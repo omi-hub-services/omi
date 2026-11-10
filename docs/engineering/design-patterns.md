@@ -143,6 +143,37 @@ Manifest là danh sách đầu vào/đầu ra và hash, cùng state nghiệp v�
 
 Ghi file atomic theo thứ tự: temp file → flush khi cần → rename → DB reference. Recovery phát hiện file thiếu/hash lệch phải báo, không tiếp tục như checkpoint hợp lệ.
 
+`ArtifactStore` (`application/ports/artifact-store.ts`) publishes immutable relative paths.
+`createLocalArtifactStore` takes an existing runtime-owned root and SQLite connection. It uses
+the existing synchronous transaction to serialize cooperating writers, refuses an existing file,
+path or ID, writes a same-directory temp with mode `0600`, fsyncs the file, renames, fsyncs the
+directory where supported, then inserts the reference. New parent directories are synced too.
+A throw before rename removes its temp; a killed writer may leave a hidden temp. Failure after
+rename may leave a complete orphan. Neither is exposed by reads or manifests without a DB row.
+Recovery/retention cleanup belongs to the later checkpoint lifecycle. Ancestor checks reject
+symlinks, including inward links; this is not a sandbox against hostile same-user directory swaps.
+`read` verifies the caller's pin and DB hash against the bytes. `manifest` verifies only explicitly
+requested references and derives byte sizes from files (schema v1 has no size column); persist
+that JSON through `write` when a durable manifest reference is needed. No migration is required.
+
+`assembleContext` (`application/services/assemble-context.ts`) is pure: its caller supplies a
+resolved catalog with explicit role and step selectors. Both selectors must match. It preserves
+skill aggregates from `skills.lock.json` (ADR-0019) and rule versions/hashes, rejects ambiguous
+selected IDs/paths, and emits the existing v1 packet. Template resolution remains OMI-032;
+dispatch-time verification of referenced skill/rule files remains with their loader. A sourced
+summary is stored as an artifact containing the summary plus its source path/hash, then selected
+by reference; there is no extra inline summary/transcript field in v1. The Issue number sources
+the task snapshot. Input text cannot grant approvals or widen the supplied scope.
+
+The pure credential guard (`application/contracts/credential-input.ts`) rejects credential paths, structured credential/environment fields,
+and recognizable secret values before artifact publication or packet assembly. Bootstrap callers
+must supply known sensitive environment values and resolved nonstandard credential roots through
+`CredentialPolicy`; neither the service nor the store reads profile contents or the environment.
+JSON artifact contents are inspected structurally as well as textually. Detection patterns are
+best effort (tech-stack.md §9), not a proof that arbitrary unlabelled bytes are secret-free.
+Keep catalog sources restricted to reviewed inputs; never collect a repository, environment or
+profile tree as an input. Errors do not echo rejected credential material.
+
 Khi đổi tool/profile, tạo attempt mới, dùng checkpoint cùng task/run. Không sửa transcript tài khoản khác để giả lập continuation. Nếu có native resume cùng profile thì dùng như tối ưu sau khi đã kiểm chứng, không thành dependency của sản phẩm.
 
 ## 10. Approval như một quyết định có phiên bản
