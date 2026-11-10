@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [develop, main]
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # typecheck, lint, format, architecture guards, backlog manifest, unit + integration tests.
+      # `build` joins once src/ has its first module (ADR-0011).
+      - run: npm run check
+
+  issue-link:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      pull-requests: read
+    steps:
+      - name: PR references a real Issue in this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          refs=$(printf '%s\n' "$PR_BODY" \
+            | grep -oiE "(^|[^[:alnum:]/])#[0-9]+|github\.com/${REPO}/issues/[0-9]+" \
+            | grep -oE '[0-9]+$' | sort -u || true)
+          for n in $refs; do
+            kind=$(gh api "repos/${REPO}/issues/${n}" --jq 'if .pull_request then "pr" else "issue" end' 2>/dev/null || echo missing)
+            if [ "$kind" = "issue" ]; then
+              echo "Linked Issue: https://github.com/${REPO}/issues/${n}"
+              exit 0
+            fi
+          done
+          echo "::error::PR body must reference an existing Issue of ${REPO} (e.g. 'Issue: #12'). Found: ${refs:-none}"
+          exit 1
