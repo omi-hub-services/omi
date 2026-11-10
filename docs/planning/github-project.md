@@ -148,14 +148,19 @@ API chỉ nhận name/layout/filter/visible fields; group-by, sort và cột boa
    chỉ xem được trên UI), rồi **Save**.
 6. Project không có field dependency: "hiển thị dependency" của Backlog xem qua trang Issue
    (mục Relationships) hoặc body Issue.
-7. Workflows tự động của Project (auto-add, item closed → Done) chưa bật; Done phải theo
-   quy trình merge đã xác nhận, nên chỉ bật khi đã quyết định chính sách.
+7. Built-in workflows (kiểm tra qua API 2026-11-10): chỉ **Auto-add sub-issues to project**
+   đang bật; Item closed, Pull request merged, Pull request linked, Item added, Auto-close
+   đều tắt. Giữ tắt các workflow đặt Done tự động: Done phải theo merge vào `develop` đã xác
+   nhận, và PR vào `develop` không đóng Issue bằng closing keyword.
 
 ## Branch/PR bootstrap
 
 - Seed commit `05a74cf` trên `main`: **ngoại lệ bootstrap một lần** vì remote rỗng; `develop`
   tạo từ đó. Không commit trực tiếp nào khác vào `main`/`develop`.
-- Scaffold đi qua task branch `task/omi-001-scaffold` → PR vào `develop`: PR_LINE
+- Scaffold đi qua task branch `task/omi-001-scaffold` → PR vào `develop`:
+  [#57](https://github.com/omi-hub-services/omi/pull/57), body `Issue: #2`, backlink comment
+  trên [#2](https://github.com/omi-hub-services/omi/issues/2). OMI-001 đang **In Review**,
+  assignee `minibox-claude-code`; chưa merge.
 
 ## Giới hạn và việc còn lại
 
