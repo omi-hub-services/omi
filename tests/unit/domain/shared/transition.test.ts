@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { findDependencyCycle } from "../../../../src/domain/shared/graph.ts";
 import { ALLOWED, decide } from "../../../../src/domain/shared/decision.ts";
-import {
-  applyTransition,
-  eventsAccepted,
-  ruleBuilder,
-} from "../../../../src/domain/shared/transition.ts";
+import { applyTransition, ruleBuilder } from "../../../../src/domain/shared/transition.ts";
 
 type State = "a" | "b" | "c";
 type Event = { type: "go"; ok: boolean } | { type: "stop" };
@@ -36,11 +32,6 @@ describe("applyTransition", () => {
       reason: "TRANSITION_NOT_ALLOWED",
     });
     expect(applyTransition(rules, "c", { type: "stop" }).ok).toBe(false);
-  });
-
-  it("lists the events a state accepts", () => {
-    expect(eventsAccepted(rules, "a")).toEqual(["go"]);
-    expect(eventsAccepted(rules, "c")).toEqual([]);
   });
 });
 

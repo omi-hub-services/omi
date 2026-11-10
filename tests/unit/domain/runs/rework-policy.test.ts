@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   INITIAL_REWORK_STATE,
-  isReworkBlocked,
-  mayAttemptFix,
   transitionRework,
 } from "../../../../src/domain/runs/rework-policy.ts";
 import type { ReworkEvent, ReworkState } from "../../../../src/domain/runs/rework-policy.ts";
@@ -34,13 +32,11 @@ describe("2 + Architect + 2", () => {
   it("allows one failed cycle without escalating", () => {
     const state = run(INITIAL_REWORK_STATE, failed("c1"));
     expect(state).toMatchObject({ phase: "normal", failedCycles: 1 });
-    expect(mayAttemptFix(state)).toBe(true);
   });
 
   it("escalates to the Architect on the second failed cycle, not before", () => {
     const state = run(INITIAL_REWORK_STATE, failed("c1"), failed("c2"));
     expect(state).toMatchObject({ phase: "architect", failedCycles: 2 });
-    expect(mayAttemptFix(state)).toBe(false);
   });
 
   it("gives two more attempts after the Architect, then blocks", () => {
@@ -54,8 +50,6 @@ describe("2 + Architect + 2", () => {
     expect(one).toMatchObject({ phase: "assisted", failedCycles: 1 });
     const two = run(one, failed("c4"));
     expect(two.phase).toBe("blocked");
-    expect(isReworkBlocked(two)).toBe(true);
-    expect(mayAttemptFix(two)).toBe(false);
   });
 
   it("passes from normal or assisted when the gate passes, and keeps nothing to retry", () => {
@@ -81,6 +75,38 @@ describe("2 + Architect + 2", () => {
       expect(first.failedCycles).toBe(1);
     });
 
+    it("does not count a late repeat of an earlier cycle after the Architect step", () => {
+      const afterArchitect = run(INITIAL_REWORK_STATE, failed("c1"), failed("c2"), solution);
+      for (const late of ["c1", "c2"]) {
+        expect(transitionRework(afterArchitect, failed(late))).toEqual({
+          ok: false,
+          reason: "CYCLE_ALREADY_COUNTED",
+        });
+      }
+      // Only genuinely new cycles spend the post-Architect budget.
+      expect(run(afterArchitect, failed("c3"))).toMatchObject({
+        phase: "assisted",
+        failedCycles: 1,
+      });
+    });
+
+    it("keeps counted cycles across a PO reopen, so an old event cannot hit the fresh budget", () => {
+      const blocked = run(
+        INITIAL_REWORK_STATE,
+        failed("c1"),
+        failed("c2"),
+        solution,
+        failed("c3"),
+        failed("c4"),
+      );
+      const reopened = run(blocked, { type: "po_reopened", poDecisionId: "po-1" });
+      expect(transitionRework(reopened, failed("c4"))).toEqual({
+        ok: false,
+        reason: "CYCLE_ALREADY_COUNTED",
+      });
+      expect(run(reopened, failed("d1"))).toMatchObject({ phase: "normal", failedCycles: 1 });
+    });
+
     it("does not count infrastructure failures or a wait for a PO decision", () => {
       const first = run(INITIAL_REWORK_STATE, failed("c1"));
       expect(
@@ -95,8 +121,8 @@ describe("2 + Architect + 2", () => {
 
     it("carries no profile or model, so changing them cannot reset the counter", () => {
       expect(Object.keys(run(INITIAL_REWORK_STATE, failed("c1"))).sort()).toEqual([
+        "countedCycleIds",
         "failedCycles",
-        "lastCountedCycleId",
         "phase",
         "reopenDecisionIds",
       ]);
@@ -179,6 +205,7 @@ describe("2 + Architect + 2", () => {
       expect(reopened).toEqual({
         phase: "normal",
         failedCycles: 0,
+        countedCycleIds: ["c1", "c2", "c3", "c4"],
         reopenDecisionIds: ["po-1"],
       });
       const blockedAgain = run(

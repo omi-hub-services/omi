@@ -42,7 +42,10 @@ export interface Approval {
   readonly reason?: string;
 }
 
-/** Lifecycle of an approval request. */
+/**
+ * Lifecycle of an approval request. Who may approve (allowlist, author) is checked in one place,
+ * `evaluateApproval` in approval-policy.ts, every time an approval is used, not here.
+ */
 export const APPROVAL_STATUSES = [
   "pending",
   "approved",
@@ -55,14 +58,11 @@ export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
 export type ApprovalEvent =
   | {
       readonly type: "approve";
-      readonly actorAllowed: boolean;
-      readonly actorIsAuthor: boolean;
       readonly sourceAuthenticated: boolean;
       readonly subjectCurrent: boolean;
     }
   | {
       readonly type: "reject";
-      readonly actorAllowed: boolean;
       readonly sourceAuthenticated: boolean;
       readonly reason: string;
     }
@@ -70,8 +70,6 @@ export type ApprovalEvent =
   | { readonly type: "invalidate"; readonly subjectChanged: boolean };
 
 export type ApprovalRefusal =
-  | "ACTOR_NOT_ALLOWED"
-  | "SELF_APPROVAL"
   | "SOURCE_NOT_AUTHENTICATED"
   | "SUBJECT_STALE"
   | "REJECTION_REASON_MISSING"
@@ -87,13 +85,10 @@ export const APPROVAL_RULES: readonly TransitionRule<
 >[] = [
   rule("pending", "approve", "approved", (e) => {
     if (!e.sourceAuthenticated) return "SOURCE_NOT_AUTHENTICATED";
-    if (!e.actorAllowed) return "ACTOR_NOT_ALLOWED";
-    if (e.actorIsAuthor) return "SELF_APPROVAL";
     return e.subjectCurrent ? undefined : "SUBJECT_STALE";
   }),
   rule("pending", "reject", "rejected", (e) => {
     if (!e.sourceAuthenticated) return "SOURCE_NOT_AUTHENTICATED";
-    if (!e.actorAllowed) return "ACTOR_NOT_ALLOWED";
     return e.reason.trim() === "" ? "REJECTION_REASON_MISSING" : undefined;
   }),
   ...(["pending", "approved"] as const).map((from) =>

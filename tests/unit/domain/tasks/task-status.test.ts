@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   TASK_RULES,
   TASK_STATUSES,
-  TERMINAL_TASK_STATUSES,
   transitionTask,
 } from "../../../../src/domain/tasks/task-status.ts";
 import type { TaskEvent, TaskStatus } from "../../../../src/domain/tasks/task-status.ts";
@@ -49,7 +48,7 @@ describe("task state machine", () => {
   });
 
   it("has no outgoing transition from done or cancelled", () => {
-    for (const from of TERMINAL_TASK_STATUSES) {
+    for (const from of ["done", "cancelled"] as const) {
       expect(TASK_RULES.filter((r) => r.from === from)).toEqual([]);
     }
   });

@@ -100,11 +100,18 @@ export function evaluateMerge(input: MergeInputs): Decision<MergeRefusal> {
   if (input.unresolvedMandatoryFindings > 0) refusals.push("FINDINGS_UNRESOLVED");
   if (!input.workflowGatesPassed) refusals.push("GATE_NOT_PASSED");
 
-  const approvalsMissing = input.kind === "release" && input.requiredApprovals.length === 0;
   const approvalsInvalid = input.requiredApprovals.some(
     ({ approval, expected }) => !evaluateApproval(approval, expected).allowed,
   );
-  if (approvalsMissing || approvalsInvalid) refusals.push("APPROVAL_REQUIRED");
+  // A release PR needs a valid release approval for the head being merged. The expectation is
+  // built by the caller, so the head it names is checked here against the remote head.
+  const releaseApprovalMissing =
+    input.kind === "release" &&
+    !input.requiredApprovals.some(
+      ({ expected }) =>
+        expected.subject.kind === "release" && expected.subject.headSha === input.currentHeadSha,
+    );
+  if (approvalsInvalid || releaseApprovalMissing) refusals.push("APPROVAL_REQUIRED");
 
   if (input.hasConflicts) refusals.push("MERGE_CONFLICT");
   if (!input.mergeLockHeld) refusals.push("MERGE_LOCK_NOT_HELD");

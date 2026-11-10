@@ -20,8 +20,6 @@ export const TASK_STATUSES = [
 ] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
-export const TERMINAL_TASK_STATUSES: readonly TaskStatus[] = ["done", "cancelled"];
-
 export type TaskEvent =
   | {
       readonly type: "dependencies_satisfied";

@@ -60,6 +60,13 @@ describe("decideOperationalRetry", () => {
     });
   });
 
+  it("never reports a cooldown that already ended", () => {
+    expect(decideOperationalRetry(input({ failure: "rate_limit", cooldownUntil: 5_000 }))).toEqual({
+      action: "failover",
+      cooldownUntil: 10_500,
+    });
+  });
+
   it("never retries login or config problems, and never guesses an unclassified failure", () => {
     expect(decideOperationalRetry(input({ failure: "login_required" }))).toEqual({
       action: "stop",

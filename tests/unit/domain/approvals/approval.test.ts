@@ -176,14 +176,11 @@ describe("approval lifecycle", () => {
   const events = {
     approve: {
       type: "approve",
-      actorAllowed: true,
-      actorIsAuthor: false,
       sourceAuthenticated: true,
       subjectCurrent: true,
     },
     reject: {
       type: "reject",
-      actorAllowed: true,
       sourceAuthenticated: true,
       reason: "out of scope",
     },
@@ -214,16 +211,10 @@ describe("approval lifecycle", () => {
     }
   });
 
-  it("approves only from an authenticated, allowlisted, non-author source on the current subject", () => {
+  it("approves only from an authenticated source on the current subject", () => {
     const base = events.approve;
     expect(transitionApproval("pending", { ...base, sourceAuthenticated: false })).toMatchObject({
       reason: "SOURCE_NOT_AUTHENTICATED",
-    });
-    expect(transitionApproval("pending", { ...base, actorAllowed: false })).toMatchObject({
-      reason: "ACTOR_NOT_ALLOWED",
-    });
-    expect(transitionApproval("pending", { ...base, actorIsAuthor: true })).toMatchObject({
-      reason: "SELF_APPROVAL",
     });
     expect(transitionApproval("pending", { ...base, subjectCurrent: false })).toMatchObject({
       reason: "SUBJECT_STALE",
@@ -231,13 +222,13 @@ describe("approval lifecycle", () => {
     expect(transitionApproval("pending", base)).toMatchObject({ to: "approved" });
   });
 
-  it("records a rejection only with a reason from an allowed actor", () => {
+  it("records a rejection only with a reason from an authenticated source", () => {
     expect(transitionApproval("pending", { ...events.reject, reason: " " })).toMatchObject({
       reason: "REJECTION_REASON_MISSING",
     });
-    expect(transitionApproval("pending", { ...events.reject, actorAllowed: false })).toMatchObject({
-      reason: "ACTOR_NOT_ALLOWED",
-    });
+    expect(
+      transitionApproval("pending", { ...events.reject, sourceAuthenticated: false }),
+    ).toMatchObject({ reason: "SOURCE_NOT_AUTHENTICATED" });
     expect(transitionApproval("pending", events.reject)).toMatchObject({ to: "rejected" });
   });
 

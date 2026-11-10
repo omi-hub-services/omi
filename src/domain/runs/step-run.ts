@@ -16,8 +16,6 @@ export const STEP_STATUSES = [
 ] as const;
 export type StepStatus = (typeof STEP_STATUSES)[number];
 
-export const TERMINAL_STEP_STATUSES: readonly StepStatus[] = ["succeeded", "cancelled"];
-
 /**
  * Events reported by an attempt carry the attempt generation they belong to. A late event from
  * an older attempt must never overwrite a newer one (design-patterns.md §4, §8).

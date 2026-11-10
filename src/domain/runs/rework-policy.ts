@@ -26,8 +26,11 @@ export interface ReworkState {
   /** Failed cycles in the current segment: before the Architect, or after the Architect. */
   readonly failedCycles: number;
   readonly architectInterventionId?: string;
-  /** Last cycle that was counted; a second report for the same cycle is not counted again. */
-  readonly lastCountedCycleId?: string;
+  /**
+   * Every cycle that was counted, across phases and reopens. A late or repeated report of any of
+   * them is not counted again, so an old event cannot spend the budget after the Architect.
+   */
+  readonly countedCycleIds: readonly string[];
   /** Ids of the PO decisions that reopened this quality cycle, oldest first. */
   readonly reopenDecisionIds: readonly string[];
 }
@@ -35,6 +38,7 @@ export interface ReworkState {
 export const INITIAL_REWORK_STATE: ReworkState = {
   phase: "normal",
   failedCycles: 0,
+  countedCycleIds: [],
   reopenDecisionIds: [],
 };
 
@@ -72,7 +76,11 @@ const accept = (state: ReworkState): ReworkOutcome => ({ ok: true, state });
 /** Next phase when a counted failure lands in `phase`, and the budget of that phase. */
 function afterCountedFailure(state: ReworkState, cycleId: string): ReworkState {
   const failedCycles = state.failedCycles + 1;
-  const counted = { ...state, failedCycles, lastCountedCycleId: cycleId };
+  const counted = {
+    ...state,
+    failedCycles,
+    countedCycleIds: [...state.countedCycleIds, cycleId],
+  };
   if (state.phase === "normal" && failedCycles >= FAILURES_BEFORE_ARCHITECT) {
     return { ...counted, phase: "architect" };
   }
@@ -90,7 +98,7 @@ export function transitionRework(state: ReworkState, event: ReworkEvent): Rework
       }
       if (event.kind === "infrastructure") return refuse("INFRASTRUCTURE_FAILURE_NOT_QUALITY");
       if (event.kind === "awaiting_decision") return refuse("AWAITING_DECISION_NOT_QUALITY");
-      if (state.lastCountedCycleId === event.cycleId) return refuse("CYCLE_ALREADY_COUNTED");
+      if (state.countedCycleIds.includes(event.cycleId)) return refuse("CYCLE_ALREADY_COUNTED");
       return accept(afterCountedFailure(state, event.cycleId));
     }
     case "gate_passed": {
@@ -107,6 +115,7 @@ export function transitionRework(state: ReworkState, event: ReworkEvent): Rework
         phase: "assisted",
         failedCycles: 0,
         architectInterventionId: event.interventionId,
+        countedCycleIds: state.countedCycleIds,
         reopenDecisionIds: state.reopenDecisionIds,
       });
     }
@@ -120,18 +129,9 @@ export function transitionRework(state: ReworkState, event: ReworkEvent): Rework
       return accept({
         phase: "normal",
         failedCycles: 0,
+        countedCycleIds: state.countedCycleIds,
         reopenDecisionIds: [...state.reopenDecisionIds, event.poDecisionId],
       });
     }
   }
-}
-
-/** True when the task must stop, keep its checkpoint and report to the PO. */
-export function isReworkBlocked(state: ReworkState): boolean {
-  return state.phase === "blocked";
-}
-
-/** Whether the executor may start another fix attempt right now. */
-export function mayAttemptFix(state: ReworkState): boolean {
-  return state.phase === "normal" || state.phase === "assisted";
 }

@@ -1,6 +1,6 @@
 # ADR-0017 — Domain policies and explicit state machines
 
-- Status: Accepted
+- Status: Proposed (the PO still decides the open points below and in the PR)
 - Date: 2026-11-10
 - Issue: #10 (OMI-008), epic #8, milestone M1 — Core foundation
 - Context documents: `docs/architecture/architecture.md` §3.1, §8, §9, §11;
@@ -22,7 +22,7 @@
    architecture.md §8 names one `blocked`; the split stops a dependency recovery from reopening a
    task that the PO must decide on. The Project field maps both to "Blocked".
 4. **Rework (2 + Architect + 2) is a counter-carrying controller** (`runs/rework-policy.ts`)
-   over `{ phase, failedCycles, architectInterventionId, lastCountedCycleId }`. It holds no
+   over `{ phase, failedCycles, architectInterventionId, countedCycleIds }`. It holds no
    profile or model, so switching them cannot reset it. Infrastructure failures and waiting for a
    PO decision are refused without counting; a repeated report of the same `cycleId` counts once;
    an Architect solution that changes business scope or cost needs a valid approval first; a PO
@@ -45,6 +45,14 @@
    requirements (probe-fresh ready profile, account group not in cooldown, model verified for the
    capability profile, supported effort at or above the minimum, concurrency) before preference.
    No candidate gives `WAITING_RESOURCE` with the reasons per candidate.
+
+## Not covered yet
+
+- A run or step in `waiting_resource` has no path to `blocked` when the retry budget is spent
+  (architecture.md §9); today only a running run can block.
+- A step cannot be paused from `waiting_approval` (the run can).
+- A step's `wait_approval` event is not tied to an attempt generation, unlike `succeed`, `fail`,
+  `interrupt` and `wait_resource`.
 
 ## Consequences
 

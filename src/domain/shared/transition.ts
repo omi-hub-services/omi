@@ -60,11 +60,3 @@ export function applyTransition<S extends string, Ev extends DomainEvent, R exte
   }
   return { ok: true, from, to: rule.to };
 }
-
-/** Events a state accepts, for diagnostics and for tests that sweep the whole table. */
-export function eventsAccepted<S extends string, Ev extends DomainEvent, R extends string>(
-  rules: readonly TransitionRule<S, Ev, R>[],
-  from: S,
-): readonly string[] {
-  return rules.filter((rule) => rule.from === from).map((rule) => rule.event);
-}

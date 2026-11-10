@@ -72,7 +72,10 @@ export function decideOperationalRetry(input: RetryInput): RetryAction {
   const backoff = input.now + backoffDelayMs(input.retriesMade, input.jitter, input.budget);
   switch (input.failure) {
     case "rate_limit":
-      return { action: "failover", cooldownUntil: input.cooldownUntil ?? backoff };
+      return {
+        action: "failover",
+        cooldownUntil: Math.max(input.cooldownUntil ?? backoff, backoff),
+      };
     case "process_died":
       return { action: "recover" };
     case "network":

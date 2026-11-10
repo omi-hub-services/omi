@@ -180,6 +180,46 @@ describe("evaluateMerge", () => {
       ).toEqual({ allowed: true });
     });
 
+    it("refuses a release merge whose approval was made for an older head", () => {
+      const oldHead = { ...releaseApproval(poApproval(OTHER)) };
+      const forOldHead = {
+        approval: oldHead.approval,
+        expected: {
+          ...oldHead.expected,
+          subject: { kind: "release", pullRequestId: "pr-1", headSha: OTHER } as const,
+        },
+      };
+      // The caller's expectation names the old head, so the approval matches itself; the policy
+      // must still compare with the head that is on the remote now.
+      expect(
+        evaluateMerge(taskPr({ kind: "release", requiredApprovals: [forOldHead] })),
+      ).toMatchObject({ allowed: false, reason: "APPROVAL_REQUIRED" });
+    });
+
+    it("refuses a release merge that only has a business approval", () => {
+      const business = {
+        approval: {
+          id: "ap-b",
+          subject: { kind: "business", baselineHash: "h", scopeIds: ["s"] },
+          decision: "approved",
+          actor: "po",
+          source: "github-actor",
+          decidedAt: 1,
+        } as const satisfies Approval,
+        expected: {
+          subject: { kind: "business", baselineHash: "h", scopeIds: ["s"] } as const,
+          allowedActors: ["po"],
+          now: 10,
+        },
+      };
+      expect(
+        evaluateMerge(taskPr({ kind: "release", requiredApprovals: [business] })),
+      ).toMatchObject({
+        allowed: false,
+        reason: "APPROVAL_REQUIRED",
+      });
+    });
+
     it("never allows a release PR without any approval requirement attached", () => {
       expect(evaluateMerge(taskPr({ kind: "release", requiredApprovals: [] }))).toMatchObject({
         reason: "APPROVAL_REQUIRED",

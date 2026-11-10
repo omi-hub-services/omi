@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  STEP_RULES,
-  STEP_STATUSES,
-  TERMINAL_STEP_STATUSES,
-  transitionStep,
-} from "../../../../src/domain/runs/step-run.ts";
+import { STEP_RULES, STEP_STATUSES, transitionStep } from "../../../../src/domain/runs/step-run.ts";
 import type { StepEvent } from "../../../../src/domain/runs/step-run.ts";
 
 const events = {
@@ -59,7 +54,7 @@ describe("step state machine", () => {
   });
 
   it("has no way out of succeeded or cancelled", () => {
-    for (const from of TERMINAL_STEP_STATUSES) {
+    for (const from of ["succeeded", "cancelled"] as const) {
       expect(STEP_RULES.filter((r) => r.from === from)).toEqual([]);
     }
   });
