@@ -11,7 +11,13 @@ import {
   type WslTarget,
 } from "./coordinator-settings.ts";
 import { asObject, type JsonObject } from "./json-shape.ts";
-import { runChecked, wslCommand, type Command, type Runner } from "./process-runner.ts";
+import {
+  runChecked,
+  WSL_NODE_ENV,
+  wslCommand,
+  type Command,
+  type Runner,
+} from "./process-runner.ts";
 
 // ── remote collector ─────────────────────────────────────────────────────────
 // Plain JavaScript run in WSL as `node --input-type=module -` (source on stdin, so the bash
@@ -139,7 +145,14 @@ export function quotaCommand(
     if (!PROFILE_NAME.test(p.profile)) throw new Error(`invalid profile name "${p.profile}"`);
     return `${p.tool}:${p.profile}`;
   });
-  const payload = ["node", "--input-type=module", "-", RUNS_DIR_FROM_HOME, probe ? "1" : "0"]
+  const payload = [
+    WSL_NODE_ENV,
+    "node",
+    "--input-type=module",
+    "-",
+    RUNS_DIR_FROM_HOME,
+    probe ? "1" : "0",
+  ]
     .concat(targets)
     .join(" ");
   return { ...wslCommand(payload, target, probe ? 240_000 : 60_000), input: REMOTE_COLLECTOR };

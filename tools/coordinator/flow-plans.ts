@@ -15,7 +15,7 @@ import {
   summarizeChecks,
   type OpenPull,
 } from "./github-snapshot.ts";
-import { joinSteps, wslCommand, type Command } from "./process-runner.ts";
+import { joinSteps, WSL_NODE_ENV, wslCommand, type Command } from "./process-runner.ts";
 
 /** Where a step runs: `gh` on the Coordinator host, git in the WSL checkout, or git on the host. */
 export type StepSide = "host" | "wsl";
@@ -33,8 +33,6 @@ export type Plan =
   | { readonly kind: "refuse"; readonly reason: string }
   | { readonly kind: "run"; readonly steps: readonly Step[]; readonly note?: string };
 
-const NODE_ENV = "[ -s $HOME/.nvm/nvm.sh ] && . $HOME/.nvm/nvm.sh >/dev/null 2>&1;";
-
 /**
  * Consecutive WSL steps become one `bash -lc` payload (one wsl.exe call, `&&`-chained, each
  * argument quoted); host steps stay plain argv. `hostCwd` applies to host git steps.
@@ -44,7 +42,7 @@ export function toCommands(steps: readonly Step[], target: WslTarget, hostCwd: s
   let group: Step[] = [];
   const flush = () => {
     if (group.length === 0) return;
-    const prefix = group.some((s) => s.needsNode) ? `${NODE_ENV} ` : "";
+    const prefix = group.some((s) => s.needsNode) ? `${WSL_NODE_ENV} ` : "";
     const long = group.some((s) => s.needsNode) ? 900_000 : undefined;
     out.push(wslCommand(prefix + joinSteps(group.map((s) => s.argv)), target, long));
     group = [];

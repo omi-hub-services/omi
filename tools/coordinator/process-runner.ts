@@ -72,6 +72,9 @@ export function joinSteps(steps: readonly (readonly string[])[]): string {
 const WINDOWS_UNSAFE = /["\\\r\n]/;
 
 /** Runs a bash payload in the WSL checkout. */
+/** A non-interactive `bash -lc` in WSL only gets node/npm/claude/codex on PATH from nvm. */
+export const WSL_NODE_ENV = "[ -s $HOME/.nvm/nvm.sh ] && . $HOME/.nvm/nvm.sh >/dev/null 2>&1;";
+
 export function wslCommand(payload: string, target: WslTarget, timeoutMs?: number): Command {
   if (WINDOWS_UNSAFE.test(payload)) {
     throw new Error(`WSL payload must not contain double quotes, backslashes or newlines`);

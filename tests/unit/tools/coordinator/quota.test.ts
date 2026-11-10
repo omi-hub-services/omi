@@ -6,7 +6,11 @@ import {
   type WorkerProfile,
   type WslTarget,
 } from "../../../../tools/coordinator/coordinator-settings.ts";
-import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
+import {
+  WSL_NODE_ENV,
+  type Command,
+  type Runner,
+} from "../../../../tools/coordinator/process-runner.ts";
 import {
   formatPick,
   formatQuotaSection,
@@ -185,8 +189,9 @@ describe("quotaCommand / readQuota", () => {
   it("sends the collector on stdin with a payload that survives Windows quoting", () => {
     const cmd = quotaCommand({ ...linux, viaWslExe: true }, PROFILES, true);
     expect(cmd.file).toBe("wsl.exe");
+    // bash -lc does not load nvm on its own; without it wsl.exe reports "node: command not found".
     expect(cmd.args.at(-1)).toBe(
-      "node --input-type=module - omi-runs 1 claude:ggtintran claude:minibox codex:ggtintran",
+      `${WSL_NODE_ENV} node --input-type=module - omi-runs 1 claude:ggtintran claude:minibox codex:ggtintran`,
     );
     expect(cmd.input).toContain("account/rateLimits/read");
     expect(() =>
