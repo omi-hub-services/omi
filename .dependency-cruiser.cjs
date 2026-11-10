@@ -5,7 +5,9 @@
 
 const IO_CORE =
   "^(node:)?(fs|fs/promises|child_process|net|http|https|http2|dgram|tls|worker_threads|cluster|sqlite)$";
-const IO_NPM = "^(better-sqlite3|@octokit/|execa)";
+// dependency-cruiser matches `to.path` against the resolved file (node_modules/<pkg>/...), not
+// the import specifier, so an anchored `^better-sqlite3` never matched (found in OMI-011).
+const IO_NPM = "(^|/)node_modules/(better-sqlite3|@octokit|execa)/";
 
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
@@ -78,7 +80,7 @@ module.exports = {
       severity: "error",
       comment: "CLI/IPC handlers never run SQL, GitHub calls or spawn processes directly.",
       from: { path: "^src/interfaces/" },
-      to: { path: "^(node:)?(child_process|sqlite)$|^(better-sqlite3|@octokit/|execa)" },
+      to: { path: `^(node:)?(child_process|sqlite)$|${IO_NPM}` },
     },
     {
       name: "only-bootstrap-imports-bootstrap",
