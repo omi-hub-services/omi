@@ -148,13 +148,7 @@ function readAuthStatus(): Record<string, unknown> {
     if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
       const record = parsed as Record<string, unknown>;
       kept["fieldNames"] = Object.keys(record).sort();
-      for (const key of [
-        "loggedIn",
-        "authMethod",
-        "apiProvider",
-        "apiKeySource",
-        "subscriptionType",
-      ]) {
+      for (const key of ["loggedIn", "authMethod", "apiProvider", "subscriptionType", "planTier"]) {
         const value = record[key];
         if (typeof value === "string" || typeof value === "boolean") kept[key] = value;
       }
@@ -165,6 +159,9 @@ function readAuthStatus(): Record<string, unknown> {
   return kept;
 }
 
+// Neither signal alone is enough (OMI-002 live run, Claude Code 2.1.322): an unknown model gave
+// `result.subtype == "success"` with `is_error: true` and exit 1, and a SIGINT-cancelled run
+// exited 0 with `subtype: "error_during_execution"`. Success needs all three.
 function classify(run: CliRun): Outcome {
   const result = findEvent(run, "result");
   const succeeded =
@@ -245,6 +242,10 @@ describe("OMI-002 Claude Code subscription worker (live)", () => {
     expect(Object.keys(workerEnv).filter((key) => key.startsWith("ANTHROPIC_"))).toEqual([]);
     expect(workerEnv["CLAUDE_CONFIG_DIR"]).toBe(configDir);
     expect(evidence.authStatus["exitCode"]).toBe(0);
+    // Subscription (claude.ai OAuth) login on the first-party API, not an API key or 3P provider.
+    expect(evidence.authStatus["loggedIn"]).toBe(true);
+    expect(evidence.authStatus["authMethod"]).toBe("claude.ai");
+    expect(evidence.authStatus["apiProvider"]).toBe("firstParty");
   });
 
   it(
@@ -343,8 +344,9 @@ describe("OMI-002 Claude Code subscription worker (live)", () => {
       const entry = record("error-invalid-model", run);
 
       expect(entry.outcome).toBe("error");
-      expect(run.exitCode !== 0 || entry.resultIsError === true).toBe(true);
-      if (entry.apiKeySource !== undefined) expect(entry.apiKeySource).toBe("none");
+      expect(run.exitCode).not.toBe(0);
+      expect(entry.resultIsError).toBe(true);
+      expect(entry.apiKeySource).toBe("none");
     },
     CASE_TIMEOUT_MS,
   );
@@ -362,6 +364,7 @@ describe("OMI-002 Claude Code subscription worker (live)", () => {
         timeoutMs: RUN_TIMEOUT_MS,
         cancelOn: {
           eventType: "system",
+          eventSubtype: "init",
           delayMs: 3_000,
           signal: "SIGINT",
           graceMs: CANCEL_GRACE_MS,
@@ -371,6 +374,8 @@ describe("OMI-002 Claude Code subscription worker (live)", () => {
 
       expect(run.cancel, "the cancel signal was never sent").toBeDefined();
       expect(entry.outcome).toBe("cancelled");
+      expect(entry.apiKeySource).toBe("none");
+      expect(entry.resultIsError).toBe(true);
       expect(run.cancel?.escalated).toBe(false);
       expect(run.cancel?.exitAfterSignalMs).toBeLessThan(CANCEL_GRACE_MS);
       expect(run.groupAliveAtClose).toBe(false);

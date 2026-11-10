@@ -91,8 +91,18 @@ export interface CliRunOptions {
   env: Record<string, string>;
   /** Hard limit; the process group is killed with SIGKILL when reached. */
   timeoutMs: number;
-  /** Send `signal` `delayMs` after the first `eventType` event; SIGKILL the group after `graceMs`. */
-  cancelOn?: { eventType: string; delayMs: number; signal: NodeJS.Signals; graceMs: number };
+  /**
+   * Send `signal` `delayMs` after the first event matching `eventType`/`eventSubtype`; SIGKILL the
+   * group after `graceMs`. Match the subtype too: profile hooks emit `system/hook_*` events
+   * before `system/init` (seen in the OMI-002 live run).
+   */
+  cancelOn?: {
+    eventType: string;
+    eventSubtype: string;
+    delayMs: number;
+    signal: NodeJS.Signals;
+    graceMs: number;
+  };
 }
 
 export function runClaude(options: CliRunOptions): Promise<CliRun> {
@@ -150,7 +160,12 @@ export function runClaude(options: CliRunOptions): Promise<CliRun> {
     }
     events.push(event);
     const cancelOn = options.cancelOn;
-    if (cancelOn !== undefined && !cancelScheduled && event.type === cancelOn.eventType) {
+    if (
+      cancelOn !== undefined &&
+      !cancelScheduled &&
+      event.type === cancelOn.eventType &&
+      event["subtype"] === cancelOn.eventSubtype
+    ) {
       cancelScheduled = true;
       timers.push(setTimeout(sendCancel, cancelOn.delayMs));
     }
