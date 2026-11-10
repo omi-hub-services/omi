@@ -5,8 +5,8 @@
 # not re-run `apply` (it would overwrite edits made on GitHub). Issues added after bootstrap
 # (e.g. OMI-049) exist only on GitHub.
 #
-# Source of truth: docs/planning/project-plan.md (v1.0, 10/11/2026). This file must
-# stay consistent with it; change the plan first, then this manifest.
+# Historical (until 2026-11-10): derived from docs/planning/project-plan.md (v1.0) and
+# cross-checked against it by `npm run check:backlog`; both are now baseline records.
 # Plan keys (EP-xx / OMI-xxx) are stable logical keys, NOT GitHub issue numbers.
 # Applied by tools/github-bootstrap/main.ts (validate | plan | apply). Every issue
 # body carries the marker `<!-- omi-squad:plan-key=KEY -->` used for idempotent reuse.
