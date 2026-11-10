@@ -1,6 +1,7 @@
 import type { ArtifactManifest, ArtifactReference, ArtifactWrite } from "../contracts/artifact.js";
 
-export type ArtifactErrorCode = "INVALID_PATH" | "NOT_FOUND" | "HASH_MISMATCH" | "ALREADY_EXISTS";
+export type ArtifactErrorCode =
+  "INVALID_PATH" | "NOT_FOUND" | "HASH_MISMATCH" | "ALREADY_EXISTS" | "HARD_LINK_UNSUPPORTED";
 
 /** Fixed messages never echo an untrusted path, content or credential. */
 export class ArtifactError extends Error {

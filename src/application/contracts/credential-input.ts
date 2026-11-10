@@ -15,13 +15,46 @@ export class CredentialInputError extends Error {
 
 const CREDENTIAL_KEY =
   /^(?:env|environment|process[._]env|(?:access|refresh|id|auth|session|bearer|oauth)[_-]?token|token|password|passwd|secret|client[_-]?secret|api[_-]?key|private[_-]?key|credentials?|authorization|cookies?|CLAUDE_CONFIG_DIR|CODEX_HOME)$/i;
+// Config directories and variable names are documentation, not credential file references.
 const CREDENTIAL_PATH =
-  /(?:^|[\s/\\"'`=:({$])(?:\.env(?:\.[\w.-]+)?|\.aws|\.ssh|\.claude(?:-profiles)?|\.codex(?:-profiles)?|\.netrc|\.npmrc|\.git-credentials|auth\.json|\.credentials(?:\.json)?|credentials\.json|id_(?:rsa|ed25519)|CODEX_HOME|CLAUDE_CONFIG_DIR)(?=$|[\s/\\"'`}:),])|[/\\]credentials(?=$|[\s/\\"'`}:),])/i;
-// Keep env names case-sensitive and require a secret-bearing UPPER_SNAKE segment.
-const SECRET_ENV_ASSIGNMENT =
-  /\b(?:[A-Z][A-Z0-9]*_)*(?:TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|CREDENTIALS?)(?:_[A-Z0-9]+)*\s*=(?!=)\s*["']?[^\s"'`;{},]{4,}/;
+  /(?:^|[\s/\\"'`=:({$])(?:\.env(?:\.[\w.-]+)?|\.netrc|\.git-credentials|auth\.json|\.credentials(?:\.json)?|credentials\.json|\.aws[/\\]credentials|id_(?:rsa|ed25519))(?=$|[\s/\\"'`}:),])|[/\\]credentials(?=$|["'`}:),])/i;
+const SECRET_ASSIGNMENT =
+  /(?:^|[^\w$-])(?:[a-z][a-z0-9]*[_-])*(?:access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|session[_-]?token|bearer[_-]?token|oauth[_-]?token|token|password|passwd|pass|pgpassword|secret|client[_-]?secret|api[_-]?key|private[_-]?key|credentials?|authorization|cookies?)(?:[_-][a-z0-9]+)*["']?\s*[:=](?!=)[ \t]*/gi;
+const BEARER_VALUE = /\bBearer[ \t]+/gi;
+const NPM_AUTH_ASSIGNMENT = /(?:^|\n)\s*(?:\/\/[^\s=]+:)?_(?:authToken|auth|password)\s*=\s*\S+/i;
 const SECRET_VALUE =
-  /(?:\b(?:sk-(?:proj-|ant-)?[\w-]{8,}|gh[pousr]_[\w]{8,}|github_pat_[\w]{8,}|xox[abprs]-[\w-]{8,}|glpat-[\w-]{8,})|\bBearer\s+\S+|\beyJ[\w-]+\.[\w-]+\.[\w-]+|-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----|\b(?:access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|session[_-]?token|bearer[_-]?token|oauth[_-]?token|token|password|passwd|secret|client[_-]?secret|api[_-]?key|private[_-]?key|authorization|cookie)["']?\s*[:=](?!=)\s*["']?[^\s"',}]+|\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@[^\s/]+)/i;
+  /(?:\b(?:sk-(?:proj-|ant-)?[\w-]{8,}|gh[pousr]_[\w]{8,}|github_pat_[\w]{8,}|xox[abprs]-[\w-]{8,}|glpat-[\w-]{8,})|\beyJ[\w-]+\.[\w-]+\.[\w-]+|-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----|\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@[^\s/]+)/i;
+
+/** Literal heuristic only: do not interpret identifiers, calls, types or template expressions. */
+function isSecretLiteral(text: string, allowOpaqueWord: boolean): boolean {
+  const quoted =
+    /^(?:"((?:\\.|[^"\\\r\n])*)"|'((?:\\.|[^'\\\r\n])*)'|`((?:\\.|[^`\\\r\n])*)`)(?=$|[\s,;})\]])/.exec(
+      text,
+    );
+  if (quoted !== null) {
+    const value = quoted[1] ?? quoted[2] ?? quoted[3] ?? "";
+    const rest = text.slice(quoted[0].length).trimStart();
+    return value.length > 0 && !/\$\{|\{\{|<%/.test(value) && !/^(?:[.(+]|\[|\?\.)/.test(rest);
+  }
+  const bare = /^([a-z0-9_+/~=-]{8,})(?=$|[\s,;})\]"'`])/i.exec(text);
+  if (bare === null) return false;
+  const value = bare[1] ?? "";
+  const rest = text.slice(bare[0].length).trimStart();
+  return (
+    // Short words and ordinary identifiers are not evidence of a secret. Long opaque words,
+    // digits or token punctuation are; this deliberately is not an entropy calculation.
+    (/[0-9+/~=-]/.test(value) || (allowOpaqueWord && value.length >= 24)) &&
+    !/^(?:[.(]|\?\.|\+|\$\{)/.test(rest)
+  );
+}
+
+function containsSecretLiteral(text: string): boolean {
+  return [SECRET_ASSIGNMENT, BEARER_VALUE].some((pattern) =>
+    Array.from(text.matchAll(pattern)).some((match) =>
+      isSecretLiteral(text.slice(match.index + match[0].length), pattern === BEARER_VALUE),
+    ),
+  );
+}
 const AWS_ACCESS_KEY = /\bAKIA[0-9A-Z]{16}\b/;
 
 /** Reject rather than silently altering pinned content. Heuristics plus caller-known secrets. */
@@ -30,11 +63,11 @@ export function assertCredentialFree(value: unknown, policy: CredentialPolicy = 
     const normalized = text.replaceAll("\\", "/");
     if (
       CREDENTIAL_PATH.test(text) ||
-      SECRET_ENV_ASSIGNMENT.test(text) ||
+      containsSecretLiteral(text) ||
+      NPM_AUTH_ASSIGNMENT.test(text) ||
       SECRET_VALUE.test(text) ||
       AWS_ACCESS_KEY.test(text) ||
-      /(?:^|[\s/])\.config\/gh(?:\/|$)/i.test(normalized) ||
-      /(?:^|[\s/])\.omi-squad\/local\/(?:credentials|profiles)(?:\/|$)/i.test(normalized) ||
+      /(?:^|[\s/])\.config\/gh\/hosts\.yml(?=$|[\s"'`}:),])/i.test(normalized) ||
       policy.sensitiveValues?.some((secret) => secret.length > 0 && text.includes(secret)) ===
         true ||
       policy.credentialRoots?.some((root) => {

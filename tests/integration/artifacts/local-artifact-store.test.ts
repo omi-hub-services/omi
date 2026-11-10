@@ -73,6 +73,8 @@ describe("durable artifact publication", () => {
   it.each([
     "AGENTS.md",
     "docs/engineering/design-patterns.md",
+    "docs/architecture/architecture.md",
+    "docs/operations/compatibility.md",
     "src/application/services/assemble-context.ts",
   ])("accepts the real repository file %s as artifact input", (path) => {
     const bytes = fs.readFileSync(join(repoRoot, path));
@@ -232,17 +234,120 @@ describe("durable artifact publication", () => {
     },
   );
 
-  it("leaves a complete unreferenced file if directory sync fails after publication", () => {
+  it("removes its publication if directory sync fails and permits retry", () => {
+    const failure = Object.assign(new Error("disk failure"), { code: "EIO" });
     const fsync = fs.fsyncSync;
-    vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
-      if (fs.fstatSync(fd).isDirectory())
-        throw Object.assign(new Error("disk failure"), { code: "EIO" });
-      fsync(fd);
-    });
-    expect(() => write()).toThrow("disk failure");
+    vi.spyOn(fs, "fsyncSync")
+      .mockImplementationOnce(fsync)
+      .mockImplementationOnce(() => {
+        throw failure;
+      });
+    expect(() => write()).toThrow(failure);
     expect(rowCount()).toBe(0);
-    expect(fs.readFileSync(join(root, "report.txt"), "utf8")).toBe("verified evidence\r\n");
+    expect(fs.readdirSync(root)).toEqual([]);
+    expect(store.read(write()).byteLength).toBeGreaterThan(0);
   });
+
+  it.each(["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "ENOSYS"])(
+    "reports typed unsupported hard links for %s and cleans temp",
+    (code) => {
+      vi.spyOn(fs, "linkSync").mockImplementationOnce(() => {
+        throw Object.assign(new Error("unsupported filesystem operation"), { code });
+      });
+      expect(() => write()).toThrow(new ArtifactError("HARD_LINK_UNSUPPORTED"));
+      expect(rowCount()).toBe(0);
+      expect(fs.readdirSync(root)).toEqual([]);
+      expect(store.read(write()).byteLength).toBeGreaterThan(0);
+    },
+  );
+
+  it("rolls back its target after a temp unlink failure, cleans temp and permits retry", () => {
+    const failure = new Error("initial temp unlink failure");
+    vi.spyOn(fs, "unlinkSync").mockImplementationOnce(() => {
+      throw failure;
+    });
+    try {
+      write();
+      expect.fail("publication should fail");
+    } catch (error) {
+      expect(error).toBe(failure);
+    }
+    expect(rowCount()).toBe(0);
+    expect(fs.readdirSync(root)).toEqual([]);
+    expect(store.read(write()).byteLength).toBeGreaterThan(0);
+  });
+
+  it("preserves the original temp unlink error even if its cleanup retry also fails", () => {
+    const failure = new Error("initial temp unlink failure");
+    const unlink = fs.unlinkSync;
+    let tempUnlinks = 0;
+    const spy = vi.spyOn(fs, "unlinkSync").mockImplementation((path) => {
+      if (String(path).endsWith(".tmp")) {
+        tempUnlinks += 1;
+        throw tempUnlinks === 1 ? failure : new Error("secondary cleanup failure");
+      }
+      unlink(path);
+    });
+    try {
+      write();
+      expect.fail("publication should fail");
+    } catch (error) {
+      expect(error).toBe(failure);
+    }
+    expect(tempUnlinks).toBe(2);
+    expect(rowCount()).toBe(0);
+    expect(fs.existsSync(join(root, "report.txt"))).toBe(false);
+    expect(fs.readdirSync(root)).toHaveLength(1);
+    spy.mockRestore();
+    expect(store.read(write()).byteLength).toBeGreaterThan(0);
+  });
+
+  it("preserves an insert error even if target rollback fails", () => {
+    const failure = new Error("injected insert failure");
+    const unlink = fs.unlinkSync;
+    db.function("reject_artifact", () => {
+      throw failure;
+    });
+    db.exec(
+      "CREATE TRIGGER reject_artifact BEFORE INSERT ON artifacts BEGIN SELECT reject_artifact(); END",
+    );
+    vi.spyOn(fs, "unlinkSync")
+      .mockImplementationOnce(unlink)
+      .mockImplementationOnce(() => {
+        throw new Error("secondary rollback failure");
+      });
+    try {
+      write();
+      expect.fail("publication should fail");
+    } catch (error) {
+      expect(error).toBe(failure);
+    }
+    expect(rowCount()).toBe(0);
+  });
+
+  it.each(["file", "symlink"])(
+    "keeps an outside %s replacing its target before insert fails",
+    (kind) => {
+      const target = join(root, "report.txt");
+      const outside = join(directory, "outside.txt");
+      fs.writeFileSync(outside, "outside writer evidence");
+      db.function("replace_artifact", () => {
+        if (kind === "file") fs.renameSync(outside, target);
+        else {
+          fs.unlinkSync(target);
+          fs.symlinkSync(outside, target);
+        }
+        return 1;
+      });
+      db.exec(
+        "CREATE TRIGGER replace_artifact BEFORE INSERT ON artifacts BEGIN SELECT replace_artifact(); SELECT RAISE(ABORT, 'injected insert failure'); END",
+      );
+      expect(() => write()).toThrow("injected insert failure");
+      expect(rowCount()).toBe(0);
+      expect(fs.readFileSync(target, "utf8")).toBe("outside writer evidence");
+      expect(fs.lstatSync(target).isSymbolicLink()).toBe(kind === "symlink");
+    },
+  );
 
   it("tolerates an explicitly unsupported directory fsync", () => {
     const fsync = fs.fsyncSync;
@@ -255,14 +360,42 @@ describe("durable artifact publication", () => {
     expect(rowCount()).toBe(1);
   });
 
-  it("rolls back failed DB insertion, leaving only a complete orphan", () => {
+  it("rolls back a failed DB insertion without an orphan and permits retry of the same path", () => {
     expect(() => write({ producerAttemptId: "missing-attempt" })).toThrow(/FOREIGN KEY/);
     expect(rowCount()).toBe(0);
-    expect(fs.readdirSync(root)).toEqual(["report.txt"]);
-    expect(() => write()).toThrow(new ArtifactError("ALREADY_EXISTS"));
-    expect(() =>
-      store.read({ path: "report.txt", sha256: digest("verified evidence\r\n") }),
-    ).toThrow(new ArtifactError("NOT_FOUND"));
+    expect(fs.readdirSync(root)).toEqual([]);
+    const ref = write();
+    expect(rowCount()).toBe(1);
+    expect(Buffer.from(store.read(ref)).toString()).toBe("verified evidence\r\n");
+  });
+
+  it("also removes its target when a deferred foreign key fails at commit", () => {
+    const inserted = vi.fn(() => 1);
+    db.function("artifact_inserted", inserted);
+    db.exec(
+      "CREATE TRIGGER artifact_inserted AFTER INSERT ON artifacts BEGIN SELECT artifact_inserted(); END",
+    );
+    db.pragma("defer_foreign_keys = ON");
+    expect(() => write({ producerAttemptId: "missing-attempt" })).toThrow(/FOREIGN KEY/);
+    expect(inserted).toHaveBeenCalledOnce();
+    expect(rowCount()).toBe(0);
+    expect(fs.readdirSync(root)).toEqual([]);
+    expect(store.read(write()).byteLength).toBeGreaterThan(0);
+  });
+
+  it("refuses rollback if the inode matches but the device differs", () => {
+    const target = join(root, "report.txt");
+    db.function("different_device", () => {
+      const stat = fs.lstatSync(target, { bigint: true });
+      vi.spyOn(fs, "lstatSync").mockReturnValueOnce(Object.assign(stat, { dev: stat.dev + 1n }));
+      return 1;
+    });
+    db.exec(
+      "CREATE TRIGGER different_device BEFORE INSERT ON artifacts BEGIN SELECT different_device(); SELECT RAISE(ABORT, 'injected insert failure'); END",
+    );
+    expect(() => write()).toThrow("injected insert failure");
+    expect(rowCount()).toBe(0);
+    expect(fs.readFileSync(target, "utf8")).toBe("verified evidence\r\n");
   });
 
   it("never overwrites either an existing reference or a duplicate id", () => {

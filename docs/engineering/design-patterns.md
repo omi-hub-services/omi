@@ -153,11 +153,20 @@ adapter trả lỗi có kiểu `ALREADY_EXISTS` và giữ nguyên file đó. Cá
 được fsync. Cách này tuần tự hóa phần công bố giữa các writer hợp tác mà không giữ khóa DB
 trong lúc ghi và fsync toàn bộ nội dung file.
 
-Khi có exception, adapter dọn temp trên mọi đường lỗi; process bị kill có thể để lại temp ẩn.
-Lỗi sau khi tạo hard link có thể để lại artifact hoàn chỉnh chưa được tham chiếu. `read` và
-`manifest` không cung cấp những file này khi chưa có DB row. Dọn file mồ côi và retention thuộc
-vòng đời checkpoint ở task sau. Kiểm tra các thành phần path từ chối symlink, kể cả link trỏ
-vào trong root; đây không phải sandbox chống process cùng user cố ý đổi thư mục trong lúc I/O.
+Khi công bố thất bại sau hard link (kể cả unlink temp, fsync thư mục, INSERT hoặc COMMIT),
+adapter rollback file đích chỉ khi `lstat` xác nhận file thường có cùng device/inode với
+`fstat` của temp đã ghi. File do writer khác tạo hoặc thay thế được giữ nguyên. Dọn temp và
+rollback là best effort; lỗi dọn dẹp thứ hai không được che lỗi gốc. Khi filesystem cho phép
+dọn dẹp, retry cùng path thành công. Process bị kill hoặc filesystem từ chối unlink vẫn có
+thể để lại file chưa tham chiếu; `read` và `manifest` chỉ phục vụ file có DB row. Recovery và
+retention cho những file còn lại thuộc vòng đời checkpoint ở task sau.
+
+Adapter yêu cầu hard link trong cùng filesystem; không fallback sang rename có thể ghi đè.
+`EPERM`, `ENOTSUP`, `EOPNOTSUPP`, `EXDEV` và `ENOSYS` từ `linkSync` trả lỗi có kiểu
+`HARD_LINK_UNSUPPORTED` và dọn temp. Chọn artifact root trên filesystem hỗ trợ hard link và
+quyền tạo link; không bảo đảm hỗ trợ mọi mount/volume. Các lỗi I/O khác giữ nguyên lỗi gốc.
+Kiểm tra các thành phần path từ chối symlink, kể cả link trỏ vào trong root; đây không phải
+sandbox chống process cùng user cố ý đổi thư mục trong lúc I/O.
 `read` đối chiếu hash đã ghim và hash trong DB với bytes thực tế. `manifest` chỉ kiểm tra các
 reference được yêu cầu và lấy kích thước byte từ file vì schema v1 không có cột size. Khi cần
 reference manifest bền vững, lưu JSON đó bằng `write`; không cần migration.
@@ -174,10 +183,30 @@ thể tự cấp approval hoặc mở rộng scope đã truyền vào.
 Guard thuần (`application/contracts/credential-input.ts`) từ chối đường dẫn credential, các
 field credential/environment có tên xác định và giá trị bí mật nhận diện được trước khi công
 bố artifact hoặc lắp packet. Tên field phải khớp toàn bộ để các thống kê token vẫn hợp lệ;
-assignment chỉ bị chặn khi tên biến môi trường chỉ rõ dữ liệu bí mật và giá trị không tầm
-thường. Guard nhận diện thêm định dạng key AWS, Slack, GitLab và URL có user/password, đồng
-thời vẫn chấp nhận code, HTML, Markdown và từ ngữ mô tả credential thông thường. Bên gọi tại
-bootstrap phải truyền giá trị môi trường nhạy cảm đã biết và root credential tùy chỉnh qua
+assignment được nhận diện qua tên chỉ rõ secret (kể cả prefix chữ thường, `DB_PASS`,
+`PGPASSWORD`) và giá trị literal: chuỗi có quote không chứa template expression, hoặc giá trị
+không quote dài ít nhất 8 ký tự có số hay dấu của token. Bearer còn nhận diện từ opaque dài
+ít nhất 24 ký tự. Các nhánh này bỏ qua từ thông thường, type, lời gọi hàm và template
+expression trong các trường hợp đã kiểm thử; chúng không phải parser TypeScript hay bộ
+phân loại mọi câu văn. Guard nhận diện thêm định dạng key AWS, Slack, GitLab, PEM và URL có
+user/password. Ví dụ khai báo biến lấy token qua hàm, field password có type `string` và
+câu “Bearer tokens are short-lived” được chấp nhận.
+
+Quyết định cho OMI-032/loader ([ADR-0022](../architecture/adr/0022-credential-reference-boundary.md)):
+cho phép nhắc tên thư mục config `.claude/`, `.codex/`, cây profile, `.npmrc`, `CODEX_HOME` và
+`CLAUDE_CONFIG_DIR` trong văn bản. Tên thư mục không chứng minh có credential. Vẫn chặn file
+credential xác định (cache auth JSON, file credentials JSON, file môi trường, key SSH,
+file netrc, credential Git, file credentials AWS và hosts của gh); tên file `credentials`
+không phần mở rộng được nhận diện khi kết thúc chuỗi/path hoặc có delimiter quote/dấu câu, không suy
+ra từ cặp từ trong prose như state/credentials. Nội dung `.npmrc` có assignment `_authToken`,
+`_auth` hoặc `_password` vẫn bị chặn. Field environment/credential trong object và policy
+được bên gọi cung cấp vẫn bị chặn như trước. Ngoại lệ chỉ dành cho tham chiếu config thông
+thường, không có allowlist theo tên tài liệu. Loader có thể lưu tóm tắt có nguồn và quote
+những tên config này, nhưng vẫn phải chạy guard trên toàn bộ đầu vào và giữ hash nguồn;
+không đọc/copy auth file để đưa vào context. Corpus integration nạp nguyên văn
+`architecture.md` và `compatibility.md` qua cả write/read artifact.
+
+Bên gọi tại bootstrap phải truyền giá trị môi trường nhạy cảm đã biết và root credential tùy chỉnh qua
 `CredentialPolicy`; service/store không tự đọc môi trường hoặc nội dung profile. Nội dung
 artifact JSON được kiểm tra cả cấu trúc lẫn văn bản. Nhận diện bằng pattern chỉ là best effort
 (tech-stack.md §9), không chứng minh mọi bytes không có nhãn đều không chứa bí mật. Chỉ lấy
