@@ -112,3 +112,9 @@ checked license.
 - A code task is Done only when AC are met, checks and independent review passed on the merged
   revision, and the PR is actually merged into `develop`. Do not mark Done in bulk.
 - Do not edit native Claude Code/Codex configuration outside what the framework manages.
+- **GitHub Issues and the GitHub Project are the only source of task content and status.** Do
+  not mirror task status, assignees or progress into repository files. Change scope, AC,
+  sub-issues and dependencies on GitHub. `docs/planning/github-project.md` records Project
+  configuration only; `docs/planning/github-backlog.yaml` is a frozen bootstrap seed.
+- The Coordinator runs on Windows and task work runs in WSL2 (ADR-0012). Release PRs into
+  `main` are opened by an account other than the PO so the PO can approve them.

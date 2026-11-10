@@ -10,7 +10,7 @@ Phiên bản 1.0 · 10/11/2026. Đọc cùng `architecture.md`. Đây là baseli
 
 | Hạng mục | Lựa chọn | Lý do và vị trí |
 |---|---|---|
-| OS | Ubuntu trong WSL2 | Môi trường Linux thống nhất cho Coordinator và worker |
+| OS | Ubuntu trong WSL2 (runtime, worker); Windows (Coordinator) | Runtime và worker chạy trong Linux thống nhất; Coordinator là Claude Code trên Windows gọi CLI qua `wsl.exe` (ADR-0012) |
 | Runtime | Node.js 24 LTS baseline | Dòng LTS; pin patch đã kiểm thử. Node 26 LTS là ứng viên nâng cấp sau compatibility test |
 | Ngôn ngữ | TypeScript, strict, ESM | Contract typed; domain thuần; build bằng `tsc` |
 | Package manager | npm + `package-lock.json` | Một lockfile, `npm ci`, không cần workspace monorepo tool |

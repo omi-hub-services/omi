@@ -1,6 +1,10 @@
 # GitHub Project và mapping backlog
 
-Kết quả bootstrap ngày 2026-11-10. Nguồn dữ liệu: [github-backlog.yaml](github-backlog.yaml)
+**Bản ghi cấu hình**, không theo dõi tiến độ: trạng thái, assignee và phạm vi hiện hành của task
+chỉ xem trên [GitHub Project](https://github.com/orgs/omi-hub-services/projects/1) (AGENTS.md §8).
+File này chỉ cập nhật khi cấu hình Project/repo thay đổi.
+
+Kết quả bootstrap ngày 2026-11-10. Nguồn dữ liệu seed: [github-backlog.yaml](github-backlog.yaml)
 (cross-check tự động với [project-plan.md](project-plan.md)). Công cụ áp dụng:
 `tools/github-bootstrap/main.ts` (`validate` | `plan` | `apply`), idempotent theo marker
 `<!-- omi-squad:plan-key=KEY -->` trong body Issue. Journal và mapping ID đầy đủ (kể cả node ID)
@@ -14,20 +18,20 @@ nằm ở `.tmp/github-bootstrap/` (gitignored, không chứa token).
 | Branches           | `main` (release), `develop` (integration) — cùng seed commit `05a74cf`                         |
 | GitHub Project     | [omi-squad delivery — #1](https://github.com/orgs/omi-hub-services/projects/1) (org, private) |
 | Project node ID    | `PVT_kwDOFSS4LM4Bq8Hl`; repository đã được liên kết vào Project                                 |
-| Items              | 56 (8 Epic + 48 sub-issue), Status khởi tạo `Backlog`                                          |
+| Items bootstrap    | 56 (8 Epic + 48 sub-issue); Issue thêm sau đó tra theo field Plan Key trên Project             |
 
 ## Milestones
 
-Milestone lấy từ project-plan.md §2, không suy từ Epic cha. Số Issue mở gồm cả Epic.
+Milestone lấy từ project-plan.md §2, không suy từ Epic cha.
 
-| Milestone | GitHub | Issues |
-| --------- | ------ | ------ |
-| M0 — Feasibility | [#1](https://github.com/omi-hub-services/omi/milestone/1) | 7 |
-| M1 — Core foundation | [#2](https://github.com/omi-hub-services/omi/milestone/2) | 7 |
-| M2 — Execution | [#3](https://github.com/omi-hub-services/omi/milestone/3) | 11 |
-| M3 — Task delivery | [#4](https://github.com/omi-hub-services/omi/milestone/4) | 8 |
-| M4 — Full lifecycle | [#5](https://github.com/omi-hub-services/omi/milestone/5) | 14 |
-| M5 — v0.1 acceptance | [#6](https://github.com/omi-hub-services/omi/milestone/6) | 7 |
+| Milestone            | GitHub                                                    |
+| -------------------- | --------------------------------------------------------- |
+| M0 — Feasibility     | [#1](https://github.com/omi-hub-services/omi/milestone/1) |
+| M1 — Core foundation | [#2](https://github.com/omi-hub-services/omi/milestone/2) |
+| M2 — Execution       | [#3](https://github.com/omi-hub-services/omi/milestone/3) |
+| M3 — Task delivery   | [#4](https://github.com/omi-hub-services/omi/milestone/4) |
+| M4 — Full lifecycle  | [#5](https://github.com/omi-hub-services/omi/milestone/5) |
+| M5 — v0.1 acceptance | [#6](https://github.com/omi-hub-services/omi/milestone/6) |
 
 EP-04 và EP-05 trải M2–M3 nên không gán một native milestone; từng sub-issue mang milestone
 riêng. OMI-021, OMI-024, OMI-026, OMI-027 được kéo vào M2 đúng kế hoạch.
@@ -134,37 +138,48 @@ Tạo bằng GraphQL `createProjectV2View`/`updateProjectV2View` (layout, filter
 | Active Runs       | Table  | `status:"In Progress","In Review","Waiting Resource"`   |
 | Release Readiness | Table  | `work-type:Release`                                     |
 
-### Bước UI còn thiếu (API không hỗ trợ)
+### Cấu hình làm trên UI (API không hỗ trợ), áp dụng 2026-11-10
 
-API chỉ nhận name/layout/filter/visible fields; group-by, sort và cột board phải làm trên UI:
+API chỉ nhận name/layout/filter/visible fields; phần dưới được làm trên UI và đọc lại qua API:
 
-1. **Delivery Board:** kiểm tra cột = Status (board mặc định nhóm theo field single-select đầu
-   tiên); sắp thứ tự cột theo Backlog → Done nếu khác.
-2. **Backlog:** Group by **Milestone**, Sort by **Priority** tăng dần.
-3. **Epic Breakdown:** Group by **Parent issue**.
-4. **Release Readiness:** khi có release, thêm milestone release vào filter
-   (ví dụ `work-type:Release,Task milestone:"M5 — v0.1 acceptance"`).
-5. Mở từng view, xác nhận filter hiển thị đúng item (filter đã đặt qua API nhưng kết quả lọc
-   chỉ xem được trên UI), rồi **Save**.
-6. Project không có field dependency: "hiển thị dependency" của Backlog xem qua trang Issue
-   (mục Relationships) hoặc body Issue.
-7. Built-in workflows (kiểm tra qua API 2026-11-10): chỉ **Auto-add sub-issues to project**
-   đang bật; Item closed, Pull request merged, Pull request linked, Item added, Auto-close
-   đều tắt. Giữ tắt các workflow đặt Done tự động: Done phải theo merge vào `develop` đã xác
-   nhận, và PR vào `develop` không đóng Issue bằng closing keyword.
+- **Delivery Board:** cột theo Status.
+- **Backlog:** Group by **Milestone**, Sort by **Priority** tăng dần, **Show hierarchy tắt** (để
+  task nằm đúng milestone của nó, không lồng dưới Epic có milestone khác).
+- **Epic Breakdown:** Group by **Parent issue**.
+- **Release Readiness:** khi có release, thêm milestone release vào filter.
+- Project không có field dependency: dependency xem ở trang Issue (mục Relationships).
+- Built-in workflows: chỉ **Auto-add sub-issues to project** bật; các workflow tự đặt Done đều
+  tắt vì Done phải theo merge vào `develop` đã xác nhận.
+
+## Branch protection (rulesets, bật 2026-11-10)
+
+Không có bypass actor, áp dụng cả admin.
+
+| Ruleset                                  | Nhánh     | Rules                                                                                                     |
+| ---------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------- |
+| `develop: PR + CI gates` (id 26922271)     | `develop` | PR bắt buộc; checks `check`, `issue-link` (strict, nhánh phải cập nhật); cấm force-push/xóa; 0 approval     |
+| `main: PR + CI + PO approval` (id 26922272) | `main`    | Như trên + 1 approval, approval cũ mất hiệu lực khi có commit mới, người push cuối không tự approve được |
+
+Task PR vào `develop` merge sau review độc lập (agent) và CI. Release PR vào `main` cần PO
+approve native.
+
+## Tài khoản GitHub
+
+| Tài khoản             | Vai trò                                                     | Quyền                  |
+| --------------------- | ----------------------------------------------------------- | ---------------------- |
+| `ttin-omihub`         | PO; approver release PR vào `main`; `gh` trong WSL2         | org admin, repo admin  |
+| `minibox-claude-code` | Agent/Coordinator trên Windows (ADR-0012); tác giả PR      | org member, repo admin |
+
+Release PR phải do tài khoản khác PO tạo để PO approve được.
 
 ## Branch/PR bootstrap
 
 - Seed commit `05a74cf` trên `main`: **ngoại lệ bootstrap một lần** vì remote rỗng; `develop`
-  tạo từ đó. Không commit trực tiếp nào khác vào `main`/`develop`.
-- Scaffold đi qua task branch `task/omi-001-scaffold` → PR vào `develop`:
-  [#57](https://github.com/omi-hub-services/omi/pull/57), body `Issue: #2`, backlink comment
-  trên [#2](https://github.com/omi-hub-services/omi/issues/2). OMI-001 đang **In Review**,
-  assignee `minibox-claude-code`; chưa merge.
+  tạo từ đó.
+- Scaffold OMI-001 vào `develop` qua PR [#57](https://github.com/omi-hub-services/omi/pull/57)
+  (merge commit `b31eb82`), sau review độc lập.
 
-## Giới hạn và việc còn lại
+## Giới hạn
 
-- Chưa có branch protection/ruleset cho `main`/`develop` (không bắt buộc trong bootstrap; cần
-  quyết định reviewer hợp lệ trước khi bật required review).
-- Reviewer độc lập: tài khoản bootstrap `minibox-claude-code` là tác giả PR nên không thể là
-  reviewer native của chính PR đó.
+- `tools/github-bootstrap` là công cụ một lần. **Không chạy lại `apply`**: nó đưa title/body
+  Issue về nội dung seed và sẽ ghi đè các chỉnh sửa đã làm trên GitHub sau bootstrap.
