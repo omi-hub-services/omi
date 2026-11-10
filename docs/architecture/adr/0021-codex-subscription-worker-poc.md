@@ -1,6 +1,6 @@
 # ADR-0021 — PoC: Codex worker on a subscription login
 
-- Status: Proposed — harness implemented; successful subscription execution still requires Coordinator evidence
+- Status: Accepted — all three OMI-003 acceptance criteria evidenced by a live run on 2026-11-10 (codex-cli 0.167.0, ChatGPT file auth; read-only, edit, schema error and SIGINT cancel all passed)
 - Date: 2026-11-10
 - Issue: #4 (OMI-003), epic #1, milestone M0 — Feasibility
 - Context: architecture.md §3.5, §7; tech-stack.md §8; ADR-0012; ADR-0013
