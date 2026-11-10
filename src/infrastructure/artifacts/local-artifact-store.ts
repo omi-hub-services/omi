@@ -35,8 +35,9 @@ function guardBytes(bytes: Uint8Array, policy: CredentialPolicy): void {
 
 /**
  * The root must already exist; bootstrap owns its location/lifecycle. A synchronous SQLite
- * transaction serializes cooperating writers, including the no-overwrite check. No row is
- * inserted until rename and directory fsync succeed. DB failure can leave a complete orphan;
+ * transaction serializes cooperating publications; bulk file I/O happens before it. Linking
+ * the synced temp publishes without overwriting even outside writers. No row is inserted until
+ * the temp is unlinked and the directory synced. DB failure can leave a complete orphan;
  * a killed writer can leave a hidden temp, neither is a published artifact or a DB reference.
  */
 export function createLocalArtifactStore(
@@ -65,24 +66,29 @@ export function createLocalArtifactStore(
       const bytes = Buffer.from(suppliedBytes);
       guardBytes(bytes, policy);
       const sha256 = hash(bytes);
-      return runInTransaction(db, () => {
-        if (exists.get(metadata.id, metadata.path) !== undefined) {
-          throw new ArtifactError("ALREADY_EXISTS");
-        }
-        const target = resolveArtifactPath(canonicalRoot, metadata.path, true);
-        if (fs.existsSync(target)) throw new ArtifactError("ALREADY_EXISTS");
-        const directory = dirname(target);
-        const temp = join(directory, `.artifact-${randomUUID()}.tmp`);
-        let fd: number | undefined;
-        let ownsTemp = false;
-        try {
-          fd = fs.openSync(temp, "wx", 0o600);
-          ownsTemp = true;
-          fs.writeFileSync(fd, bytes);
-          fs.fsyncSync(fd);
-          fs.closeSync(fd);
-          fd = undefined;
-          fs.renameSync(temp, target);
+      const target = resolveArtifactPath(canonicalRoot, metadata.path, true);
+      const directory = dirname(target);
+      const temp = join(directory, `.artifact-${randomUUID()}.tmp`);
+      let fd: number | undefined;
+      let ownsTemp = false;
+      try {
+        fd = fs.openSync(temp, "wx", 0o600);
+        ownsTemp = true;
+        fs.writeFileSync(fd, bytes);
+        fs.fsyncSync(fd);
+        fs.closeSync(fd);
+        fd = undefined;
+        return runInTransaction(db, () => {
+          if (exists.get(metadata.id, metadata.path) !== undefined) {
+            throw new ArtifactError("ALREADY_EXISTS");
+          }
+          try {
+            fs.linkSync(temp, target);
+          } catch (error) {
+            if (hasFsCode(error, "EEXIST")) throw new ArtifactError("ALREADY_EXISTS");
+            throw error;
+          }
+          fs.unlinkSync(temp);
           ownsTemp = false;
           syncDirectory(directory);
           insert.run(
@@ -94,14 +100,14 @@ export function createLocalArtifactStore(
             metadata.createdAt,
           );
           return { path: metadata.path, sha256 };
+        });
+      } finally {
+        try {
+          if (fd !== undefined) fs.closeSync(fd);
         } finally {
-          try {
-            if (fd !== undefined) fs.closeSync(fd);
-          } finally {
-            if (ownsTemp) fs.unlinkSync(temp);
-          }
+          if (ownsTemp) fs.unlinkSync(temp);
         }
-      });
+      }
     },
 
     read(reference) {

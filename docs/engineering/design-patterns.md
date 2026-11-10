@@ -141,38 +141,48 @@ Merge serialize giải quyết cạnh tranh nội bộ; vẫn phải đối soá
 
 Manifest là danh sách đầu vào/đầu ra và hash, cùng state nghiệp vụ. Context summary giúp agent hiểu nhưng không thay thế diff/file/test thực tế.
 
-Ghi file atomic theo thứ tự: temp file → flush khi cần → rename → DB reference. Recovery phát hiện file thiếu/hash lệch phải báo, không tiếp tục như checkpoint hợp lệ.
+Ghi file atomic theo thứ tự: temp file → fsync file → công bố không ghi đè bằng hard link → unlink temp → fsync thư mục khi được hỗ trợ → DB reference. Recovery phát hiện file thiếu/hash lệch phải báo, không tiếp tục như checkpoint hợp lệ.
 
-`ArtifactStore` (`application/ports/artifact-store.ts`) publishes immutable relative paths.
-`createLocalArtifactStore` takes an existing runtime-owned root and SQLite connection. It uses
-the existing synchronous transaction to serialize cooperating writers, refuses an existing file,
-path or ID, writes a same-directory temp with mode `0600`, fsyncs the file, renames, fsyncs the
-directory where supported, then inserts the reference. New parent directories are synced too.
-A throw before rename removes its temp; a killed writer may leave a hidden temp. Failure after
-rename may leave a complete orphan. Neither is exposed by reads or manifests without a DB row.
-Recovery/retention cleanup belongs to the later checkpoint lifecycle. Ancestor checks reject
-symlinks, including inward links; this is not a sandbox against hostile same-user directory swaps.
-`read` verifies the caller's pin and DB hash against the bytes. `manifest` verifies only explicitly
-requested references and derives byte sizes from files (schema v1 has no size column); persist
-that JSON through `write` when a durable manifest reference is needed. No migration is required.
+`ArtifactStore` (`application/ports/artifact-store.ts`) công bố artifact bất biến bằng đường dẫn
+tương đối. `createLocalArtifactStore` nhận thư mục gốc đã tồn tại do runtime sở hữu và kết nối
+SQLite. Adapter ghi temp trong cùng thư mục với quyền `0600`, fsync và đóng file **trước khi**
+mở transaction. Transaction đồng bộ hiện có chỉ bao quanh kiểm tra ID/path trong DB,
+`linkSync(temp, target)`, `unlinkSync(temp)`, fsync thư mục và insert reference. Hard link thất
+bại với `EEXIST` nếu đích đã tồn tại, kể cả do process ngoài ghi vào sau khi kiểm tra path;
+adapter trả lỗi có kiểu `ALREADY_EXISTS` và giữ nguyên file đó. Các thư mục cha mới tạo cũng
+được fsync. Cách này tuần tự hóa phần công bố giữa các writer hợp tác mà không giữ khóa DB
+trong lúc ghi và fsync toàn bộ nội dung file.
 
-`assembleContext` (`application/services/assemble-context.ts`) is pure: its caller supplies a
-resolved catalog with explicit role and step selectors. Both selectors must match. It preserves
-skill aggregates from `skills.lock.json` (ADR-0019) and rule versions/hashes, rejects ambiguous
-selected IDs/paths, and emits the existing v1 packet. Template resolution remains OMI-032;
-dispatch-time verification of referenced skill/rule files remains with their loader. A sourced
-summary is stored as an artifact containing the summary plus its source path/hash, then selected
-by reference; there is no extra inline summary/transcript field in v1. The Issue number sources
-the task snapshot. Input text cannot grant approvals or widen the supplied scope.
+Khi có exception, adapter dọn temp trên mọi đường lỗi; process bị kill có thể để lại temp ẩn.
+Lỗi sau khi tạo hard link có thể để lại artifact hoàn chỉnh chưa được tham chiếu. `read` và
+`manifest` không cung cấp những file này khi chưa có DB row. Dọn file mồ côi và retention thuộc
+vòng đời checkpoint ở task sau. Kiểm tra các thành phần path từ chối symlink, kể cả link trỏ
+vào trong root; đây không phải sandbox chống process cùng user cố ý đổi thư mục trong lúc I/O.
+`read` đối chiếu hash đã ghim và hash trong DB với bytes thực tế. `manifest` chỉ kiểm tra các
+reference được yêu cầu và lấy kích thước byte từ file vì schema v1 không có cột size. Khi cần
+reference manifest bền vững, lưu JSON đó bằng `write`; không cần migration.
 
-The pure credential guard (`application/contracts/credential-input.ts`) rejects credential paths, structured credential/environment fields,
-and recognizable secret values before artifact publication or packet assembly. Bootstrap callers
-must supply known sensitive environment values and resolved nonstandard credential roots through
-`CredentialPolicy`; neither the service nor the store reads profile contents or the environment.
-JSON artifact contents are inspected structurally as well as textually. Detection patterns are
-best effort (tech-stack.md §9), not a proof that arbitrary unlabelled bytes are secret-free.
-Keep catalog sources restricted to reviewed inputs; never collect a repository, environment or
-profile tree as an input. Errors do not echo rejected credential material.
+`assembleContext` (`application/services/assemble-context.ts`) là hàm thuần: bên gọi cung cấp
+catalog đã resolve với selector role và step tường minh; cả hai phải khớp. Hàm giữ nguyên hash
+tổng hợp của skill từ `skills.lock.json` (ADR-0019), version/hash của rule, từ chối ID/path
+trùng trong phần được chọn và tạo packet v1 hiện có. Resolve template thuộc OMI-032; kiểm tra
+file skill/rule khi dispatch thuộc loader tương ứng. Bản tóm tắt có nguồn được lưu thành
+artifact chứa nội dung tóm tắt và path/hash nguồn, rồi chọn bằng reference; v1 không thêm trường
+summary/transcript inline. Số Issue xác định nguồn của task snapshot. Văn bản đầu vào không
+thể tự cấp approval hoặc mở rộng scope đã truyền vào.
+
+Guard thuần (`application/contracts/credential-input.ts`) từ chối đường dẫn credential, các
+field credential/environment có tên xác định và giá trị bí mật nhận diện được trước khi công
+bố artifact hoặc lắp packet. Tên field phải khớp toàn bộ để các thống kê token vẫn hợp lệ;
+assignment chỉ bị chặn khi tên biến môi trường chỉ rõ dữ liệu bí mật và giá trị không tầm
+thường. Guard nhận diện thêm định dạng key AWS, Slack, GitLab và URL có user/password, đồng
+thời vẫn chấp nhận code, HTML, Markdown và từ ngữ mô tả credential thông thường. Bên gọi tại
+bootstrap phải truyền giá trị môi trường nhạy cảm đã biết và root credential tùy chỉnh qua
+`CredentialPolicy`; service/store không tự đọc môi trường hoặc nội dung profile. Nội dung
+artifact JSON được kiểm tra cả cấu trúc lẫn văn bản. Nhận diện bằng pattern chỉ là best effort
+(tech-stack.md §9), không chứng minh mọi bytes không có nhãn đều không chứa bí mật. Chỉ lấy
+đầu vào đã review cho catalog; không thu thập cả repository, môi trường hoặc cây profile.
+Lỗi không lặp lại credential bị từ chối.
 
 Khi đổi tool/profile, tạo attempt mới, dùng checkpoint cùng task/run. Không sửa transcript tài khoản khác để giả lập continuation. Nếu có native resume cùng profile thì dùng như tối ưu sau khi đã kiểm chứng, không thành dependency của sản phẩm.
 

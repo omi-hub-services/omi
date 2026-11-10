@@ -13,7 +13,10 @@ import {
   ArtifactError,
   type ArtifactStore,
 } from "../../../src/application/ports/artifact-store.ts";
-import { CredentialInputError } from "../../../src/application/contracts/credential-input.ts";
+import {
+  assertCredentialFree,
+  CredentialInputError,
+} from "../../../src/application/contracts/credential-input.ts";
 import { contextPacketSchema } from "../../../src/application/contracts/context.ts";
 import { assembleContext } from "../../../src/application/services/assemble-context.ts";
 import { createLocalArtifactStore } from "../../../src/infrastructure/artifacts/local-artifact-store.ts";
@@ -27,6 +30,7 @@ import {
 } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
 
 const migrations = resolve(import.meta.dirname, "../../../migrations");
+const repoRoot = resolve(import.meta.dirname, "../../..");
 const at = "2026-11-10T00:00:00.000Z";
 const digest = (bytes: Uint8Array | string): string =>
   createHash("sha256").update(bytes).digest("hex");
@@ -66,6 +70,19 @@ function rowCount(): number {
 }
 
 describe("durable artifact publication", () => {
+  it.each([
+    "AGENTS.md",
+    "docs/engineering/design-patterns.md",
+    "src/application/services/assemble-context.ts",
+  ])("accepts the real repository file %s as artifact input", (path) => {
+    const bytes = fs.readFileSync(join(repoRoot, path));
+    expect(() => {
+      assertCredentialFree(bytes.toString("utf8"));
+    }).not.toThrow();
+    const reference = write({ bytes });
+    expect(Buffer.from(store.read(reference))).toEqual(bytes);
+  });
+
   it("hashes exact binary and UTF-8 bytes, verifies reads and lists sizes in a selective manifest", () => {
     const binary = Uint8Array.from([0, 255, 128, 13, 10]);
     const text = Buffer.from("Bằng chứng\r\n");
@@ -131,7 +148,11 @@ describe("durable artifact publication", () => {
         runId: "run-1",
         stepId: "implement",
         attemptId: "attempt-1",
-        taskSnapshot: { issueNumber: 14, title: "Artifact storage", body: "Issue #14 snapshot" },
+        taskSnapshot: {
+          issueNumber: 14,
+          title: "Artifact storage",
+          body: '## Objective\nStore selective artifact references, keeping credentials local.\n\n## Acceptance criteria\n- Atomic publication and verified hashes\n- Preserve evidence such as `const x = 5;`, `a == b` and `<div class="x">`\n\n<!-- omi-squad:plan-key=OMI-012 -->',
+        },
         acceptanceCriteria: ["Atomic writes"],
         businessBaselineHash: digest("approved scope"),
         role: "developer",
@@ -162,20 +183,30 @@ describe("durable artifact publication", () => {
     ).toEqual(packet);
   });
 
-  it("orders file fsync, rename, directory fsync, then DB reference", () => {
+  it("fsyncs the file outside the transaction, then links, unlinks temp, syncs directory and records the DB reference inside it", () => {
     const events: string[] = [];
     const fsync = fs.fsyncSync;
-    const rename = fs.renameSync;
+    const link = fs.linkSync;
+    const unlink = fs.unlinkSync;
     vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
-      events.push(fs.fstatSync(fd).isDirectory() ? "directory-sync" : "file-sync");
+      const isDirectory = fs.fstatSync(fd).isDirectory();
+      events.push(isDirectory ? "directory-sync" : "file-sync");
+      expect(db.inTransaction).toBe(isDirectory);
       expect(rowCount()).toBe(0);
       fsync(fd);
     });
-    vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
-      events.push("rename");
+    vi.spyOn(fs, "linkSync").mockImplementation((from, to) => {
+      events.push("link");
+      expect(db.inTransaction).toBe(true);
       expect(dirname(String(from))).toBe(dirname(String(to)));
       expect(rowCount()).toBe(0);
-      rename(from, to);
+      link(from, to);
+    });
+    vi.spyOn(fs, "unlinkSync").mockImplementation((path) => {
+      events.push("temp-unlink");
+      expect(db.inTransaction).toBe(true);
+      expect(fs.statSync(join(root, "report.txt")).ino).toBe(fs.statSync(path).ino);
+      unlink(path);
     });
     db.function("publication_observed", () => {
       expect(fs.readFileSync(join(root, "report.txt"), "utf8")).toBe("verified evidence\r\n");
@@ -186,10 +217,10 @@ describe("durable artifact publication", () => {
       "CREATE TRIGGER observe_artifact BEFORE INSERT ON artifacts BEGIN SELECT publication_observed(); END",
     );
     write();
-    expect(events).toEqual(["file-sync", "rename", "directory-sync", "db-reference"]);
+    expect(events).toEqual(["file-sync", "link", "temp-unlink", "directory-sync", "db-reference"]);
   });
 
-  it.each(["fsyncSync", "renameSync"] as const)(
+  it.each(["writeFileSync", "fsyncSync", "linkSync"] as const)(
     "cleans temp and records nothing when %s throws before publication",
     (operation) => {
       vi.spyOn(fs, operation).mockImplementationOnce(() => {
@@ -201,7 +232,7 @@ describe("durable artifact publication", () => {
     },
   );
 
-  it("leaves a complete unreferenced file if directory sync fails after rename", () => {
+  it("leaves a complete unreferenced file if directory sync fails after publication", () => {
     const fsync = fs.fsyncSync;
     vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
       if (fs.fstatSync(fd).isDirectory())
@@ -245,6 +276,30 @@ describe("durable artifact publication", () => {
     expect(fs.existsSync(join(root, "another.txt"))).toBe(false);
   });
 
+  it("refuses an outside writer racing publication and preserves its file", () => {
+    const link = fs.linkSync;
+    vi.spyOn(fs, "linkSync").mockImplementationOnce((from, to) => {
+      // Interleave a real outside process after path validation, immediately before the link.
+      const outside = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          "import fs from 'node:fs'; fs.writeFileSync(process.argv[1], 'outside writer evidence', {flag: 'wx'});",
+          String(to),
+        ],
+        { timeout: 10_000 },
+      );
+      expect(outside.error).toBeUndefined();
+      expect(outside.status).toBe(0);
+      link(from, to);
+    });
+    expect(() => write()).toThrow(new ArtifactError("ALREADY_EXISTS"));
+    expect(fs.readFileSync(join(root, "report.txt"), "utf8")).toBe("outside writer evidence");
+    expect(fs.readdirSync(root)).toEqual(["report.txt"]);
+    expect(rowCount()).toBe(0);
+  });
+
   it("survives a DB restart", () => {
     const ref = write();
     db.close();
@@ -253,7 +308,7 @@ describe("durable artifact publication", () => {
     expect(Buffer.from(store.read(ref)).toString()).toBe("verified evidence\r\n");
   });
 
-  it("a killed writer before rename publishes no partial artifact or DB row", () => {
+  it("a killed writer before linking publishes no partial artifact or DB row", () => {
     // Real child process, file and SQLite transaction; no production fault hooks.
     const script = `
       import fs from 'node:fs';
@@ -261,7 +316,7 @@ describe("durable artifact publication", () => {
       import { createLocalArtifactStore } from './src/infrastructure/artifacts/local-artifact-store.ts';
       const [root, database] = process.argv.slice(1);
       const db = openStateDatabase(database);
-      fs.renameSync = () => process.kill(process.pid, 'SIGKILL');
+      fs.linkSync = () => process.kill(process.pid, 'SIGKILL');
       createLocalArtifactStore(root, db).write({ id: 'crashed', path: 'crashed.txt', bytes: Buffer.from('complete temp'), classification: 'report', createdAt: '${at}' });
     `;
     const child = spawnSync(
