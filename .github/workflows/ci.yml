@@ -35,21 +35,26 @@ jobs:
       issues: read
       pull-requests: read
     steps:
-      - name: PR references a real Issue in this repository
+      # Only explicit "Issue: #N" (or the Issue URL) lines count; other mentions such as the
+      # parent Epic must not satisfy the check. Every listed Issue must exist and not be a PR.
+      - name: PR declares real Issue(s) with an "Issue:" line
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          refs=$(printf '%s\n' "$PR_BODY" \
-            | grep -oiE "(^|[^[:alnum:]/])#[0-9]+|github\.com/${REPO}/issues/[0-9]+" \
-            | grep -oE '[0-9]+$' | sort -u || true)
+          refs=$(printf '%s\n' "$PR_BODY" | tr -d '\r' \
+            | grep -iE "^Issue:[[:space:]]*(#[0-9]+|https://github\.com/${REPO}/issues/[0-9]+)[[:space:]]*$" \
+            | sed -E 's/[[:space:]]+$//' | grep -oE '[0-9]+$' | sort -u || true)
+          if [ -z "$refs" ]; then
+            echo "::error::PR body needs a line 'Issue: #N' naming an Issue of ${REPO}."
+            exit 1
+          fi
           for n in $refs; do
             kind=$(gh api "repos/${REPO}/issues/${n}" --jq 'if .pull_request then "pr" else "issue" end' 2>/dev/null || echo missing)
-            if [ "$kind" = "issue" ]; then
-              echo "Linked Issue: https://github.com/${REPO}/issues/${n}"
-              exit 0
+            if [ "$kind" != "issue" ]; then
+              echo "::error::'Issue: #${n}' is not an existing Issue of ${REPO} (${kind})."
+              exit 1
             fi
+            echo "Linked Issue: https://github.com/${REPO}/issues/${n}"
           done
-          echo "::error::PR body must reference an existing Issue of ${REPO} (e.g. 'Issue: #12'). Found: ${refs:-none}"
-          exit 1
