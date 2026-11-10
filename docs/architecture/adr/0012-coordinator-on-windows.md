@@ -2,7 +2,8 @@
 
 - Status: Accepted — product decision by the PO, 2026-11-10 (Issue OMI-049)
 - Supersedes: the product-overview.md §2 environment row for Coordinator placement (it said
-  "các process chạy trong WSL2", which included the Coordinator); refines ADR-0006 (supervisor bound to the Coordinator).
+  "các process chạy trong WSL2", which included the Coordinator); refines ADR-0006 (supervisor
+  bound to the Coordinator).
 - Affects: OMI-005, OMI-016, OMI-030, OMI-045, OMI-046
 
 ## Context
@@ -27,37 +28,9 @@ wants that session to be the Coordinator, while the agents that do the work run 
    typed argv and reads versioned JSON from stdout. Unix-socket IPC (tech-stack.md §7) stays
    inside WSL2 between the CLI and the runtime. Prompt text and Issue bodies are passed as files
    or stdin, never concatenated into a command line. `--exec` runs the shim without the
-   distro's shell, so arguments are not re-expanded (`# ADR-0012 — Coordinator on Windows, runtime and workers in WSL2
-
-- Status: Accepted — product decision by the PO, 2026-11-10 (Issue OMI-049)
-- Supersedes: the product-overview.md §2 environment row for Coordinator placement (it said
-  "các process chạy trong WSL2", which included the Coordinator); refines ADR-0006 (supervisor bound to the Coordinator).
-- Affects: OMI-005, OMI-016, OMI-030, OMI-045, OMI-046
-
-## Context
-
-product-overview.md §2 fixed the first-version environment as "Windows qua WSL2; các process
-chạy trong WSL2" and architecture.md §5 assumed one supervisor that launches the runtime and the
-Coordinator in the same Linux environment. The PO works from a Claude Code session on Windows and
-wants that session to be the Coordinator, while the agents that do the work run in WSL2.
-
-## Decision
-
-| Component                                                     | Runs on                              |
-| ------------------------------------------------------------- | ------------------------------------ |
-| Coordinator (main Claude Code session of the PO)              | Windows, native                      |
-| Coordinator bridge (skill/instructions that call the CLI)     | Windows, in the Coordinator session  |
-| `omi` CLI implementation, runtime, SQLite state, artifacts    | WSL2 (Ubuntu); a project is bound to one distro |
-| Worker agents (Claude Code, Codex) and their process groups   | WSL2                                 |
-| Repository checkout and task worktrees                        | WSL2 Linux filesystem (e.g. `~/…`)    |
-
-1. **Call boundary.** The Coordinator never talks to the runtime over a socket across the
-   boundary. It invokes the CLI through `wsl.exe -d <distro> --cd <repo> --exec <shim> <args>` with
-   typed argv and reads versioned JSON from stdout. Unix-socket IPC (tech-stack.md §7) stays
-   inside WSL2 between the CLI and the runtime. Prompt text and Issue bodies are passed as files
-, quotes, globs) as they would be after
-   `--`; Windows still passes wsl.exe one command-line string, so OMI-030 must test quoting of
-   every argument the bridge sends.
+   distro's shell, so arguments are not re-expanded (dollar signs, quotes, globs) as they would be
+   after `--`. Windows still hands wsl.exe a single command-line string, so OMI-030 must test the
+   quoting of every argument the bridge sends.
 2. **Lifecycle.** A Windows-side launcher (`omi session start` on Windows) starts the runtime in
    WSL2 and then the Coordinator, and keeps a long-lived `wsl.exe` child connected to the runtime
    by a pipe. Pipe EOF or an explicit stop means "Coordinator gone": the runtime stops dispatching,
