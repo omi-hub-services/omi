@@ -6,9 +6,11 @@ Versions listed here are only what has actually been checked; nothing else is pr
 
 ## Worker environment (WSL2)
 
-Checked 2026-11-10 by the OMI-002 live run (Coordinator, commit `f141f34`, profile
-`~/.claude-profiles/b`). Evidence: ADR-0013 §Evidence; raw redacted files in
-`.tmp/live/omi-002-*` on the machine that ran it (gitignored).
+Checked 2026-11-10 by the OMI-002 live runs (Coordinator, profile `~/.claude-profiles/b`): first
+on commit `f141f34`, then re-run with the tightened assertions on `b0ab3b3` (merged head of
+PR #60), 5/5 passed both times. Evidence: ADR-0013 §Evidence, the PR #60 body and its
+independent review comment; raw redacted files in `.tmp/live/omi-002-*` on the machine that ran
+it (gitignored).
 
 | Component   | Version                                                                  | Status    | Checked    | Evidence / scope                                                                 |
 | ----------- | ------------------------------------------------------------------------ | --------- | ---------- | -------------------------------------------------------------------------------- |
@@ -16,7 +18,7 @@ Checked 2026-11-10 by the OMI-002 live run (Coordinator, commit `f141f34`, profi
 | Node.js     | 24.22.2                                                                  | supported | 2026-11-10 | `.nvmrc`; `npm run check` and OMI-002 live run                                   |
 | Git         | 2.43.0                                                                   | supported | 2026-11-10 | Temp repo init/commit/status in the OMI-002 live run; worktree flows untested    |
 | gh          | 2.103.3 (2026-10-26)                                                     | untested  | 2026-11-10 | Version recorded only; no gh operation exercised by OMI-002                      |
-| Claude Code | 2.1.322                                                                  | supported | 2026-11-10 | `claude -p` worker: read, edit, error, SIGINT cancel (ADR-0013). Single profile, one run |
+| Claude Code | 2.1.322                                                                  | supported | 2026-11-10 | `claude -p` worker: read, edit, error, SIGINT cancel (ADR-0013). Single profile, two runs |
 | Codex CLI   | —                                                                        | untested  | —          | OMI-003                                                                          |
 
 ## Claude Code auth mode

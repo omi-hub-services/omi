@@ -166,6 +166,15 @@ Không có bypass actor, áp dụng cả admin.
 Task PR vào `develop` merge sau review độc lập (agent) và CI. Release PR vào `main` cần PO
 approve native.
 
+## Repository settings
+
+| Setting                  | Giá trị | Bật        | Ghi chú                                                                                   |
+| ------------------------ | ------- | ---------- | ----------------------------------------------------------------------------------------- |
+| `delete_branch_on_merge` | `true`  | 2026-11-10 | GitHub tự xóa nhánh remote sau merge; nhánh local dọn bằng `tools/coordinator/flow.ts cleanup` |
+
+Required checks (`check`, `issue-link`) và option ID của field được script Coordinator đọc trực
+tiếp từ GitHub, không sao chép thêm ở đây.
+
 ## Tài khoản GitHub
 
 | Tài khoản             | Vai trò                                                     | Quyền                  |
