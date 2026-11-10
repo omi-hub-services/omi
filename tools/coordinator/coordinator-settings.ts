@@ -9,6 +9,12 @@ export const REPO_SLUG = `${OWNER}/${REPO}`;
 export const PROJECT_NUMBER = 1;
 export const BASE_BRANCH = "develop";
 
+/**
+ * GitHub login of the Coordinator account. Only `VERDICT` comments it posted count as agent
+ * reviews for merge, close and status (OMI-052); the independent reviewer posts through it.
+ */
+export const COORDINATOR_LOGIN = "minibox-claude-code";
+
 /** Status options in board order (github-project.md, Field mapping). */
 export const STATUS_ORDER = [
   "Backlog",

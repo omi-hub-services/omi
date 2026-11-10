@@ -1,16 +1,17 @@
 // Project/PR snapshot for the status script: one GraphQL query, boundary parsing and the pure
 // classification rules (status grouping, Ready-with-closed-blockers, check and review state).
-import { PRIORITY_ORDER, STATUS_ORDER } from "./coordinator-settings.ts";
+import { COORDINATOR_LOGIN, PRIORITY_ORDER, STATUS_ORDER } from "./coordinator-settings.ts";
 import {
   asArray,
   asBoolean,
   asNumber,
   asObject,
   asString,
-  commentBodies,
+  authoredComments,
   nodes,
   optObject,
   optString,
+  type AuthoredComment,
   type JsonObject,
 } from "./json-shape.ts";
 
@@ -38,7 +39,7 @@ const ITEM_FIELDS = `
 /** What `parsePull` reads; shared by the snapshot and the flow script's merge read. */
 export const PULL_FIELDS = `
   number title isDraft headRefName headRefOid baseRefName body reviewDecision mergeStateStatus
-  comments(last: 50) { nodes { body } }
+  comments(last: 50) { nodes { author { login } body } }
   commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes {
     __typename
     ... on CheckRun { name status conclusion }
@@ -94,7 +95,7 @@ export interface OpenPull {
   readonly body: string;
   readonly reviewDecision: string | null;
   readonly mergeStateStatus: string;
-  readonly comments: readonly string[];
+  readonly comments: readonly AuthoredComment[];
   readonly checks: readonly CheckContext[];
 }
 
@@ -170,7 +171,7 @@ export function parsePull(raw: unknown, path: string): OpenPull {
     body: asString(p.body, `${path}.body`),
     reviewDecision: optString(p.reviewDecision, `${path}.reviewDecision`),
     mergeStateStatus: asString(p.mergeStateStatus, `${path}.mergeStateStatus`),
-    comments: commentBodies(p, path),
+    comments: authoredComments(p, path),
     checks: rollup
       ? nodes(rollup, "contexts", `${path}.rollup`).map((c, i) =>
           parseCheck(c, `${path}.checks[${String(i)}]`),
@@ -250,6 +251,8 @@ export interface ReviewState {
     readonly head: string;
     readonly current: boolean;
   } | null;
+  /** Logins (deduplicated) of `VERDICT` comments ignored because another account posted them. */
+  readonly ignoredVerdictAuthors: readonly string[];
 }
 
 export interface AgentReview {
@@ -258,27 +261,68 @@ export interface AgentReview {
   readonly body: string;
 }
 
-/** Newest comment carrying `VERDICT: … REVIEWED_HEAD: <sha>`; comments are oldest first. */
-export function latestAgentReview(comments: readonly string[]): AgentReview | null {
-  for (const body of [...comments].reverse()) {
-    const m = VERDICT.exec(body);
-    if (m?.[1] && m[2]) return { verdict: m[1], head: m[2], body };
+const GHOST = "(deleted account)";
+
+/**
+ * Newest comment by the Coordinator account carrying `VERDICT: … REVIEWED_HEAD: <sha>`;
+ * comments are oldest first. A `VERDICT` from any other account is not a review.
+ */
+export function latestAgentReview(
+  comments: readonly AuthoredComment[],
+  coordinator: string = COORDINATOR_LOGIN,
+): AgentReview | null {
+  for (const c of [...comments].reverse()) {
+    if (c.author !== coordinator) continue;
+    const m = VERDICT.exec(c.body);
+    if (m?.[1] && m[2]) return { verdict: m[1], head: m[2], body: c.body };
   }
   return null;
 }
 
-export function classifyReview(pull: {
-  readonly reviewDecision: string | null;
-  readonly headRefOid: string;
-  readonly comments: readonly string[];
-}): ReviewState {
-  const r = latestAgentReview(pull.comments);
+/** Authors other than the Coordinator whose comments look like an agent review. */
+export function foreignVerdictAuthors(
+  comments: readonly AuthoredComment[],
+  coordinator: string = COORDINATOR_LOGIN,
+): string[] {
+  const authors = comments
+    .filter((c) => c.author !== coordinator && VERDICT.test(c.body))
+    .map((c) => c.author ?? GHOST);
+  return [...new Set(authors)];
+}
+
+export function classifyReview(
+  pull: {
+    readonly reviewDecision: string | null;
+    readonly headRefOid: string;
+    readonly comments: readonly AuthoredComment[];
+  },
+  coordinator: string = COORDINATOR_LOGIN,
+): ReviewState {
+  const r = latestAgentReview(pull.comments, coordinator);
   const agent = r && {
     verdict: r.verdict,
     head: r.head,
     current: pull.headRefOid.startsWith(r.head),
   };
-  return { native: pull.reviewDecision, agent };
+  return {
+    native: pull.reviewDecision,
+    agent,
+    ignoredVerdictAuthors: foreignVerdictAuthors(pull.comments, coordinator),
+  };
+}
+
+/** status.ts "Attention" lines for open PRs carrying a `VERDICT` from another account. */
+export function ignoredVerdictWarnings(
+  pulls: readonly { readonly number: number; readonly review: ReviewState }[],
+  coordinator: string = COORDINATOR_LOGIN,
+): string[] {
+  return pulls
+    .filter((p) => p.review.ignoredVerdictAuthors.length > 0)
+    .map(
+      (p) =>
+        `PR #${String(p.number)}: ignored VERDICT comment from ${p.review.ignoredVerdictAuthors.join(", ")}` +
+        ` (only ${coordinator} counts)`,
+    );
 }
 
 const ISSUE_LINK = /^Issue:\s*#(\d+)\b/m;

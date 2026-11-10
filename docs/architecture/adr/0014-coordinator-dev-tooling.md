@@ -34,8 +34,14 @@ no place in the folder map.
      `merge` requires green required checks, the newest agent review `PASS` on the exact head
      and merge state `CLEAN`/`HAS_HOOKS`. `close` ticks the Issue's Acceptance criteria from the
      `AC-<n>: met|not met` lines of the agent review `PASS` on the merged PR's head and refuses
-     on a missing line or `not met` (OMI-051). `pick-profile` chooses the worker profile by
-     quota (OMI-053, below).
+     on a missing line or `not met` (OMI-051). Since OMI-052 an agent review is only a
+     `VERDICT` comment posted by the Coordinator account (`COORDINATOR_LOGIN` in
+     `coordinator-settings.ts`); `VERDICT` comments from other accounts are ignored and
+     `status.ts` lists them under "Attention". `close` only takes evidence from PRs of this
+     repository and uses the one merged last (`mergedAt`). An AC is a top-level checkbox
+     directly under `## Acceptance criteria`; nested checkboxes, checkboxes in a code fence and
+     anything under a `###` sub-heading are not counted. `pick-profile` chooses the worker
+     profile by quota (OMI-053, below).
    - `quota.ts` — worker subscription quota (OMI-053), read in one WSL call by a small Node
      collector sent on stdin (the bash payload stays quote-free): **Codex** through
      `codex app-server` JSON-RPC `account/rateLimits/read` (no model call, free); **Claude** from
@@ -47,8 +53,9 @@ no place in the folder map.
      boundary (percentages, reset times, status, plan, reset-credit count, data age; never
      `accountId`, emails, tokens or credit ids). `pickProfile` is pure: score = share left of the
      tighter window minus a penalty for the profile sharing the Coordinator's account; stale or
-     missing data ranks below fresh; below the thresholds in `coordinator-settings.ts` it refuses
-     with the earliest reset. Codex reset credits are only reported; spending one is a PO
+     missing data ranks below fresh and is never chosen without `--probe` (OMI-052); a reported
+     limit only blocks while a window is still to reset; below the thresholds in
+     `coordinator-settings.ts` it refuses with the earliest reset. Codex reset credits are only reported; spending one is a PO
      decision. Log mtime is the Claude data time, and an undocumented app-server method may
      change with codex-cli versions. Temporary: OMI-004 runtime quota detection replaces it.
 3. All process execution goes through one injectable runner (`spawn`, `shell: false`, argv
@@ -88,10 +95,15 @@ no place in the folder map.
 - `tools/coordinator/` is verified by `npm run check` (typecheck, lint, format, unit tests).
 - The Windows/wsl.exe path is exercised only by the Coordinator on Windows; CI and WSL runs use
   the Linux branch of the same runner. OMI-030 still owns the tested product bridge.
-- Residual risk (OMI-051): the worker allowlist in `/omi-next` is narrow (specific git
-  subcommands, read-only `gh`, `npm run`/`npm ci`, `node`) and `git push`, `git reset --hard`,
-  `gh api` and `npm install` are denied, but a worker can still run arbitrary code through
-  `node` or `npm run` with the PO's WSL `gh`/git login, so the allowlist limits mistakes, not a
-  hostile worker. A separate read-only token for workers is a PO decision and out of scope here
-  (OMI-004 / runtime). Agent review comments are also not tied to an author yet; any account
-  that can comment on the PR could post a `VERDICT: PASS` line.
+- Residual risk (OMI-051, updated OMI-052): the worker allowlist in `/omi-next` is narrow
+  (specific git subcommands, read-only `gh`, `npm run`/`npm ci`, `node`) and `git push`,
+  `git reset --hard`, `gh api`, `npm install`, `git commit --no-verify`/`--amend` and
+  `git switch --discard-changes`/`-C`/`-f` are denied, but a worker can still run arbitrary
+  code through `node` or `npm run` with the PO's WSL `gh`/git login, so the allowlist limits
+  mistakes, not a hostile worker. A separate read-only token for workers is a PO decision and
+  out of scope here (OMI-004 / runtime).
+- Agent review comments are bound to the Coordinator account (OMI-052): another account's
+  `VERDICT: PASS` no longer counts for `merge`, `close` or `status`. What remains is that the
+  binding is to an account, not to a review run: anything that can post as the Coordinator's
+  `gh` login — the Coordinator session itself, or a worker whose WSL `gh` login is that same
+  account — could still post a `VERDICT` line. The separate worker token above closes that.

@@ -24,8 +24,9 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      # typecheck, lint, format, architecture guards, backlog manifest, unit + integration tests.
-      # `build` joins once src/ has its first module (ADR-0011).
+      # typecheck, build, lint, format, architecture guards, backlog manifest, generated-schema
+      # drift (schemas:check), unit + integration tests. `build` joined with the first src/
+      # module (OMI-007, ADR-0011).
       - run: npm run check
 
   issue-link:

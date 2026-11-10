@@ -105,6 +105,20 @@ describe("parseCodexRateLimits", () => {
     expect(limited).toMatchObject({ limited: true, status: "secondary", fiveHour: null });
     expect(() => parseCodexRateLimits({ nope: 1 }, NOW)).toThrow(/codex rateLimits/);
   });
+
+  it("maps primary to the 5-hour and secondary to the weekly window, as codex-cli sends them", () => {
+    const w = (usedPercent: number, windowDurationMins: number) => ({
+      usedPercent,
+      windowDurationMins,
+      resetsAt: null,
+    });
+    // Durations are not used to reorder windows (never seen reversed; OMI-052).
+    const r = parseCodexRateLimits(
+      { rateLimits: { primary: w(1, 10080), secondary: w(2, 300) } },
+      NOW,
+    );
+    expect(r).toMatchObject({ fiveHour: { usedPercent: 1 }, sevenDay: { usedPercent: 2 } });
+  });
 });
 
 describe("parseClaudeRateLimitEvent", () => {
@@ -243,15 +257,32 @@ describe("pickProfile", () => {
       quota("claude", "stale", stale),
       quota("claude", "fresh", reading(60, 60)),
     ];
-    const r = pickProfile("claude", qs, settings, NOW);
+    const r = pickProfile("claude", qs, settings, NOW, true);
     expect(r.ranked.map((c) => [c.profile, c.freshness])).toEqual([
       ["fresh", "fresh"],
       ["stale", "stale"],
       ["none", "unknown"],
     ]);
     expect(r.ok && r.chosen[0]?.profile).toBe("fresh");
-    const onlyUnknown = pickProfile("claude", [quota("claude", "none", null)], settings, NOW);
-    expect(onlyUnknown.ok && onlyUnknown.chosen[0]?.freshness).toBe("unknown");
+    // After a probe that still found nothing, an unknown profile is the last resort.
+    const unknown = [quota("claude", "none", null)];
+    const probed = pickProfile("claude", unknown, settings, NOW, true);
+    expect(probed.ok && probed.chosen[0]?.freshness).toBe("unknown");
+  });
+
+  it("never chooses a profile without quota data unless the run probed", () => {
+    // e.g. minibox shares the Coordinator account and has no worker log yet.
+    const qs = [quota("claude", "minibox", null, true)];
+    const r = pickProfile("claude", qs, settings, NOW);
+    expect(r).toMatchObject({ ok: false, earliestReset: null });
+    expect(formatPick("pick-profile 65", r)[0]).toBe(
+      "pick-profile 65: refused: claude: minibox no quota data; rerun pick-profile with --probe; earliest reset unknown",
+    );
+    const withData = [...qs, quota("claude", "own", reading(50, 50))];
+    expect(pickProfile("claude", withData, settings, NOW)).toMatchObject({
+      ok: true,
+      chosen: [{ profile: "own" }],
+    });
   });
 
   it("refuses below threshold with the earliest reset across profiles", () => {
@@ -281,6 +312,28 @@ describe("pickProfile", () => {
     const result = pickProfile("claude", [quota("claude", "a", r)], settings, NOW);
     // Which window hit the limit is unknown, so wait for the later reset (conservative).
     expect(!result.ok && result.earliestReset).toBe(NOW + 50 * H);
+  });
+
+  it("stops honouring a reported limit once every window has reset", () => {
+    const old = reading(50, 50, {
+      limited: true,
+      status: "rejected",
+      fiveHour: { usedPercent: 100, resetsAt: NOW - 2 * H },
+      sevenDay: { usedPercent: 50, resetsAt: NOW - 1 },
+    });
+    expect(pickProfile("claude", [quota("claude", "a", old)], settings, NOW).ok).toBe(true);
+    // Without any reset time there is nothing left to wait for either.
+    const noReset = reading(0, 0, {
+      limited: true,
+      status: "rejected",
+      fiveHour: null,
+      sevenDay: null,
+    });
+    expect(pickProfile("claude", [quota("claude", "a", noReset)], settings, NOW).ok).toBe(true);
+    // One window still to reset keeps it blocked until then.
+    const partly = { ...old, sevenDay: { usedPercent: 50, resetsAt: NOW + H } };
+    const r = pickProfile("claude", [quota("claude", "a", partly)], settings, NOW);
+    expect(r).toMatchObject({ ok: false, earliestReset: NOW + H });
   });
 
   it("claude+codex-live needs both tools; codex alone ignores Claude profiles", () => {

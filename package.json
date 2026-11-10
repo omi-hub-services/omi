@@ -11,14 +11,16 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint .",
-    "format": "prettier --write . \"!docs/**/*.md\"",
-    "format:check": "prettier --check . \"!docs/**/*.md\"",
+    "format": "prettier --write . \"!docs/**/*.md\" \"!schemas/**\"",
+    "format:check": "prettier --check . \"!docs/**/*.md\" \"!schemas/**\"",
+    "schemas:generate": "node --import ./tools/register-ts-imports.ts tools/generate-schemas.ts",
+    "schemas:check": "node --import ./tools/register-ts-imports.ts tools/generate-schemas.ts --check",
     "check:architecture": "depcruise src --config .dependency-cruiser.cjs && node tools/check-structure.ts",
     "check:backlog": "node tools/github-bootstrap/main.ts validate",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:live": "vitest run tests/live",
-    "check": "npm run typecheck && npm run lint && npm run format:check && npm run check:architecture && npm run check:backlog && npm run test:unit && npm run test:integration"
+    "check": "npm run typecheck && npm run build && npm run lint && npm run format:check && npm run check:architecture && npm run check:backlog && npm run schemas:check && npm run test:unit && npm run test:integration"
   },
   "prettier": {
     "printWidth": 100,
@@ -34,5 +36,8 @@
     "typescript-eslint": "8.72.1",
     "vitest": "4.1.12",
     "yaml": "2.9.1"
+  },
+  "dependencies": {
+    "zod": "4.6.7"
   }
 }
