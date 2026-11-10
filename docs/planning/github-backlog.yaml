@@ -1,0 +1,1429 @@
+# omi-squad — GitHub backlog manifest (machine-readable)
+#
+# Source of truth: docs/planning/project-plan.md (v1.0, 10/11/2026). This file must
+# stay consistent with it; change the plan first, then this manifest.
+# Plan keys (EP-xx / OMI-xxx) are stable logical keys, NOT GitHub issue numbers.
+# Applied by tools/github-bootstrap/main.ts (validate | plan | apply). Every issue
+# body carries the marker `<!-- omi-squad:plan-key=KEY -->` used for idempotent reuse.
+#
+# Field notes:
+# - role: primary role (GitHub Project "Role" option); role_detail keeps the plan's wording.
+# - workflow: omi-squad workflow template used to deliver the issue.
+# - milestone: from project-plan.md §2, never derived from the parent Epic.
+#   EP-04 and EP-05 span M2–M3, so they carry no single native milestone.
+# - review.approval: PO approval needed beyond the standard gates (none = standard gates only).
+
+schema_version: 1
+project:
+  owner: omi-hub-services
+  repository: omi
+  title: "omi-squad delivery"
+  default_branch: main
+  integration_branch: develop
+
+milestones:
+  - key: M0
+    title: "M0 — Feasibility"
+    description: "OMI-001–006. Exit: hai CLI chạy bằng subscription; profile/lifecycle/GitHub có bằng chứng; blockers được ghi rõ."
+  - key: M1
+    title: "M1 — Core foundation"
+    description: "OMI-007–012. Exit: schema, domain, state, transaction, CLI/IPC và artifact foundation kiểm thử được."
+  - key: M2
+    title: "M2 — Execution"
+    description: "OMI-013–018; OMI-021, OMI-024, OMI-026, OMI-027. Exit: chạy worker, worktree, checkpoint/recovery, quản lý profile và failover."
+  - key: M3
+    title: "M3 — Task delivery"
+    description: "OMI-019, 020, 022, 023, 025, 028, 029, 030. Exit: Issue → workflow tối thiểu → test/review → merge develop → Done; parallel/approval hoạt động."
+  - key: M4
+    title: "M4 — Full lifecycle"
+    description: "OMI-031–042. Exit: bộ template đủ vòng đời, release và deploy có hai điểm duyệt riêng."
+  - key: M5
+    title: "M5 — v0.1 acceptance"
+    description: "OMI-043–048. Exit: fault tests, clean install, beta và release framework được PO duyệt."
+
+# GitHub Project fields (project-plan.md §6). Status and Milestone are native fields;
+# Status options are replaced only when they differ. Iteration is not created: work is
+# assigned by milestone (plan: "Không bắt buộc nếu PO giao theo milestone").
+fields:
+  - name: Status
+    native: true
+    options:
+      [Backlog, Ready, In Progress, In Review, Waiting Approval, Waiting Resource, Blocked, Done]
+  - name: Priority
+    options: [P0, P1, P2]
+  - name: Work Type
+    options: [Epic, Spike, Task, Bug, Docs, Release]
+  - name: Workflow
+    options: [init, research, feature, bugfix, refactor, docs, release, deploy]
+  - name: Role
+    options: [Architect, Developer, BA, Designer, QA, DevOps, Writer, Release Manager]
+  - name: Area
+    options: [domain, runtime, adapters, github, workflows, delivery, tooling]
+  - name: Plan Key
+    text: true
+  - name: Run ID
+    text: true
+  - name: Blocked Reason
+    text: true
+
+# Project views (project-plan.md §6). The API sets name, layout, filter and visible fields only;
+# grouping, sorting and board columns are UI steps listed in docs/planning/github-project.md.
+views:
+  - name: Delivery Board
+    layout: board
+    filter: "-work-type:Epic"
+    fields: [Title, Status, Assignees, Priority, Milestone, Plan Key]
+  - name: Backlog
+    layout: table
+    filter: "-status:Done"
+    fields: [Title, Status, Milestone, Priority, Work Type, Role, Area, Parent issue, Plan Key]
+  - name: Epic Breakdown
+    layout: table
+    filter: "-work-type:Epic"
+    fields: [Title, Parent issue, Status, Milestone, Priority, Plan Key]
+  - name: Needs PO
+    layout: table
+    filter: 'status:"Waiting Approval",Blocked'
+    fields: [Title, Status, Blocked Reason, Priority, Milestone, Plan Key]
+  - name: Active Runs
+    layout: table
+    filter: 'status:"In Progress","In Review","Waiting Resource"'
+    fields: [Title, Status, Run ID, Role, Assignees, Linked pull requests, Plan Key]
+  - name: Release Readiness
+    layout: table
+    filter: "work-type:Release"
+    fields: [Title, Status, Milestone, Linked pull requests, Sub-issues progress, Plan Key]
+
+defaults:
+  review:
+    checks: ["npm run check (local) và CI xanh trên đúng head SHA của PR"]
+    reviewers: ["Một reviewer độc lập (khác run/agent triển khai) review revision cố định"]
+    approval: none
+
+issues:
+  # ───────────────────────────── EP-01 ─────────────────────────────
+  - key: EP-01
+    title: "Bootstrap & feasibility"
+    type: epic
+    milestone: M0
+    area: tooling
+    objective: "Xác minh nền tảng trước đầu tư lớn: scaffold repo, chạy được Claude Code và Codex bằng subscription, nhiều profile, lifecycle WSL2 và năng lực GitHub."
+    outcome:
+      - "Hai CLI chạy bằng subscription; profile/lifecycle/GitHub có bằng chứng; blockers được ghi rõ (exit gate M0)."
+      - "Output PoC đặt trong tests/live/ hoặc adapter spike có ADR; evidence tóm tắt trong docs/architecture/adr/; code tạm không thành module production ngoài cấu trúc."
+
+  - key: OMI-001
+    title: "Scaffold clean architecture"
+    type: task
+    parent: EP-01
+    milestone: M0
+    priority: P0
+    role: Architect
+    role_detail: "Architect/Developer"
+    area: tooling
+    workflow: feature
+    blocked_by: []
+    objective: "Repository framework có cấu trúc, công cụ và quy tắc kiểm tra đúng architecture.md để mọi task sau đặt code đúng chỗ ngay từ đầu."
+    scope:
+      in:
+        - "Root/src/tests/docs/templates theo bản đồ architecture.md §3; placeholder tối thiểu cho thư mục chưa có code."
+        - "npm scripts cơ bản (build, typecheck, lint, format:check, check:architecture, test:unit, test:integration, check)."
+        - "AGENTS.md (rules có thẩm quyền) và CLAUDE.md (tham chiếu)."
+        - "Architecture guard baseline: import direction, cycles, root allowlist, vị trí/tên file; CI chạy các kiểm tra đã có."
+      out:
+        - "Runtime, adapters, CLI sản phẩm `omi`, profile switching."
+        - "Guard đầy đủ naming/schema drift (OMI-043)."
+    acceptance_criteria:
+      - "Tạo đúng root/src/tests/docs/templates theo architecture.md §3."
+      - "npm scripts cơ bản tồn tại và chạy thật, không có script giả lập kết quả."
+      - "AGENTS/CLAUDE rules được tạo; CLAUDE.md tham chiếu AGENTS.md, không chép bộ quy tắc riêng."
+      - "Architecture guard baseline có fixtures chứng minh: import hợp lệ được chấp nhận, import sai chiều bị chặn, circular bị chặn, file/root path trái quy ước bị phát hiện."
+      - "build/typecheck/lint chạy."
+      - "Không có file ngoài quy ước (check-structure pass trên repo)."
+    implementation_map:
+      - "Root config: package.json, tsconfig*.json, eslint.config.js, vitest.config.ts, .dependency-cruiser.cjs, .nvmrc, .npmrc, .gitignore"
+      - "tools/check-structure.ts; tests/integration/tools/, tests/unit/tools/, tests/fixtures/architecture/"
+      - ".github/workflows/ci.yml, .github/pull_request_template.md, .github/ISSUE_TEMPLATE/"
+      - "docs/architecture/adr/0011-bootstrap-toolchain.md"
+    review:
+      reviewers:
+        [
+          "Reviewer độc lập (người/agent khác run triển khai) kiểm tra cấu trúc so với architecture.md",
+        ]
+
+  - key: OMI-002
+    title: "PoC Claude Code subscription worker"
+    type: spike
+    parent: EP-01
+    milestone: M0
+    priority: P0
+    role: Developer
+    area: adapters
+    workflow: research
+    blocked_by: [OMI-001]
+    objective: "Chứng minh có thể chạy một worker Claude Code không tương tác bằng đăng nhập subscription để đọc và sửa một repo tạm."
+    scope:
+      in:
+        - "Chạy `claude -p` (không dùng `--bare`, vì bare mode không dùng subscription login) trên repo tạm."
+        - "Ghi version, auth mode, log đã khử secret; kiểm tra success/error/cancel."
+      out:
+        - "Adapter production (OMI-013); multi-profile (OMI-004)."
+        - "Dùng API key thay subscription."
+    acceptance_criteria:
+      - "Một step read-only rồi một step sửa repo tạm qua CLI subscription."
+      - "Log/version/auth mode được ghi lại và đã khử secret."
+      - "Kiểm tra các trường hợp success, error và cancel."
+      - "Không dùng API key để thay thế."
+    implementation_map:
+      - "tests/live/ (PoC opt-in, không chạy trong CI mặc định)"
+      - "docs/architecture/adr/ (ADR + evidence tóm tắt); docs/operations/compatibility.md"
+    review:
+      checks:
+        [
+          "Evidence chạy thật (lệnh, exit status, thời điểm, version) đính kèm; npm run check xanh nếu có code",
+        ]
+
+  - key: OMI-003
+    title: "PoC Codex subscription worker"
+    type: spike
+    parent: EP-01
+    milestone: M0
+    priority: P0
+    role: Developer
+    area: adapters
+    workflow: research
+    blocked_by: [OMI-001]
+    objective: "Chứng minh có thể chạy worker Codex không tương tác bằng auth subscription đã lưu, trả kết quả có cấu trúc."
+    scope:
+      in:
+        - "Chạy `codex exec` với JSON output/schema trên repo tạm; một step read-only và một step sửa."
+        - "Xác định auth cache (file dưới CODEX_HOME hoặc OS store) phù hợp; log đã khử secret; success/error/cancel."
+      out:
+        - "Adapter production (OMI-014); sửa refresh token thủ công."
+    acceptance_criteria:
+      - "Tương tự OMI-002 bằng Codex: một step read-only rồi step sửa repo tạm qua CLI subscription; log/version/auth mode đã khử secret; kiểm tra success/error/cancel; không dùng API key."
+      - "Chứng minh result có cấu trúc."
+      - "Chứng minh auth cache phù hợp."
+    implementation_map:
+      - "tests/live/"
+      - "docs/architecture/adr/; docs/operations/compatibility.md"
+    review:
+      checks: ["Evidence chạy thật đính kèm; npm run check xanh nếu có code"]
+
+  - key: OMI-004
+    title: "PoC nhiều profile và continuation"
+    type: spike
+    parent: EP-01
+    milestone: M0
+    priority: P0
+    role: Architect
+    area: adapters
+    workflow: research
+    blocked_by: [OMI-002, OMI-003]
+    objective: "Xác minh có thể isolate nhiều profile subscription cho mỗi tool và tiếp tục công việc từ checkpoint khi đổi profile."
+    scope:
+      in:
+        - "Hai profile mỗi tool nếu PO cung cấp; kiểm tra isolation (kể cả keyring/profile namespace, token refresh concurrent của Codex)."
+        - "Checkpoint continuation; fault injection limit."
+      out:
+        - "Đổi auth global qua lại khi có process song song."
+    acceptance_criteria:
+      - "Hai profile mỗi tool nếu PO cung cấp."
+      - "Chứng minh isolation và checkpoint continuation."
+      - "Fault injection limit không bắt buộc tiêu hao quota thật; phân biệt lỗi giả lập với quota detection thật."
+      - "Ghi rõ điểm chưa chứng minh."
+      - "Nếu không đạt auto failover: báo blocker sản phẩm, không đóng Issue thành Done bằng phương án manual."
+    implementation_map:
+      - "tests/live/"
+      - "docs/architecture/adr/ (kết luận isolation, giới hạn)"
+    review:
+      reviewers: ["Reviewer độc lập + PO xem kết luận blocker nếu không đạt"]
+      approval: "PO cung cấp profile thử nghiệm; PO quyết định nếu auto failover không khả thi"
+
+  - key: OMI-005
+    title: "PoC lifecycle WSL2"
+    type: spike
+    parent: EP-01
+    milestone: M0
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: research
+    blocked_by: [OMI-002, OMI-003]
+    objective: "Chứng minh supervisor nhận biết Coordinator thoát và dừng đúng nhóm process worker trong WSL2."
+    scope:
+      in:
+        - "Supervisor launch có quản lý; graceful và abrupt stop; process group."
+      out:
+        - "System service/daemon tự khởi động."
+    acceptance_criteria:
+      - "Supervisor nhận biết Coordinator exit, dừng process group."
+      - "Test graceful và abrupt stop."
+      - "Giữ file chưa commit."
+      - "Không kill phiên không thuộc framework."
+    implementation_map:
+      - "tests/live/ (chạy trong WSL2)"
+      - "docs/architecture/adr/"
+
+  - key: OMI-006
+    title: "PoC GitHub capability"
+    type: spike
+    parent: EP-01
+    milestone: M0
+    priority: P0
+    role: DevOps
+    area: github
+    workflow: research
+    blocked_by: [OMI-001]
+    objective: "Lập capability matrix GitHub thực tế cho repo/Project/plan đang dùng."
+    scope:
+      in:
+        - "Sandbox repo/Project riêng; không dùng repo production."
+      out:
+        - "Adapter production (OMI-019, OMI-022, OMI-024)."
+    acceptance_criteria:
+      - "Sandbox repo/Project: đọc/ghi field, Issue/sub-issue/dependency, PR link và merge permission."
+      - "Xác minh actor approval, native checks, deployment gate."
+      - "Capability matrix rõ."
+    implementation_map:
+      - "tests/live/"
+      - "docs/architecture/adr/ (capability matrix); tham khảo docs/planning/github-project.md"
+
+  # ───────────────────────────── EP-02 ─────────────────────────────
+  - key: EP-02
+    title: "Domain & persistent state"
+    type: epic
+    milestone: M1
+    area: domain
+    objective: "State và contract đáng tin cậy."
+    outcome:
+      - "Schema, domain, state, transaction, CLI/IPC và artifact foundation kiểm thử được (exit gate M1)."
+
+  - key: OMI-007
+    title: "Contract/schema v1"
+    type: task
+    parent: EP-02
+    milestone: M1
+    priority: P0
+    role: Developer
+    area: domain
+    workflow: feature
+    blocked_by: [OMI-001]
+    objective: "Contract v1 có kiểu và JSON Schema sinh tự động cho workflow, config, context, result và command."
+    scope:
+      in:
+        - "Zod 4 schemas + z.infer trong src/application/contracts/; sinh JSON Schema vào schemas/."
+        - "Script schemas:generate / schemas:check."
+      out:
+        - "Domain không import contract/Zod."
+    acceptance_criteria:
+      - "Zod schemas cho workflow/config/context/result/command."
+      - "Generated JSON Schema trong schemas/ (không viết tay trùng nguồn)."
+      - "Reject input sai."
+      - "Có schema version và schema drift test."
+    implementation_map:
+      - "src/application/contracts/"
+      - "schemas/ (generated)"
+      - "tools/ (codegen); tests/unit/application/contracts/"
+      - "Khi thêm module src/ đầu tiên: đưa `npm run build` vào `check` và CI (đang tạm loại vì src/ chưa có input — xem ADR-0011)."
+
+  - key: OMI-008
+    title: "Domain policies/state machines"
+    type: task
+    parent: EP-02
+    milestone: M1
+    priority: P0
+    role: Developer
+    area: domain
+    workflow: feature
+    blocked_by: [OMI-007]
+    objective: "Các policy và state machine thuần cho task, run, approval, merge, capability và 2+Architect+2."
+    scope:
+      in:
+        - "Transition tường minh (nguồn, event, precondition, đích); reason code."
+      out:
+        - "I/O, đọc thời gian ngầm."
+    acceptance_criteria:
+      - "Task/run/approval/merge/capability và 2+Architect+2."
+      - "Pure tests cho boundary/invalid transition."
+      - "domain/ không I/O."
+    implementation_map:
+      - "src/domain/{tasks,workflows,runs,agents,profiles,approvals,delivery,shared}/"
+      - "tests/unit/domain/"
+
+  - key: OMI-009
+    title: "SQLite schema/migration"
+    type: task
+    parent: EP-02
+    milestone: M1
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-007]
+    objective: "State schema SQLite và migration runner có checksum đáp ứng các bảng trong architecture.md §8."
+    scope:
+      in:
+        - "better-sqlite3 (kiểm tra native module trên Node/WSL2 baseline); SQL thuần; foreign_keys, WAL, synchronous FULL, busy timeout."
+      out:
+        - "ORM."
+    acceptance_criteria:
+      - "Tables/index/FK/unique từ architecture."
+      - "Migration có checksum; WAL/FULL."
+      - "Restart và rollback transaction test."
+    implementation_map:
+      - "migrations/0001-initial-state.sql"
+      - "src/infrastructure/persistence/sqlite/"
+      - "tests/integration/persistence/"
+
+  - key: OMI-010
+    title: "Transaction, leases và audit"
+    type: task
+    parent: EP-02
+    milestone: M1
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-008, OMI-009]
+    objective: "Cập nhật state + event + outbox nguyên tử; lease có generation/fencing đảm bảo một writer."
+    scope:
+      in:
+        - "Transaction ngắn, đồng bộ; compare-and-swap version."
+      out:
+        - "await agent/network trong transaction."
+    acceptance_criteria:
+      - "State+event+outbox atomic."
+      - "Generation/lease stale bị từ chối."
+      - "Một writer/worktree."
+      - "Test competing claim và late event."
+    implementation_map:
+      - "src/application/ports/ (RunStore, OperationStore...)"
+      - "src/infrastructure/persistence/sqlite/"
+      - "tests/integration/persistence/"
+
+  - key: OMI-011
+    title: "CLI/IPC skeleton"
+    type: task
+    parent: EP-02
+    milestone: M1
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-007, OMI-009]
+    objective: "Khung CLI (Commander) và IPC có version để Coordinator gọi runtime."
+    scope:
+      in:
+        - "Handler mỏng; presenters text/JSON; IPC qua Unix socket có framing và giới hạn payload."
+      out:
+        - "Command truy cập SQL trực tiếp."
+    acceptance_criteria:
+      - "Commander handlers mỏng."
+      - "Versioned IPC; text/JSON output; framing/error/exit codes."
+      - "Command không truy cập SQL trực tiếp."
+    implementation_map:
+      - "src/interfaces/cli/commands/, src/interfaces/cli/presenters/, src/interfaces/ipc/"
+      - "src/bootstrap/cli.ts, src/bootstrap/container.ts"
+      - "tests/integration/ipc/"
+
+  - key: OMI-012
+    title: "Artifact store & context packet"
+    type: task
+    parent: EP-02
+    milestone: M1
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-007, OMI-009]
+    objective: "Artifact được ghi nguyên tử có hash/manifest; context packet chọn lọc đầu vào cho từng step."
+    scope:
+      in:
+        - "temp → fsync → rename → DB reference; packet theo architecture.md §6.2."
+      out:
+        - "Nhét toàn bộ repo/transcript vào packet."
+    acceptance_criteria:
+      - "Atomic write/hash/manifest."
+      - "Packet chọn lọc skills/rules/input."
+      - "Path validation và missing artifact test."
+      - "Không chứa credential."
+    implementation_map:
+      - "src/infrastructure/artifacts/"
+      - "src/application/services/ (context assembly)"
+      - "tests/integration/artifacts/, tests/unit/application/"
+
+  # ───────────────────────────── EP-03 ─────────────────────────────
+  - key: EP-03
+    title: "Agent execution & profiles"
+    type: epic
+    milestone: M2
+    area: adapters
+    objective: "Worker thật và failover."
+    outcome:
+      - "Chạy worker Claude Code/Codex qua adapter chung, quản lý profile và failover từ checkpoint."
+
+  - key: OMI-013
+    title: "Production Claude adapter"
+    type: task
+    parent: EP-03
+    milestone: M2
+    priority: P0
+    role: Developer
+    area: adapters
+    workflow: feature
+    blocked_by: [OMI-002, OMI-007, OMI-012]
+    objective: "Adapter Claude Code production thực hiện port AgentExecutor."
+    scope:
+      in:
+        - "Invocation, output parser, error classifier."
+      out:
+        - "Use case biết cờ CLI cụ thể; global auth swapping."
+    acceptance_criteria:
+      - "Port probe/start/events/cancel/result."
+      - "Parser fixtures success/limit/auth/malformed."
+      - "Version compatibility."
+      - "Không dùng global auth swapping."
+    implementation_map:
+      - "src/application/ports/agent-executor.ts"
+      - "src/infrastructure/executors/claude-code/"
+      - "tests/contract/executors/claude-code/"
+
+  - key: OMI-014
+    title: "Production Codex adapter"
+    type: task
+    parent: EP-03
+    milestone: M2
+    priority: P0
+    role: Developer
+    area: adapters
+    workflow: feature
+    blocked_by: [OMI-003, OMI-007, OMI-012]
+    objective: "Adapter Codex production cùng contract với OMI-013."
+    scope:
+      in:
+        - "codex exec, JSON output; auth namespace đã kiểm chứng ở OMI-003/004."
+      out:
+        - "Tự sửa refresh token."
+    acceptance_criteria:
+      - "Cùng contract của OMI-013 (probe/start/events/cancel/result, fixtures success/limit/auth/malformed, version compatibility)."
+      - "Cấu hình auth namespace đã kiểm chứng."
+      - "Không leak CLI-specific object vào application."
+    implementation_map:
+      - "src/infrastructure/executors/codex/"
+      - "tests/contract/executors/codex/"
+
+  - key: OMI-015
+    title: "Profile registry & selector"
+    type: task
+    parent: EP-03
+    milestone: M2
+    priority: P0
+    role: Developer
+    area: adapters
+    workflow: feature
+    blocked_by: [OMI-004, OMI-008, OMI-009]
+    objective: "Registry profile local và chọn executor theo khả dụng → capability → concurrency → preference → độ bận."
+    scope:
+      in:
+        - "Metadata không chứa token; trạng thái unknown/ready/busy/cooldown/login-required/unavailable/disabled."
+      out:
+        - "Suy năng lực từ tên model; hứa đọc quota."
+    acceptance_criteria:
+      - "Local metadata, TTL/cooldown/account-group/concurrency."
+      - "Chọn đủ capability."
+      - "unknown và login-required thể hiện đúng."
+    implementation_map:
+      - "src/domain/profiles/, src/domain/agents/selection-policy.ts"
+      - "src/application/use-cases/profiles/{probe-profile,select-executor}.ts"
+      - "src/infrastructure/profiles/"
+      - "tests/unit/domain/, tests/integration/profiles/"
+
+  - key: OMI-016
+    title: "Session supervisor/runtime"
+    type: task
+    parent: EP-03
+    milestone: M2
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-005, OMI-010, OMI-011]
+    objective: "Runtime gắn lifecycle Coordinator; một chủ sở hữu project."
+    scope:
+      in:
+        - "omi session start; supervisor giữ process handle; interrupt → grace → terminate."
+      out:
+        - "System service/daemon."
+    acceptance_criteria:
+      - "Runtime gắn Coordinator lifecycle."
+      - "Single project owner."
+      - "Stop/grace/kill đúng process."
+      - "Session mới không chiếm state khi process cũ còn ghi."
+    implementation_map:
+      - "src/bootstrap/runtime.ts"
+      - "src/infrastructure/processes/"
+      - "tests/integration/processes/"
+
+  - key: OMI-017
+    title: "Dispatch và validate result"
+    type: task
+    parent: EP-03
+    milestone: M2
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-013, OMI-014, OMI-016, OMI-021]
+    objective: "Dispatch step tới worker và xác minh result có cấu trúc trước khi ghi nhận."
+    scope:
+      in:
+        - "Cấp attempt/context/worktree; kiểm tra schema, artifact, hash, path, revision."
+      out:
+        - "Coi exit 0 là Done."
+    acceptance_criteria:
+      - "Cấp attempt/context/worktree."
+      - "Nhận result/schema/artifact."
+      - "Event stale không ghi đè."
+      - "Exit 0 không tự Done."
+    implementation_map:
+      - "src/application/use-cases/runs/{dispatch-step,record-step-result}.ts"
+      - "tests/unit/application/, tests/e2e/ (fake executors)"
+
+  - key: OMI-018
+    title: "Failover từ checkpoint"
+    type: task
+    parent: EP-03
+    milestone: M2
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-015, OMI-017, OMI-027]
+    objective: "Khi gặp limit, chuyển sang profile phù hợp và tiếp tục từ checkpoint mà không mất counter chất lượng."
+    scope:
+      in:
+        - "Quy trình failover architecture.md §7."
+      out:
+        - "Giảm chất lượng hoặc chuyển API trả phí âm thầm."
+    acceptance_criteria:
+      - "Limit → stop writer → reconcile → profile khác → attempt mới."
+      - "Không reset quality counter."
+      - "Hết candidate thì waiting_resource."
+    implementation_map:
+      - "src/application/use-cases/profiles/failover-step.ts"
+      - "tests/e2e/ (fault injection)"
+
+  # ───────────────────────────── EP-04 ─────────────────────────────
+  - key: EP-04
+    title: "GitHub & Git delivery"
+    type: epic
+    area: github
+    objective: "Task/PR/merge/Done có truy vết."
+    outcome:
+      - "Milestone chính M2–M3 (không gán một native milestone; từng sub-issue mang milestone riêng)."
+      - "Issue → branch/worktree → PR develop → gate → merge → Done có mapping và đối soát."
+
+  - key: OMI-019
+    title: "Init và GitHub Project mapping"
+    type: task
+    parent: EP-04
+    milestone: M3
+    priority: P1
+    role: Developer
+    area: github
+    workflow: feature
+    blocked_by: [OMI-006, OMI-007, OMI-011]
+    objective: "omi init phát hiện và ánh xạ GitHub Project (mới hoặc có sẵn) bằng ID thật."
+    scope:
+      in:
+        - "Org/user Project; field/option IDs; preview thay đổi."
+      out:
+        - "Ghi đè cấu hình cũ; hardcode tên field thay ID."
+    acceptance_criteria:
+      - "Detect org/user Project, field/option IDs."
+      - "New template và existing mapping."
+      - "Preview thay đổi, không overwrite cấu hình cũ."
+    implementation_map:
+      - "src/application/use-cases/project/{initialize-project,inspect-project}.ts"
+      - "src/infrastructure/github/"
+      - "tests/contract/github/"
+
+  - key: OMI-020
+    title: "Import task/scope/dependencies"
+    type: task
+    parent: EP-04
+    milestone: M3
+    priority: P0
+    role: Developer
+    area: github
+    workflow: feature
+    blocked_by: [OMI-019, OMI-009]
+    objective: "Nhập Issue thành task snapshot với scope và dependency DAG."
+    scope:
+      in:
+        - "Snapshot/hash; scope milestone/iteration/list."
+      out:
+        - "Chọn task ngoài scope."
+    acceptance_criteria:
+      - "Issue snapshot/hash."
+      - "Scope milestone/iteration/list, dependency DAG."
+      - "Loại draft item chưa đủ điều kiện."
+      - "Không chọn task ngoài scope."
+    implementation_map:
+      - "src/application/use-cases/tasks/{import-task,select-ready-tasks}.ts"
+      - "src/domain/tasks/dependency-policy.ts"
+      - "tests/unit/, tests/contract/github/"
+
+  - key: OMI-021
+    title: "Git branch/worktree manager"
+    type: task
+    parent: EP-04
+    milestone: M2
+    priority: P0
+    role: Developer
+    area: delivery
+    workflow: feature
+    blocked_by: [OMI-001, OMI-010]
+    objective: "Mỗi task có branch từ develop và worktree riêng ngoài checkout chính, an toàn với thay đổi của người dùng."
+    scope:
+      in:
+        - "Worktree ở thư mục sibling; một writer/worktree."
+      out:
+        - "Auto stash/reset/drop file của PO."
+    acceptance_criteria:
+      - "Branch từ develop, worktree riêng task."
+      - "Phát hiện dirty user worktree."
+      - "Nested writers bị chặn."
+      - "Cleanup không mất thay đổi."
+    implementation_map:
+      - "src/infrastructure/git/"
+      - "src/application/ports/ (GitWorkspace)"
+      - "tests/integration/git/"
+
+  - key: OMI-022
+    title: "PR creation & Issue linkage"
+    type: task
+    parent: EP-04
+    milestone: M3
+    priority: P1
+    role: Developer
+    area: github
+    workflow: feature
+    blocked_by: [OMI-020, OMI-021, OMI-024]
+    objective: "Tạo PR vào develop có liên kết Issue đã xác minh, idempotent."
+    scope:
+      in:
+        - "Reference canonical, backlink, mapping local; tìm PR có sẵn trước khi tạo."
+      out:
+        - "Dựa vào closing keyword cho nhánh không mặc định."
+    acceptance_criteria:
+      - "PR vào develop, Issue reference/backlink/mapping đã xác minh."
+      - "Retry không tạo PR trùng."
+      - "Không dựa Closes cho non-default branch."
+    implementation_map:
+      - "src/application/use-cases/delivery/prepare-pr.ts"
+      - "src/infrastructure/github/"
+      - "tests/contract/github/"
+
+  - key: OMI-023
+    title: "Review/check gates & merge"
+    type: task
+    parent: EP-04
+    milestone: M3
+    priority: P0
+    role: Developer
+    role_detail: "Developer/QA"
+    area: delivery
+    workflow: feature
+    blocked_by: [OMI-017, OMI-022, OMI-029]
+    objective: "Merge task PR vào develop chỉ khi mọi gate đạt trên đúng revision, rồi cập nhật Done."
+    scope:
+      in:
+        - "Merge lock, fetch lại base, xác nhận merge commit từ remote."
+      out:
+        - "Giả lập native approval; tắt branch protection."
+    acceptance_criteria:
+      - "Reviewer độc lập."
+      - "Head/base validation; checks bắt buộc."
+      - "Merge queue, remote confirmation, Done."
+      - "Native approval không bị giả lập."
+    implementation_map:
+      - "src/domain/delivery/merge-policy.ts"
+      - "src/application/use-cases/delivery/merge-task-pr.ts"
+      - "tests/unit/domain/, tests/e2e/"
+
+  - key: OMI-024
+    title: "GitHub outbox & reconciliation"
+    type: task
+    parent: EP-04
+    milestone: M2
+    priority: P0
+    role: Developer
+    area: github
+    workflow: feature
+    blocked_by: [OMI-006, OMI-010]
+    objective: "Mọi side effect GitHub đi qua outbox có operation key và đối soát remote trước retry."
+    scope:
+      in:
+        - "Retry-after, rate limit, pagination; logical operation marker."
+      out:
+        - "Hứa exactly-once."
+    acceptance_criteria:
+      - "Retry/backoff/pagination."
+      - "Operation marker."
+      - "Timeout-after-success test."
+      - "GitHub offline giữ local state và sync lại không trùng."
+    implementation_map:
+      - "src/application/use-cases/sync/{reconcile-github,flush-outbox}.ts"
+      - "src/infrastructure/github/"
+      - "tests/integration/, tests/contract/github/"
+
+  # ───────────────────────────── EP-05 ─────────────────────────────
+  - key: EP-05
+    title: "Orchestration & recovery"
+    type: epic
+    area: runtime
+    objective: "Song song, checkpoint, retry, approval."
+    outcome:
+      - "Milestone chính M2–M3 (không gán một native milestone; từng sub-issue mang milestone riêng)."
+      - "Scheduler DAG, checkpoint nghiệp vụ, resume, 2+Architect+2, approval và vertical slice qua Coordinator bridge."
+
+  - key: OMI-025
+    title: "DAG scheduler/parallelism"
+    type: task
+    parent: EP-05
+    milestone: M3
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-017, OMI-020, OMI-010]
+    objective: "Scheduler chỉ dispatch task Ready trong scope, chạy song song có giới hạn."
+    scope:
+      in:
+        - "Giới hạn mặc định cấu hình được: 2 task, 4 worker, 1 worker/profile, 1 writer/worktree."
+      out:
+        - "Chọn task ngoài scope PO."
+    acceptance_criteria:
+      - "Ready-only dispatch, scope/priority, limits, blocked propagation."
+      - "Hai task độc lập chạy song song."
+      - "Không hai writer cùng worktree."
+    implementation_map:
+      - "src/domain/tasks/, src/application/use-cases/tasks/select-ready-tasks.ts"
+      - "tests/unit/, tests/e2e/"
+
+  - key: OMI-026
+    title: "Business checkpoint"
+    type: task
+    parent: EP-05
+    milestone: M2
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-012, OMI-010, OMI-017]
+    objective: "Checkpoint nghiệp vụ độc lập công cụ, đủ để tiếp tục công việc."
+    scope:
+      in:
+        - "Manifest architecture.md §10; checkpoint tại boundary."
+      out:
+        - "Copy credential vào snapshot."
+    acceptance_criteria:
+      - "Manifest có counters/versions/Git/uncommitted state."
+      - "Checkpoint tại boundary."
+      - "Interrupted snapshot được đánh dấu."
+      - "Test file/DB crash boundary."
+    implementation_map:
+      - "src/application/use-cases/runs/, src/infrastructure/artifacts/"
+      - "tests/integration/"
+
+  - key: OMI-027
+    title: "Resume/recovery engine"
+    type: task
+    parent: EP-05
+    milestone: M2
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-026, OMI-024, OMI-016]
+    objective: "Đối soát process/Git/GitHub rồi tiếp tục từ checkpoint mà không lặp side effect."
+    scope:
+      in:
+        - "Quy trình resume architecture.md §10."
+      out:
+        - "Phụ thuộc transcript cũ."
+    acceptance_criteria:
+      - "Reconcile process/Git/GitHub rồi resume."
+      - "Missing/hash mismatch được báo."
+      - "Không repeat merge/PR hoặc step đã hợp lệ."
+    implementation_map:
+      - "src/application/use-cases/runs/{pause-run,resume-run}.ts"
+      - "tests/e2e/ (fault injection)"
+
+  - key: OMI-028
+    title: "Architect escalation 2+2"
+    type: task
+    parent: EP-05
+    milestone: M3
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-008, OMI-025, OMI-026]
+    objective: "Rework controller 2 + Architect + 2 theo product-overview.md §10."
+    scope:
+      in:
+        - "Lưu phase, failedCycles, architectInterventionId."
+      out:
+        - "Dùng chung bộ đếm với lỗi hạ tầng."
+    acceptance_criteria:
+      - "Hai quality failures gọi Architect, thêm hai lần rồi blocked."
+      - "Lỗi hạ tầng không tiêu hao counter."
+      - "Task độc lập tiếp tục."
+    implementation_map:
+      - "src/domain/runs/retry-policy.ts"
+      - "tests/unit/domain/, tests/e2e/"
+
+  - key: OMI-029
+    title: "Approval lifecycle"
+    type: task
+    parent: EP-05
+    milestone: M3
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-008, OMI-011, OMI-006]
+    objective: "Approval có phiên bản, gắn subject/actor/source, không thể bị agent tự tạo."
+    scope:
+      in:
+        - "CLI tương tác và GitHub actor allowlist."
+      out:
+        - "approved=true trong JSON của worker."
+    acceptance_criteria:
+      - "Subject hash/actor/source, approve/reject/stale."
+      - "Business/cost trước thực thi."
+      - "Agent JSON không tự tạo approval."
+      - "CLI/GitHub pathways."
+    implementation_map:
+      - "src/domain/approvals/"
+      - "src/application/use-cases/approvals/{request-approval,record-approval}.ts"
+      - "tests/unit/domain/, tests/integration/"
+
+  - key: OMI-030
+    title: "Coordinator bridge & vertical slice"
+    type: task
+    parent: EP-05
+    milestone: M3
+    priority: P0
+    role: Developer
+    area: runtime
+    workflow: feature
+    blocked_by: [OMI-018, OMI-023, OMI-025, OMI-028, OMI-029]
+    objective: "Coordinator Claude Code gọi CLI qua bridge và xử lý một Issue đến Done bằng workflow fixture tối thiểu."
+    scope:
+      in:
+        - "Bridge skill; pause/new session/manual coordinator-profile switch."
+      out:
+        - "Full library templates M4."
+    acceptance_criteria:
+      - "Bridge Claude Code gọi CLI."
+      - "Minimal fixture workflow xử lý Issue đến Done."
+      - "Pause/new session/manual coordinator-profile switch."
+      - "Không yêu cầu full library templates M4."
+    implementation_map:
+      - "templates/bridges/"
+      - "src/interfaces/cli/commands/"
+      - "tests/e2e/"
+
+  # ───────────────────────────── EP-06 ─────────────────────────────
+  - key: EP-06
+    title: "Roles, skills & workflows"
+    type: epic
+    milestone: M4
+    area: workflows
+    objective: "Bộ mẫu toàn vòng đời."
+    outcome:
+      - "Bộ template role/skill/rule/workflow phủ vòng đời đã chốt, chạy bằng cùng engine."
+
+  - key: OMI-031
+    title: "Curate bốn nguồn skills"
+    type: task
+    parent: EP-06
+    milestone: M4
+    priority: P1
+    role: Architect
+    role_detail: "Architect/Designer"
+    area: workflows
+    workflow: feature
+    blocked_by: [OMI-007]
+    objective: "Chọn lọc và chuẩn hóa skills từ Superpowers, Taste, Ponytail, UI UX Pro Max thành bộ riêng có provenance."
+    scope:
+      in:
+        - "Ghi source/commit/license/attribution và file đi kèm; kiểm tra license đúng tài nguyên lấy."
+      out:
+        - "Cài nguyên cả bốn bộ."
+    acceptance_criteria:
+      - "Chọn lọc Superpowers/Taste/Ponytail/UI UX Pro Max."
+      - "Ghi source commit/license/attribution."
+      - "Loại xung đột điều phối."
+      - "Không copy nguyên bộ thiếu review."
+    implementation_map:
+      - "templates/project/ (.omi-squad/skills/, provenance/skills.lock.json)"
+    review:
+      reviewers: ["Reviewer độc lập kiểm tra license/attribution"]
+
+  - key: OMI-032
+    title: "Role/rule templates & resolver"
+    type: task
+    parent: EP-06
+    milestone: M4
+    priority: P1
+    role: Architect
+    area: workflows
+    workflow: feature
+    blocked_by: [OMI-031, OMI-012]
+    objective: "Template role/rule và resolver chọn skill/rule xác định, có version/hash."
+    scope:
+      in:
+        - "Role không khóa tool/model."
+      out:
+        - "Nạp toàn bộ thư viện vào mọi agent."
+    acceptance_criteria:
+      - "Role không khóa tool/model."
+      - "Skill/rule resolution deterministic."
+      - "Versions/hashes."
+      - "Validate unknown reference và mandatory gate."
+    implementation_map:
+      - "templates/project/ (roles, rules)"
+      - "src/application/services/, src/infrastructure/config/"
+      - "tests/unit/"
+
+  - key: OMI-033
+    title: "Onboarding new/existing workflow"
+    type: task
+    parent: EP-06
+    milestone: M4
+    priority: P1
+    role: Architect
+    role_detail: "Architect/DevOps"
+    area: workflows
+    workflow: feature
+    blocked_by: [OMI-019, OMI-032]
+    objective: "Workflow khởi tạo/tiếp nhận dự án mới và có sẵn."
+    scope:
+      in:
+        - "Detect codebase, sinh config/plan."
+      out:
+        - "Ghi đè file hiện hữu."
+    acceptance_criteria:
+      - "Detect codebase, sinh config/plan."
+      - "Bảo toàn file hiện hữu."
+      - "Dry-run và fixtures repo mới/cũ."
+    implementation_map:
+      - "templates/project/workflows/"
+      - "src/application/use-cases/project/"
+      - "tests/fixtures/, tests/e2e/"
+
+  - key: OMI-034
+    title: "Idea → requirements → Issue workflow"
+    type: task
+    parent: EP-06
+    milestone: M4
+    priority: P1
+    role: BA
+    role_detail: "BA/Architect"
+    area: workflows
+    workflow: feature
+    blocked_by: [OMI-020, OMI-029, OMI-032]
+    objective: "Workflow biến ý tưởng thành yêu cầu đã duyệt và Issue có dependency."
+    scope:
+      in:
+        - "Phạm vi/AC/baseline được PO duyệt."
+      out:
+        - "Sinh mỗi step thành Issue."
+    acceptance_criteria:
+      - "Phạm vi/AC/baseline duyệt."
+      - "Decomposition có dependency."
+      - "Không sinh step thành Issue máy móc."
+      - "Ngoài scope chờ PO."
+    implementation_map:
+      - "templates/project/workflows/"
+      - "tests/e2e/"
+
+  - key: OMI-035
+    title: "Feature/bugfix/refactor/docs workflows"
+    type: task
+    parent: EP-06
+    milestone: M4
+    priority: P1
+    role: Developer
+    role_detail: "Developer/QA"
+    area: workflows
+    workflow: feature
+    blocked_by: [OMI-023, OMI-028, OMI-032]
+    objective: "Các workflow feature, bugfix, refactor và docs chạy bằng cùng engine."
+    scope:
+      in:
+        - "Role/review/gate rõ cho từng template."
+      out:
+        - "Engine riêng cho từng workflow."
+    acceptance_criteria:
+      - "Các template chạy bằng cùng engine, role/review/gate rõ."
+      - "Bug có regression."
+      - "Refactor giữ hành vi."
+      - "Docs có nghiệm thu."
+    implementation_map:
+      - "templates/project/workflows/"
+      - "tests/e2e/"
+
+  - key: OMI-036
+    title: "UI/UX và CI/CD workflows"
+    type: task
+    parent: EP-06
+    milestone: M4
+    priority: P1
+    role: Designer
+    role_detail: "Designer/DevOps"
+    area: workflows
+    workflow: feature
+    blocked_by: [OMI-029, OMI-032]
+    objective: "Workflow UI/UX và CI/CD với bằng chứng phù hợp."
+    scope:
+      in:
+        - "Design/visual evidence; pipeline output."
+      out:
+        - "Tự phát sinh chi phí dịch vụ."
+    acceptance_criteria:
+      - "Design/visual evidence và pipeline output phù hợp."
+      - "Project không có UI được skip có lý do."
+      - "Chi phí mới cần PO."
+    implementation_map:
+      - "templates/project/workflows/"
+      - "tests/e2e/"
+    review:
+      approval: "PO duyệt nếu phát sinh chi phí mới"
+
+  # ───────────────────────────── EP-07 ─────────────────────────────
+  - key: EP-07
+    title: "Release & deployment"
+    type: epic
+    milestone: M4
+    area: delivery
+    objective: "Phát hành và deploy có kiểm soát."
+    outcome:
+      - "Release và deploy có hai điểm duyệt riêng."
+
+  - key: OMI-037
+    title: "Release planning & PR"
+    type: task
+    parent: EP-07
+    milestone: M4
+    priority: P1
+    role: Release Manager
+    area: delivery
+    workflow: feature
+    blocked_by: [OMI-022, OMI-035]
+    objective: "Tạo Release Issue và PR develop → main theo đúng branch flow."
+    scope:
+      in:
+        - "Danh sách task thuộc release."
+      out:
+        - "Tạo nhánh release thay thế; tự merge main."
+    acceptance_criteria:
+      - "Release Issue, danh sách task, PR develop→main."
+      - "Giữ đúng branch flow."
+      - "Không tự merge main."
+    implementation_map:
+      - "src/domain/delivery/release-policy.ts"
+      - "src/application/use-cases/delivery/prepare-release.ts"
+      - "tests/unit/, tests/contract/github/"
+
+  - key: OMI-038
+    title: "Release PO approval gate"
+    type: task
+    parent: EP-07
+    milestone: M4
+    priority: P0
+    role: Developer
+    area: delivery
+    workflow: feature
+    blocked_by: [OMI-029, OMI-037]
+    objective: "Release chỉ merge khi PO duyệt đúng head và checks đạt."
+    scope:
+      in:
+        - "Approval gắn PR/head; invalidation khi head đổi."
+      out:
+        - "Approval giả lập cùng GitHub identity."
+    acceptance_criteria:
+      - "Xác minh PO/revision, checks."
+      - "Head đổi làm approval stale."
+      - "Test repo native review restrictions."
+      - "Chặn nếu thiếu quyền cần thiết."
+    implementation_map:
+      - "src/domain/approvals/, src/domain/delivery/release-policy.ts"
+      - "tests/unit/, tests/live/ (sandbox)"
+
+  - key: OMI-039
+    title: "Tag/changelog/GitHub Release"
+    type: task
+    parent: EP-07
+    milestone: M4
+    priority: P1
+    role: DevOps
+    area: delivery
+    workflow: feature
+    blocked_by: [OMI-038, OMI-024]
+    objective: "Tạo tag/changelog/GitHub Release idempotent sau khi merge main."
+    scope:
+      in:
+        - "Notes đúng commit."
+      out:
+        - "Tạo release trước khi merge main."
+    acceptance_criteria:
+      - "Sau merge main mới tạo artifact release."
+      - "Tags/notes đúng commit."
+      - "Retry không tạo release trùng."
+    implementation_map:
+      - "src/infrastructure/github/"
+      - "tests/contract/github/"
+
+  - key: OMI-040
+    title: "Production deployment approval"
+    type: task
+    parent: EP-07
+    milestone: M4
+    priority: P0
+    role: Developer
+    area: delivery
+    workflow: feature
+    blocked_by: [OMI-029, OMI-039]
+    objective: "Deploy production cần approval riêng gắn artifact digest và environment."
+    scope:
+      in:
+        - "Approval deploy độc lập approval release."
+      out:
+        - "Dùng `latest` hoặc code đổi sau approval."
+    acceptance_criteria:
+      - "Approval riêng gắn digest/environment."
+      - "Release approval không đủ."
+      - "Thay artifact yêu cầu quyết định mới."
+    implementation_map:
+      - "src/domain/approvals/, src/domain/delivery/"
+      - "tests/unit/"
+
+  - key: OMI-041
+    title: "Deploy adapter & verification"
+    type: task
+    parent: EP-07
+    milestone: M4
+    priority: P1
+    role: DevOps
+    role_detail: "DevOps/QA"
+    area: delivery
+    workflow: feature
+    blocked_by: [OMI-040, OMI-036]
+    objective: "Dispatch deploy idempotent tới pipeline sandbox và xác minh kết quả."
+    scope:
+      in:
+        - "Artifact bất biến; verify; rollback chỉ theo runbook đã duyệt."
+      out:
+        - "Production thật trong test."
+    acceptance_criteria:
+      - "Một pipeline sandbox tham chiếu artifact bất biến."
+      - "Dispatch idempotent, kết quả verify."
+      - "Fail báo PO."
+      - "Rollback chỉ theo runbook duyệt."
+    implementation_map:
+      - "src/application/use-cases/delivery/deploy-release.ts"
+      - "src/infrastructure/github/"
+      - "tests/live/ (sandbox), docs/operations/"
+
+  - key: OMI-042
+    title: "Full lifecycle acceptance scenario"
+    type: task
+    parent: EP-07
+    milestone: M4
+    priority: P1
+    role: QA
+    area: delivery
+    workflow: feature
+    blocked_by: [OMI-030, OMI-033, OMI-034, OMI-035, OMI-036, OMI-041]
+    objective: "Chứng minh vòng đời ý tưởng → task → develop → release → deploy sandbox."
+    scope:
+      in:
+        - "Sandbox; PO duyệt thật tại gate."
+      out:
+        - "Approval giả lập."
+    acceptance_criteria:
+      - "Chạy ý tưởng→task→develop→release→deploy sandbox."
+      - "Evidence đủ, hai approval riêng."
+      - "PO duyệt thực tế ở gate cần thiết."
+    implementation_map:
+      - "tests/e2e/, tests/live/"
+    review:
+      approval: "PO duyệt thực tế ở gate release và deploy"
+
+  # ───────────────────────────── EP-08 ─────────────────────────────
+  - key: EP-08
+    title: "Reliability & packaging"
+    type: epic
+    milestone: M5
+    area: tooling
+    objective: "Có thể cài, dùng, phục hồi và bảo trì."
+    outcome:
+      - "Fault tests, clean install, beta và release framework được PO duyệt (exit gate M5)."
+
+  - key: OMI-043
+    title: "Complete architecture/quality CI"
+    type: task
+    parent: EP-08
+    milestone: M5
+    priority: P0
+    role: Developer
+    area: tooling
+    workflow: feature
+    blocked_by: [OMI-001, OMI-007, OMI-032]
+    objective: "Hoàn thiện guard kiến trúc/chất lượng trong CI dựa trên baseline OMI-001."
+    scope:
+      in:
+        - "Layer/root/naming/cycles/schema drift; required checks."
+      out:
+        - "Wildcard exemption."
+    acceptance_criteria:
+      - "Guard đầy đủ layer/root/naming/cycles/schema drift."
+      - "Fixtures vi phạm phải fail."
+      - "Không có wildcard exemption."
+      - "Review required checks."
+    implementation_map:
+      - ".dependency-cruiser.cjs, tools/check-structure.ts, .github/workflows/"
+      - "tests/integration/tools/, tests/fixtures/architecture/"
+
+  - key: OMI-044
+    title: "Fault injection/regression suite"
+    type: task
+    parent: EP-08
+    milestone: M5
+    priority: P0
+    role: QA
+    area: tooling
+    workflow: feature
+    blocked_by: [OMI-018, OMI-023, OMI-027, OMI-028, OMI-040]
+    objective: "Ma trận lỗi bắt buộc của architecture.md §16 có regression test."
+    scope:
+      in:
+        - "Crash/timeout/stale/limits/cancel."
+      out:
+        - "Phụ thuộc quota thật."
+    acceptance_criteria:
+      - "Ma trận crash/timeout/stale/limits/cancel."
+      - "Xác minh no duplicate/no lost approval/no concurrent writer."
+      - "Tests không phụ thuộc real quota."
+    implementation_map:
+      - "tests/e2e/, tests/integration/"
+
+  - key: OMI-045
+    title: "Packaging/install/update"
+    type: task
+    parent: EP-08
+    milestone: M5
+    priority: P1
+    role: Developer
+    area: tooling
+    workflow: feature
+    blocked_by: [OMI-033, OMI-043, OMI-027]
+    objective: "Cài framework project-local, update có kiểm soát."
+    scope:
+      in:
+        - "npm pack chỉ dist/templates/schemas/migrations; `.omi-squad/tool/`; shim; update ba chiều."
+      out:
+        - "Global framework install; publish dịch vụ trả phí."
+    acceptance_criteria:
+      - "npm pack sạch."
+      - "Project-local install, preserve overrides."
+      - "Config/state migration+backup."
+      - "Clean WSL2 install không dùng global framework."
+    implementation_map:
+      - "package.json (files/bin), tools/ (pack:check)"
+      - "templates/project/"
+      - "tests/e2e/"
+
+  - key: OMI-046
+    title: "Operations/Claude Code handbook"
+    type: docs
+    parent: EP-08
+    milestone: M5
+    priority: P1
+    role: Writer
+    role_detail: "Technical Writer"
+    area: tooling
+    workflow: docs
+    blocked_by: [OMI-030, OMI-041, OMI-045]
+    objective: "Tài liệu vận hành khớp hành vi CLI thật."
+    scope:
+      in:
+        - "Hướng dẫn và compatibility matrix."
+      out:
+        - "Mô tả lệnh chưa được implement như đã có."
+    acceptance_criteria:
+      - "Hướng dẫn init/login/run/pause/resume/retry/update/recovery."
+      - "Compatibility matrix, known limitations, folder rules."
+      - "Đối chiếu CLI thật."
+    implementation_map:
+      - "docs/operations/"
+
+  - key: OMI-047
+    title: "Beta acceptance trên project thử"
+    type: task
+    parent: EP-08
+    milestone: M5
+    priority: P1
+    role: QA
+    role_detail: "QA/PO"
+    area: delivery
+    workflow: research
+    blocked_by: [OMI-042, OMI-044, OMI-045, OMI-046]
+    objective: "Nghiệm thu beta trên một repo mới và một repo có sẵn."
+    scope:
+      in:
+        - "Checklist v0.1 (ma trận AT-01–AT-14)."
+      out:
+        - "Đổi blocked thành pass bằng lời giải thích."
+    acceptance_criteria:
+      - "Một repo mới và một repo có sẵn."
+      - "Log đã khử secret."
+      - "Checklist v0.1."
+      - "Mọi blocker có Issue và quyết định rõ."
+    implementation_map:
+      - "tests/live/, docs/operations/"
+    review:
+      approval: "PO tham gia nghiệm thu"
+
+  - key: OMI-048
+    title: "Release omi-squad v0.1"
+    type: release
+    parent: EP-08
+    milestone: M5
+    priority: P1
+    role: Release Manager
+    role_detail: "Release Manager/PO"
+    area: delivery
+    workflow: release
+    blocked_by: [OMI-047]
+    objective: "Phát hành omi-squad v0.1."
+    scope:
+      in:
+        - "Issue release framework, PR develop→main, package/tag/changelog."
+      out:
+        - "Tự publish dịch vụ mất phí."
+    acceptance_criteria:
+      - "Issue release framework."
+      - "PR develop→main được PO duyệt."
+      - "Package/tag/changelog và known limitations."
+      - "Không tự publish dịch vụ mất phí."
+    implementation_map:
+      - "CHANGELOG.md, package.json"
+    review:
+      approval: "PO duyệt PR develop → main"
