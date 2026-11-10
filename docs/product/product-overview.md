@@ -25,12 +25,12 @@ Framework phải có runtime thực sự để chạy process, quản lý trạn
 | Thành phần | Phạm vi đã chốt |
 |---|---|
 | Người sử dụng chính | PO trực tiếp điều khiển squad |
-| Coordinator | Phiên làm việc chính của Claude Code |
+| Coordinator | Phiên làm việc chính của Claude Code, chạy trên Windows (ADR-0012) |
 | Agent thực thi | Claude Code hoặc Codex |
 | Đơn vị cài đặt | Mỗi project/repository cài riêng framework và cấu hình |
 | Workspace | Một repository và một GitHub Project |
 | Loại dự án | Dự án mới và dự án có sẵn |
-| Môi trường bản đầu | Windows qua WSL2; các process chạy trong WSL2 |
+| Môi trường bản đầu | Coordinator chạy trên Windows; runtime, agent thực thi, worktree và state chạy trong WSL2 (quyết định PO 10/11/2026, ADR-0012) |
 | Giao diện | Phiên Claude Code, CLI riêng, GitHub Issues/Project/PR |
 | Credential | Profile đăng nhập subscription; không lấy API key làm mô hình bản đầu |
 | Khi đóng Coordinator | Dừng công việc, lưu checkpoint; PO mở phiên mới và yêu cầu tiếp tục |

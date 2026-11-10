@@ -1,6 +1,10 @@
 # GitHub Project và mapping backlog
 
-Kết quả bootstrap ngày 2026-11-10. Nguồn dữ liệu: [github-backlog.yaml](github-backlog.yaml)
+**Bản ghi cấu hình**, không theo dõi tiến độ: trạng thái, assignee và phạm vi hiện hành của task
+chỉ xem trên [GitHub Project](https://github.com/orgs/omi-hub-services/projects/1) (AGENTS.md §8).
+File này chỉ cập nhật khi cấu hình Project/repo thay đổi.
+
+Kết quả bootstrap ngày 2026-11-10. Nguồn dữ liệu seed: [github-backlog.yaml](github-backlog.yaml)
 (cross-check tự động với [project-plan.md](project-plan.md)). Công cụ áp dụng:
 `tools/github-bootstrap/main.ts` (`validate` | `plan` | `apply`), idempotent theo marker
 `<!-- omi-squad:plan-key=KEY -->` trong body Issue. Journal và mapping ID đầy đủ (kể cả node ID)
@@ -14,20 +18,20 @@ nằm ở `.tmp/github-bootstrap/` (gitignored, không chứa token).
 | Branches           | `main` (release), `develop` (integration) — cùng seed commit `05a74cf`                         |
 | GitHub Project     | [omi-squad delivery — #1](https://github.com/orgs/omi-hub-services/projects/1) (org, private) |
 | Project node ID    | `PVT_kwDOFSS4LM4Bq8Hl`; repository đã được liên kết vào Project                                 |
-| Items              | 56 (8 Epic + 48 sub-issue), Status khởi tạo `Backlog`                                          |
+| Items bootstrap    | 56 (8 Epic + 48 sub-issue); Issue thêm sau đó tra theo field Plan Key trên Project             |
 
 ## Milestones
 
-Milestone lấy từ project-plan.md §2, không suy từ Epic cha. Số Issue mở gồm cả Epic.
+Milestone lấy từ project-plan.md §2, không suy từ Epic cha.
 
-| Milestone | GitHub | Issues |
-| --------- | ------ | ------ |
-| M0 — Feasibility | [#1](https://github.com/omi-hub-services/omi/milestone/1) | 7 |
-| M1 — Core foundation | [#2](https://github.com/omi-hub-services/omi/milestone/2) | 7 |
-| M2 — Execution | [#3](https://github.com/omi-hub-services/omi/milestone/3) | 11 |
-| M3 — Task delivery | [#4](https://github.com/omi-hub-services/omi/milestone/4) | 8 |
-| M4 — Full lifecycle | [#5](https://github.com/omi-hub-services/omi/milestone/5) | 14 |
-| M5 — v0.1 acceptance | [#6](https://github.com/omi-hub-services/omi/milestone/6) | 7 |
+| Milestone            | GitHub                                                    |
+| -------------------- | --------------------------------------------------------- |
+| M0 — Feasibility     | [#1](https://github.com/omi-hub-services/omi/milestone/1) |
+| M1 — Core foundation | [#2](https://github.com/omi-hub-services/omi/milestone/2) |
+| M2 — Execution       | [#3](https://github.com/omi-hub-services/omi/milestone/3) |
+| M3 — Task delivery   | [#4](https://github.com/omi-hub-services/omi/milestone/4) |
+| M4 — Full lifecycle  | [#5](https://github.com/omi-hub-services/omi/milestone/5) |
+| M5 — v0.1 acceptance | [#6](https://github.com/omi-hub-services/omi/milestone/6) |
 
 EP-04 và EP-05 trải M2–M3 nên không gán một native milestone; từng sub-issue mang milestone
 riêng. OMI-021, OMI-024, OMI-026, OMI-027 được kéo vào M2 đúng kế hoạch.
@@ -54,72 +58,75 @@ PO giao việc theo milestone. Assignee chỉ là tài khoản GitHub thật; ro
 
 ## Quan hệ Issue
 
-- **Parent/sub-issue:** native sub-issues, 48 cạnh (mỗi task đúng một Epic).
-- **Dependencies:** native issue dependencies (blocked by), 118 cạnh, đúng bằng tổng
-  `blocked_by` trong manifest; đã kiểm tra lại từ remote là không có vòng.
+- **Parent/sub-issue:** native sub-issues (mỗi task đúng một Epic).
+- **Dependencies:** native issue dependencies (blocked by); lúc bootstrap khớp đúng `blocked_by`
+  trong manifest và không có vòng. Dependency hiện hành xem trên GitHub.
 - Body mỗi Issue có mục tiêu, phạm vi, acceptance criteria, implementation map, dependency URL
   thật, workflow/role/checks/approval theo template project-plan.md §7.
 
-## Epic và Issue
+## Mapping Plan key → Issue (bootstrap)
 
-| Plan key | Issue | Title | Work Type | Milestone | Priority | Blocked by |
-| -------- | ----- | ----- | --------- | --------- | -------- | ---------- |
-| **EP-01** | [#1](https://github.com/omi-hub-services/omi/issues/1) | **Bootstrap & feasibility** | Epic | M0 | — | — |
-| OMI-001 | [#2](https://github.com/omi-hub-services/omi/issues/2) | Scaffold clean architecture | Task | M0 | P0 | — |
-| OMI-002 | [#3](https://github.com/omi-hub-services/omi/issues/3) | PoC Claude Code subscription worker | Spike | M0 | P0 | #2 |
-| OMI-003 | [#4](https://github.com/omi-hub-services/omi/issues/4) | PoC Codex subscription worker | Spike | M0 | P0 | #2 |
-| OMI-004 | [#5](https://github.com/omi-hub-services/omi/issues/5) | PoC nhiều profile và continuation | Spike | M0 | P0 | #3, #4 |
-| OMI-005 | [#6](https://github.com/omi-hub-services/omi/issues/6) | PoC lifecycle WSL2 | Spike | M0 | P0 | #3, #4 |
-| OMI-006 | [#7](https://github.com/omi-hub-services/omi/issues/7) | PoC GitHub capability | Spike | M0 | P0 | #2 |
-| **EP-02** | [#8](https://github.com/omi-hub-services/omi/issues/8) | **Domain & persistent state** | Epic | M1 | — | — |
-| OMI-007 | [#9](https://github.com/omi-hub-services/omi/issues/9) | Contract/schema v1 | Task | M1 | P0 | #2 |
-| OMI-008 | [#10](https://github.com/omi-hub-services/omi/issues/10) | Domain policies/state machines | Task | M1 | P0 | #9 |
-| OMI-009 | [#11](https://github.com/omi-hub-services/omi/issues/11) | SQLite schema/migration | Task | M1 | P0 | #9 |
-| OMI-010 | [#12](https://github.com/omi-hub-services/omi/issues/12) | Transaction, leases và audit | Task | M1 | P0 | #10, #11 |
-| OMI-011 | [#13](https://github.com/omi-hub-services/omi/issues/13) | CLI/IPC skeleton | Task | M1 | P0 | #9, #11 |
-| OMI-012 | [#14](https://github.com/omi-hub-services/omi/issues/14) | Artifact store & context packet | Task | M1 | P0 | #9, #11 |
-| **EP-03** | [#15](https://github.com/omi-hub-services/omi/issues/15) | **Agent execution & profiles** | Epic | M2 | — | — |
-| OMI-013 | [#16](https://github.com/omi-hub-services/omi/issues/16) | Production Claude adapter | Task | M2 | P0 | #3, #9, #14 |
-| OMI-014 | [#17](https://github.com/omi-hub-services/omi/issues/17) | Production Codex adapter | Task | M2 | P0 | #4, #9, #14 |
-| OMI-015 | [#18](https://github.com/omi-hub-services/omi/issues/18) | Profile registry & selector | Task | M2 | P0 | #5, #10, #11 |
-| OMI-016 | [#19](https://github.com/omi-hub-services/omi/issues/19) | Session supervisor/runtime | Task | M2 | P0 | #6, #12, #13 |
-| OMI-017 | [#20](https://github.com/omi-hub-services/omi/issues/20) | Dispatch và validate result | Task | M2 | P0 | #16, #17, #19, #25 |
-| OMI-018 | [#21](https://github.com/omi-hub-services/omi/issues/21) | Failover từ checkpoint | Task | M2 | P0 | #18, #20, #32 |
-| **EP-04** | [#22](https://github.com/omi-hub-services/omi/issues/22) | **GitHub & Git delivery** | Epic | M2–M3 (không gán) | — | — |
-| OMI-019 | [#23](https://github.com/omi-hub-services/omi/issues/23) | Init và GitHub Project mapping | Task | M3 | P1 | #7, #9, #13 |
-| OMI-020 | [#24](https://github.com/omi-hub-services/omi/issues/24) | Import task/scope/dependencies | Task | M3 | P0 | #23, #11 |
-| OMI-021 | [#25](https://github.com/omi-hub-services/omi/issues/25) | Git branch/worktree manager | Task | M2 | P0 | #2, #12 |
-| OMI-022 | [#26](https://github.com/omi-hub-services/omi/issues/26) | PR creation & Issue linkage | Task | M3 | P1 | #24, #25, #28 |
-| OMI-023 | [#27](https://github.com/omi-hub-services/omi/issues/27) | Review/check gates & merge | Task | M3 | P0 | #20, #26, #34 |
-| OMI-024 | [#28](https://github.com/omi-hub-services/omi/issues/28) | GitHub outbox & reconciliation | Task | M2 | P0 | #7, #12 |
-| **EP-05** | [#29](https://github.com/omi-hub-services/omi/issues/29) | **Orchestration & recovery** | Epic | M2–M3 (không gán) | — | — |
-| OMI-025 | [#30](https://github.com/omi-hub-services/omi/issues/30) | DAG scheduler/parallelism | Task | M3 | P0 | #20, #24, #12 |
-| OMI-026 | [#31](https://github.com/omi-hub-services/omi/issues/31) | Business checkpoint | Task | M2 | P0 | #14, #12, #20 |
-| OMI-027 | [#32](https://github.com/omi-hub-services/omi/issues/32) | Resume/recovery engine | Task | M2 | P0 | #31, #28, #19 |
-| OMI-028 | [#33](https://github.com/omi-hub-services/omi/issues/33) | Architect escalation 2+2 | Task | M3 | P0 | #10, #30, #31 |
-| OMI-029 | [#34](https://github.com/omi-hub-services/omi/issues/34) | Approval lifecycle | Task | M3 | P0 | #10, #13, #7 |
-| OMI-030 | [#35](https://github.com/omi-hub-services/omi/issues/35) | Coordinator bridge & vertical slice | Task | M3 | P0 | #21, #27, #30, #33, #34 |
-| **EP-06** | [#36](https://github.com/omi-hub-services/omi/issues/36) | **Roles, skills & workflows** | Epic | M4 | — | — |
-| OMI-031 | [#37](https://github.com/omi-hub-services/omi/issues/37) | Curate bốn nguồn skills | Task | M4 | P1 | #9 |
-| OMI-032 | [#38](https://github.com/omi-hub-services/omi/issues/38) | Role/rule templates & resolver | Task | M4 | P1 | #37, #14 |
-| OMI-033 | [#39](https://github.com/omi-hub-services/omi/issues/39) | Onboarding new/existing workflow | Task | M4 | P1 | #23, #38 |
-| OMI-034 | [#40](https://github.com/omi-hub-services/omi/issues/40) | Idea → requirements → Issue workflow | Task | M4 | P1 | #24, #34, #38 |
-| OMI-035 | [#41](https://github.com/omi-hub-services/omi/issues/41) | Feature/bugfix/refactor/docs workflows | Task | M4 | P1 | #27, #33, #38 |
-| OMI-036 | [#42](https://github.com/omi-hub-services/omi/issues/42) | UI/UX và CI/CD workflows | Task | M4 | P1 | #34, #38 |
-| **EP-07** | [#43](https://github.com/omi-hub-services/omi/issues/43) | **Release & deployment** | Epic | M4 | — | — |
-| OMI-037 | [#44](https://github.com/omi-hub-services/omi/issues/44) | Release planning & PR | Task | M4 | P1 | #26, #41 |
-| OMI-038 | [#45](https://github.com/omi-hub-services/omi/issues/45) | Release PO approval gate | Task | M4 | P0 | #34, #44 |
-| OMI-039 | [#46](https://github.com/omi-hub-services/omi/issues/46) | Tag/changelog/GitHub Release | Task | M4 | P1 | #45, #28 |
-| OMI-040 | [#47](https://github.com/omi-hub-services/omi/issues/47) | Production deployment approval | Task | M4 | P0 | #34, #46 |
-| OMI-041 | [#48](https://github.com/omi-hub-services/omi/issues/48) | Deploy adapter & verification | Task | M4 | P1 | #47, #42 |
-| OMI-042 | [#49](https://github.com/omi-hub-services/omi/issues/49) | Full lifecycle acceptance scenario | Task | M4 | P1 | #35, #39, #40, #41, #42, #48 |
-| **EP-08** | [#50](https://github.com/omi-hub-services/omi/issues/50) | **Reliability & packaging** | Epic | M5 | — | — |
-| OMI-043 | [#51](https://github.com/omi-hub-services/omi/issues/51) | Complete architecture/quality CI | Task | M5 | P0 | #2, #9, #38 |
-| OMI-044 | [#52](https://github.com/omi-hub-services/omi/issues/52) | Fault injection/regression suite | Task | M5 | P0 | #21, #27, #32, #33, #47 |
-| OMI-045 | [#53](https://github.com/omi-hub-services/omi/issues/53) | Packaging/install/update | Task | M5 | P1 | #39, #51, #32 |
-| OMI-046 | [#54](https://github.com/omi-hub-services/omi/issues/54) | Operations/Claude Code handbook | Docs | M5 | P1 | #35, #48, #53 |
-| OMI-047 | [#55](https://github.com/omi-hub-services/omi/issues/55) | Beta acceptance trên project thử | Task | M5 | P1 | #49, #52, #53, #54 |
-| OMI-048 | [#56](https://github.com/omi-hub-services/omi/issues/56) | Release omi-squad v0.1 | Release | M5 | P1 | #55 |
+Chỉ là ánh xạ khóa kế hoạch sang số Issue; milestone, priority, dependency và trạng thái hiện
+hành xem trên GitHub Project.
+
+| Plan key | Issue | Title |
+| -------- | ----- | ----- |
+| **EP-01** | [#1](https://github.com/omi-hub-services/omi/issues/1) | **Bootstrap & feasibility** |
+| OMI-001 | [#2](https://github.com/omi-hub-services/omi/issues/2) | Scaffold clean architecture |
+| OMI-002 | [#3](https://github.com/omi-hub-services/omi/issues/3) | PoC Claude Code subscription worker |
+| OMI-003 | [#4](https://github.com/omi-hub-services/omi/issues/4) | PoC Codex subscription worker |
+| OMI-004 | [#5](https://github.com/omi-hub-services/omi/issues/5) | PoC nhiều profile và continuation |
+| OMI-005 | [#6](https://github.com/omi-hub-services/omi/issues/6) | PoC lifecycle WSL2 |
+| OMI-006 | [#7](https://github.com/omi-hub-services/omi/issues/7) | PoC GitHub capability |
+| **EP-02** | [#8](https://github.com/omi-hub-services/omi/issues/8) | **Domain & persistent state** |
+| OMI-007 | [#9](https://github.com/omi-hub-services/omi/issues/9) | Contract/schema v1 |
+| OMI-008 | [#10](https://github.com/omi-hub-services/omi/issues/10) | Domain policies/state machines |
+| OMI-009 | [#11](https://github.com/omi-hub-services/omi/issues/11) | SQLite schema/migration |
+| OMI-010 | [#12](https://github.com/omi-hub-services/omi/issues/12) | Transaction, leases và audit |
+| OMI-011 | [#13](https://github.com/omi-hub-services/omi/issues/13) | CLI/IPC skeleton |
+| OMI-012 | [#14](https://github.com/omi-hub-services/omi/issues/14) | Artifact store & context packet |
+| **EP-03** | [#15](https://github.com/omi-hub-services/omi/issues/15) | **Agent execution & profiles** |
+| OMI-013 | [#16](https://github.com/omi-hub-services/omi/issues/16) | Production Claude adapter |
+| OMI-014 | [#17](https://github.com/omi-hub-services/omi/issues/17) | Production Codex adapter |
+| OMI-015 | [#18](https://github.com/omi-hub-services/omi/issues/18) | Profile registry & selector |
+| OMI-016 | [#19](https://github.com/omi-hub-services/omi/issues/19) | Session supervisor/runtime |
+| OMI-017 | [#20](https://github.com/omi-hub-services/omi/issues/20) | Dispatch và validate result |
+| OMI-018 | [#21](https://github.com/omi-hub-services/omi/issues/21) | Failover từ checkpoint |
+| **EP-04** | [#22](https://github.com/omi-hub-services/omi/issues/22) | **GitHub & Git delivery** |
+| OMI-019 | [#23](https://github.com/omi-hub-services/omi/issues/23) | Init và GitHub Project mapping |
+| OMI-020 | [#24](https://github.com/omi-hub-services/omi/issues/24) | Import task/scope/dependencies |
+| OMI-021 | [#25](https://github.com/omi-hub-services/omi/issues/25) | Git branch/worktree manager |
+| OMI-022 | [#26](https://github.com/omi-hub-services/omi/issues/26) | PR creation & Issue linkage |
+| OMI-023 | [#27](https://github.com/omi-hub-services/omi/issues/27) | Review/check gates & merge |
+| OMI-024 | [#28](https://github.com/omi-hub-services/omi/issues/28) | GitHub outbox & reconciliation |
+| **EP-05** | [#29](https://github.com/omi-hub-services/omi/issues/29) | **Orchestration & recovery** |
+| OMI-025 | [#30](https://github.com/omi-hub-services/omi/issues/30) | DAG scheduler/parallelism |
+| OMI-026 | [#31](https://github.com/omi-hub-services/omi/issues/31) | Business checkpoint |
+| OMI-027 | [#32](https://github.com/omi-hub-services/omi/issues/32) | Resume/recovery engine |
+| OMI-028 | [#33](https://github.com/omi-hub-services/omi/issues/33) | Architect escalation 2+2 |
+| OMI-029 | [#34](https://github.com/omi-hub-services/omi/issues/34) | Approval lifecycle |
+| OMI-030 | [#35](https://github.com/omi-hub-services/omi/issues/35) | Coordinator bridge & vertical slice |
+| **EP-06** | [#36](https://github.com/omi-hub-services/omi/issues/36) | **Roles, skills & workflows** |
+| OMI-031 | [#37](https://github.com/omi-hub-services/omi/issues/37) | Curate bốn nguồn skills |
+| OMI-032 | [#38](https://github.com/omi-hub-services/omi/issues/38) | Role/rule templates & resolver |
+| OMI-033 | [#39](https://github.com/omi-hub-services/omi/issues/39) | Onboarding new/existing workflow |
+| OMI-034 | [#40](https://github.com/omi-hub-services/omi/issues/40) | Idea → requirements → Issue workflow |
+| OMI-035 | [#41](https://github.com/omi-hub-services/omi/issues/41) | Feature/bugfix/refactor/docs workflows |
+| OMI-036 | [#42](https://github.com/omi-hub-services/omi/issues/42) | UI/UX và CI/CD workflows |
+| **EP-07** | [#43](https://github.com/omi-hub-services/omi/issues/43) | **Release & deployment** |
+| OMI-037 | [#44](https://github.com/omi-hub-services/omi/issues/44) | Release planning & PR |
+| OMI-038 | [#45](https://github.com/omi-hub-services/omi/issues/45) | Release PO approval gate |
+| OMI-039 | [#46](https://github.com/omi-hub-services/omi/issues/46) | Tag/changelog/GitHub Release |
+| OMI-040 | [#47](https://github.com/omi-hub-services/omi/issues/47) | Production deployment approval |
+| OMI-041 | [#48](https://github.com/omi-hub-services/omi/issues/48) | Deploy adapter & verification |
+| OMI-042 | [#49](https://github.com/omi-hub-services/omi/issues/49) | Full lifecycle acceptance scenario |
+| **EP-08** | [#50](https://github.com/omi-hub-services/omi/issues/50) | **Reliability & packaging** |
+| OMI-043 | [#51](https://github.com/omi-hub-services/omi/issues/51) | Complete architecture/quality CI |
+| OMI-044 | [#52](https://github.com/omi-hub-services/omi/issues/52) | Fault injection/regression suite |
+| OMI-045 | [#53](https://github.com/omi-hub-services/omi/issues/53) | Packaging/install/update |
+| OMI-046 | [#54](https://github.com/omi-hub-services/omi/issues/54) | Operations/Claude Code handbook |
+| OMI-047 | [#55](https://github.com/omi-hub-services/omi/issues/55) | Beta acceptance trên project thử |
+| OMI-048 | [#56](https://github.com/omi-hub-services/omi/issues/56) | Release omi-squad v0.1 |
 
 ## Views
 
@@ -134,37 +141,48 @@ Tạo bằng GraphQL `createProjectV2View`/`updateProjectV2View` (layout, filter
 | Active Runs       | Table  | `status:"In Progress","In Review","Waiting Resource"`   |
 | Release Readiness | Table  | `work-type:Release`                                     |
 
-### Bước UI còn thiếu (API không hỗ trợ)
+### Cấu hình làm trên UI (API không hỗ trợ), áp dụng 2026-11-10
 
-API chỉ nhận name/layout/filter/visible fields; group-by, sort và cột board phải làm trên UI:
+API chỉ nhận name/layout/filter/visible fields; phần dưới được làm trên UI và đọc lại qua API:
 
-1. **Delivery Board:** kiểm tra cột = Status (board mặc định nhóm theo field single-select đầu
-   tiên); sắp thứ tự cột theo Backlog → Done nếu khác.
-2. **Backlog:** Group by **Milestone**, Sort by **Priority** tăng dần.
-3. **Epic Breakdown:** Group by **Parent issue**.
-4. **Release Readiness:** khi có release, thêm milestone release vào filter
-   (ví dụ `work-type:Release,Task milestone:"M5 — v0.1 acceptance"`).
-5. Mở từng view, xác nhận filter hiển thị đúng item (filter đã đặt qua API nhưng kết quả lọc
-   chỉ xem được trên UI), rồi **Save**.
-6. Project không có field dependency: "hiển thị dependency" của Backlog xem qua trang Issue
-   (mục Relationships) hoặc body Issue.
-7. Built-in workflows (kiểm tra qua API 2026-11-10): chỉ **Auto-add sub-issues to project**
-   đang bật; Item closed, Pull request merged, Pull request linked, Item added, Auto-close
-   đều tắt. Giữ tắt các workflow đặt Done tự động: Done phải theo merge vào `develop` đã xác
-   nhận, và PR vào `develop` không đóng Issue bằng closing keyword.
+- **Delivery Board:** cột theo Status.
+- **Backlog:** Group by **Milestone**, Sort by **Priority** tăng dần, **Show hierarchy tắt** (để
+  task nằm đúng milestone của nó, không lồng dưới Epic có milestone khác).
+- **Epic Breakdown:** Group by **Parent issue**.
+- **Release Readiness:** khi có release, thêm milestone release vào filter.
+- Project không có field dependency: dependency xem ở trang Issue (mục Relationships).
+- Built-in workflows: chỉ **Auto-add sub-issues to project** bật; các workflow tự đặt Done đều
+  tắt vì Done phải theo merge vào `develop` đã xác nhận.
+
+## Branch protection (rulesets, bật 2026-11-10)
+
+Không có bypass actor, áp dụng cả admin.
+
+| Ruleset                                  | Nhánh     | Rules                                                                                                     |
+| ---------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------- |
+| `develop: PR + CI gates` (id 26922271)     | `develop` | PR bắt buộc; checks `check`, `issue-link` (strict, nhánh phải cập nhật); cấm force-push/xóa; 0 approval     |
+| `main: PR + CI + PO approval` (id 26922272) | `main`    | Như trên + 1 approval, approval cũ mất hiệu lực khi có commit mới, người push cuối không tự approve được |
+
+Task PR vào `develop` merge sau review độc lập (agent) và CI. Release PR vào `main` cần PO
+approve native.
+
+## Tài khoản GitHub
+
+| Tài khoản             | Vai trò                                                     | Quyền                  |
+| --------------------- | ----------------------------------------------------------- | ---------------------- |
+| `ttin-omihub`         | PO; approver release PR vào `main`; `gh` trong WSL2         | org admin, repo admin  |
+| `minibox-claude-code` | Agent/Coordinator trên Windows (ADR-0012); tác giả PR      | org member, repo admin |
+
+Release PR phải do tài khoản khác PO tạo để PO approve được.
 
 ## Branch/PR bootstrap
 
 - Seed commit `05a74cf` trên `main`: **ngoại lệ bootstrap một lần** vì remote rỗng; `develop`
-  tạo từ đó. Không commit trực tiếp nào khác vào `main`/`develop`.
-- Scaffold đi qua task branch `task/omi-001-scaffold` → PR vào `develop`:
-  [#57](https://github.com/omi-hub-services/omi/pull/57), body `Issue: #2`, backlink comment
-  trên [#2](https://github.com/omi-hub-services/omi/issues/2). OMI-001 đang **In Review**,
-  assignee `minibox-claude-code`; chưa merge.
+  tạo từ đó.
+- Scaffold OMI-001 vào `develop` qua PR [#57](https://github.com/omi-hub-services/omi/pull/57)
+  (merge commit `b31eb82`), sau review độc lập.
 
-## Giới hạn và việc còn lại
+## Giới hạn
 
-- Chưa có branch protection/ruleset cho `main`/`develop` (không bắt buộc trong bootstrap; cần
-  quyết định reviewer hợp lệ trước khi bật required review).
-- Reviewer độc lập: tài khoản bootstrap `minibox-claude-code` là tác giả PR nên không thể là
-  reviewer native của chính PR đó.
+- `tools/github-bootstrap` là công cụ một lần. **Không chạy lại `apply`**: nó đưa title/body
+  Issue về nội dung seed và sẽ ghi đè các chỉnh sửa đã làm trên GitHub sau bootstrap.

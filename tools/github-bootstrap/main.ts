@@ -682,6 +682,14 @@ async function main(command: string | undefined): Promise<void> {
     );
     return;
   }
+  // Bootstrap ran on 2026-11-10; GitHub is now authoritative. Re-applying would reset Issue
+  // titles/bodies to the frozen seed, so it needs an explicit acknowledgement.
+  if (command === "apply" && !process.argv.includes("--overwrite-github-edits")) {
+    console.error(
+      "apply refused: GitHub Issues are authoritative since bootstrap; re-applying overwrites edits made on GitHub. Pass --overwrite-github-edits only if that is intended.",
+    );
+    process.exit(2);
+  }
   if (command !== "plan" && command !== "apply") {
     console.error("usage: node tools/github-bootstrap/main.ts validate|plan|apply");
     process.exit(2);
