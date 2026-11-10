@@ -62,6 +62,9 @@ describe("dependency guard (.dependency-cruiser.cjs)", () => {
         "application-only-ports: src/application/use-cases/tasks/import-task.ts -> src/infrastructure/github/github-issues.ts",
         "interfaces-not-to-infrastructure: src/interfaces/cli/commands/run-commands.ts -> src/infrastructure/github/github-issues.ts",
         "interfaces-no-sql-github-spawn: src/interfaces/cli/commands/run-commands.ts -> child_process",
+        // OMI-011 AC-3: a command can reach neither SQLite adapters nor a SQL driver.
+        "interfaces-not-to-infrastructure: src/interfaces/cli/commands/state-commands.ts -> src/infrastructure/persistence/sqlite/sqlite-state-store.ts",
+        "interfaces-no-sql-github-spawn: src/interfaces/cli/commands/state-commands.ts -> ../../../../node_modules/better-sqlite3/lib/index.js",
       ]),
     );
     expect(violations.some((v) => v.rule.name === "no-circular")).toBe(true);
