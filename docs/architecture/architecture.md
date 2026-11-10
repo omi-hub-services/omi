@@ -56,7 +56,7 @@ Repository này chứa mã nguồn **omi-squad**, khác với project sẽ cài 
 | `migrations/` | Migration SQLite đánh số thứ tự | Migration database của project đích |
 | `schemas/` | JSON Schema sinh từ contract, phục vụ CLI/agent | Schema viết tay trùng nguồn contract |
 | `tests/` | Unit, integration, contract, E2E, fixtures | Mã production |
-| `tools/` | Script phục vụ build, codegen, kiểm tra kiến trúc | Chức năng người dùng đáng lẽ thuộc CLI |
+| `tools/` | Script phục vụ build, codegen, kiểm tra kiến trúc; dev tooling của Coordinator khi phát triển repo này (`tools/coordinator/`, tạm thời, thay bằng CLI `omi`; ADR-0014) | Chức năng người dùng đáng lẽ thuộc CLI |
 | `docs/` | Tài liệu sản phẩm, kiến trúc, vận hành và ADR | Artifacts của một lần chạy agent |
 | `.github/` | Issue/PR templates, workflow CI của framework | Profile subscription hoặc log |
 | `.claude/` | Chỉ dẫn phát triển framework cho Claude Code | Bản cài omi-squad của project khác |
@@ -439,6 +439,7 @@ CI kiểm tra root allowlist, import direction, cycles, file naming, generated s
 | ADR-0009 | Chọn lọc skills thành bộ riêng | Tránh nhiều framework cùng điều phối |
 | ADR-0010 | Runtime version riêng mỗi project | Update có kiểm soát, không phụ thuộc global install |
 | ADR-0012 | Coordinator trên Windows, runtime/worker trong WSL2 | Quyết định PO 10/11/2026; lifecycle xuyên ranh giới cần PoC (OMI-005) |
+| ADR-0014 | Dev tooling Coordinator ở `tools/coordinator/` | Tạm thời tới khi có CLI `omi`; script trước, LLM sau (OMI-050) |
 
 ## 16. Kiểm chứng kiến trúc
 

@@ -94,7 +94,18 @@ Live run by the **Coordinator** on 2026-11-10 (07:30:13–07:30:35 UTC) at commi
 `task/omi-002-claude-subscription-poc`, profile `~/.claude-profiles/b`:
 `OMI_LIVE_CLAUDE_CONFIG_DIR=$HOME/.claude-profiles/b npm run test:live` → exit 0, 5/5 tests
 passed. Source: `.tmp/live/omi-002-claude-subscription-evidence.json` and
-`.tmp/live/omi-002-*.events.jsonl` (gitignored, not committed).
+`.tmp/live/omi-002-*.events.jsonl` (gitignored, not committed). The tables and findings below
+come from this run.
+
+**Re-run on `b0ab3b3`** (the merged head of PR #60, with the tightened assertions from "Changes
+after the run"), same day, same profile and environment: exit 0, **5/5 tests passed** —
+read-only 5.2 s, edit 5.9 s, error 2.2 s, cancel 4.3 s. Every case reported
+`apiKeySource: none`; `auth status` gave `authMethod: claude.ai`, `apiProvider: firstParty`,
+subscription `pro`; no forbidden auth variable in the child env. Sources: the PR #60 body and the
+independent review comment on PR #60 (which read the re-run evidence in `.tmp/live/`). The
+re-run evidence recorded `cancel.afterMs: 2709`, below the scheduled 3000 ms delay, because the
+test times with `Date.now()` and the WSL2 clock jumped; switching to `performance.now()` is
+tracked in OMI-013 (#16).
 
 Environment: Ubuntu 24.04.5 LTS on WSL2 (kernel 5.15.167.4-microsoft-standard-WSL2), Node
 v24.22.2, Git 2.43.0, gh 2.103.3 (2026-10-26), Claude Code 2.1.322.
@@ -153,8 +164,8 @@ Earlier, without `OMI_LIVE_CLAUDE_CONFIG_DIR`, `npm run test:live` failed the su
 
 ### Changes after the run
 
-Made after `f141f34` from the findings above, in the follow-up commit. They are **not yet re-run
-live**; every new assertion holds for the values recorded in this run:
+Made after `f141f34` from the findings above, in the follow-up commit `b0ab3b3`. They were
+**re-run live on `b0ab3b3` with 5/5 passing** (see Evidence):
 
 - Cancel trigger matches `system/init` instead of any `system` event (in this run SIGINT still
   landed after `init`, because the hooks finished within the 3 s delay).
@@ -179,8 +190,8 @@ live**; every new assertion holds for the values recorded in this run:
 | ------------------------------------------------------------- | --------------------------------------------------------- |
 | Missing profile config fails the live suite loudly            | Proven                                                    |
 | Child env carries no API key or OAuth token                   | Proven (allowlist + env-guard case)                       |
-| Read-only step on a subscription login                        | Proven (one run, one profile)                             |
-| Edit step on a temp repo, verified on disk                    | Proven (one run, one profile)                             |
+| Read-only step on a subscription login                        | Proven (two runs, one profile)                            |
+| Edit step on a temp repo, verified on disk                    | Proven (two runs, one profile)                            |
 | Error classification (invalid model)                          | Proven                                                    |
 | Cancel of a tool-less run via SIGINT within a bounded time    | Proven                                                    |
 | `apiKeySource == "none"` corresponds to a subscription login  | Corroborated by `auth status` (`authMethod: claude.ai`) on profile `b` |
@@ -189,8 +200,8 @@ live**; every new assertion holds for the values recorded in this run:
 | Concurrency (more than one worker at a time)                  | **Not proven** — OMI-004                                  |
 | Cancel of a worker running tool subprocesses (Bash)           | **Not proven** — the cancel case has no tools             |
 | Cancel from the Windows Coordinator across the WSL boundary   | **Not proven** — OMI-005                                  |
-| Repeatability across runs / other Claude Code versions        | **Not proven** — one run on 2.1.322                       |
-| The post-run test changes (see above)                         | Not re-run live yet                                       |
+| Repeatability across runs / other Claude Code versions        | Partly — two passing runs on 2.1.322 (`f141f34`, `b0ab3b3`); other versions not proven |
+| The post-run test changes (see above)                         | Proven — re-run live on `b0ab3b3`, 5/5 passed             |
 
 ## Risks
 

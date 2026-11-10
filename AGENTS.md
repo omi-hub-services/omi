@@ -118,3 +118,15 @@ checked license.
   configuration only; `docs/planning/github-backlog.yaml` is a frozen bootstrap seed.
 - The Coordinator runs on Windows and task work runs in WSL2 (ADR-0012). Release PRs into
   `main` are opened by an account other than the PO so the PO can approve them.
+
+## 9. Operational work: script first, LLM second
+
+- Deterministic operational steps — reading Project/PR/CI/worker status, changing Status,
+  creating/pushing/deleting branches, opening and merging PRs, closing Issues — go through
+  scripts (`tools/coordinator/`, later the `omi` CLI; ADR-0014), not hand-written `gh`/`git`
+  sequences or LLM reasoning. Use the skills `/omi-status` and `/omi-next`.
+- Use the LLM only for judgement: choosing between tasks, writing worker prompts, reviewing,
+  and deciding what to do when a step fails or is refused.
+- A script that refuses a step is a gate, not an obstacle: fix the cause or ask the PO; never
+  work around it with raw commands. Business and cost decisions go to the PO.
+- If a deterministic step keeps being done by hand, add it to the script instead.
