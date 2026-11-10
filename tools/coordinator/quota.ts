@@ -51,9 +51,14 @@ function logs() {
   const dir = join(home, runs);
   let names = [];
   try { names = readdirSync(dir).filter((n) => n.startsWith("omi-") && n.endsWith(".jsonl")); } catch { return; }
-  const files = names.map((n) => ({ n, m: statSync(join(dir, n)).mtimeMs })).sort((a, b) => b.m - a.m);
+  // A log deleted or unreadable between readdir and stat/read is skipped, not fatal.
+  const files = names.flatMap((n) => {
+    try { return [{ n, m: statSync(join(dir, n)).mtimeMs }]; } catch { return []; }
+  }).sort((a, b) => b.m - a.m);
   for (const f of files.slice(0, MAX_LOGS)) {
-    const event = lastRateLimitEvent(readFileSync(join(dir, f.n), "utf8"));
+    let text;
+    try { text = readFileSync(join(dir, f.n), "utf8"); } catch { continue; }
+    const event = lastRateLimitEvent(text);
     if (event) emit({ kind: "log", file: f.n, mtime: Math.floor(f.m / 1000), event });
   }
 }
@@ -200,18 +205,13 @@ function codexWindow(raw: unknown): QuotaWindow | null {
 export function parseCodexRateLimits(result: unknown, observedAt: number): QuotaReading {
   const root = asObject(result, "codex rateLimits result");
   const limits = asObject(root.rateLimits, "codex rateLimits");
-  const windows = [codexWindow(limits.primary), codexWindow(limits.secondary)];
-  const durations = [objOrNull(limits.primary), objOrNull(limits.secondary)].map((w) =>
-    num(w?.windowDurationMins),
-  );
-  // primary is the 5-hour window and secondary the weekly one; the durations confirm it.
-  const swapped = (durations[0] ?? 0) > (durations[1] ?? Infinity);
   const reached = text(limits.rateLimitReachedType);
+  // primary is the 5-hour window and secondary the weekly one (codex-cli 0.167.0).
   return {
     source: "codex-app-server",
     observedAt,
-    fiveHour: windows[swapped ? 1 : 0] ?? null,
-    sevenDay: windows[swapped ? 0 : 1] ?? null,
+    fiveHour: codexWindow(limits.primary),
+    sevenDay: codexWindow(limits.secondary),
     status: reached ?? "allowed",
     limited: reached !== null,
     planType: text(limits.planType),
@@ -386,12 +386,23 @@ export function windowLeft(w: QuotaWindow | null, now: number): number | null {
   return round1(Math.max(0, 100 - w.usedPercent));
 }
 
-export function evaluate(q: ProfileQuota, settings: QuotaSettings, now: number): Candidate {
+/**
+ * `probed`: the reading came from a run with `--probe`. Without it a profile with no data is
+ * blocked (it may be exhausted, e.g. the Coordinator's own account); after a probe that still
+ * found nothing it stays usable, ranked last.
+ */
+export function evaluate(
+  q: ProfileQuota,
+  settings: QuotaSettings,
+  now: number,
+  probed = false,
+): Candidate {
   const r = q.reading;
   const base = { tool: q.tool, profile: q.profile, resetCredits: r?.resetCredits ?? null };
   if (!r) {
     const none = { fiveHourLeft: null, sevenDayLeft: null, score: null };
-    return { ...base, ...none, freshness: "unknown", blocked: null, blockedUntil: null };
+    const blocked = probed ? null : "no quota data; rerun pick-profile with --probe";
+    return { ...base, ...none, freshness: "unknown", blocked, blockedUntil: null };
   }
   const fiveHourLeft = windowLeft(r.fiveHour, now);
   const sevenDayLeft = windowLeft(r.sevenDay, now);
@@ -405,11 +416,14 @@ export function evaluate(q: ProfileQuota, settings: QuotaSettings, now: number):
     reasons.push(`7d ${String(sevenDayLeft)}% left < ${String(settings.minSevenDayLeftPercent)}%`);
     resets.push(r.sevenDay?.resetsAt ?? null);
   }
-  if (r.limited && reasons.length === 0) {
+  // A reported limit only blocks while a window is still to reset: once every reset time has
+  // passed, an old `rejected` reading no longer says anything about now.
+  const pending = [r.fiveHour, r.sevenDay].flatMap((w) =>
+    w?.resetsAt != null && w.resetsAt > now ? [w.resetsAt] : [],
+  );
+  if (r.limited && reasons.length === 0 && pending.length > 0) {
     reasons.push(`limit reached (${r.status ?? "unknown"})`);
-    for (const w of [r.fiveHour, r.sevenDay]) {
-      if (w?.resetsAt != null && w.resetsAt > now) resets.push(w.resetsAt);
-    }
+    resets.push(...pending);
   }
   const known = [fiveHourLeft, sevenDayLeft].filter((n): n is number => n !== null);
   const penalty = q.sharesCoordinatorAccount ? settings.coordinatorSharedPenalty : 0;
@@ -443,12 +457,14 @@ export function rankCandidates(candidates: readonly Candidate[]): Candidate[] {
 /**
  * Chooses the worker profile(s) for a task kind. `claude+codex-live` needs a Claude writer and a
  * Codex profile for live tests, both above threshold. Codex reset credits are never spent here.
+ * Without `probed` a profile with no quota data is never chosen (see `evaluate`).
  */
 export function pickProfile(
   kind: WorkerKind,
   quotas: readonly ProfileQuota[],
   settings: QuotaSettings,
   now: number,
+  probed = false,
 ): PickResult {
   const tools: WorkerProfile["tool"][] =
     kind === "claude+codex-live" ? ["claude", "codex"] : [kind];
@@ -458,7 +474,7 @@ export function pickProfile(
   const waits: (number | null)[] = [];
   for (const tool of tools) {
     const list = rankCandidates(
-      quotas.filter((q) => q.tool === tool).map((q) => evaluate(q, settings, now)),
+      quotas.filter((q) => q.tool === tool).map((q) => evaluate(q, settings, now, probed)),
     );
     ranked.push(...list);
     const best = list.find((c) => c.blocked === null);
