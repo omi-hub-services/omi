@@ -326,38 +326,46 @@ export async function verifyDeployments(session: ProbeSession): Promise<void> {
           : { result: "partial", note: `approvals by ${approvers.join(", ")}` };
       },
     });
-    await session.step({
+    const listed = await session.step({
       id: "deploy.state-read.deployments",
       capability: "deploy.state-read",
-      api: "REST GET /repos/{r}/deployments?environment={env} + /statuses",
+      api: "REST GET /repos/{r}/deployments?environment={env}",
       args: [
         "api",
         `repos/${session.repo}/deployments?environment=${state.environmentName}&per_page=10`,
       ],
       expect: "success",
-      observe: (stdout) => {
-        const latest = pickArray(parseJsonOutput(stdout), "")[0];
-        return {
-          deployments: pickArray(parseJsonOutput(stdout), "").length,
-          latestId: pickNumber(latest, "id") ?? null,
-          latestSha: pickString(latest, "sha") ?? null,
-          creator: pickString(latest, "creator.login") ?? null,
-        };
-      },
+      observe: (stdout) => ({ deployments: pickArray(parseJsonOutput(stdout), "").length }),
     });
-    const deployments = await session.gh([
-      "api",
-      `repos/${session.repo}/deployments?environment=${state.environmentName}&per_page=1`,
-    ]);
-    const latestId = pickNumber(pickArray(parseJsonOutput(deployments.stdout), "")[0], "id");
-    if (latestId !== undefined) {
+    // One deployment per gated run, created by the run's triggering actor. The 2026-11-10 run
+    // read only the newest one, which was the self-review run's; read every one instead and
+    // expect the approved run's deployment (created by its triggerer) to end in `success`.
+    for (const deployment of pickArray(parseJsonOutput(listed.stdout), "")) {
+      const id = pickNumber(deployment, "id");
+      if (id === undefined) continue;
+      const creator = pickString(deployment, "creator.login") ?? "unknown";
+      const isGate = creator === gate.triggeredBy;
       await session.step({
-        id: "deploy.state-read.deployment-statuses",
+        id: `deploy.state-read.deployment-statuses.${creator}`,
         capability: "deploy.state-read",
         api: "REST GET /repos/{r}/deployments/{id}/statuses",
-        args: ["api", `repos/${session.repo}/deployments/${String(latestId)}/statuses`],
+        args: ["api", `repos/${session.repo}/deployments/${String(id)}/statuses`],
         expect: "success",
+        // Statuses are listed newest first.
+        verify: (stdout): Verdict => {
+          const latest = pickString(pickArray(parseJsonOutput(stdout), "")[0], "state");
+          if (!isGate) return { result: "supported", note: `latest state ${latest ?? "none"}` };
+          return latest === "success"
+            ? { result: "supported", note: "approved run's deployment ended in success" }
+            : {
+                result: "partial",
+                note: `approved run's deployment latest state ${latest ?? "none"}`,
+              };
+        },
         observe: (stdout) => ({
+          deploymentId: id,
+          creator,
+          sha: pickString(deployment, "sha") ?? null,
           states: pickArray(parseJsonOutput(stdout), "")
             .map((s) => pickString(s, "state") ?? "?")
             .join(","),

@@ -454,7 +454,7 @@ export const CAPABILITIES = [
     id: "pr.link.non-default-base",
     title: "PR→Issue link: closing keyword, PR into non-default branch",
     consequence:
-      "OMI-022 task PRs into `develop`; fallback: explicit `Issue: #N` + close by OMI-024",
+      "OMI-022 task PRs into `develop`: GitHub does not link or close; use `Issue: #N` (timeline read-back) and OMI-024 closes the Issue after the verified merge",
   },
   {
     id: "pr.link.explicit-reference",
