@@ -26,7 +26,7 @@ adapter must not import test support. `npm run check` continues to exclude live 
 
 ## Invocation and isolation
 
-From the repository root, the Coordinator should run this **outside the worker sandbox**:
+To re-check from the repository root, run this **outside the worker sandbox**:
 
 ```sh
 OMI_LIVE_CODEX_HOME="$HOME/.codex-profiles/ggtintran" \
@@ -80,14 +80,16 @@ not prove an AC: the corresponding `checksPassed` and `structuredResultValid` mu
 
 The initial implementation supplied `--output-schema` twice in the error case; its exit 2 is
 **not** evidence of malformed-schema handling. The final harness supplies the option once and
-requires a schema-specific diagnostic. It has not been rerun live in this sandbox.
+requires a schema-specific diagnostic. The Coordinator verified this corrected case outside the
+sandbox in the passing live run described below.
 
 ## Auth cache and refresh
 
 The supplied WSL profile has a readable `CODEX_HOME/auth.json` with mode `chatgpt`, access and
-refresh tokens, and no API key. Only these validation facts were retained. This makes the file
-store a candidate for sequential workers, rather than evidence that authenticated execution or
-refresh succeeded.
+refresh tokens, and no API key. Only these validation facts were retained. The Coordinator live
+run proved authenticated read and edit execution through this file store for one profile, with
+no forbidden auth environment variables in the child. Token refresh and durable persistence of
+refreshed credentials remain unverified.
 
 [Official auth documentation](https://learn.chatgpt.com/docs/auth) describes `file` storage under
 `CODEX_HOME`, OS `keyring` storage, and automatic token refresh during use. The PoC selects the
@@ -107,7 +109,10 @@ describes JSONL events including `thread.started`, `turn.started`, `turn.complet
 `item.*` and `error`. Items can carry message text, command output or changes; `turn.completed`
 can carry usage. `--output-schema` requests a schema-constrained final response; `-o` saves it.
 The final harness generates that schema from Zod and validates the saved result independently.
-These event shapes are documentation-based expectations, not observations from this live attempt.
+The Coordinator live event logs confirmed `thread.started`, `turn.started`, `item.started`,
+`item.completed` and `turn.completed` in the successful read/edit runs. The cancel log ends after
+`turn.started`; the malformed-schema case emitted no JSONL events. Other documented event
+shapes, including `turn.failed` and `error`, were not observed in this run.
 
 The parser accepts only JSON objects with a string `type`, ignores empty lines and counts
 malformed/untyped lines. Classification requires exit 0, no signal, `turn.completed`, no error
@@ -130,10 +135,11 @@ Escalation is recorded and fails the real CLI cancellation assertion.
   replaced with `unknown`. No raw stdout, stderr, command, message, session ID or token is saved.
   Diagnostics in memory are scrubbed for keys, bearer values, token fields, JWTs and long tokens.
   Regexes are best effort; the field allowlist is the primary protection for saved logs.
-- Evidence is gitignored, written with restrictive creation permissions, and is not copied into
-  this ADR. A failure remains a failure; missing evidence is never interpreted as a pass.
+- Evidence is gitignored and written with restrictive creation permissions. Only summary
+  findings, rather than raw evidence, are copied into this ADR. A failure remains a failure;
+  missing evidence is never interpreted as a pass.
 
-## Attempt on 2026-11-10
+## Initial sandbox attempt on 2026-11-10
 
 One live attempt was made on the initial harness, with this exact command:
 
@@ -142,7 +148,8 @@ OMI_LIVE_CODEX_HOME="$HOME/.codex-profiles/ggtintran" \
   npm run test:live -- tests/live/codex-cli/codex-subscription-worker.test.ts
 ```
 
-Observed, scrubbed evidence in `.tmp/live/omi-003-codex-subscription-evidence.json`:
+The initial evidence writer recorded the following observations. The evidence path was later
+overwritten by the passing Coordinator run below:
 
 | Observation | Result |
 | --- | --- |
@@ -157,8 +164,32 @@ The installed CLI emitted a read-only-filesystem warning while handling `--versi
 (PATH alias creation). The worker profile is read-only under this sandbox. Actual exec stderr
 was not retained by the initial evidence writer, so its exact startup failure cause is
 **unverified**; do not claim token refresh or network failure was diagnosed. No sandbox
-workaround or second live attempt was made. The revised harness adds fixed diagnostic
-categories, corrects error-case argv, and stops after the first failure.
+workaround or second live attempt was made inside the worker sandbox. The revised harness adds
+fixed diagnostic categories, corrects error-case argv, and stops after the first failure.
+
+## Coordinator live run on 2026-11-10
+
+The Coordinator ran the corrected harness from revision `ae8fc54` outside the worker sandbox,
+using the direct Vitest command in §Invocation and isolation. The command exited 0 with 1/1
+tests passing in approximately 24 s. Evidence timestamps span 15:38:06–15:38:29 UTC.
+
+Redacted evidence: `.tmp/live/omi-003-codex-subscription-evidence.json` and
+`.tmp/live/omi-003-<case>.events.jsonl` on the machine that ran the test. The summary records
+`allChecksPassed: true`, with `checksPassed: true` for every case.
+
+| Case | Observed result |
+| --- | --- |
+| Environment/auth | `codex-cli 0.167.0`, Node `v24.22.2`, Linux; `authMode: chatgpt`, file store `CODEX_HOME/auth.json`; forbidden auth env list empty |
+| Read-only | Success, exit 0, 9,265 ms; structured result valid; repository unchanged |
+| Edit | Success, exit 0, 12,971 ms; structured result valid; exactly `greeting.txt` changed to `Hello, omi` |
+| Malformed schema | Classified error, exit 1, 73 ms; diagnostic `invalid-schema` |
+| Cancel | Classified cancelled, exit 1; SIGINT sent 733 ms after start; exit 65 ms later; no escalation |
+| Process/output guards | No surviving process groups, hard timeouts, output overflow or unparsed stdout in any case |
+
+This proves the three OMI-003 acceptance criteria for one subscription profile and this CLI
+version: read-only then edit execution without an API key, schema-validated structured results,
+and suitability of the saved file cache for those sequential worker runs. It does not establish
+that token refresh occurred, nor extend compatibility to other versions or concurrent workers.
 
 ## Proven and unverified
 
@@ -166,15 +197,15 @@ categories, corrects error-case argv, and stops after the first failure.
 | --- | --- |
 | Environment isolation, boundary validation, redaction | Offline unit tests |
 | JSONL framing, process exits, cancellation, escalation, deadline and output bounds | Offline integration tests with a fake executable |
-| Installed CLI version and subscription file-cache shape | Initial live guard |
-| Actual subscription read then edit, schema response and graceful Codex cancel | **Unverified** — Coordinator must run the final harness outside the sandbox |
-| Successful malformed-schema error handling in real Codex | **Unverified** — corrected invocation awaits that run |
+| Installed CLI version and subscription file-cache use | **Proven** — Coordinator live run on 2026-11-10; `chatgpt` file auth, no forbidden child auth env |
+| Actual subscription read then edit, schema response and graceful Codex cancel | **Proven** — Coordinator live run on 2026-11-10; both structured results valid, disk checks passed, SIGINT exit in 65 ms |
+| Successful malformed-schema error handling in real Codex | **Proven** — Coordinator live run on 2026-11-10; exit 1, `invalid-schema`, checks passed |
 | Automatic refresh with durable cache, keyring behavior, multi-profile isolation under load | **Unverified**; concurrency/failover belongs to OMI-004 |
 | Windows-to-WSL cancellation / tool subprocess cancellation | **Unverified** — this cancel case requests no tools; cross-boundary lifecycle is OMI-005 |
 
 ## Open decisions
 
-Accept the PoC findings only after the Coordinator attaches a passing final-harness run to
-Issue #4 or its PR. OMI-014 must decide the supported version/model range and settings policy;
-OMI-004 must prove refresh/concurrency safety before increasing concurrency above one worker
-per profile. No production readiness or supported Codex worker version is declared here.
+The passing Coordinator run establishes PoC compatibility for Codex CLI 0.167.0 with one
+subscription file-store profile. OMI-014 must decide the production supported version/model
+range and settings policy. OMI-004 must prove refresh/concurrency safety before increasing
+concurrency above one worker per profile. Production readiness is not established by this PoC.

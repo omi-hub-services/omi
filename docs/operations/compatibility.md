@@ -19,7 +19,7 @@ it (gitignored).
 | Git         | 2.43.0                                                                   | supported | 2026-11-10 | Temp repo init/commit/status in the OMI-002 live run; worktree flows untested    |
 | gh          | 2.103.3 (2026-10-26)                                                     | untested  | 2026-11-10 | Version recorded only; no gh operation exercised by OMI-002                      |
 | Claude Code | 2.1.322                                                                  | supported | 2026-11-10 | `claude -p` worker: read, edit, error, SIGINT cancel (ADR-0013). Single profile, two runs |
-| Codex CLI   | 0.167.0                                                                  | untested  | 2026-11-10 | Version/auth guard only; worker startup failed in sandbox (ADR-0021)              |
+| Codex CLI   | 0.167.0                                                                  | supported (PoC) | 2026-11-10 | Coordinator live run: subscription read, edit, schema error and SIGINT cancel (ADR-0021) |
 
 ## Claude Code auth mode
 
@@ -35,18 +35,20 @@ profile on the same machine: `claude-opus-5-5`). Do not infer it from the Claude
 
 ## Codex CLI subscription worker
 
-OMI-003 adds a test-only harness for Codex CLI **0.167.0**. The 2026-11-10 sandbox attempt
-validated the version, a `chatgpt` file cache and a child environment without API keys. Read-only
-and cancel invocations exited 1 before emitting JSONL; edit was not reached. The initial error
-case passed a duplicate schema option and its exit 2 is inconclusive. The corrected harness has
-not been rerun live. See [ADR-0021](../architecture/adr/0021-codex-subscription-worker-poc.md) for
-observations, the command used, and the distinction between offline checks and subscription evidence.
+OMI-003 proves a subscription worker using Codex CLI **0.167.0**, Node **v24.22.2**, Linux,
+and one WSL file-store profile. The Coordinator ran revision `ae8fc54` outside the worker
+sandbox on 2026-11-10: exit 0, 1/1 tests passed in approximately 24 s. Read-only and edit
+results validated against the output schema and passed disk checks; malformed schema and
+SIGINT cancellation were classified correctly. Auth mode was `chatgpt`, with no forbidden auth
+environment variables in the child. See [ADR-0021](../architecture/adr/0021-codex-subscription-worker-poc.md)
+for evidence and the earlier sandbox startup failures. Refresh, keyring behavior, concurrent
+profiles and Windows-to-WSL cancellation remain unverified.
 
 | Mode / capability | Status | Notes |
 | --- | --- | --- |
-| ChatGPT subscription, file store under explicit WSL `CODEX_HOME` | untested | Cache shape validated; successful authenticated execution and durable refresh not proven |
-| Read-only then edit with schema output | untested | Final harness awaits an outside-sandbox run |
-| Real CLI schema error / SIGINT cancel | untested | Offline fake-process tests pass; real behavior not proven |
+| ChatGPT subscription, file store under explicit WSL `CODEX_HOME` | supported (PoC, live 2026-11-10) | Authenticated read/edit proven for one profile; durable refresh remains unverified |
+| Read-only then edit with schema output | supported (PoC, live 2026-11-10) | Exit 0 for both; structured results valid; read-only repo unchanged and edit changed only `greeting.txt` |
+| Real CLI schema error / SIGINT cancel | supported (PoC, live 2026-11-10) | Invalid schema: exit 1, `invalid-schema`; cancel: exit 65 ms after SIGINT, no escalation or surviving group |
 | API key (`OPENAI_API_KEY`, `CODEX_API_KEY`, cached API key) | unsupported | Excluded by design and guarded in tests |
 | OS keyring, concurrent profiles/refresh, quota failover | untested | OMI-004; separate cache directories do not imply separate quotas |
 
@@ -58,9 +60,9 @@ OMI_LIVE_CODEX_HOME="$HOME/.codex-profiles/ggtintran" \
 ```
 
 Read `.tmp/live/omi-003-codex-subscription-evidence.json` and `omi-003-*.events.jsonl` on the
-machine running the test. Require `allChecksPassed: true` and per-case checks before recording
-support. This command selects Codex alone. `npm run test:live -- <file>` also selects the Claude
-suite and requires its profile variable. Without `OMI_LIVE_CODEX_HOME`, the Codex suite skips;
+machine running the test. The 2026-11-10 run recorded `allChecksPassed: true` and every per-case
+check passed. Require these checks again when re-checking support. This command selects Codex
+alone. `npm run test:live -- <file>` also selects the Claude suite and requires its profile variable. Without `OMI_LIVE_CODEX_HOME`, the Codex suite skips;
 with an invalid or empty value it fails. Live tests remain outside `npm run check` and CI.
 
 ## Coordinator environment (Windows)
