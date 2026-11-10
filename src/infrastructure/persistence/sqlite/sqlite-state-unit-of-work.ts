@@ -1,0 +1,104 @@
+import type {
+  StateChange,
+  StateCommitResult,
+  StateUnitOfWork,
+} from "../../../application/ports/state-unit-of-work.js";
+import { assertIsoUtc } from "./sqlite-lease-store.js";
+import type { StateDatabase } from "./sqlite-connection.js";
+import { runInTransaction } from "./sqlite-transaction.js";
+
+const TABLE_BY_KIND = {
+  workflow_run: "workflow_runs",
+  step_run: "step_runs",
+} as const;
+
+/**
+ * StateUnitOfWork over SQLite: lease check, version compare-and-swap, event append and outbox
+ * insert in one BEGIN IMMEDIATE transaction. Every rejection is decided before the first write,
+ * so a rejected change leaves nothing behind; a failing insert throws and rolls back the state
+ * update as well.
+ */
+export function createSqliteStateUnitOfWork(db: StateDatabase): StateUnitOfWork {
+  const selectLease = db.prepare(
+    "SELECT owner, generation, expires_at FROM leases WHERE resource_key = ?",
+  );
+  const cas = {
+    workflow_run: db.prepare(
+      `UPDATE ${TABLE_BY_KIND.workflow_run} SET status = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?`,
+    ),
+    step_run: db.prepare(
+      `UPDATE ${TABLE_BY_KIND.step_run} SET status = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?`,
+    ),
+  };
+  const exists = {
+    workflow_run: db.prepare(`SELECT 1 FROM ${TABLE_BY_KIND.workflow_run} WHERE id = ?`),
+    step_run: db.prepare(`SELECT 1 FROM ${TABLE_BY_KIND.step_run} WHERE id = ?`),
+  };
+  const insertEvent = db.prepare(
+    `INSERT INTO events (event_id, kind, subject, run_id, causation_id, correlation_id, payload, occurred_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const insertOutbox = db.prepare(
+    `INSERT INTO outbox (operation_key, kind, subject, payload_ref, payload_hash, state, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
+  );
+
+  return {
+    commit(change: StateChange): StateCommitResult {
+      assertIsoUtc(change.at, "at");
+      const { target, fence, event, outbox } = change;
+      return runInTransaction(db, (): StateCommitResult => {
+        if (fence !== undefined) {
+          const lease = selectLease.get(fence.resourceKey) as
+            { owner: string; generation: number; expires_at: string } | undefined;
+          if (
+            lease === undefined ||
+            lease.owner !== fence.owner ||
+            lease.generation !== fence.generation
+          ) {
+            return { ok: false, reason: "STALE_LEASE" };
+          }
+          if (lease.expires_at <= change.at) return { ok: false, reason: "LEASE_EXPIRED" };
+        }
+
+        const updated = cas[target.kind].run(
+          target.toStatus,
+          change.at,
+          target.id,
+          target.expectedVersion,
+        );
+        if (updated.changes === 0) {
+          const found = exists[target.kind].get(target.id) !== undefined;
+          return { ok: false, reason: found ? "STALE_VERSION" : "NOT_FOUND" };
+        }
+
+        const appended = insertEvent.run(
+          event.eventId,
+          event.kind,
+          event.subject,
+          event.runId ?? null,
+          event.causationId ?? null,
+          event.correlationId,
+          event.payload,
+          change.at,
+        );
+        if (outbox !== undefined) {
+          insertOutbox.run(
+            outbox.operationKey,
+            outbox.kind,
+            outbox.subject,
+            outbox.payloadRef,
+            outbox.payloadHash,
+            change.at,
+            change.at,
+          );
+        }
+        return {
+          ok: true,
+          newVersion: target.expectedVersion + 1,
+          eventSequence: Number(appended.lastInsertRowid),
+        };
+      });
+    },
+  };
+}
