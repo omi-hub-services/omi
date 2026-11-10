@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CLOSE_EVIDENCE_MARKER,
+  COORDINATOR_LOGIN,
   type WslTarget,
 } from "../../../../tools/coordinator/coordinator-settings.ts";
 import {
@@ -180,9 +181,14 @@ describe("planOpenPr", () => {
   });
 });
 
-const pass = (head: string, extra = "") =>
-  `## Independent agent review\n\n**VERDICT:** PASS · **REVIEWED_HEAD:** \`${head}\`\n${extra}`;
-const fail = (head: string) => `**VERDICT:** FAIL · **REVIEWED_HEAD:** \`${head}\``;
+/** A comment as GitHub returns it; the Coordinator account unless another author is given. */
+const by = (body: string, author: string | null = COORDINATOR_LOGIN) => ({ author, body });
+const pass = (head: string, extra = "", author?: string | null) =>
+  by(
+    `## Independent agent review\n\n**VERDICT:** PASS · **REVIEWED_HEAD:** \`${head}\`\n${extra}`,
+    author,
+  );
+const fail = (head: string) => by(`**VERDICT:** FAIL · **REVIEWED_HEAD:** \`${head}\``);
 
 describe("planMerge", () => {
   const green: PullForMerge = {
@@ -197,7 +203,7 @@ describe("planMerge", () => {
     reviewDecision: null,
     mergeStateStatus: "CLEAN",
     mergeCommit: null,
-    comments: ["looks fine", pass(HEAD)],
+    comments: [by("looks fine"), pass(HEAD)],
     checks: [
       { name: "check", state: "pass" },
       { name: "issue-link", state: "pass" },
@@ -245,8 +251,12 @@ describe("planMerge", () => {
     expect(planMerge({ ...green, ...change }, "b0ab3b3", required).kind).toBe("refuse");
   });
 
-  it.each<[string, string[], RegExp]>([
-    ["no agent review at all", ["LGTM"], /needs an agent review PASS on head b0ab3b3 \(none found/],
+  it.each<[string, ReturnType<typeof by>[], RegExp]>([
+    [
+      "no agent review at all",
+      [by("LGTM")],
+      /needs an agent review PASS on head b0ab3b3 \(none found/,
+    ],
     ["PASS on an older head", [pass("1111111")], /newest: PASS @1111111/],
     ["newest review is FAIL on the head", [pass(HEAD), fail(HEAD)], /newest: FAIL @b0ab3b3/],
   ])("refuses without an agent PASS on the exact head: %s", (_label, comments, reason) => {
@@ -254,6 +264,20 @@ describe("planMerge", () => {
       kind: "refuse",
       reason: expect.stringMatching(reason) as unknown,
     });
+  });
+
+  it("counts only the Coordinator's VERDICT comments", () => {
+    const forged = [pass(HEAD, "", "someone-else")];
+    expect(planMerge({ ...green, comments: forged }, "b0ab3b3", required)).toEqual({
+      kind: "refuse",
+      reason: expect.stringMatching(/none found; ignored VERDICT from someone-else/) as unknown,
+    });
+    const ghost = [pass(HEAD, "", null)];
+    expect(planMerge({ ...green, comments: ghost }, "b0ab3b3", required).kind).toBe("refuse");
+    // A later FAIL from another account does not override the Coordinator's PASS either.
+    const foreignFail = { ...fail(HEAD), author: "someone-else" };
+    const comments = [pass(HEAD), foreignFail];
+    expect(planMerge({ ...green, comments }, "b0ab3b3", required).kind).toBe("run");
   });
 
   it("merges when a FAIL was followed by a PASS on the new head", () => {
@@ -291,6 +315,7 @@ describe("planClose", () => {
     merged: true,
     baseRefName: "develop",
     headRefOid: HEAD,
+    mergedAt: "2026-11-10T10:00:00Z",
     body: "Summary\n\nIssue: #61\n",
     comments: [pass(HEAD, verdicts)],
   };
@@ -338,6 +363,11 @@ describe("planClose", () => {
     ["PR into main", [{ baseRefName: "main" }], /no merged PR into develop/],
     ["review on an older head", [{ comments: [pass("1111111", verdicts)] }], /PASS @1111111/],
     ["review is FAIL", [{ comments: [fail(HEAD)] }], /newest: FAIL/],
+    [
+      "PASS posted by another account",
+      [{ comments: [pass(HEAD, verdicts, "someone-else")] }],
+      /none found; ignored VERDICT from someone-else/,
+    ],
     ["AC line missing", [{ comments: [pass(HEAD, "AC-1: met — x")] }], /no line for AC-2/],
     [
       "AC not met",
@@ -352,9 +382,22 @@ describe("planClose", () => {
     expect(plan).toEqual({ kind: "refuse", reason: expect.stringMatching(reason) as unknown });
   });
 
-  it("uses the newest merged PR that links the Issue", () => {
-    const older = { ...merged, number: 50, comments: [fail(HEAD)] };
+  it("uses the most recently merged PR by mergedAt, not the newest cross-reference", () => {
+    const older = {
+      ...merged,
+      number: 50,
+      mergedAt: "2026-11-09T23:59:59Z",
+      comments: [fail(HEAD)],
+    };
+    // The older PR was cross-referenced last (e.g. mentioned again after the newer merge).
+    expect(heads(close({}, [merged, older]))[0]).toBe("gh issue edit");
     expect(heads(close({}, [older, merged]))[0]).toBe("gh issue edit");
+    // ...and the other way round: when the failing PR merged last, close refuses.
+    const later = { ...older, mergedAt: "2026-11-10T10:00:01Z" };
+    expect(close({}, [later, merged])).toEqual({
+      kind: "refuse",
+      reason: expect.stringMatching(/^PR #50 needs an agent review PASS/) as unknown,
+    });
   });
 
   it("refuses an empty comment or an Issue outside the Project before doing anything", () => {

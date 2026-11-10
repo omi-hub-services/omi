@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, type Context } from "../../../../tools/coordinator/flow.ts";
+import { cleanup, referencingPulls, type Context } from "../../../../tools/coordinator/flow.ts";
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
 
 const BRANCH = "task/omi-051-harden-coordinator-tooling";
@@ -25,6 +25,50 @@ const gitArgs = (c: Command) => (c.args.at(-1) ?? "").split(" ").slice(1);
 
 const READ_ONLY_GIT = new Set(["remote", "rev-parse", "status", "merge-base"]);
 const text = (c: Command) => [c.file, ...c.args].join(" ");
+
+describe("referencingPulls", () => {
+  /** A CrossReferencedEvent source as the Issue timeline query returns it. */
+  const source = (number: number, nameWithOwner: string) => ({
+    number,
+    merged: true,
+    mergedAt: "2026-11-10T10:00:00Z",
+    baseRefName: "develop",
+    headRefOid: "abc1234",
+    body: "Issue: #65",
+    repository: { nameWithOwner },
+    comments: { nodes: [{ author: { login: "minibox-claude-code" }, body: "VERDICT" }] },
+  });
+  const timeline = (...sources: unknown[]) => ({
+    timelineItems: { nodes: sources.map((s) => ({ source: s })) },
+  });
+
+  it("keeps only PRs of this repository, never a PR elsewhere that links the Issue", () => {
+    const pulls = referencingPulls(
+      timeline(
+        source(64, "omi-hub-services/omi"),
+        source(64, "someone/omi-fork"),
+        {}, // an Issue cross-reference parses to an empty object
+        source(66, "omi-hub-services/other"),
+      ),
+    );
+    expect(pulls).toEqual([
+      {
+        number: 64,
+        merged: true,
+        mergedAt: "2026-11-10T10:00:00Z",
+        baseRefName: "develop",
+        headRefOid: "abc1234",
+        body: "Issue: #65",
+        comments: [{ author: "minibox-claude-code", body: "VERDICT" }],
+      },
+    ]);
+  });
+
+  it("fails loudly when the repository of a PR is missing from the response", () => {
+    const noRepo = { ...source(64, "omi-hub-services/omi"), repository: undefined };
+    expect(() => referencingPulls(timeline(noRepo))).toThrow(/source\.repository/);
+  });
+});
 
 describe("flow cleanup", () => {
   beforeEach(() => {
