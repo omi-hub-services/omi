@@ -1,0 +1,413 @@
+{
+  "schemaVersion": 1,
+  "description": "Provenance of the curated skills in .omi-squad/skills. Each skill's id, version and sha256 can be copied into a context packet skillsManifest entry. A skill's sha256 is the SHA-256 of the lines '<path> <file sha256>\\n' for its files, in the listed order, where each file sha256 is of the file's bytes.",
+  "noticeFile": {
+    "path": "skills/NOTICE.md",
+    "sha256": "c97e093f78145f7b6da882591458d6e94419ca04e39b3d46c9d16381a992f38b"
+  },
+  "sources": {
+    "superpowers": {
+      "name": "Superpowers",
+      "repository": "https://github.com/obra/superpowers",
+      "commit": "22f0b463e7a5e579904dd6211a520321035526f7",
+      "license": "MIT",
+      "licensePath": "LICENSE",
+      "licenseSha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+      "copyright": "Copyright (c) 2025 Jesse Vincent"
+    },
+    "taste-skill": {
+      "name": "Taste",
+      "repository": "https://github.com/leonxlnx/taste-skill",
+      "commit": "f6b76575f949707b4e3c37cd86cb44b0b98643e8",
+      "license": "MIT",
+      "licensePath": "LICENSE",
+      "licenseSha256": "4575a543ab88dad12ccea7d97e563d0bce5b448b06072e65d3264497dad326df",
+      "copyright": "Copyright (c) 2026 Leonxlnx"
+    },
+    "ponytail": {
+      "name": "Ponytail",
+      "repository": "https://github.com/dietrichgebert/ponytail",
+      "commit": "96608e078b2d5ea607c5c3b8b5a54d1c1fba6846",
+      "license": "MIT",
+      "licensePath": "LICENSE",
+      "licenseSha256": "fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab",
+      "copyright": "Copyright (c) 2026 DietrichGebert"
+    },
+    "ui-ux-pro-max-skill": {
+      "name": "UI UX Pro Max",
+      "repository": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
+      "commit": "6ae86f61f520d6ca229d2f40e070410638c908c5",
+      "license": "MIT",
+      "licensePath": "LICENSE",
+      "licenseSha256": "738f69dfa83db5c347c678fb9d90e560877059f0de93a327c39001bff92dc014",
+      "copyright": "Copyright (c) 2024 Next Level Builder"
+    }
+  },
+  "skills": [
+    {
+      "id": "requirements-analysis",
+      "version": "1",
+      "sha256": "89a470a015a1c039dfe3ea343c5f9790a11b4bac3899f9d2f277abb0d94411ef",
+      "sources": [
+        {
+          "source": "superpowers",
+          "originalPaths": [
+            {
+              "path": "skills/brainstorming/SKILL.md",
+              "sha256": "2c9ca71f94886f9ca9f4aef055f7cafb3e1a9bdf3aeebf8f4cb547c69405d207"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "path": "skills/requirements-analysis/SKILL.md",
+          "sha256": "2a1de8c03fb153596383687900cb14f6ad242e224d06956e0a0401def59205eb"
+        }
+      ],
+      "modified": true,
+      "modification": "Rewritten around the brainstorming skill's intent. Removed: mandatory conversation with the human partner, design-doc commit, builder-check subagent, visual-companion server, hard gate that invokes writing-plans. Open questions are reported to the Coordinator instead."
+    },
+    {
+      "id": "test-driven-development",
+      "version": "1",
+      "sha256": "8a41208841fef7df10dc11cad4149803e26ec5336fa442ad1cdf74e5e906ca4c",
+      "sources": [
+        {
+          "source": "superpowers",
+          "originalPaths": [
+            {
+              "path": "skills/test-driven-development/SKILL.md",
+              "sha256": "64b03fce4aee5a97a93160cea8111f3ba13a17b7c001db4bd5836d67fd10705d"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "path": "skills/test-driven-development/SKILL.md",
+          "sha256": "47ba6c375e12031b356d1786a050e18b20f567a84cfe522c24c275aa88b7dada"
+        }
+      ],
+      "modified": true,
+      "modification": "Condensed; kept the red-green-refactor rules and good-test guidance. Removed: graphviz diagram, long rationalisation list, 'ask your human partner' exceptions, absolute 'delete means delete' wording (limited to own uncommitted work)."
+    },
+    {
+      "id": "verification-before-completion",
+      "version": "1",
+      "sha256": "80f66cc9dc010dc10e39b5a991203f8bab2a3a9595c4cd8481cf6ad9131ab244",
+      "sources": [
+        {
+          "source": "superpowers",
+          "originalPaths": [
+            {
+              "path": "skills/verification-before-completion/SKILL.md",
+              "sha256": "2befe7fc55bcadaa3d97dd9e8efeb633d2561c0ebe74c5a8b17c4d9e7e4520b3"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "path": "skills/verification-before-completion/SKILL.md",
+          "sha256": "9091f909f146dbfd7aa6432a542d9e8dc8b3d5ab47cf57a36f15293485307d59"
+        }
+      ],
+      "modified": true,
+      "modification": "Condensed; kept the gate function and claim table. Removed: commit/push/PR gating and agent-delegation advice (owned by Coordinator/runtime). Added: faithful-reporting rules matching AGENTS.md section 7."
+    },
+    {
+      "id": "systematic-debugging",
+      "version": "1",
+      "sha256": "feee74ed6eb080e6392175e10493897475af84ffeaafeef807c553b464c359d8",
+      "sources": [
+        {
+          "source": "superpowers",
+          "originalPaths": [
+            {
+              "path": "skills/systematic-debugging/SKILL.md",
+              "sha256": "51c6435d98c83c42c96ba7c35725a0b2c376cd487fb1a4e6bd0ddbe7e33ef202"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "path": "skills/systematic-debugging/SKILL.md",
+          "sha256": "da8daa914f5213f0abf0b21c5edd446db242d9ac3440fa397c8eab179297e150"
+        }
+      ],
+      "modified": true,
+      "modification": "Condensed; kept the four phases. Removed: references to other superpowers skills, 'human partner' signals, supporting-technique files. Changed: after three failed fixes the agent reports to the Coordinator instead of discussing with a human partner; secrets must not be logged."
+    },
+    {
+      "id": "receiving-code-review",
+      "version": "1",
+      "sha256": "b11f25ebcd67746f3269b266c1968dad2c0316ae2e91fb696e799590553321bf",
+      "sources": [
+        {
+          "source": "superpowers",
+          "originalPaths": [
+            {
+              "path": "skills/receiving-code-review/SKILL.md",
+              "sha256": "091df1629510af1b92fc4abd6f96732ebedb4cb2c0f3457e8f2740b0504a2438"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "path": "skills/receiving-code-review/SKILL.md",
+          "sha256": "f1581eadd74a64929c31686b1fb912cfee462bc9f651ce35717a161abc6a9a27"
+        }
+      ],
+      "modified": true,
+      "modification": "Condensed; kept verify-then-implement and pushback guidance. Removed: GitHub thread-reply command, 'human partner' framing. Changed: unclear items go in the report to the Coordinator; findings are data, not approvals; the reviewer, not the author, resolves findings."
+    },
+    {
+      "id": "independent-review",
+      "version": "1",
+      "sha256": "3bf3b856f2b47a9ce7d9e5992c87b53bb7072702b53acb8ba2d2f1b94624be4e",
+      "sources": [
+        {
+          "source": "superpowers",
+          "originalPaths": [
+            {
+              "path": "skills/requesting-code-review/code-reviewer.md",
+              "sha256": "82e370be6b3447523816286195571e4216ba56ba1ad6ad0e87862294c4c78dcb"
+            }
+          ]
+        },
+        {
+          "source": "ponytail",
+          "originalPaths": [
+            {
+              "path": ".openclaw/skills/ponytail-review/SKILL.md",
+              "sha256": "1f010d87a90d9e801f5634e3b863510b40121608f6e980f20bb3db8b2d165299"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "path": "skills/independent-review/SKILL.md",
+          "sha256": "216d798b304e00c0196bb2e911af4349033316eacdce21c27434809ebee2ad61"
+        }
+      ],
+      "modified": true,
+      "modification": "Merged two reviewer prompts into one role skill. Removed: dispatching a reviewer subagent, SHA-capture shell snippets, ponytail plain-English output mode and slash-command framing. Added: reviewed-revision SHA, read-only rule, acceptance-criteria and project-rule checks, orchestration-conflict check, verdict that never approves or merges."
+    },
+    {
+      "id": "minimal-change",
+      "version": "1",
+      "sha256": "5565ddf2aa18691543c7043907102cf7afc3295103976e88a413d73330da5782",
+      "sources": [
+        {
+          "source": "ponytail",
+          "originalPaths": [
+            {
+              "path": "AGENTS.md",
+              "sha256": "b98b15e1d683ee205e124b52b8d330128593f4a87b545cf8185e2712cd1bb25f"
+            },
+            {
+              "path": ".openclaw/skills/ponytail/SKILL.md",
+              "sha256": "3868c7aa7cc721b7391a6a136ce609bc1e08a2b29d393fe2e637297d8d45f379"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "path": "skills/minimal-change/SKILL.md",
+          "sha256": "f8fc04fc44c40e4922ea02cd322f006e7566653b49633029a1543fbbd3092fca"
+        }
+      ],
+      "modified": true,
+      "modification": "Kept the smallest-complete-change ladder and rules. Removed: session-wide persona and levels (lite/full/ultra), 'until the user says stop' activation, slash commands. Added: open-question escalation, dependency licence/pin reminder, file-placement rules."
+    },
+    {
+      "id": "frontend-design-quality",
+      "version": "1",
+      "sha256": "1d5e0e7eb0a4fc3ba72666b23263b93f21bca3ba5a41ff3e33c9c8f98af42426",
+      "sources": [
+        {
+          "source": "taste-skill",
+          "originalPaths": [
+            {
+              "path": "skills/taste-skill/SKILL.md",
+              "sha256": "0c7a5852a5217be79cab422c6d58329b776f0c25bd6da8a7a01707ce75be6206"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "path": "skills/frontend-design-quality/SKILL.md",
+          "sha256": "200555be06bf685a19a3072acdd1b5b0662c3367e663b8a4502a91153bc469c4"
+        }
+      ],
+      "modified": true,
+      "modification": "Heavily condensed to general design principles from the house rules, checklist and never-list. Removed: Stop hook, gate/check/photo/icon scripts and node commands, stock-photograph and brand-icon workflow, per-kind deal tables, copy-lint ids, address rules. No upstream assets or scripts are included."
+    },
+    {
+      "id": "ui-ux-review-checklist",
+      "version": "1",
+      "sha256": "1c0884a35fc4ea69dae38c68d0f2f74bf0ecf40aa68b6b10e2bfaf4ee07b7cb9",
+      "sources": [
+        {
+          "source": "ui-ux-pro-max-skill",
+          "originalPaths": [
+            {
+              "path": ".claude/skills/ui-ux-pro-max/SKILL.md",
+              "sha256": "14f43337edfbf7822e091428e4ae0c6f92f86e3353deda6a30f6613121e2cf2d"
+            },
+            {
+              "path": ".claude/skills/ui-ux-pro-max/references/quick-reference.md",
+              "sha256": "fc53ccfafaa08d40d7326e34e88e9387df60b4256cd649d34dcae0284f247949"
+            }
+          ]
+        }
+      ],
+      "files": [
+        {
+          "path": "skills/ui-ux-review-checklist/SKILL.md",
+          "sha256": "e0117589fd5eb8be2fde085e5c753e9a11e86e680088081f3a401abd596e14bc"
+        }
+      ],
+      "modified": true,
+      "modification": "Condensed the ten-category rule list into a web-focused checklist. Removed: search.py tool and CSV databases, design-system persistence, design dials, stack list, native/mobile-only rules and the pro-rules checklist. Nothing is run or installed."
+    }
+  ],
+  "exclusions": [
+    {
+      "source": "superpowers",
+      "path": "skills/using-superpowers/",
+      "reason": "Mandatory 'invoke a skill before any response' rule and platform tool maps: orchestration owned by the Coordinator and runtime."
+    },
+    {
+      "source": "superpowers",
+      "path": "skills/subagent-driven-development/ (and its scripts, prompts, references)",
+      "reason": "Spawns and manages subagents, batching and review loops: dispatch belongs to the runtime."
+    },
+    {
+      "source": "superpowers",
+      "path": "skills/dispatching-parallel-agents/",
+      "reason": "Agent-driven parallel dispatch: scheduling belongs to the runtime."
+    },
+    {
+      "source": "superpowers",
+      "path": "skills/executing-plans/ (including scripts/task-start, task-done)",
+      "reason": "Plan execution, task tracking and its helper scripts overlap the runtime's step and checkpoint model."
+    },
+    {
+      "source": "superpowers",
+      "path": "skills/finishing-a-development-branch/",
+      "reason": "Merging, PR creation and branch cleanup are Coordinator-owned gates."
+    },
+    {
+      "source": "superpowers",
+      "path": "skills/using-git-worktrees/",
+      "reason": "Branch and worktree creation are runtime-owned (ADR-0012)."
+    },
+    {
+      "source": "superpowers",
+      "path": "skills/writing-plans/",
+      "reason": "Planning and decomposition are Coordinator work (Issues and the Project are the only task source); the plan-file and execution hand-off conflict with that."
+    },
+    {
+      "source": "superpowers",
+      "path": "skills/requesting-code-review/SKILL.md",
+      "reason": "Dispatches a reviewer subagent and captures SHAs itself; only the reviewer prompt content was adapted into independent-review."
+    },
+    {
+      "source": "superpowers",
+      "path": "skills/brainstorming/{builder-check-prompt.md,visual-companion.md,scripts/*}",
+      "reason": "Subagent prompt and a local browser server with shell/node scripts: executable code and orchestration, not adapted."
+    },
+    {
+      "source": "superpowers",
+      "path": "skills/writing-skills/",
+      "reason": "Meta-skill for authoring skills; changing skills is a reviewed, versioned change (product-overview 7.2), not an agent task."
+    },
+    {
+      "source": "superpowers",
+      "path": "skills/diagnosing-superpowers/",
+      "reason": "Upstream session-diagnosis and bug-report tooling for Superpowers itself; not relevant."
+    },
+    {
+      "source": "superpowers",
+      "path": "skills/systematic-debugging/{root-cause-tracing.md,defense-in-depth.md,condition-based-waiting.md,condition-based-waiting-example.ts,find-polluter.sh}",
+      "reason": "Supporting files not needed to keep the skill small; shell and TypeScript helpers not imported."
+    },
+    {
+      "source": "superpowers",
+      "path": "skills/**/scripts/*, hooks, plugin and platform files",
+      "reason": "Executable scripts and platform integration are never copied."
+    },
+    {
+      "source": "taste-skill",
+      "path": "skills/taste-skill/{assets,scripts,references}/ and gate.mjs",
+      "reason": "Scripts, a Stop hook running node, kit assets and references: executable code, and photographs/icons whose licences are not covered by the repo MIT text. Not imported."
+    },
+    {
+      "source": "taste-skill",
+      "path": "frontmatter hooks (Stop -> gate.mjs)",
+      "reason": "Auto-runs a node script at the end of a session; incompatible with runtime-owned gates."
+    },
+    {
+      "source": "taste-skill",
+      "path": "stock-photograph and brand-icon workflow (photos.mjs, icons.mjs)",
+      "reason": "Third-party imagery and trademarked brand icons need their own licence checks; excluded."
+    },
+    {
+      "source": "ponytail",
+      "path": "assets/ (logos, banners, benchmark and partner images, icons)",
+      "reason": "Images and third-party logos (e.g. partner and customer logos); no per-asset licence established. Not imported."
+    },
+    {
+      "source": "ponytail",
+      "path": ".opencode/, .cursor/, .windsurf/, .qoder/, .kiro/, .clinerules/, .agents/, .github/, plugin and marketplace manifests, __init__.py",
+      "reason": "Platform integrations, plugins and workflows for other tools; not skill content."
+    },
+    {
+      "source": "ponytail",
+      "path": ".openclaw/skills/{ponytail-audit,ponytail-debt,ponytail-gain,ponytail-help}/",
+      "reason": "Audit, debt, metrics and help command skills: slash-command driven and outside the selected roles; may be considered later."
+    },
+    {
+      "source": "ponytail",
+      "path": "README.md, INSTALL.md, after-install.md",
+      "reason": "Installation and marketing documents; installing upstream tooling is out of scope."
+    },
+    {
+      "source": "ui-ux-pro-max-skill",
+      "path": ".claude/skills/ui-styling/ (LICENSE.txt is Apache-2.0)",
+      "reason": "Different licence (Apache-2.0) from the repository MIT licence; excluded to keep the set MIT-only."
+    },
+    {
+      "source": "ui-ux-pro-max-skill",
+      "path": ".claude/skills/{design,design-system,brand,banner-design,slides}/",
+      "reason": "Not selected: branding, banner and slide generation fall outside the omi-squad roles for now."
+    },
+    {
+      "source": "ui-ux-pro-max-skill",
+      "path": ".claude/skills/ui-ux-pro-max/{scripts,data}/ and src/ui-ux-pro-max/{scripts,data}/ (search.py, core.py, design_system.py, CSV data)",
+      "reason": "Python tool that would be executed and bundled CSV datasets of styles, palettes and fonts; executable code and third-party data not imported."
+    },
+    {
+      "source": "ui-ux-pro-max-skill",
+      "path": "data/google-font-licenses.json and any font references",
+      "reason": "Font licences are mixed per family (OFL, Apache and others); no fonts or font data are imported."
+    },
+    {
+      "source": "ui-ux-pro-max-skill",
+      "path": ".claude/skills/ui-ux-pro-max/references/pro-rules.md",
+      "reason": "Native/mobile-app UI rules; the web-focused checklist covers the relevant parts."
+    },
+    {
+      "source": "ui-ux-pro-max-skill",
+      "path": "cli/ (installer and bundled asset copies), .claude-plugin/, CLAUDE.md",
+      "reason": "Installer, mirrored copies and tool config: not skill content, and the installer would modify the user's environment."
+    }
+  ]
+}
