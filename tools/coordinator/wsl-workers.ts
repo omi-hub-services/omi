@@ -22,7 +22,6 @@ export interface WorkerProcess {
   readonly tool: "claude" | "codex";
   readonly headless: boolean;
   readonly elapsedSeconds: number;
-  readonly command: string;
 }
 
 export interface RunLog {
@@ -51,13 +50,13 @@ function workerTool(args: readonly string[]): "claude" | "codex" | null {
   return candidate === "claude" || candidate === "codex" ? candidate : null;
 }
 
+/** Worker argv (prompts, paths, flags) is read only to classify the process, never kept. */
 export function parseProcesses(psOutput: string): WorkerProcess[] {
   const out: WorkerProcess[] = [];
   for (const line of psOutput.split("\n")) {
     const m = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
     if (!m?.[1] || !m[2] || !m[3]) continue;
-    const command = m[3].trim();
-    const args = command.split(/\s+/);
+    const args = m[3].trim().split(/\s+/);
     const tool = workerTool(args);
     if (!tool) continue;
     out.push({
@@ -65,7 +64,6 @@ export function parseProcesses(psOutput: string): WorkerProcess[] {
       tool,
       headless: args.includes("-p") || args.includes("--print") || args.includes("exec"),
       elapsedSeconds: Number(m[2]),
-      command: command.length > 100 ? `${command.slice(0, 97)}...` : command,
     });
   }
   return out;

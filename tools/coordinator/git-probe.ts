@@ -1,7 +1,9 @@
-// Branch state of a checkout, read with one bash payload (key=value lines) and parsed purely.
-import { BASE_BRANCH } from "./coordinator-settings.ts";
+// Branch state of a checkout from read-only git calls. The same reads serve the WSL checkout
+// (each call through wsl.exe, or bash inside Linux) and the Coordinator's Windows clone (plain
+// argv); only how one git argv becomes a Command differs.
+import { BASE_BRANCH, type WslTarget } from "./coordinator-settings.ts";
 import type { CleanupState } from "./flow-plans.ts";
-import { shellQuote } from "./process-runner.ts";
+import { joinSteps, runChecked, wslCommand, type Command, type Runner } from "./process-runner.ts";
 
 export interface ProbeOptions {
   /** `git fetch --prune origin` first, so "merged" is judged against the real origin/develop. */
@@ -12,49 +14,46 @@ export interface ProbeOptions {
 
 export interface ProbedState extends CleanupState {
   readonly head: string;
-  /** No tracked or untracked (non-ignored) changes. */
-  readonly clean: boolean;
   readonly remote: string | null;
 }
 
-export function branchProbe(branch: string, options: ProbeOptions = {}): string {
-  const ref = shellQuote(`refs/heads/${branch}`);
-  return [
-    ...(options.fetch ? ["git fetch --prune --quiet origin"] : []),
-    "echo current=$(git rev-parse --abbrev-ref HEAD)",
-    `echo local=$(git rev-parse --verify --quiet ${ref})`,
-    "echo dirty=$(git status --porcelain --untracked-files=no | head -c 1)",
-    "echo changes=$(git status --porcelain | head -c 1)",
-    "echo head=$(git rev-parse HEAD)",
-    `echo merged=$(git merge-base --is-ancestor ${ref} origin/${BASE_BRANCH} 2>/dev/null && echo yes || echo no)`,
-    ...(options.remote ? [`echo remote=$(git ls-remote origin ${ref} | cut -f1)`] : []),
-  ].join("; ");
-}
+export type GitCommand = (args: readonly string[]) => Command;
 
-export function parseKeyValues(stdout: string): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const line of stdout.split("\n")) {
-    const i = line.indexOf("=");
-    if (i > 0) map.set(line.slice(0, i).trim(), line.slice(i + 1).trim());
-  }
-  return map;
-}
+export const wslGit =
+  (target: WslTarget): GitCommand =>
+  (args) =>
+    wslCommand(joinSteps([["git", ...args]]), target);
 
-export function parseBranchProbe(stdout: string): ProbedState {
-  const kv = parseKeyValues(stdout);
-  const current = kv.get("current");
-  if (!current) throw new Error("branch probe returned no current branch (not a git checkout?)");
-  const nonEmpty = (k: string) => {
-    const v = kv.get(k) ?? "";
-    return v === "" ? null : v;
-  };
+export const localGit =
+  (cwd: string): GitCommand =>
+  (args) => ({ file: "git", args, cwd });
+
+/** A read that fails throws, so a broken call never looks like a clean checkout. */
+export async function probeBranch(
+  run: Runner,
+  git: GitCommand,
+  branch: string,
+  options: ProbeOptions = {},
+): Promise<ProbedState> {
+  const ref = `refs/heads/${branch}`;
+  if (options.fetch) await run(git(["fetch", "--prune", "--quiet", "origin"]));
+  const read = async (...args: string[]) => (await runChecked(run, git(args))).trim();
+  const [current, local, tracked, all, head, merged, remote] = await Promise.all([
+    read("rev-parse", "--abbrev-ref", "HEAD"),
+    run(git(["rev-parse", "--verify", "--quiet", ref])),
+    read("status", "--porcelain", "--untracked-files=no"),
+    read("status", "--porcelain"),
+    read("rev-parse", "HEAD"),
+    run(git(["merge-base", "--is-ancestor", ref, `origin/${BASE_BRANCH}`])),
+    options.remote ? read("ls-remote", "origin", ref) : "",
+  ]);
   return {
     current,
-    local: nonEmpty("local"),
-    dirty: (kv.get("dirty") ?? "") !== "",
-    head: kv.get("head") ?? "",
-    clean: (kv.get("dirty") ?? "") === "" && (kv.get("changes") ?? "") === "",
-    merged: kv.get("merged") === "yes",
-    remote: nonEmpty("remote"),
+    local: local.code === 0 ? local.stdout.trim() : null,
+    dirty: tracked !== "",
+    clean: all === "",
+    head,
+    merged: merged.code === 0,
+    remote: remote.split(/\s/)[0] || null,
   };
 }

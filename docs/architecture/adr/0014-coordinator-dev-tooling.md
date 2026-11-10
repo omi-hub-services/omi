@@ -30,12 +30,18 @@ no place in the folder map.
      with checks and review state, WSL workers. `--json` for machines.
    - `flow.ts` — the mechanical steps of a task: `set-status`, `start-branch`, `push`, `check`,
      `open-pr`, `merge`, `close`, `cleanup`. Each reads the current state first and is
-     idempotent; `--dry-run` prints the argv it would run.
+     idempotent; `--dry-run` prints the argv it would run and changes nothing (no fetch either).
+     `merge` requires green required checks, the newest agent review `PASS` on the exact head
+     and merge state `CLEAN`/`HAS_HOOKS`. `close` ticks the Issue's Acceptance criteria from the
+     `AC-<n>: met|not met` lines of the agent review `PASS` on the merged PR's head and refuses
+     on a missing line or `not met` (OMI-051).
 3. All process execution goes through one injectable runner (`spawn`, `shell: false`, argv
-   arrays). The only shell string is the single `bash -lc` payload handed to
+   arrays). The only shell strings are `bash -lc` payloads handed to
    `wsl.exe -d <distro> --cd <repo> --exec bash -lc <payload>`; each argument is POSIX-quoted and
    a payload containing `"`, `\` or a newline is rejected, because Windows rewrites those when it
-   builds the wsl.exe command line. Inside Linux the same payload runs in `bash` directly.
+   builds the wsl.exe command line. Inside Linux (the scripts run in the WSL checkout) the same
+   payload runs in `bash` directly. Branch state is read with the same git argv list in the WSL
+   checkout and in the Coordinator's Windows clone.
 4. Pure logic (parsing, Ready filtering, check/review classification, idempotency decisions) is
    kept apart from I/O and unit-tested in `tests/unit/tools/coordinator/`.
 5. Project field option IDs and required checks are read live from GitHub, never hard-coded.
@@ -66,3 +72,10 @@ no place in the folder map.
 - `tools/coordinator/` is verified by `npm run check` (typecheck, lint, format, unit tests).
 - The Windows/wsl.exe path is exercised only by the Coordinator on Windows; CI and WSL runs use
   the Linux branch of the same runner. OMI-030 still owns the tested product bridge.
+- Residual risk (OMI-051): the worker allowlist in `/omi-next` is narrow (specific git
+  subcommands, read-only `gh`, `npm run`/`npm ci`, `node`) and `git push`, `git reset --hard`,
+  `gh api` and `npm install` are denied, but a worker can still run arbitrary code through
+  `node` or `npm run` with the PO's WSL `gh`/git login, so the allowlist limits mistakes, not a
+  hostile worker. A separate read-only token for workers is a PO decision and out of scope here
+  (OMI-004 / runtime). Agent review comments are also not tied to an author yet; any account
+  that can comment on the PR could post a `VERDICT: PASS` line.

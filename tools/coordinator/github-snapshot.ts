@@ -7,6 +7,7 @@ import {
   asNumber,
   asObject,
   asString,
+  commentBodies,
   nodes,
   optObject,
   optString,
@@ -34,6 +35,16 @@ const ITEM_FIELDS = `
     }
   }`;
 
+/** What `parsePull` reads; shared by the snapshot and the flow script's merge read. */
+export const PULL_FIELDS = `
+  number title isDraft headRefName headRefOid baseRefName body reviewDecision mergeStateStatus
+  comments(last: 50) { nodes { body } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes {
+    __typename
+    ... on CheckRun { name status conclusion }
+    ... on StatusContext { context state }
+  } } } } } }`;
+
 /** Items page plus open PRs; later pages pass `withPulls: false`. */
 export const SNAPSHOT_QUERY = `
 query($owner: String!, $repo: String!, $project: Int!, $after: String, $withPulls: Boolean!) {
@@ -42,15 +53,7 @@ query($owner: String!, $repo: String!, $project: Int!, $after: String, $withPull
   }
   repository(owner: $owner, name: $repo) @include(if: $withPulls) {
     pullRequests(states: OPEN, first: 30, orderBy: { field: CREATED_AT, direction: ASC }) {
-      nodes {
-        number title isDraft headRefName headRefOid baseRefName body reviewDecision mergeStateStatus
-        comments(last: 20) { nodes { body } }
-        commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes {
-          __typename
-          ... on CheckRun { name status conclusion }
-          ... on StatusContext { context state }
-        } } } } } }
-      }
+      nodes { ${PULL_FIELDS} }
     }
   }
 }`;
@@ -151,7 +154,7 @@ export function parseCheck(raw: unknown, path: string): CheckContext {
   };
 }
 
-function parsePull(raw: unknown, path: string): OpenPull {
+export function parsePull(raw: unknown, path: string): OpenPull {
   const p = asObject(raw, path);
   const commit = nodes(p, "commits", path)[0];
   const rollup = commit
@@ -167,9 +170,7 @@ function parsePull(raw: unknown, path: string): OpenPull {
     body: asString(p.body, `${path}.body`),
     reviewDecision: optString(p.reviewDecision, `${path}.reviewDecision`),
     mergeStateStatus: asString(p.mergeStateStatus, `${path}.mergeStateStatus`),
-    comments: nodes(p, "comments", path).map((c, i) =>
-      asString(asObject(c, "comment").body, `${path}.comments[${String(i)}].body`),
-    ),
+    comments: commentBodies(p, path),
     checks: rollup
       ? nodes(rollup, "contexts", `${path}.rollup`).map((c, i) =>
           parseCheck(c, `${path}.checks[${String(i)}]`),
@@ -251,18 +252,32 @@ export interface ReviewState {
   } | null;
 }
 
+export interface AgentReview {
+  readonly verdict: string;
+  readonly head: string;
+  readonly body: string;
+}
+
+/** Newest comment carrying `VERDICT: … REVIEWED_HEAD: <sha>`; comments are oldest first. */
+export function latestAgentReview(comments: readonly string[]): AgentReview | null {
+  for (const body of [...comments].reverse()) {
+    const m = VERDICT.exec(body);
+    if (m?.[1] && m[2]) return { verdict: m[1], head: m[2], body };
+  }
+  return null;
+}
+
 export function classifyReview(pull: {
   readonly reviewDecision: string | null;
   readonly headRefOid: string;
   readonly comments: readonly string[];
 }): ReviewState {
-  let agent: ReviewState["agent"] = null;
-  for (const body of pull.comments) {
-    const m = VERDICT.exec(body);
-    if (m?.[1] && m[2]) {
-      agent = { verdict: m[1], head: m[2], current: pull.headRefOid.startsWith(m[2]) };
-    }
-  }
+  const r = latestAgentReview(pull.comments);
+  const agent = r && {
+    verdict: r.verdict,
+    head: r.head,
+    current: pull.headRefOid.startsWith(r.head),
+  };
   return { native: pull.reviewDecision, agent };
 }
 

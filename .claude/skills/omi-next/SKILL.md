@@ -35,22 +35,31 @@ node tools/coordinator/flow.ts start-branch N <slug>        # task/omi-NNN-<slug
 Write the prompt to WSL `~/omi-runs/omi-NNN-prompt.md` (Windows path
 `\\wsl.localhost\Ubuntu-24.04\home\<user>\omi-runs\`). Include: Issue number, read-first list,
 the branch, what to build, `npm run check` before reporting, **no push/PR/merge**, `gh`
-read-only, no env-prefixed commands or pipes (use a script in `.tmp/`), no writes under
-`.claude/` (protected; the worker cannot), and the final report format (branch, SHAs, files per
-layer, check result, what is unverified, open decisions).
+read-only, no env-prefixed commands or pipes (use a script in `.tmp/` run with `node`), no
+writes under `.claude/` (protected; the worker cannot), and the final report format (branch,
+SHAs, files per layer, check result, what is unverified, open decisions).
 
-Launch in the background (proven command; `<profile>` is the PO's worker profile). Written for
-Git Bash: every `\$` must reach WSL unexpanded (in PowerShell use `$` inside single quotes).
+Launch in the background (`<profile>` is the PO's worker profile). Written for Git Bash: every
+`\$` must reach WSL unexpanded (in PowerShell use `$` inside single quotes).
 
 ```
-wsl.exe -d Ubuntu-24.04 --cd /home/<user>/github/omi --exec bash -lc "source ~/.nvm/nvm.sh >/dev/null; export CLAUDE_CONFIG_DIR=\$HOME/.claude-profiles/<profile>; unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; ts=\$(date +%Y%m%d-%H%M%S); claude -p --output-format stream-json --verbose --max-turns 200 --permission-mode acceptEdits --allowedTools Read Edit Write Grep Glob TodoWrite 'Bash(git *)' 'Bash(npm *)' 'Bash(npx *)' 'Bash(node *)' 'Bash(gh issue view *)' 'Bash(gh issue list *)' 'Bash(gh pr view *)' 'Bash(gh pr list *)' 'Bash(gh api *)' 'Bash(gh project *)' 'Bash(ls *)' 'Bash(cat *)' 'Bash(mkdir *)' 'Bash(ps *)' < ~/omi-runs/omi-NNN-prompt.md > ~/omi-runs/omi-NNN-\$ts.jsonl 2> ~/omi-runs/omi-NNN-\$ts.err; echo exit=\$?"
+wsl.exe -d Ubuntu-24.04 --cd /home/<user>/github/omi --exec bash -lc "source ~/.nvm/nvm.sh >/dev/null; export CLAUDE_CONFIG_DIR=\$HOME/.claude-profiles/<profile>; unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; ts=\$(date +%Y%m%d-%H%M%S); claude -p --output-format stream-json --verbose --max-turns 200 --permission-mode acceptEdits --allowedTools Read Edit Write Grep Glob TodoWrite 'Bash(git status*)' 'Bash(git diff*)' 'Bash(git log*)' 'Bash(git show*)' 'Bash(git add *)' 'Bash(git commit *)' 'Bash(git switch *)' 'Bash(git fetch*)' 'Bash(git rev-parse *)' 'Bash(git restore *)' 'Bash(git ls-files*)' 'Bash(git grep *)' 'Bash(npm run *)' 'Bash(npm ci)' 'Bash(node *)' 'Bash(gh issue view *)' 'Bash(gh issue list *)' 'Bash(gh pr view *)' 'Bash(gh pr list *)' 'Bash(gh pr diff *)' 'Bash(gh project item-list *)' 'Bash(gh project field-list *)' 'Bash(gh project view *)' 'Bash(ls *)' 'Bash(cat *)' 'Bash(mkdir *)' 'Bash(ps *)' --disallowedTools 'Bash(git push*)' 'Bash(git reset --hard*)' 'Bash(gh api*)' 'Bash(npm install*)' < ~/omi-runs/omi-NNN-prompt.md > ~/omi-runs/omi-NNN-\$ts.jsonl 2> ~/omi-runs/omi-NNN-\$ts.err; echo exit=\$?"
 ```
 
+- This allowlist is the default for every task: specific git subcommands, `npm run`/`npm ci`,
+  read-only `gh`, `node`, `ls`, `cat`, `mkdir`, `ps`. `--disallowedTools` wins over
+  `--allowedTools`, so push, hard reset, `gh api` and `npm install` stay denied even if a
+  pattern above would match. Denials appear as `permission_denials` in the final `result`
+  event of the log.
+- **Extra permissions for one task** (e.g. a `gh api` GET, `npm install` of a dependency the
+  Issue approves) are added to that task's dispatch command only, named in that task's prompt
+  and listed in its PR body with the reason. Never add them to this default.
+- Residual risk (ADR-0014): `node` and `npm run` can still run arbitrary code with the PO's WSL
+  `gh`/git login; the allowlist prevents mistakes, not a hostile worker.
 - `--allowedTools` patterns match a command prefix. `VAR=x cmd`, pipes and `&&` chains do not
-  match and are silently denied in `-p` mode, hence the prompt rule above. `Bash(git *)` and
-  `Bash(gh api *)` would also allow push/mutations; only the prompt forbids them.
-- Watch with `/omi-status` (worker process, newest log, `session_id`). The worker's final report
-  is the `result` field of the last log line.
+  match and are silently denied in `-p` mode, hence the prompt rule above.
+- Watch with `/omi-status` (worker tool, pid, mode, elapsed time; newest log and `session_id`).
+  The worker's final report is the `result` field of the last log line.
 - Resume (turn limit, follow-up, fix findings): same command with `--resume <session_id>` and
   the follow-up text as the stdin prompt.
 
@@ -66,25 +75,44 @@ node tools/coordinator/flow.ts set-status N "In Review"
 ```
 
 **(judge)** The PR body has `Issue: #N`, changes, a file → layer table, check evidence,
-dependency/ADR notes, approval needs.
+dependency/ADR notes, approval needs, and any extra worker permissions used for this task.
 
 ## 5. Independent review (judge)
 
 Start a fresh review subagent (not the worker, not you) pinned to `<sha>`: diff, AC, rules in
-AGENTS.md, evidence. Post its verdict with `gh pr comment <pr> --body-file <f>`; the body must
-contain `**VERDICT:** PASS|FAIL · **REVIEWED_HEAD:** \`<sha>\`` (status.ts reads it). FAIL →
-resume the worker with the findings, then repeat 4–5 for the new SHA (limit 2 + Architect + 2,
-design-patterns.md; then ask the PO).
+AGENTS.md, evidence. Post its verdict with `gh pr comment <pr> --body-file <f>`. The body must
+contain:
+
+- ``**VERDICT:** PASS|FAIL · **REVIEWED_HEAD:** `<sha>` `` (status.ts and `merge` read it);
+- one line per acceptance criterion, at the start of the line, numbered by the order of the
+  checkboxes under the Issue's `## Acceptance criteria` heading (`close` reads them):
+
+  ```
+  AC-1: met — <evidence>
+  AC-2: not met — <what is missing>
+  ```
+
+  Every criterion gets exactly one line; PASS requires every line to be `met`.
+
+FAIL → resume the worker with the findings, then repeat 4–5 for the new SHA (limit: 2 rounds,
+then Architect, then 2 more; design-patterns.md; then ask the PO).
 
 ## 6. Merge, close, clean up
 
-When `/omi-status` shows checks `pass` and `agent PASS @head`:
-
 ```
 node tools/coordinator/flow.ts merge <pr> --head <sha>
-node tools/coordinator/flow.ts close N --comment-file <f>     # comment + close + Done
+node tools/coordinator/flow.ts close N --comment-file <f>     # tick AC + comment + close + Done
 node tools/coordinator/flow.ts cleanup <branch>
 ```
+
+- `merge` refuses unless required checks are green, the newest agent review is `PASS` on
+  exactly `<sha>`, and the merge state is `CLEAN` or `HAS_HOOKS`.
+- `close` finds the merged PR into develop with `Issue: #N`, requires the newest agent review
+  on it to be `PASS` on its merged head, and ticks the Issue's Acceptance criteria checkboxes
+  from the `AC-<n>` lines (only that section of the body changes). It refuses, and closes
+  nothing, when a criterion has no line or is `not met`; fix that with a new review comment,
+  not by editing the Issue by hand.
+- `cleanup --dry-run` only reads (no fetch); the real run fetches first.
 
 **(judge)** The closing comment states the PR, merge commit, checks and review verdict. Report
 the outcome to the PO in a few lines.
