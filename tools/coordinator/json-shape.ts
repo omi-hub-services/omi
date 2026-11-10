@@ -49,6 +49,10 @@ export function nodes(obj: JsonObject, key: string, path: string): readonly unkn
   return asArray(asObject(obj[key], `${path}.${key}`).nodes, `${path}.${key}.nodes`);
 }
 
+/** `obj.comments.nodes[].body` (oldest first). */
+export const commentBodies = (obj: JsonObject, path: string): string[] =>
+  nodes(obj, "comments", path).map((c) => asString(asObject(c, "comment").body, "comment.body"));
+
 /** Throws on a GraphQL `errors` array; returns `data`. */
 export function graphqlData(text: string, what: string): JsonObject {
   const root = asObject(parseJson(text, what), what);

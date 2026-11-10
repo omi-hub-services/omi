@@ -26,9 +26,10 @@ describe("parseProcesses", () => {
     ]);
   });
 
-  it("truncates long command lines", () => {
-    const [p] = parseProcesses(`1 1 claude -p ${"x".repeat(300)}`);
-    expect(p?.command.length).toBe(100);
+  it("keeps only tool, pid, mode and elapsed time, never the worker's argv", () => {
+    const procs = parseProcesses("7 65 claude -p --allowedTools Bash(gh pr view *) secret-prompt");
+    expect(procs).toEqual([{ pid: 7, tool: "claude", headless: true, elapsedSeconds: 65 }]);
+    expect(JSON.stringify(procs)).not.toMatch(/allowedTools|secret-prompt/);
   });
 });
 

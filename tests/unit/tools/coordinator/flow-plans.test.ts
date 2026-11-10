@@ -18,6 +18,7 @@ import {
   type CleanupState,
   type Plan,
   type PullForMerge,
+  type ReferencingPull,
   type Step,
   type StatusField,
 } from "../../../../tools/coordinator/flow-plans.ts";
@@ -179,16 +180,24 @@ describe("planOpenPr", () => {
   });
 });
 
+const pass = (head: string, extra = "") =>
+  `## Independent agent review\n\n**VERDICT:** PASS · **REVIEWED_HEAD:** \`${head}\`\n${extra}`;
+const fail = (head: string) => `**VERDICT:** FAIL · **REVIEWED_HEAD:** \`${head}\``;
+
 describe("planMerge", () => {
   const green: PullForMerge = {
     number: 62,
+    title: "OMI-050: skills",
     state: "OPEN",
     isDraft: false,
+    headRefName: BRANCH,
     baseRefName: "develop",
     headRefOid: HEAD,
-    mergeable: "MERGEABLE",
+    body: "Issue: #61",
+    reviewDecision: null,
     mergeStateStatus: "CLEAN",
     mergeCommit: null,
+    comments: ["looks fine", pass(HEAD)],
     checks: [
       { name: "check", state: "pass" },
       { name: "issue-link", state: "pass" },
@@ -212,8 +221,6 @@ describe("planMerge", () => {
     ["head moved after review", { headRefOid: "2222222222222222222222222222222222222222" }],
     ["release PR into main", { baseRefName: "main" }],
     ["draft", { isDraft: true }],
-    ["conflicts", { mergeable: "CONFLICTING" }],
-    ["behind develop", { mergeStateStatus: "BEHIND" }],
     ["closed", { state: "CLOSED" }],
     [
       "failing check",
@@ -238,6 +245,37 @@ describe("planMerge", () => {
     expect(planMerge({ ...green, ...change }, "b0ab3b3", required).kind).toBe("refuse");
   });
 
+  it.each<[string, string[], RegExp]>([
+    ["no agent review at all", ["LGTM"], /needs an agent review PASS on head b0ab3b3 \(none found/],
+    ["PASS on an older head", [pass("1111111")], /newest: PASS @1111111/],
+    ["newest review is FAIL on the head", [pass(HEAD), fail(HEAD)], /newest: FAIL @b0ab3b3/],
+  ])("refuses without an agent PASS on the exact head: %s", (_label, comments, reason) => {
+    expect(planMerge({ ...green, comments }, "b0ab3b3", required)).toEqual({
+      kind: "refuse",
+      reason: expect.stringMatching(reason) as unknown,
+    });
+  });
+
+  it("merges when a FAIL was followed by a PASS on the new head", () => {
+    const comments = [fail("1111111"), pass(HEAD.slice(0, 12))];
+    expect(planMerge({ ...green, comments }, "b0ab3b3", required).kind).toBe("run");
+  });
+
+  it.each(["BEHIND", "DIRTY", "BLOCKED", "UNSTABLE", "UNKNOWN"])(
+    "refuses merge state %s with the state in the reason",
+    (mergeStateStatus) => {
+      const plan = planMerge({ ...green, mergeStateStatus }, "b0ab3b3", required);
+      expect(plan.kind === "refuse" && plan.reason).toContain(
+        `merge state is ${mergeStateStatus}, not CLEAN or HAS_HOOKS`,
+      );
+    },
+  );
+
+  it("merges in merge state HAS_HOOKS", () => {
+    const plan = planMerge({ ...green, mergeStateStatus: "HAS_HOOKS" }, "b0ab3b3", required);
+    expect(plan.kind).toBe("run");
+  });
+
   it("rejects a non-SHA head before looking at the PR", () => {
     expect(() => planMerge(green, "HEAD", required)).toThrow(/commit SHA/);
   });
@@ -245,37 +283,83 @@ describe("planMerge", () => {
 
 describe("planClose", () => {
   const item = { itemId: "I", status: "In Review" };
-  const fresh = { number: 61, state: "OPEN", comments: ["other"] };
+  const body = "## Objective\n- [ ] not an AC\n\n## Acceptance criteria\n- [ ] one\n- [ ] two\n";
+  const fresh = { number: 61, state: "OPEN", body, comments: ["other"] };
+  const verdicts = "AC-1: met — test\nAC-2: met — run";
+  const merged: ReferencingPull = {
+    number: 62,
+    merged: true,
+    baseRefName: "develop",
+    headRefOid: HEAD,
+    body: "Summary\n\nIssue: #61\n",
+    comments: [pass(HEAD, verdicts)],
+  };
+  const close = (over: Partial<typeof fresh>, pulls: ReferencingPull[] = [merged]) =>
+    planClose({ ...fresh, ...over }, "Evidence: PR #62 merged", field, item, pulls);
+  const heads = (plan: Plan) => argvs(plan).map((a) => a.split(" ").slice(0, 3).join(" "));
 
-  it("comments once with the marker, closes, then sets Done", () => {
-    const s = steps(planClose(fresh, "Evidence: PR #62 merged", field, item));
-    expect(s.map((x) => x.argv.slice(0, 3).join(" "))).toEqual([
+  it("ticks the AC, comments once with the marker, closes, then sets Done", () => {
+    const s = steps(close({}));
+    expect(heads(close({}))).toEqual([
+      "gh issue edit",
       "gh issue comment",
       "gh issue close",
       "gh project item-edit",
     ]);
-    expect(s[0]?.input).toContain(CLOSE_EVIDENCE_MARKER);
-    expect(s[0]?.argv).toContain("-");
+    expect(s[0]?.argv).toEqual([
+      "gh",
+      "issue",
+      "edit",
+      "61",
+      "-R",
+      "omi-hub-services/omi",
+      "--body-file",
+      "-",
+    ]);
+    expect(s[0]?.input).toBe(body.replace("- [ ] one\n- [ ] two", "- [x] one\n- [x] two"));
+    expect(s[1]?.input).toContain(CLOSE_EVIDENCE_MARKER);
+    expect(s[1]?.argv).toContain("-");
   });
 
   it("is done on a re-run after everything happened, and resumes a partial run", () => {
     const posted = `Evidence\n\n${CLOSE_EVIDENCE_MARKER}`;
-    expect(
-      planClose({ ...fresh, state: "CLOSED", comments: [posted] }, "Evidence", field, {
-        itemId: "I",
-        status: "Done",
-      }).kind,
-    ).toBe("done");
-    const partial = planClose({ ...fresh, comments: [posted] }, "Evidence", field, item);
-    expect(argvs(partial).map((a) => a.split(" ").slice(0, 3).join(" "))).toEqual([
+    const finished = { ...fresh, state: "CLOSED", comments: [posted] };
+    expect(planClose(finished, "E", field, { itemId: "I", status: "Done" }, []).kind).toBe("done");
+    const ticked = body.replace("- [ ] one\n- [ ] two", "- [x] one\n- [x] two");
+    expect(heads(close({ body: ticked, comments: [posted] }))).toEqual([
       "gh issue close",
       "gh project item-edit",
     ]);
   });
 
+  it.each<[string, Partial<ReferencingPull>[], RegExp]>([
+    ["no merged PR links the Issue", [{ merged: false }], /no merged PR into develop/],
+    ["PR links another Issue", [{ body: "Issue: #610" }], /no merged PR into develop/],
+    ["PR into main", [{ baseRefName: "main" }], /no merged PR into develop/],
+    ["review on an older head", [{ comments: [pass("1111111", verdicts)] }], /PASS @1111111/],
+    ["review is FAIL", [{ comments: [fail(HEAD)] }], /newest: FAIL/],
+    ["AC line missing", [{ comments: [pass(HEAD, "AC-1: met — x")] }], /no line for AC-2/],
+    [
+      "AC not met",
+      [{ comments: [pass(HEAD, "AC-1: met — x\nAC-2: not met — y")] }],
+      /AC-2 as not met/,
+    ],
+  ])("refuses to close: %s", (_label, changes, reason) => {
+    const plan = close(
+      {},
+      changes.map((c) => ({ ...merged, ...c })),
+    );
+    expect(plan).toEqual({ kind: "refuse", reason: expect.stringMatching(reason) as unknown });
+  });
+
+  it("uses the newest merged PR that links the Issue", () => {
+    const older = { ...merged, number: 50, comments: [fail(HEAD)] };
+    expect(heads(close({}, [older, merged]))[0]).toBe("gh issue edit");
+  });
+
   it("refuses an empty comment or an Issue outside the Project before doing anything", () => {
-    expect(planClose(fresh, "  \n", field, item).kind).toBe("refuse");
-    expect(planClose(fresh, "Evidence", field, null).kind).toBe("refuse");
+    expect(planClose(fresh, "  \n", field, item, [merged]).kind).toBe("refuse");
+    expect(planClose(fresh, "Evidence", field, null, [merged]).kind).toBe("refuse");
   });
 });
 

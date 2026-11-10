@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { WslTarget } from "../../../../tools/coordinator/coordinator-settings.ts";
-import { branchProbe, parseBranchProbe } from "../../../../tools/coordinator/git-probe.ts";
 import {
   formatCommand,
   joinSteps,
@@ -59,11 +58,8 @@ describe("wslCommand", () => {
     }
   });
 
-  it("accepts the fixed probes (they are built to be Windows-safe)", () => {
+  it("accepts the fixed worker probe (it is built to be Windows-safe)", () => {
     expect(() => wslCommand(WORKER_PROBE, windows)).not.toThrow();
-    expect(() =>
-      wslCommand(branchProbe("task/omi-050-x", { fetch: true, remote: true }), windows),
-    ).not.toThrow();
   });
 });
 
@@ -75,26 +71,5 @@ describe("formatCommand", () => {
       input: "secret-ish body",
     });
     expect(text).toBe("gh issue comment (stdin: 15 chars)");
-  });
-});
-
-describe("parseBranchProbe", () => {
-  it("maps empty values to absent and untracked changes to not clean", () => {
-    const s = parseBranchProbe(
-      "current=task/omi-050-x\nlocal=\ndirty=\nchanges=?\nhead=abc\nmerged=no\n",
-    );
-    expect(s).toEqual({
-      current: "task/omi-050-x",
-      local: null,
-      dirty: false,
-      clean: false,
-      head: "abc",
-      merged: false,
-      remote: null,
-    });
-  });
-
-  it("throws when the probe did not run in a git checkout", () => {
-    expect(() => parseBranchProbe("fatal: not a git repository\n")).toThrow(/no current branch/);
   });
 });

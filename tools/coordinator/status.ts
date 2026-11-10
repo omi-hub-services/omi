@@ -143,7 +143,7 @@ function renderText(report: ReturnType<typeof buildReport>): string {
     out.push(`WSL workers: ${String(w.processes.length)} running`);
     for (const p of w.processes) {
       out.push(
-        `  pid ${String(p.pid)} ${p.tool} ${p.headless ? "headless" : "interactive"} ${duration(p.elapsedSeconds)}  ${short(p.command, 80)}`,
+        `  pid ${String(p.pid)} ${p.tool} ${p.headless ? "headless" : "interactive"} ${duration(p.elapsedSeconds)}`,
       );
     }
     const log = w.latestLog;

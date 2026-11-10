@@ -27,34 +27,29 @@ import {
   planStartBranch,
   taskBranchName,
   toCommands,
-  type CleanupState,
   type ExistingPull,
   type IssueItem,
   type Plan,
   type PullForMerge,
+  type ReferencingPull,
   type StatusField,
 } from "./flow-plans.ts";
-import { branchProbe, parseBranchProbe, type ProbeOptions } from "./git-probe.ts";
+import { localGit, probeBranch, wslGit, type ProbeOptions } from "./git-probe.ts";
 import { graphql, readRequiredChecks } from "./github-reads.ts";
-import { parseCheck } from "./github-snapshot.ts";
+import { parsePull, PULL_FIELDS } from "./github-snapshot.ts";
 import {
   asArray,
   asBoolean,
   asNumber,
   asObject,
   asString,
+  commentBodies,
   nodes,
   optObject,
   optString,
   parseJson,
 } from "./json-shape.ts";
-import {
-  createProcessRunner,
-  formatCommand,
-  runChecked,
-  wslCommand,
-  type Runner,
-} from "./process-runner.ts";
+import { createProcessRunner, formatCommand, runChecked, type Runner } from "./process-runner.ts";
 
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   set-status <issue> <status>
@@ -62,11 +57,11 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   push <branch>                               WSL: git push -u origin <branch>
   check <branch> --head <sha>                 WSL: npm run check on exactly <sha>
   open-pr <issue> <branch> --title <t> --body-file <f>
-  merge <pr> --head <sha>                     only when required checks are green
-  close <issue> --comment-file <f>            comment + close + Status Done
+  merge <pr> --head <sha>                     checks green, agent PASS @head, merge state clean
+  close <issue> --comment-file <f>            tick AC from the review + comment + close + Done
   cleanup <branch>                            delete the merged local branch (WSL and host)`;
 
-interface Context {
+export interface Context {
   readonly run: Runner;
   readonly target: WslTarget;
   readonly hostCwd: string;
@@ -78,8 +73,11 @@ const ISSUE_QUERY = `
 query($owner: String!, $repo: String!, $number: Int!, $project: Int!) {
   organization(login: $owner) { projectV2(number: $project) { id
     field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } } }
-  repository(owner: $owner, name: $repo) { issue(number: $number) { state
+  repository(owner: $owner, name: $repo) { issue(number: $number) { state body
     comments(last: 100) { nodes { body } }
+    timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 30) { nodes {
+      ... on CrossReferencedEvent { source { ... on PullRequest {
+        number merged baseRefName headRefOid body comments(last: 50) { nodes { body } } } } } } }
     projectItems(first: 20) { nodes { id project { id }
       status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       planKey: fieldValueByName(name: "Plan Key") { ... on ProjectV2ItemFieldTextValue { text } }
@@ -91,7 +89,27 @@ interface IssueContext {
   readonly item: IssueItem | null;
   readonly planKey: string | null;
   readonly state: string;
+  readonly body: string;
   readonly comments: readonly string[];
+  readonly pulls: readonly ReferencingPull[];
+}
+
+/** PRs among the Issue's cross-references (an Issue source parses to an empty object). */
+function referencingPulls(issue: Readonly<Record<string, unknown>>): ReferencingPull[] {
+  return nodes(issue, "timelineItems", "issue").flatMap((raw) => {
+    const pr = optObject(asObject(raw, "event").source, "event.source");
+    if (pr?.number === undefined) return [];
+    return [
+      {
+        number: asNumber(pr.number, "source.number"),
+        merged: asBoolean(pr.merged, "source.merged"),
+        baseRefName: asString(pr.baseRefName, "source.baseRefName"),
+        headRefOid: asString(pr.headRefOid, "source.headRefOid"),
+        body: asString(pr.body, "source.body"),
+        comments: commentBodies(pr, "source"),
+      },
+    ];
+  });
 }
 
 async function readIssue(ctx: Context, number: number): Promise<IssueContext> {
@@ -126,21 +144,16 @@ async function readIssue(ctx: Context, number: number): Promise<IssueContext> {
       : null,
     planKey: item ? optString(optObject(item.planKey, "planKey")?.text, "planKey.text") : null,
     state: asString(issue.state, "issue.state"),
-    comments: nodes(issue, "comments", "issue").map((c) =>
-      asString(asObject(c, "comment").body, "comment.body"),
-    ),
+    body: asString(issue.body, "issue.body"),
+    comments: commentBodies(issue, "issue"),
+    pulls: referencingPulls(issue),
   };
 }
 
 const PULL_QUERY = `
 query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) { pullRequest(number: $number) {
-    number state isDraft baseRefName headRefOid mergeable mergeStateStatus mergeCommit { oid }
-    commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes {
-      __typename
-      ... on CheckRun { name status conclusion }
-      ... on StatusContext { context state }
-    } } } } } }
+    state mergeCommit { oid } ${PULL_FIELDS}
   } }
 }`;
 
@@ -148,22 +161,10 @@ async function readPull(ctx: Context, number: number): Promise<PullForMerge> {
   const data = await graphql(ctx.run, PULL_QUERY, { owner: OWNER, repo: REPO, number });
   const pr = optObject(asObject(data.repository, "repository").pullRequest, "pullRequest");
   if (!pr) throw new Error(`PR #${String(number)} not found in ${REPO_SLUG}`);
-  const commit = nodes(pr, "commits", "pr")[0];
-  const rollup = commit
-    ? optObject(asObject(asObject(commit, "commit").commit, "commit").statusCheckRollup, "rollup")
-    : null;
   return {
-    number: asNumber(pr.number, "pr.number"),
+    ...parsePull(pr, "pullRequest"),
     state: asString(pr.state, "pr.state"),
-    isDraft: asBoolean(pr.isDraft, "pr.isDraft"),
-    baseRefName: asString(pr.baseRefName, "pr.baseRefName"),
-    headRefOid: asString(pr.headRefOid, "pr.headRefOid"),
-    mergeable: asString(pr.mergeable, "pr.mergeable"),
-    mergeStateStatus: asString(pr.mergeStateStatus, "pr.mergeStateStatus"),
     mergeCommit: optString(optObject(pr.mergeCommit, "mergeCommit")?.oid, "mergeCommit.oid"),
-    checks: rollup
-      ? nodes(rollup, "contexts", "rollup").map((c, i) => parseCheck(c, `checks[${String(i)}]`))
-      : [],
   };
 }
 
@@ -195,31 +196,30 @@ async function readExistingPulls(ctx: Context, branch: string): Promise<Existing
 }
 
 // ── git state ────────────────────────────────────────────────────────────────
-async function probeWsl(ctx: Context, branch: string, options?: ProbeOptions) {
-  const stdout = await runChecked(ctx.run, wslCommand(branchProbe(branch, options), ctx.target));
-  return parseBranchProbe(stdout);
+const probeWsl = (ctx: Context, branch: string, options?: ProbeOptions) =>
+  probeBranch(ctx.run, wslGit(ctx.target), branch, options);
+
+/**
+ * The Windows checkout (cwd) when it is a clone of this repository (the Coordinator fetches task
+ * branches into it from WSL, so they need cleaning up there too); Linux has none.
+ */
+async function probeHost(ctx: Context, branch: string, options: ProbeOptions) {
+  if (!ctx.isWindows) return null;
+  const git = localGit(ctx.hostCwd);
+  const origin = await ctx.run(git(["remote", "get-url", "origin"]));
+  if (origin.code !== 0 || !origin.stdout.includes(REPO_SLUG)) return null;
+  return probeBranch(ctx.run, git, branch, options);
 }
 
-/** The Windows checkout (cwd), if it is a checkout of this repository; Linux has none. */
-async function probeHost(ctx: Context, branch: string): Promise<CleanupState | null> {
-  if (!ctx.isWindows) return null;
-  const git = (...args: string[]) => ctx.run({ file: "git", args, cwd: ctx.hostCwd });
-  const origin = await git("remote", "get-url", "origin");
-  if (origin.code !== 0 || !origin.stdout.includes(REPO_SLUG)) return null;
-  await git("fetch", "--prune", "--quiet", "origin");
-  const ref = `refs/heads/${branch}`;
-  const local = await git("rev-parse", "--verify", "--quiet", ref);
-  const merged = await git("merge-base", "--is-ancestor", ref, `origin/${BASE_BRANCH}`);
-  const current = await git("rev-parse", "--abbrev-ref", "HEAD");
-  const tracked = await git("status", "--porcelain", "--untracked-files=no");
-  const all = await git("status", "--porcelain");
-  return {
-    current: current.stdout.trim(),
-    local: local.code === 0 ? local.stdout.trim() : null,
-    merged: merged.code === 0,
-    dirty: tracked.stdout.trim() !== "",
-    clean: all.stdout.trim() === "",
-  };
+/** Dry-run changes nothing, not even remote-tracking refs: no fetch, "merged" is as of now. */
+export async function cleanup(ctx: Context, branch: string, dryRun: boolean): Promise<boolean> {
+  const label = `cleanup ${branch}`;
+  const options = { fetch: !dryRun };
+  const wslState = await probeWsl(ctx, branch, options);
+  const wslOk = await execute(ctx, `${label} (wsl)`, planCleanup(branch, "wsl", wslState), dryRun);
+  const hostState = await probeHost(ctx, branch, options);
+  const hostPlan = planCleanup(branch, "host", hostState);
+  return (await execute(ctx, `${label} (host)`, hostPlan, dryRun)) && wslOk;
 }
 
 // ── execution ────────────────────────────────────────────────────────────────
@@ -334,31 +334,22 @@ async function main(argv: readonly string[]): Promise<number> {
       const n = issueNumber(a);
       const comment = readFileSync(required(values["comment-file"], "--comment-file"), "utf8");
       const issue = await readIssue(ctx, n);
-      const target = { number: n, state: issue.state, comments: issue.comments };
-      return go(planClose(target, comment, issue.field, issue.item));
+      const target = { number: n, ...issue };
+      return go(planClose(target, comment, issue.field, issue.item, issue.pulls));
     }
-    case "cleanup": {
-      const branch = taskBranch(a);
-      const wslState = await probeWsl(ctx, branch, { fetch: true });
-      const wslOk = await execute(ctx, `${label} (wsl)`, planCleanup(branch, "wsl", wslState), dry);
-      const hostState = await probeHost(ctx, branch);
-      const hostOk = await execute(
-        ctx,
-        `${label} (host)`,
-        planCleanup(branch, "host", hostState),
-        dry,
-      );
-      return wslOk && hostOk ? 0 : 1;
-    }
+    case "cleanup":
+      return (await cleanup(ctx, taskBranch(a), dry)) ? 0 : 1;
     default:
       console.error(`unknown subcommand "${sub}"\n${USAGE}`);
       return 2;
   }
 }
 
-try {
-  process.exitCode = await main(process.argv.slice(2));
-} catch (error) {
-  console.error(`flow: ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
+if (import.meta.main) {
+  try {
+    process.exitCode = await main(process.argv.slice(2));
+  } catch (error) {
+    console.error(`flow: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
 }

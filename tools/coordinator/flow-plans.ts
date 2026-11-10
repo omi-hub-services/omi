@@ -7,7 +7,14 @@ import {
   REPO_SLUG,
   type WslTarget,
 } from "./coordinator-settings.ts";
-import { summarizeChecks, type CheckContext } from "./github-snapshot.ts";
+import { parseAcLines, tickAcceptanceCriteria } from "./acceptance-criteria.ts";
+import {
+  classifyReview,
+  latestAgentReview,
+  linkedIssue,
+  summarizeChecks,
+  type OpenPull,
+} from "./github-snapshot.ts";
 import { joinSteps, wslCommand, type Command } from "./process-runner.ts";
 
 /** Where a step runs: `gh` on the Coordinator host, git in the WSL checkout, or git on the host. */
@@ -248,11 +255,10 @@ export function planOpenPr(
     return done(
       `PR #${String(live.number)} (${live.state}) already exists for ${branch}: ${live.url}`,
     );
-  const link = /^Issue:\s*#(\d+)\b/m.exec(body)?.[1];
-  if (link !== String(issue)) {
-    return refuse(
-      `PR body must contain a line "Issue: #${String(issue)}" (found ${link ? `#${link}` : "none"})`,
-    );
+  const link = linkedIssue(body);
+  if (link !== issue) {
+    const found = link === null ? "none" : `#${String(link)}`;
+    return refuse(`PR body must contain a line "Issue: #${String(issue)}" (found ${found})`);
   }
   if (!title.trim()) return refuse("PR title is empty");
   return {
@@ -277,17 +283,17 @@ export function planOpenPr(
   };
 }
 
-export interface PullForMerge {
-  readonly number: number;
+export interface PullForMerge extends OpenPull {
   readonly state: string;
-  readonly isDraft: boolean;
-  readonly baseRefName: string;
-  readonly headRefOid: string;
-  readonly mergeable: string;
-  readonly mergeStateStatus: string;
   readonly mergeCommit: string | null;
-  readonly checks: readonly CheckContext[];
 }
+
+/** GitHub merge states in which `gh pr merge` can merge without bypassing anything. */
+const MERGEABLE_STATES = new Set(["CLEAN", "HAS_HOOKS"]);
+
+const shortSha = (sha: string) => sha.slice(0, 7);
+const reviewSeen = (r: { verdict: string; head: string } | null) =>
+  r ? `newest: ${r.verdict} @${shortSha(r.head)}` : "none found";
 
 export function planMerge(
   pr: PullForMerge,
@@ -312,9 +318,6 @@ export function planMerge(
     );
   }
   if (pr.isDraft) return refuse(`${n} is a draft`);
-  if (pr.mergeable === "CONFLICTING") return refuse(`${n} has merge conflicts`);
-  if (pr.mergeStateStatus === "BEHIND")
-    return refuse(`${n} is behind ${BASE_BRANCH}; update it first`);
   const checks = summarizeChecks(pr.checks, required);
   if (checks.overall !== "pass") {
     const detail = [
@@ -323,6 +326,16 @@ export function planMerge(
       checks.missingRequired.length > 0 ? `missing: ${checks.missingRequired.join(", ")}` : "",
     ].filter(Boolean);
     return refuse(`${n} checks are not green (${detail.join("; ") || checks.overall})`);
+  }
+  const review = classifyReview(pr).agent;
+  if (review?.verdict !== "PASS" || !review.current) {
+    return refuse(
+      `${n} needs an agent review PASS on head ${shortSha(pr.headRefOid)} (${reviewSeen(review)})`,
+    );
+  }
+  if (!MERGEABLE_STATES.has(pr.mergeStateStatus)) {
+    const hint = pr.mergeStateStatus === "BEHIND" ? `; update it from ${BASE_BRANCH} first` : "";
+    return refuse(`${n} merge state is ${pr.mergeStateStatus}, not CLEAN or HAS_HOOKS${hint}`);
   }
   return {
     kind: "run",
@@ -346,7 +359,52 @@ export function planMerge(
 export interface IssueForClose {
   readonly number: number;
   readonly state: string;
+  readonly body: string;
   readonly comments: readonly string[];
+}
+
+/** A PR that references the Issue (Issue timeline cross-references). */
+export interface ReferencingPull {
+  readonly number: number;
+  readonly merged: boolean;
+  readonly baseRefName: string;
+  readonly headRefOid: string;
+  readonly body: string;
+  readonly comments: readonly string[];
+}
+
+/**
+ * Ticks the Issue's AC from the `AC-<n>` lines of the agent review PASS on the merged head of
+ * the newest merged PR into develop with `Issue: #N`. Refuses on a missing PASS, a missing line
+ * or a `not met`; done when every box is already ticked.
+ */
+export function planTickCriteria(issue: IssueForClose, pulls: readonly ReferencingPull[]): Plan {
+  const n = String(issue.number);
+  const pr = pulls
+    .filter((p) => p.merged && p.baseRefName === BASE_BRANCH)
+    .filter((p) => linkedIssue(p.body) === issue.number)
+    .at(-1);
+  if (!pr) return refuse(`no merged PR into ${BASE_BRANCH} has the line "Issue: #${n}"`);
+  const p = `PR #${String(pr.number)}`;
+  const review = latestAgentReview(pr.comments);
+  if (review?.verdict !== "PASS" || !pr.headRefOid.startsWith(review.head)) {
+    const want = `${p} needs an agent review PASS on its merged head ${shortSha(pr.headRefOid)}`;
+    return refuse(`${want} (${reviewSeen(review)})`);
+  }
+  const tick = tickAcceptanceCriteria(issue.body, parseAcLines(review.body));
+  if (tick.kind === "refuse") return refuse(`#${n} AC: ${tick.reason} (review on ${p})`);
+  if (tick.newly === 0) return done(`all ${String(tick.total)} AC already ticked`);
+  return {
+    kind: "run",
+    note: `ticks ${String(tick.newly)} of ${String(tick.total)} AC from the review on ${p}`,
+    steps: [
+      {
+        side: "host",
+        argv: ["gh", "issue", "edit", n, "-R", REPO_SLUG, "--body-file", "-"],
+        input: tick.body,
+      },
+    ],
+  };
 }
 
 export function withEvidenceMarker(comment: string): string {
@@ -355,21 +413,30 @@ export function withEvidenceMarker(comment: string): string {
     : `${comment.trimEnd()}\n\n${CLOSE_EVIDENCE_MARKER}\n`;
 }
 
-/** Comment (once), close (once), then Status Done (once); each part is skipped when done. */
+/**
+ * Tick AC, comment (once), close (once), then Status Done (once); each part is skipped when
+ * done. An Issue already commented, closed and Done is done without re-checking AC.
+ */
 export function planClose(
   issue: IssueForClose,
   comment: string,
   field: StatusField,
   item: IssueItem | null,
+  pulls: readonly ReferencingPull[],
 ): Plan {
   if (!comment.trim()) return refuse("closing comment is empty");
   const statusPlan = planSetStatus(issue.number, "Done", field, item);
   if (statusPlan.kind === "refuse") return statusPlan;
   const n = String(issue.number);
-  const steps: Step[] = [];
-  const notes: string[] = [];
-  if (issue.comments.some((c) => c.includes(CLOSE_EVIDENCE_MARKER)))
-    notes.push("evidence comment exists");
+  const commented = issue.comments.some((c) => c.includes(CLOSE_EVIDENCE_MARKER));
+  if (commented && issue.state === "CLOSED" && statusPlan.kind === "done") {
+    return done(`#${n}: evidence comment exists; already closed; Status already Done`);
+  }
+  const tick = planTickCriteria(issue, pulls);
+  if (tick.kind === "refuse") return tick;
+  const steps: Step[] = tick.kind === "run" ? [...tick.steps] : [];
+  const notes: string[] = tick.note ? [tick.note] : [];
+  if (commented) notes.push("evidence comment exists");
   else {
     steps.push({
       side: "host",
