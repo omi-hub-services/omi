@@ -37,8 +37,9 @@ function guardBytes(bytes: Uint8Array, policy: CredentialPolicy): void {
  * The root must already exist; bootstrap owns its location/lifecycle. A synchronous SQLite
  * transaction serializes cooperating publications; bulk file I/O happens before it. Linking
  * the synced temp publishes without overwriting even outside writers. No row is inserted until
- * the temp is unlinked and the directory synced. DB failure can leave a complete orphan;
- * a killed writer can leave a hidden temp, neither is a published artifact or a DB reference.
+ * the temp is unlinked and the directory synced. Failed publications roll back only their
+ * own inode. Cleanup is best effort and never masks the publication error; a killed writer
+ * or a filesystem refusing cleanup can still leave unreferenced files for recovery.
  */
 export function createLocalArtifactStore(
   root: string,
@@ -71,11 +72,13 @@ export function createLocalArtifactStore(
       const temp = join(directory, `.artifact-${randomUUID()}.tmp`);
       let fd: number | undefined;
       let ownsTemp = false;
+      const publication: { stat?: fs.BigIntStats } = {};
       try {
         fd = fs.openSync(temp, "wx", 0o600);
         ownsTemp = true;
         fs.writeFileSync(fd, bytes);
         fs.fsyncSync(fd);
+        const tempStat = fs.fstatSync(fd, { bigint: true });
         fs.closeSync(fd);
         fd = undefined;
         return runInTransaction(db, () => {
@@ -84,8 +87,16 @@ export function createLocalArtifactStore(
           }
           try {
             fs.linkSync(temp, target);
+            publication.stat = tempStat;
           } catch (error) {
             if (hasFsCode(error, "EEXIST")) throw new ArtifactError("ALREADY_EXISTS");
+            if (
+              ["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "ENOSYS"].some((code) =>
+                hasFsCode(error, code),
+              )
+            ) {
+              throw new ArtifactError("HARD_LINK_UNSUPPORTED");
+            }
             throw error;
           }
           fs.unlinkSync(temp);
@@ -101,11 +112,36 @@ export function createLocalArtifactStore(
           );
           return { path: metadata.path, sha256 };
         });
+      } catch (error) {
+        // A failed INSERT/COMMIT or temp unlink must not strand our published inode. An
+        // outside writer may have replaced the target: never remove a different file/link.
+        const publishedStat = publication.stat;
+        if (publishedStat !== undefined) {
+          try {
+            const targetStat = fs.lstatSync(target, { bigint: true });
+            if (
+              targetStat.isFile() &&
+              targetStat.dev === publishedStat.dev &&
+              targetStat.ino === publishedStat.ino
+            ) {
+              fs.unlinkSync(target);
+              syncDirectory(directory);
+            }
+          } catch {
+            // Preserve the original error even when rollback itself cannot finish.
+          }
+        }
+        throw error;
       } finally {
         try {
           if (fd !== undefined) fs.closeSync(fd);
-        } finally {
+        } catch {
+          // A secondary close failure must not replace the publication error.
+        }
+        try {
           if (ownsTemp) fs.unlinkSync(temp);
+        } catch {
+          // In particular, retrying a failed temp unlink must not mask its first error.
         }
       }
     },

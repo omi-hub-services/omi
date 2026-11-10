@@ -180,7 +180,22 @@ describe("selective context assembly", () => {
   ])("rejects credential smuggling anywhere in the packet", (smuggle) => {
     const request = input();
     smuggle(request);
-    expect(() => assembleContext(request)).toThrow(CredentialInputError);
+    // Resolved profile roots come from the runtime; directory names in docs alone are safe.
+    expect(() => assembleContext(request, { credentialRoots: ["/home/user/.codex"] })).toThrow(
+      CredentialInputError,
+    );
+  });
+
+  it("accepts configuration references and auth-related code in sourced task text", () => {
+    const request = input();
+    const text = [
+      "See .claude/, .npmrc, CODEX_HOME and CLAUDE_CONFIG_DIR in the source docs.",
+      "const token = await getToken();",
+      "interface U { password: string }",
+      "Bearer tokens are short-lived",
+    ].join("\n");
+    request.context.taskSnapshot.body = text;
+    expect(assembleContext(request).taskSnapshot.body).toBe(text);
   });
 
   it("checks unknown credential fields before schema validation and does not echo values", () => {
