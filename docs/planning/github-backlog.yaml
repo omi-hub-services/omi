@@ -66,6 +66,34 @@ fields:
   - name: Blocked Reason
     text: true
 
+# Project views (project-plan.md §6). The API sets name, layout, filter and visible fields only;
+# grouping, sorting and board columns are UI steps listed in docs/planning/github-project.md.
+views:
+  - name: Delivery Board
+    layout: board
+    filter: "-work-type:Epic"
+    fields: [Title, Status, Assignees, Priority, Milestone, Plan Key]
+  - name: Backlog
+    layout: table
+    filter: "-status:Done"
+    fields: [Title, Status, Milestone, Priority, Work Type, Role, Area, Parent issue, Plan Key]
+  - name: Epic Breakdown
+    layout: table
+    filter: "-work-type:Epic"
+    fields: [Title, Parent issue, Status, Milestone, Priority, Plan Key]
+  - name: Needs PO
+    layout: table
+    filter: 'status:"Waiting Approval",Blocked'
+    fields: [Title, Status, Blocked Reason, Priority, Milestone, Plan Key]
+  - name: Active Runs
+    layout: table
+    filter: 'status:"In Progress","In Review","Waiting Resource"'
+    fields: [Title, Status, Run ID, Role, Assignees, Linked pull requests, Plan Key]
+  - name: Release Readiness
+    layout: table
+    filter: "work-type:Release"
+    fields: [Title, Status, Milestone, Linked pull requests, Sub-issues progress, Plan Key]
+
 defaults:
   review:
     checks: ["npm run check (local) và CI xanh trên đúng head SHA của PR"]

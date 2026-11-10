@@ -12,7 +12,7 @@ separate Product Owner approval.
 Only the repository scaffold exists: folder map, toolchain, engineering rules and architecture
 guards. **There is no runtime, agent adapter, profile switching or product CLI yet.** The
 `omi` / `omi-squad` command described in the docs is planned (OMI-011 and later) and does not
-exist. Work is tracked in the [GitHub Project](PROJECT_URL) and the
+exist. Work is tracked in the [GitHub Project](https://github.com/orgs/omi-hub-services/projects/1) and the
 [backlog manifest](docs/planning/github-backlog.yaml).
 
 ## Documents

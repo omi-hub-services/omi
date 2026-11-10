@@ -56,6 +56,7 @@ export interface Manifest {
   };
   milestones: { key: string; title: string; description: string }[];
   fields: Field[];
+  views: { name: string; layout: "board" | "table"; filter: string; fields: string[] }[];
   defaults: { review: Required<Review> };
   issues: ManifestIssue[];
 }

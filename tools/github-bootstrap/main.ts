@@ -563,6 +563,115 @@ async function syncItems(
   }
 }
 
+// Views: the API covers name, layout, filter and visible fields. The default "View 1" of a
+// fresh Project is renamed into the first view instead of leaving an empty extra view.
+async function ensureViews(m: Manifest, project: ProjectInfo, dry: boolean): Promise<void> {
+  type View = { id: string; name: string; layout: string; filter: string | null; fields: string[] };
+  const read = (): View[] =>
+    (
+      graphql(
+        `
+          query ($p: ID!) {
+            node(id: $p) {
+              ... on ProjectV2 {
+                views(first: 50) {
+                  nodes {
+                    id
+                    name
+                    layout
+                    filter
+                    fields(first: 50) {
+                      nodes {
+                        ... on ProjectV2FieldCommon {
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        `,
+        { p: project.id },
+      ) as {
+        node: {
+          views: { nodes: (Omit<View, "fields"> & { fields: { nodes: { name: string }[] } })[] };
+        };
+      }
+    ).node.views.nodes.map((v) => ({ ...v, fields: v.fields.nodes.map((f) => f.name) }));
+  let views = read();
+  for (const want of m.views) {
+    const layout = want.layout === "board" ? "BOARD_LAYOUT" : "TABLE_LAYOUT";
+    const fieldIds = want.fields.map((name) => {
+      const f = project.fields.find((x) => x.name === name);
+      if (!f) throw new Error(`view ${want.name}: unknown field ${name}`);
+      return f.id;
+    });
+    let view = views.find((v) => v.name === want.name);
+    if (!view) {
+      const spare = m.views.some((v) => v.name === "View 1")
+        ? undefined
+        : views.find((v) => v.name === "View 1");
+      console.log(spare ? `view rename: View 1 -> ${want.name}` : `view create: ${want.name}`);
+      if (dry) {
+        views = views.filter((v) => v !== spare);
+        continue;
+      }
+      if (!spare) {
+        await write(`view:${want.name}`, () =>
+          graphql(
+            `
+              mutation ($p: ID!, $n: String!, $l: ProjectV2ViewLayout!) {
+                createProjectV2View(input: { projectId: $p, name: $n, layout: $l }) {
+                  clientMutationId
+                }
+              }
+            `,
+            { p: project.id, n: want.name, l: layout },
+          ),
+        );
+        views = read();
+        view = views.find((v) => v.name === want.name);
+      } else view = { ...spare, name: "" };
+      if (!view) throw new Error(`view ${want.name} not found after creation`);
+    }
+    if (
+      view.name === want.name &&
+      view.layout === layout &&
+      (view.filter ?? "") === want.filter &&
+      // The API returns visible fields in Project field order, not request order.
+      JSON.stringify([...view.fields].sort()) === JSON.stringify([...want.fields].sort())
+    ) {
+      continue;
+    }
+    console.log(`view update: ${want.name}`);
+    if (dry) continue;
+    const id = view.id;
+    await write(`view-update:${want.name}`, () =>
+      graphql(
+        `
+          mutation ($v: ID!, $n: String!, $l: ProjectV2ViewLayout!, $f: String!, $ids: [ID!]) {
+            updateProjectV2View(
+              input: {
+                viewId: $v
+                name: $n
+                layout: $l
+                filter: $f
+                configuration: { visibleFieldIds: $ids }
+              }
+            ) {
+              clientMutationId
+            }
+          }
+        `,
+        { v: id, n: want.name, l: layout, f: want.filter, ids: fieldIds },
+      ),
+    );
+    views = read();
+  }
+}
+
 // ── entry ────────────────────────────────────────────────────────────────────
 async function main(command: string | undefined): Promise<void> {
   const m = load();
@@ -587,7 +696,10 @@ async function main(command: string | undefined): Promise<void> {
   const remote = await upsertIssues(m, repo, milestones, dry);
   if (!dry || remote.size === m.issues.length) await linkRelationships(m, repo, remote, dry);
   const project = await ensureProject(m, repoNodeId, dry);
-  if (project) await syncItems(m, project, remote, dry);
+  if (project) {
+    await syncItems(m, project, remote, dry);
+    await ensureViews(m, project, dry);
+  }
 
   const mapping = {
     repository: repo,
