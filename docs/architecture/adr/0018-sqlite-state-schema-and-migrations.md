@@ -18,8 +18,13 @@
    positive integer), reads each pragma back, and fails if SQLite did not accept it. The state DB
    must be a file; `:memory:` is refused because it cannot use WAL or survive a restart.
 3. **Transactions** (`sqlite-transaction.ts`): `runInTransaction` runs synchronous work in
-   `BEGIN IMMEDIATE` and rolls back on any throw. If the work returns a promise it is refused and
-   rolled back, because better-sqlite3 cannot keep a transaction open across an `await`.
+   `BEGIN IMMEDIATE` and rolls back on any throw. Its type rejects promise-like return values,
+   including unions containing them. Native async functions are refused before invocation, so
+   their writes before or after an `await` cannot run. A returned promise-like from another
+   function is still refused and its synchronous writes rolled back. This runtime fallback
+   cannot cancel an already scheduled continuation; such a continuation must never use the
+   connection after the callback returns. better-sqlite3 cannot keep a transaction open across
+   an `await`.
 4. **Migrations** (`migration-runner.ts`): plain SQL files `migrations/NNNN-kebab-name.sql`,
    numbered contiguously from 0001. The runner owns the `schema_migrations` history table
    (version, name, SHA-256 checksum, applied time). It creates the table itself so the first
@@ -30,6 +35,12 @@
    version the code does not know (a newer schema). The checksum is taken over the SQL with
    CRLF normalised to LF, so a Windows checkout of the same file is not reported as tampered.
    The runner takes the migrations directory as a parameter. Bootstrap will resolve it.
+   For table rebuilds, the runner disables foreign key enforcement before `BEGIN`, checks
+   `foreign_key_check` before committing, and restores and verifies enforcement in `finally`.
+   It refuses an existing transaction before changing connection settings: SQLite cannot toggle
+   foreign keys inside a transaction. Rebuilds create a replacement table, copy rows, drop the
+   original, rename the replacement, then recreate the original indexes and triggers. They do
+   not rename the original first, which would rewrite child foreign key references.
 5. **Schema v1** (`0001-initial-state.sql`): the 14 tables of architecture.md §8, all `STRICT`.
    Local IDs and timestamps are TEXT values passed in by the application, so the domain never
    reads IDs or time implicitly. Foreign keys use NO ACTION, so a parent row with children
@@ -44,12 +55,18 @@
      `sequence` monotonic.
    - Step status is CHECKed against the §8 state list. `step_runs.iteration` lets rework run the
      same step again inside one run.
+6. **Schema v2** (`0002-state-constraints.sql`): rebuild `workflow_runs` with the exact
+   `RUN_STATUSES` vocabulary and `approvals` with the `Approval.decision` vocabulary
+   (`approved`, `rejected`). An approval decision is distinct from an approval request's lifecycle
+   status (`pending`, `expired`, `invalidated`). Rebuild `checkpoints` and `artifacts` to reject
+   empty paths, leading slash or backslash, Windows drive prefixes and parent traversal segments
+   with either separator. Preserve valid rows, foreign key references, indexes and audit triggers.
 
 ## Consequences
 
 - An applied migration is never edited; schema changes go in a new numbered file.
-- Status columns other than `step_runs.status` are free TEXT until their domain state machines
-  exist. A later migration can add CHECKs.
+- Remaining free-TEXT status columns need their own domain vocabulary before a migration can
+  constrain them. Integration tests pin persisted constrained values to the domain types.
 - Not yet covered: backup before migration, an integrity check, a recovery procedure, a
   read-only snapshot mode and repositories/ports. These belong to later Issues (tech-stack.md
   §6).

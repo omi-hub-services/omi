@@ -8,6 +8,7 @@ const BASE = "b".repeat(40);
 const OTHER = "c".repeat(40);
 
 const taskPr = (overrides: Partial<MergeInputs> = {}): MergeInputs => ({
+  pullRequestId: "pr-1",
   kind: "task",
   targetBranch: "develop",
   expectedTargetBranch: "develop",
@@ -162,6 +163,17 @@ describe("evaluateMerge", () => {
   });
 
   describe("approvals", () => {
+    it("refuses a release approval and expectation for another PR with the same head", () => {
+      expect(
+        evaluateMerge(
+          taskPr({
+            kind: "release",
+            pullRequestId: "pr-2",
+            requiredApprovals: [releaseApproval(poApproval(HEAD))],
+          }),
+        ),
+      ).toMatchObject({ allowed: false, reason: "APPROVAL_REQUIRED" });
+    });
     it("refuses a required approval that is missing or rejected", () => {
       expect(
         evaluateMerge(taskPr({ requiredApprovals: [releaseApproval(undefined)] })),

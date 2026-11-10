@@ -10,6 +10,7 @@ import {
   readHistory,
 } from "../../../src/infrastructure/persistence/sqlite/migration-runner.ts";
 import { openStateDatabase } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
+import { runInTransaction } from "../../../src/infrastructure/persistence/sqlite/sqlite-transaction.ts";
 
 const REPO_MIGRATIONS = resolve(import.meta.dirname, "../../../migrations");
 const INITIAL = "0001-initial-state.sql";
@@ -125,6 +126,46 @@ describe("migration runner", () => {
       expect(db.prepare("SELECT name FROM sqlite_schema WHERE name = 'projects'").get()).toBe(
         undefined,
       );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("checks foreign keys before commit and restores enforcement after a failed migration", () => {
+    migrate();
+    writeFileSync(
+      join(migrationsDir, "0002-orphan.sql"),
+      `CREATE TABLE migration_parent (id TEXT PRIMARY KEY) STRICT;
+       CREATE TABLE migration_child (parent_id TEXT REFERENCES migration_parent(id)) STRICT;
+       INSERT INTO migration_child VALUES ('missing');`,
+    );
+    const db = openStateDatabase(dbPath);
+    try {
+      expect(() => applyMigrations(db, loadMigrations(migrationsDir))).toThrow(
+        /migrations left foreign key violations/,
+      );
+      expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
+      expect(readHistory(db).map((record) => record.version)).toEqual([1]);
+      expect(
+        db.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'migration_%'").all(),
+      ).toEqual([]);
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("refuses nested migration without disabling foreign keys or disturbing the outer transaction", () => {
+    const db = openStateDatabase(dbPath);
+    try {
+      runInTransaction(db, () => {
+        expect(() => applyMigrations(db, loadMigrations(migrationsDir))).toThrow(
+          /outside an existing transaction/,
+        );
+        expect(db.inTransaction).toBe(true);
+        expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
+        expect(readHistory(db)).toEqual([]);
+      });
     } finally {
       db.close();
     }

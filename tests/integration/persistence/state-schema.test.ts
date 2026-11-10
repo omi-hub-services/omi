@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import {
   applyMigrations,
   loadMigrations,
@@ -155,14 +155,44 @@ describe("transactions", () => {
     expect(db.prepare("SELECT id FROM projects").all()).toEqual([{ id: "p1" }]);
   });
 
-  it("refuse async work and roll back what it wrote before its first await", async () => {
-    expect(() =>
-      runInTransaction(db, async () => {
-        insertProject();
-        await Promise.resolve();
-      }),
-    ).toThrow(/must be synchronous/);
+  it("rejects promise-like callbacks at compile time and preserves synchronous result types", () => {
+    expectTypeOf<typeof runInTransaction>().not.toExtend<
+      (db: StateDatabase, work: () => Promise<void>) => Promise<void>
+    >();
+    expectTypeOf<Parameters<typeof runInTransaction<Promise<void>>>[1]>().toEqualTypeOf<
+      () => never
+    >();
+    expectTypeOf<Parameters<typeof runInTransaction<PromiseLike<string>>>[1]>().toEqualTypeOf<
+      () => never
+    >();
+    expectTypeOf<Parameters<typeof runInTransaction<string | Promise<string>>>[1]>().toEqualTypeOf<
+      () => never
+    >();
+    expectTypeOf(runInTransaction(db, () => "result")).toEqualTypeOf<string>();
+    expectTypeOf<ReturnType<typeof runInTransaction<undefined>>>().toEqualTypeOf<undefined>();
+  });
+
+  it("refuses native async work before invocation so writes after await cannot commit", async () => {
+    let entered = false;
+    // Simulate an untyped caller; the public signature rejects this callback.
+    const work: () => unknown = async () => {
+      entered = true;
+      insertProject("before", "acme/before");
+      await Promise.resolve();
+      insertProject("after", "acme/after");
+    };
+    expect(() => runInTransaction(db, work)).toThrow(/must be synchronous/);
     await Promise.resolve();
+    expect(entered).toBe(false);
+    expect(db.prepare("SELECT count(*) AS n FROM projects").get()).toEqual({ n: 0 });
+  });
+
+  it("rolls back synchronous writes when an untyped callback returns a promise-like", () => {
+    const work: () => unknown = () => {
+      insertProject();
+      return Promise.resolve("unexpected");
+    };
+    expect(() => runInTransaction(db, work)).toThrow(/must be synchronous/);
     expect(db.prepare("SELECT count(*) AS n FROM projects").get()).toEqual({ n: 0 });
   });
 });

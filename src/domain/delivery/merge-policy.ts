@@ -25,6 +25,7 @@ export interface RequiredApproval {
 }
 
 export interface MergeInputs {
+  readonly pullRequestId: string;
   /** `task` PRs go to the integration branch; `release` PRs need the PO's approval on the head. */
   readonly kind: "task" | "release";
   readonly targetBranch: string;
@@ -103,13 +104,14 @@ export function evaluateMerge(input: MergeInputs): Decision<MergeRefusal> {
   const approvalsInvalid = input.requiredApprovals.some(
     ({ approval, expected }) => !evaluateApproval(approval, expected).allowed,
   );
-  // A release PR needs a valid release approval for the head being merged. The expectation is
-  // built by the caller, so the head it names is checked here against the remote head.
+  // The caller builds the expectation, so bind both its PR identity and head to this merge.
   const releaseApprovalMissing =
     input.kind === "release" &&
     !input.requiredApprovals.some(
       ({ expected }) =>
-        expected.subject.kind === "release" && expected.subject.headSha === input.currentHeadSha,
+        expected.subject.kind === "release" &&
+        expected.subject.pullRequestId === input.pullRequestId &&
+        expected.subject.headSha === input.currentHeadSha,
     );
   if (approvalsInvalid || releaseApprovalMissing) refusals.push("APPROVAL_REQUIRED");
 

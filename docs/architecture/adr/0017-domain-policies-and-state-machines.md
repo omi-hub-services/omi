@@ -1,6 +1,6 @@
 # ADR-0017 — Domain policies and explicit state machines
 
-- Status: Proposed (the PO still decides the open points below and in the PR)
+- Status: Accepted
 - Date: 2026-11-10
 - Issue: #10 (OMI-008), epic #8, milestone M1 — Core foundation
 - Context documents: `docs/architecture/architecture.md` §3.1, §8, §9, §11;
@@ -19,8 +19,8 @@
    jitter in `[0, 1)`; none reads a clock, `Math.random` or an id generator.
 3. **Task `blocked` is split in two**: `blocked_by_dependency` (clears when no predecessor is
    blocked) and `blocked` (quality budget spent, reopened only by a recorded PO decision).
-   architecture.md §8 names one `blocked`; the split stops a dependency recovery from reopening a
-   task that the PO must decide on. The Project field maps both to "Blocked".
+   The split in architecture.md §8 stops dependency recovery from reopening a task that the PO
+   must decide on (PO decision recorded in #73). The Project field maps both to "Blocked".
 4. **Rework (2 + Architect + 2) is a counter-carrying controller** (`runs/rework-policy.ts`)
    over `{ phase, failedCycles, architectInterventionId, countedCycleIds }`. It holds no
    profile or model, so switching them cannot reset it. Infrastructure failures and waiting for a

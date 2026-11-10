@@ -307,7 +307,7 @@ SQLite là nguồn trạng thái, artifacts ở file. Dùng transaction ngắn �
 
 Uniqueness: một active workflow run/task (trừ khi PO mở run thay thế đã đóng run cũ); một active writer/worktree; một operation key cho mỗi external action; một active supervisor/project. Session/process phải gắn start time và generation, không chỉ PID có thể tái sử dụng.
 
-State step: `pending`, `ready`, `running`, `waiting_approval`, `waiting_resource`, `succeeded`, `failed`, `paused`, `interrupted`, `cancelled`. Task có thêm `blocked` khi dependency/lỗi cuối cùng. `failed` của attempt không đồng nghĩa task thất bại cuối cùng.
+State step: `pending`, `ready`, `running`, `waiting_approval`, `waiting_resource`, `succeeded`, `failed`, `paused`, `interrupted`, `cancelled`. Task tách thành `blocked_by_dependency` (tự hết khi không còn predecessor bị blocked) và `blocked` (hết quality budget, chỉ mở lại bằng quyết định PO đã ghi nhận). Cả hai ánh xạ vào "Blocked" trên GitHub Project. `failed` của attempt không đồng nghĩa task thất bại cuối cùng.
 
 ## 9. Scheduling, concurrency và rework
 
