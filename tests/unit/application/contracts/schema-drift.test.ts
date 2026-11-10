@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { renderJsonSchemaFiles } from "../../../../src/application/contracts/json-schema-catalog.ts";
 import { findSchemaDrift, readGeneratedSchemas } from "../../../../tools/generate-schemas.ts";
@@ -23,6 +25,39 @@ describe("generated JSON Schema", () => {
     expect(problems).toContain(`${first?.fileName ?? ""}: missing`);
     expect(problems).toContain("stale.v1.schema.json: not produced by any contract");
     expect(problems).toContain(`${stale?.fileName ?? ""}: out of date`);
+  });
+
+  it("does not require fields that Zod defaults, and marks files as generated", () => {
+    const workflow = JSON.parse(
+      renderJsonSchemaFiles().find((f) => f.fileName === "workflow.v1.schema.json")?.content ??
+        "null",
+    ) as {
+      $comment?: string;
+      required?: string[];
+      properties?: { steps?: { items?: { required?: string[] } } };
+    };
+    expect(workflow.required).not.toContain("gates");
+    expect(workflow.required).toContain("steps");
+    const stepRequired = workflow.properties?.steps?.items?.required ?? [];
+    expect(stepRequired).not.toContain("skills");
+    expect(stepRequired).not.toContain("rules");
+    expect(stepRequired).toContain("capability_profile");
+    for (const file of renderJsonSchemaFiles()) {
+      expect(file.content).toContain("Do not edit");
+    }
+  });
+
+  it("ignores CRLF line endings when reading a checkout", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omi-schemas-"));
+    try {
+      const expected = renderJsonSchemaFiles();
+      for (const file of expected) {
+        writeFileSync(join(dir, file.fileName), file.content.replaceAll("\n", "\r\n"));
+      }
+      expect(findSchemaDrift(expected, readGeneratedSchemas(dir))).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("is deterministic", () => {

@@ -53,7 +53,13 @@ export const workflowSchema = z
     });
     workflow.steps.forEach((step, index) => {
       step.needs.forEach((need, needIndex) => {
-        if (!ids.has(need)) {
+        if (need === step.id) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["steps", index, "needs", needIndex],
+            message: `step "${need}" cannot need itself`,
+          });
+        } else if (!ids.has(need)) {
           ctx.addIssue({
             code: "custom",
             path: ["steps", index, "needs", needIndex],

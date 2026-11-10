@@ -28,8 +28,8 @@ export const relativePathSchema = z
   .min(1)
   .max(512)
   .regex(
-    /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[^\\]+$/u,
-    "must be a relative path without '..' segments or backslashes",
+    /^(?!\/)(?![A-Za-z]:)(?![\s\S]*(?:^|\/)\.\.(?:\/|$))[^\\\r\n\u2028\u2029]+$/u,
+    "must be a relative path without '..' segments, drive prefix, backslashes or line breaks",
   )
   .refine(hasNoNul, "must not contain a NUL character");
 
@@ -37,5 +37,8 @@ export const absolutePathSchema = z
   .string()
   .min(1)
   .max(1024)
-  .regex(/^\/(?!.*(?:^|\/)\.\.(?:\/|$))[^\\]*$/u, "must be an absolute path without '..'")
+  .regex(
+    /^\/(?![\s\S]*(?:^|\/)\.\.(?:\/|$))[^\\\r\n\u2028\u2029]*$/u,
+    "must be an absolute path without '..', backslashes or line breaks",
+  )
   .refine(hasNoNul, "must not contain a NUL character");

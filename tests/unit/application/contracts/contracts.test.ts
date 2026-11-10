@@ -239,6 +239,9 @@ describe("other invalid input is rejected", () => {
     const needs = { ...validWorkflow, steps: [analyze, { ...implement, needs: ["ghost"] }] };
     expect(workflowSchema.safeParse(needs).success).toBe(false);
 
+    const self = { ...validWorkflow, steps: [analyze, { ...implement, needs: ["implement"] }] };
+    expect(workflowSchema.safeParse(self).success).toBe(false);
+
     const gate = { ...validWorkflow, gates: [{ id: "g", before: "ghost", policy: "p" }] };
     expect(workflowSchema.safeParse(gate).success).toBe(false);
   });
@@ -255,7 +258,18 @@ describe("other invalid input is rejected", () => {
   });
 
   it("rejects paths that escape the workspace or run directory", () => {
-    for (const path of ["/etc/passwd", "../secret", "a/../../b", "a\\b"]) {
+    const escapes = [
+      "/etc/passwd",
+      "../secret",
+      "a/../../b",
+      "a\\b",
+      "a\n/../../etc/passwd",
+      "a\r/../x",
+      "a\u2028/../x",
+      "C:/Windows/x",
+      "a\u0000b",
+    ];
+    for (const path of escapes) {
       expect(
         stepResultSchema.safeParse({ ...validResult, artifacts: [{ path, sha256: SHA256 }] })
           .success,
@@ -269,6 +283,12 @@ describe("other invalid input is rejected", () => {
       contextPacketSchema.safeParse({ ...validContext, workspace: { path: "relative/dir" } })
         .success,
     ).toBe(false);
+    for (const path of ["/x\n/../../etc", "/x/../y", "/x\\y", "/x\u0000"]) {
+      expect(
+        contextPacketSchema.safeParse({ ...validContext, workspace: { path } }).success,
+        path,
+      ).toBe(false);
+    }
   });
 
   it("rejects malformed hashes, statuses and out-of-range command fields", () => {

@@ -28,7 +28,8 @@ export function findSchemaDrift(
 export function readGeneratedSchemas(dir: string): Map<string, string> {
   const files = new Map<string, string>();
   for (const name of readdirSync(dir)) {
-    if (GENERATED.test(name)) files.set(name, readFileSync(join(dir, name), "utf8"));
+    if (GENERATED.test(name))
+      files.set(name, readFileSync(join(dir, name), "utf8").replaceAll("\r\n", "\n"));
   }
   return files;
 }

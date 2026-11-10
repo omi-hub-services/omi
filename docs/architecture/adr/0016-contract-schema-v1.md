@@ -39,6 +39,19 @@
 7. **`npm run build` and `schemas:check` join `check` and CI**, as ADR-0011 planned, now that
    `src/` has input. No guard was loosened.
 
+## Dependency check (AGENTS.md §6)
+
+`zod` 4.6.7: MIT license, published 2026-10-12 (at least 14 days old when adopted), pinned
+exactly, used only under `src/application/`.
+
+## Generated-file marking and path rules
+
+Each generated schema starts with a `$comment` naming the generator and "do not edit". The
+generator emits the `io: "input"` form so defaulted fields are optional. The drift reader
+normalises CRLF so a Windows checkout with `autocrlf` does not report false drift. Path
+schemas reject `..` segments (also across line breaks), backslashes, line breaks, NUL and a
+drive prefix such as `C:/`.
+
 ## Consequences
 
 - The command set is the six Coordinator commands in architecture.md §5 (`plan`, `dispatch`,
