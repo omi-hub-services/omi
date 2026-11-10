@@ -39,11 +39,30 @@ read-only, no env-prefixed commands or pipes (use a script in `.tmp/` run with `
 writes under `.claude/` (protected; the worker cannot), and the final report format (branch,
 SHAs, files per layer, check result, what is unverified, open decisions).
 
-Launch in the background (`<profile>` is the PO's worker profile). Written for Git Bash: every
-`\$` must reach WSL unexpanded (in PowerShell use `$` inside single quotes).
+Pick the worker profile by quota (script, OMI-053) right before launching:
 
 ```
-wsl.exe -d Ubuntu-24.04 --cd /home/<user>/github/omi --exec bash -lc "source ~/.nvm/nvm.sh >/dev/null; export CLAUDE_CONFIG_DIR=\$HOME/.claude-profiles/<profile>; unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; ts=\$(date +%Y%m%d-%H%M%S); claude -p --output-format stream-json --verbose --max-turns 200 --permission-mode acceptEdits --allowedTools Read Edit Write Grep Glob TodoWrite 'Bash(git status*)' 'Bash(git diff*)' 'Bash(git log*)' 'Bash(git show*)' 'Bash(git add *)' 'Bash(git commit *)' 'Bash(git switch *)' 'Bash(git fetch*)' 'Bash(git rev-parse *)' 'Bash(git restore *)' 'Bash(git ls-files*)' 'Bash(git grep *)' 'Bash(npm run *)' 'Bash(npm ci)' 'Bash(node *)' 'Bash(gh issue view *)' 'Bash(gh issue list *)' 'Bash(gh pr view *)' 'Bash(gh pr list *)' 'Bash(gh pr diff *)' 'Bash(gh project item-list *)' 'Bash(gh project field-list *)' 'Bash(gh project view *)' 'Bash(ls *)' 'Bash(cat *)' 'Bash(mkdir *)' 'Bash(ps *)' --disallowedTools 'Bash(git push*)' 'Bash(git reset --hard*)' 'Bash(gh api*)' 'Bash(npm install*)' < ~/omi-runs/omi-NNN-prompt.md > ~/omi-runs/omi-NNN-\$ts.jsonl 2> ~/omi-runs/omi-NNN-\$ts.err; echo exit=\$?"
+node tools/coordinator/flow.ts pick-profile N [--kind codex|claude+codex-live] --probe
+```
+
+- `--kind` defaults to `claude`; use `claude+codex-live` when the worker's live tests call
+  Codex (needs a Claude writer and a Codex profile both above threshold), `codex` for a Codex
+  worker. `--probe` spends one minimal Haiku call per Claude profile for fresh numbers; Codex
+  limits are read free through `codex app-server`.
+- Output `pick-profile N: claude <profile>` (and `codex <profile>`) names the profile(s) to
+  use; the `reason:` and `ranked:` lines explain the choice.
+- `refused:` (exit 1, every profile below the thresholds in `coordinator-settings.ts`) →
+  **stop and ask the PO**: wait until the printed earliest reset, or spend a Codex reset
+  credit (the count is printed). Spending a credit is the PO's decision, never yours.
+
+Launch in the background with the chosen Claude profile as `<profile>`; it is also part of
+the log name, which is how `status.ts` attributes Claude quota to a profile. For
+`claude+codex-live` add `export CODEX_HOME=\$HOME/.codex-profiles/<codex-profile>;` after
+`CLAUDE_CONFIG_DIR`. Written for Git Bash: every `\$` must reach WSL unexpanded (in
+PowerShell use `$` inside single quotes).
+
+```
+wsl.exe -d Ubuntu-24.04 --cd /home/<user>/github/omi --exec bash -lc "source ~/.nvm/nvm.sh >/dev/null; export CLAUDE_CONFIG_DIR=\$HOME/.claude-profiles/<profile>; unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; ts=\$(date +%Y%m%d-%H%M%S); claude -p --output-format stream-json --verbose --max-turns 200 --permission-mode acceptEdits --allowedTools Read Edit Write Grep Glob TodoWrite 'Bash(git status*)' 'Bash(git diff*)' 'Bash(git log*)' 'Bash(git show*)' 'Bash(git add *)' 'Bash(git commit *)' 'Bash(git switch *)' 'Bash(git fetch*)' 'Bash(git rev-parse *)' 'Bash(git restore *)' 'Bash(git ls-files*)' 'Bash(git grep *)' 'Bash(npm run *)' 'Bash(npm ci)' 'Bash(node *)' 'Bash(gh issue view *)' 'Bash(gh issue list *)' 'Bash(gh pr view *)' 'Bash(gh pr list *)' 'Bash(gh pr diff *)' 'Bash(gh project item-list *)' 'Bash(gh project field-list *)' 'Bash(gh project view *)' 'Bash(ls *)' 'Bash(cat *)' 'Bash(mkdir *)' 'Bash(ps *)' --disallowedTools 'Bash(git push*)' 'Bash(git reset --hard*)' 'Bash(gh api*)' 'Bash(npm install*)' < ~/omi-runs/omi-NNN-prompt.md > ~/omi-runs/omi-NNN-<profile>-\$ts.jsonl 2> ~/omi-runs/omi-NNN-<profile>-\$ts.err; echo exit=\$?"
 ```
 
 - This allowlist is the default for every task: specific git subcommands, `npm run`/`npm ci`,

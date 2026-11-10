@@ -4,7 +4,14 @@
 // gh calls: one GraphQL query (plus one per extra 100 Project items) and one REST read of the
 // required checks; one wsl.exe call for workers, which degrades to "unavailable" on failure.
 import { parseArgs } from "node:util";
-import { OWNER, PROJECT_NUMBER, REPO, wslTarget } from "./coordinator-settings.ts";
+import {
+  OWNER,
+  PROJECT_NUMBER,
+  QUOTA_SETTINGS,
+  REPO,
+  WORKER_PROFILES,
+  wslTarget,
+} from "./coordinator-settings.ts";
 import { graphql, readRequiredChecks } from "./github-reads.ts";
 import {
   classifyReview,
@@ -20,6 +27,7 @@ import {
   type ReadyTask,
 } from "./github-snapshot.ts";
 import { createProcessRunner, type Runner } from "./process-runner.ts";
+import { formatQuotaSection, readQuota, type QuotaReport } from "./quota.ts";
 import { readWorkers, type Workers } from "./wsl-workers.ts";
 
 const ACTIVE = new Set([
@@ -158,6 +166,7 @@ function renderText(report: ReturnType<typeof buildReport>): string {
       );
     }
   }
+  out.push(...formatQuotaSection(report.quota));
   return out.join("\n");
 }
 
@@ -165,6 +174,7 @@ function buildReport(
   project: Awaited<ReturnType<typeof readProject>>,
   required: readonly string[],
   workers: Workers,
+  quota: QuotaReport,
 ) {
   const { unblocked, blocked } = partitionReady(project.items);
   return {
@@ -177,18 +187,20 @@ function buildReport(
     pulls: project.pulls.map((p) => pullView(p, required)),
     mismatches: findMismatches(project.items),
     workers,
+    quota,
   };
 }
 
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: { json: { type: "boolean", default: false } } });
   const run = createProcessRunner();
-  const [project, required, workers] = await Promise.all([
+  const [project, required, workers, quota] = await Promise.all([
     readProject(run),
     readRequiredChecks(run),
     readWorkers(run, wslTarget()),
+    readQuota(run, wslTarget(), WORKER_PROFILES, QUOTA_SETTINGS, false),
   ]);
-  const report = buildReport(project, required, workers);
+  const report = buildReport(project, required, workers, quota);
   if (values.json) {
     const groups = report.groups.map((g) => ({
       status: g.status,

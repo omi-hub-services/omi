@@ -10,8 +10,10 @@ import {
   BASE_BRANCH,
   OWNER,
   PROJECT_NUMBER,
+  QUOTA_SETTINGS,
   REPO,
   REPO_SLUG,
+  WORKER_PROFILES,
   wslTarget,
   type WslTarget,
 } from "./coordinator-settings.ts";
@@ -50,6 +52,7 @@ import {
   parseJson,
 } from "./json-shape.ts";
 import { createProcessRunner, formatCommand, runChecked, type Runner } from "./process-runner.ts";
+import { formatPick, pickProfile, readQuota, WORKER_KINDS, type WorkerKind } from "./quota.ts";
 
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   set-status <issue> <status>
@@ -59,7 +62,9 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   open-pr <issue> <branch> --title <t> --body-file <f>
   merge <pr> --head <sha>                     checks green, agent PASS @head, merge state clean
   close <issue> --comment-file <f>            tick AC from the review + comment + close + Done
-  cleanup <branch>                            delete the merged local branch (WSL and host)`;
+  cleanup <branch>                            delete the merged local branch (WSL and host)
+  pick-profile <issue> [--kind claude|codex|claude+codex-live] [--probe]
+                                              worker profile by quota (--probe: 1 Haiku call/profile)`;
 
 export interface Context {
   readonly run: Runner;
@@ -267,6 +272,29 @@ function taskBranch(raw: string | undefined): string {
   return branch;
 }
 
+/** Read-only; the Issue number only labels the output. Never spends a Codex reset credit. */
+async function pickProfileCommand(
+  ctx: Context,
+  issue: number,
+  kind: string,
+  probe: boolean,
+): Promise<number> {
+  if (!(WORKER_KINDS as readonly string[]).includes(kind)) {
+    throw new Error(`--kind must be one of ${WORKER_KINDS.join(", ")}`);
+  }
+  const label = `pick-profile ${String(issue)}`;
+  const quota = await readQuota(ctx.run, ctx.target, WORKER_PROFILES, QUOTA_SETTINGS, probe);
+  if (!quota.available) {
+    console.error(`${label}: refused: quota unavailable (${quota.reason.slice(0, 200)})`);
+    return 1;
+  }
+  const result = pickProfile(kind as WorkerKind, quota.profiles, QUOTA_SETTINGS, quota.now);
+  const lines = formatPick(label, result);
+  if (result.ok) console.log(lines.join("\n"));
+  else console.error(lines.join("\n"));
+  return result.ok ? 0 : 1;
+}
+
 async function main(argv: readonly string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...argv],
@@ -277,6 +305,8 @@ async function main(argv: readonly string[]): Promise<number> {
       title: { type: "string" },
       "body-file": { type: "string" },
       "comment-file": { type: "string" },
+      kind: { type: "string", default: "claude" },
+      probe: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
   });
@@ -339,6 +369,8 @@ async function main(argv: readonly string[]): Promise<number> {
     }
     case "cleanup":
       return (await cleanup(ctx, taskBranch(a), dry)) ? 0 : 1;
+    case "pick-profile":
+      return pickProfileCommand(ctx, issueNumber(a), values.kind, values.probe);
     default:
       console.error(`unknown subcommand "${sub}"\n${USAGE}`);
       return 2;

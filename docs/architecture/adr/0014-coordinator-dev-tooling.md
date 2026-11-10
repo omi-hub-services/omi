@@ -34,7 +34,23 @@ no place in the folder map.
      `merge` requires green required checks, the newest agent review `PASS` on the exact head
      and merge state `CLEAN`/`HAS_HOOKS`. `close` ticks the Issue's Acceptance criteria from the
      `AC-<n>: met|not met` lines of the agent review `PASS` on the merged PR's head and refuses
-     on a missing line or `not met` (OMI-051).
+     on a missing line or `not met` (OMI-051). `pick-profile` chooses the worker profile by
+     quota (OMI-053, below).
+   - `quota.ts` — worker subscription quota (OMI-053), read in one WSL call by a small Node
+     collector sent on stdin (the bash payload stays quote-free): **Codex** through
+     `codex app-server` JSON-RPC `account/rateLimits/read` (no model call, free); **Claude** from
+     the newest `rate_limit_event` in the worker logs `~/omi-runs/omi-NNN-<profile>-<ts>.jsonl`
+     (the log name carries the profile; older logs without it are ignored unless
+     `legacyLogProfile` is set). Claude has no free read: `--probe` spends one minimal
+     `claude -p --model haiku --max-turns 1 --tools ""` call per profile, so `status.ts` never
+     probes and `/omi-next` probes once before dispatch. Results are redacted at the parse
+     boundary (percentages, reset times, status, plan, reset-credit count, data age; never
+     `accountId`, emails, tokens or credit ids). `pickProfile` is pure: score = share left of the
+     tighter window minus a penalty for the profile sharing the Coordinator's account; stale or
+     missing data ranks below fresh; below the thresholds in `coordinator-settings.ts` it refuses
+     with the earliest reset. Codex reset credits are only reported; spending one is a PO
+     decision. Log mtime is the Claude data time, and an undocumented app-server method may
+     change with codex-cli versions. Temporary: OMI-004 runtime quota detection replaces it.
 3. All process execution goes through one injectable runner (`spawn`, `shell: false`, argv
    arrays). The only shell strings are `bash -lc` payloads handed to
    `wsl.exe -d <distro> --cd <repo> --exec bash -lc <payload>`; each argument is POSIX-quoted and

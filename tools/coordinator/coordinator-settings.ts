@@ -29,6 +29,47 @@ export const RUNS_DIR_FROM_HOME = "omi-runs";
 /** Hidden marker appended to the closing evidence comment so `close` never posts it twice. */
 export const CLOSE_EVIDENCE_MARKER = "<!-- omi-coordinator:close-evidence -->";
 
+/**
+ * Worker subscription profiles (OMI-053). Claude uses `CLAUDE_CONFIG_DIR=~/.claude-profiles/<p>`,
+ * Codex `CODEX_HOME=~/.codex-profiles/<p>`. `sharesCoordinatorAccount` marks a profile on the
+ * same subscription as the Coordinator session, which pickProfile penalises.
+ */
+export const WORKER_PROFILES = [
+  { tool: "claude", profile: "ggtintran", sharesCoordinatorAccount: false },
+  { tool: "claude", profile: "minibox", sharesCoordinatorAccount: true },
+  { tool: "codex", profile: "ggtintran", sharesCoordinatorAccount: false },
+] as const satisfies readonly WorkerProfile[];
+
+export interface WorkerProfile {
+  readonly tool: "claude" | "codex";
+  readonly profile: string;
+  readonly sharesCoordinatorAccount: boolean;
+}
+
+export interface QuotaSettings {
+  /** Refuse a profile with less than this share (%) of the 5-hour window left. */
+  readonly minFiveHourLeftPercent: number;
+  /** Refuse a profile with less than this share (%) of the 7-day window left. */
+  readonly minSevenDayLeftPercent: number;
+  /** Score points taken from a profile that shares the Coordinator's account. */
+  readonly coordinatorSharedPenalty: number;
+  /** Readings older than this rank below fresh ones (Claude logs; Codex is always live). */
+  readonly staleAfterMinutes: number;
+  /**
+   * Claude profile assumed for old logs named `omi-NNN-<ts>.jsonl` (no profile in the name);
+   * null ignores them.
+   */
+  readonly legacyLogProfile: string | null;
+}
+
+export const QUOTA_SETTINGS: QuotaSettings = {
+  minFiveHourLeftPercent: 30,
+  minSevenDayLeftPercent: 10,
+  coordinatorSharedPenalty: 20,
+  staleAfterMinutes: 120,
+  legacyLogProfile: null,
+};
+
 export interface WslTarget {
   /** true on Windows: steps go through wsl.exe; false inside Linux: run bash directly. */
   readonly viaWslExe: boolean;
