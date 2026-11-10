@@ -17,6 +17,7 @@ import {
   classifyReview,
   findMismatches,
   groupByStatus,
+  ignoredVerdictWarnings,
   linkedIssue,
   parseSnapshotPage,
   partitionReady,
@@ -177,6 +178,7 @@ function buildReport(
   quota: QuotaReport,
 ) {
   const { unblocked, blocked } = partitionReady(project.items);
+  const pulls = project.pulls.map((p) => pullView(p, required));
   return {
     generatedAt: new Date().toISOString(),
     project: project.title,
@@ -184,8 +186,8 @@ function buildReport(
     ready: unblocked.map(readyView),
     readyBlocked: blocked.map(readyView),
     requiredChecks: required,
-    pulls: project.pulls.map((p) => pullView(p, required)),
-    mismatches: findMismatches(project.items),
+    pulls,
+    mismatches: [...findMismatches(project.items), ...ignoredVerdictWarnings(pulls)],
     workers,
     quota,
   };

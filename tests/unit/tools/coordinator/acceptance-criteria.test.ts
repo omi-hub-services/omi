@@ -10,11 +10,17 @@ const BODY = [
   "",
   "## Acceptance criteria",
   "- [ ] `flow.ts merge` refuses",
-  "  - [ ] nested box counts as AC-2",
+  "  - [ ] nested box, not an AC",
   "* [x] already ticked",
+  "```md",
+  "- [ ] example inside a code fence, not an AC",
+  "## not a heading inside the fence",
+  "```",
+  "+ [ ] fourth line, AC-3",
+  "- [ ] AC-4",
   "",
   "### Notes inside the section",
-  "- [ ] fourth",
+  "- [ ] under a sub-heading, not an AC",
   "",
   "## Implementation map",
   "- [ ] after the section",
@@ -51,15 +57,36 @@ describe("parseAcLines", () => {
 });
 
 describe("tickAcceptanceCriteria", () => {
-  it("ticks only the boxes inside the Acceptance criteria section, byte for byte", () => {
+  it("ticks only the top-level criteria of the section, byte for byte", () => {
     const result = tickAcceptanceCriteria(BODY, met(4));
     expect(result).toMatchObject({ kind: "ok", total: 4, newly: 3 });
     const expected = BODY.replace("- [ ] `flow", "- [x] `flow")
-      .replace("  - [ ] nested", "  - [x] nested")
-      .replace("- [ ] fourth", "- [x] fourth");
+      .replace("+ [ ] fourth", "+ [x] fourth")
+      .replace("- [ ] AC-4", "- [x] AC-4");
     expect(result.kind === "ok" && result.body).toBe(expected);
-    expect(expected).toContain("- [ ] scope box");
-    expect(expected).toContain("- [ ] after the section");
+    for (const kept of [
+      "- [ ] scope box",
+      "  - [ ] nested box",
+      "- [ ] example inside a code fence",
+      "- [ ] under a sub-heading",
+      "- [ ] after the section",
+    ]) {
+      expect(expected).toContain(kept);
+    }
+  });
+
+  it("does not count nested, fenced or sub-heading checkboxes as criteria", () => {
+    expect(tickAcceptanceCriteria(BODY, met(5))).toEqual({
+      kind: "refuse",
+      reason: "the review has AC-5 but the Issue has 4 criteria",
+    });
+    const tilde = "## Acceptance criteria\n- [ ] a\n~~~\n- [ ] b\n```\n- [ ] c\n~~~\n- [ ] d\n";
+    expect(tickAcceptanceCriteria(tilde, met(2))).toMatchObject({ kind: "ok", total: 2 });
+    const subOnly = "## Acceptance criteria\n### Details\n- [ ] x\n";
+    expect(tickAcceptanceCriteria(subOnly, met(1))).toEqual({
+      kind: "refuse",
+      reason: "the Acceptance criteria section has no checkboxes",
+    });
   });
 
   it("is idempotent: a ticked body is returned unchanged with nothing newly ticked", () => {
@@ -69,10 +96,11 @@ describe("tickAcceptanceCriteria", () => {
   });
 
   it("keeps CRLF line endings and everything else untouched", () => {
-    const crlf = "Intro\r\n## Acceptance Criteria\r\n- [ ] a\r\n- [X] b\r\n\r\nTail";
+    const crlf =
+      "Intro\r\n## Acceptance Criteria\r\n- [ ] a\r\n```\r\n- [ ] f\r\n```\r\n- [X] b\r\n\r\nTail";
     const result = tickAcceptanceCriteria(crlf, met(2));
     expect(result.kind === "ok" && result.body).toBe(
-      "Intro\r\n## Acceptance Criteria\r\n- [x] a\r\n- [X] b\r\n\r\nTail",
+      "Intro\r\n## Acceptance Criteria\r\n- [x] a\r\n```\r\n- [ ] f\r\n```\r\n- [X] b\r\n\r\nTail",
     );
   });
 

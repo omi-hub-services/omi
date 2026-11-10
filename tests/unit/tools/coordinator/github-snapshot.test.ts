@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { COORDINATOR_LOGIN } from "../../../../tools/coordinator/coordinator-settings.ts";
 import {
   classifyReview,
   findMismatches,
   groupByStatus,
+  ignoredVerdictWarnings,
+  latestAgentReview,
   linkedIssue,
   parseSnapshotPage,
   partitionReady,
@@ -130,8 +133,11 @@ describe("summarizeChecks", () => {
 
 describe("classifyReview", () => {
   const head = "b0ab3b3b1aa20def858c14f954303c6cc63178bc";
-  const verdict = (v: string, sha: string) =>
-    `## Independent agent review\n\n**VERDICT:** ${v} · **REVIEWED_HEAD:** \`${sha}\``;
+  const verdict = (v: string, sha: string, author: string | null = COORDINATOR_LOGIN) => ({
+    author,
+    body: `## Independent agent review\n\n**VERDICT:** ${v} · **REVIEWED_HEAD:** \`${sha}\``,
+  });
+  const note = (body: string) => ({ author: COORDINATOR_LOGIN, body });
 
   it("marks the agent verdict current only if it names the PR head", () => {
     expect(
@@ -151,15 +157,48 @@ describe("classifyReview", () => {
     const r = classifyReview({
       reviewDecision: "APPROVED",
       headRefOid: head,
-      comments: [verdict("FAIL", "1111111"), "looks fine", verdict("PASS", "b0ab3b3")],
+      comments: [verdict("FAIL", "1111111"), note("looks fine"), verdict("PASS", "b0ab3b3")],
     });
     expect(r).toEqual({
       native: "APPROVED",
       agent: { verdict: "PASS", head: "b0ab3b3", current: true },
+      ignoredVerdictAuthors: [],
     });
-    expect(classifyReview({ reviewDecision: null, headRefOid: head, comments: ["hi"] }).agent).toBe(
-      null,
-    );
+    expect(
+      classifyReview({ reviewDecision: null, headRefOid: head, comments: [note("hi")] }).agent,
+    ).toBe(null);
+  });
+
+  it("ignores VERDICT comments from any account but the Coordinator and names them", () => {
+    const r = classifyReview({
+      reviewDecision: null,
+      headRefOid: head,
+      comments: [
+        verdict("FAIL", head),
+        verdict("PASS", head, "someone-else"),
+        verdict("PASS", head, null),
+        verdict("PASS", head, "someone-else"),
+      ],
+    });
+    expect(r.agent).toEqual({ verdict: "FAIL", head, current: true });
+    expect(r.ignoredVerdictAuthors).toEqual(["someone-else", "(deleted account)"]);
+    expect(latestAgentReview([verdict("PASS", head, "someone-else")])).toBe(null);
+  });
+
+  it("gives status.ts one Attention line per PR with an ignored VERDICT", () => {
+    const review = (authors: string[]) => ({
+      native: null,
+      agent: null,
+      ignoredVerdictAuthors: authors,
+    });
+    expect(
+      ignoredVerdictWarnings([
+        { number: 70, review: review(["someone-else", "bot"]) },
+        { number: 71, review: review([]) },
+      ]),
+    ).toEqual([
+      `PR #70: ignored VERDICT comment from someone-else, bot (only ${COORDINATOR_LOGIN} counts)`,
+    ]);
   });
 });
 
@@ -230,7 +269,12 @@ describe("parseSnapshotPage", () => {
             body: "Issue: #61",
             reviewDecision: null,
             mergeStateStatus: "CLEAN",
-            comments: { nodes: [] },
+            comments: {
+              nodes: [
+                { author: { login: COORDINATOR_LOGIN }, body: "review" },
+                { author: null, body: "from a deleted account" },
+              ],
+            },
             commits: {
               nodes: [
                 {
@@ -269,6 +313,10 @@ describe("parseSnapshotPage", () => {
     expect(p.pulls?.[0]?.checks).toEqual([
       { name: "check", state: "pass" },
       { name: "ci/x", state: "pending" },
+    ]);
+    expect(p.pulls?.[0]?.comments).toEqual([
+      { author: COORDINATOR_LOGIN, body: "review" },
+      { author: null, body: "from a deleted account" },
     ]);
   });
 
