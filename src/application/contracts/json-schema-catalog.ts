@@ -1,0 +1,34 @@
+import { z } from "zod";
+import { commandSchema } from "./command.js";
+import { contextPacketSchema } from "./context.js";
+import { modelsConfigSchema } from "./model-capability.js";
+import { projectConfigSchema } from "./project-config.js";
+import { stepResultSchema } from "./result.js";
+import { CONTRACT_SCHEMA_VERSION } from "./schema-version.js";
+import { workflowSchema } from "./workflow.js";
+
+export interface GeneratedSchemaFile {
+  readonly fileName: string;
+  readonly content: string;
+}
+
+const CONTRACTS: readonly { name: string; schema: z.ZodType }[] = [
+  { name: "workflow", schema: workflowSchema },
+  { name: "project-config", schema: projectConfigSchema },
+  { name: "models-config", schema: modelsConfigSchema },
+  { name: "context-packet", schema: contextPacketSchema },
+  { name: "step-result", schema: stepResultSchema },
+  { name: "command", schema: commandSchema },
+];
+
+/**
+ * The only source of `schemas/*.json`: Zod's native JSON Schema conversion, serialised
+ * deterministically. Pure; `tools/generate-schemas.ts` writes or compares the files.
+ * Refinements (cross-references) are not expressible in JSON Schema and are not emitted.
+ */
+export function renderJsonSchemaFiles(): GeneratedSchemaFile[] {
+  return CONTRACTS.map(({ name, schema }) => ({
+    fileName: `${name}.v${String(CONTRACT_SCHEMA_VERSION)}.schema.json`,
+    content: `${JSON.stringify(z.toJSONSchema(schema, { target: "draft-2020-12" }), null, 2)}\n`,
+  }));
+}
