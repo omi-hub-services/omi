@@ -53,6 +53,23 @@ export function nodes(obj: JsonObject, key: string, path: string): readonly unkn
 export const commentBodies = (obj: JsonObject, path: string): string[] =>
   nodes(obj, "comments", path).map((c) => asString(asObject(c, "comment").body, "comment.body"));
 
+export interface AuthoredComment {
+  /** GitHub login; null for a deleted account ("ghost"). */
+  readonly author: string | null;
+  readonly body: string;
+}
+
+/** `obj.comments.nodes[]` as `{ author { login } body }` (oldest first). */
+export const authoredComments = (obj: JsonObject, path: string): AuthoredComment[] =>
+  nodes(obj, "comments", path).map((raw, i) => {
+    const c = asObject(raw, `${path}.comments[${String(i)}]`);
+    const author = optObject(c.author, `${path}.comments[${String(i)}].author`);
+    return {
+      author: optString(author?.login, `${path}.comments[${String(i)}].author.login`),
+      body: asString(c.body, `${path}.comments[${String(i)}].body`),
+    };
+  });
+
 /** Throws on a GraphQL `errors` array; returns `data`. */
 export function graphqlData(text: string, what: string): JsonObject {
   const root = asObject(parseJson(text, what), what);

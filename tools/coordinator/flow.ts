@@ -45,6 +45,7 @@ import {
   asNumber,
   asObject,
   asString,
+  authoredComments,
   commentBodies,
   nodes,
   optObject,
@@ -82,7 +83,8 @@ query($owner: String!, $repo: String!, $number: Int!, $project: Int!) {
     comments(last: 100) { nodes { body } }
     timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 30) { nodes {
       ... on CrossReferencedEvent { source { ... on PullRequest {
-        number merged baseRefName headRefOid body comments(last: 50) { nodes { body } } } } } } }
+        number merged mergedAt baseRefName headRefOid body repository { nameWithOwner }
+        comments(last: 50) { nodes { author { login } body } } } } } } }
     projectItems(first: 20) { nodes { id project { id }
       status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       planKey: fieldValueByName(name: "Plan Key") { ... on ProjectV2ItemFieldTextValue { text } }
@@ -99,19 +101,25 @@ interface IssueContext {
   readonly pulls: readonly ReferencingPull[];
 }
 
-/** PRs among the Issue's cross-references (an Issue source parses to an empty object). */
-function referencingPulls(issue: Readonly<Record<string, unknown>>): ReferencingPull[] {
+/**
+ * PRs of this repository among the Issue's cross-references (an Issue source parses to an empty
+ * object). A PR in another repository can mention the Issue too, but is never evidence for it.
+ */
+export function referencingPulls(issue: Readonly<Record<string, unknown>>): ReferencingPull[] {
   return nodes(issue, "timelineItems", "issue").flatMap((raw) => {
     const pr = optObject(asObject(raw, "event").source, "event.source");
     if (pr?.number === undefined) return [];
+    const repo = asObject(pr.repository, "source.repository");
+    if (asString(repo.nameWithOwner, "source.repository.nameWithOwner") !== REPO_SLUG) return [];
     return [
       {
         number: asNumber(pr.number, "source.number"),
         merged: asBoolean(pr.merged, "source.merged"),
+        mergedAt: optString(pr.mergedAt, "source.mergedAt"),
         baseRefName: asString(pr.baseRefName, "source.baseRefName"),
         headRefOid: asString(pr.headRefOid, "source.headRefOid"),
         body: asString(pr.body, "source.body"),
-        comments: commentBodies(pr, "source"),
+        comments: authoredComments(pr, "source"),
       },
     ];
   });
@@ -288,7 +296,7 @@ async function pickProfileCommand(
     console.error(`${label}: refused: quota unavailable (${quota.reason.slice(0, 200)})`);
     return 1;
   }
-  const result = pickProfile(kind as WorkerKind, quota.profiles, QUOTA_SETTINGS, quota.now);
+  const result = pickProfile(kind as WorkerKind, quota.profiles, QUOTA_SETTINGS, quota.now, probe);
   const lines = formatPick(label, result);
   if (result.ok) console.log(lines.join("\n"));
   else console.error(lines.join("\n"));

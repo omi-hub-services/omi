@@ -10,11 +10,13 @@ import {
 import { parseAcLines, tickAcceptanceCriteria } from "./acceptance-criteria.ts";
 import {
   classifyReview,
+  foreignVerdictAuthors,
   latestAgentReview,
   linkedIssue,
   summarizeChecks,
   type OpenPull,
 } from "./github-snapshot.ts";
+import type { AuthoredComment } from "./json-shape.ts";
 import { joinSteps, WSL_NODE_ENV, wslCommand, type Command } from "./process-runner.ts";
 
 /** Where a step runs: `gh` on the Coordinator host, git in the WSL checkout, or git on the host. */
@@ -154,6 +156,8 @@ export function planStartBranch(branch: string, state: BranchState): Plan {
   if (state.current === branch) return done(`WSL checkout is already on ${branch}`);
   if (state.dirty)
     return refuse(`WSL checkout on ${state.current} has uncommitted tracked changes`);
+  // Kept for resuming: a re-run of start-branch after the branch was created (worker started,
+  // checkout moved elsewhere, session restarted) switches back instead of failing on `-c`.
   if (state.local !== null) {
     return {
       kind: "run",
@@ -290,8 +294,14 @@ export interface PullForMerge extends OpenPull {
 const MERGEABLE_STATES = new Set(["CLEAN", "HAS_HOOKS"]);
 
 const shortSha = (sha: string) => sha.slice(0, 7);
-const reviewSeen = (r: { verdict: string; head: string } | null) =>
-  r ? `newest: ${r.verdict} @${shortSha(r.head)}` : "none found";
+const reviewSeen = (
+  r: { verdict: string; head: string } | null,
+  comments: readonly AuthoredComment[],
+) => {
+  const seen = r ? `newest: ${r.verdict} @${shortSha(r.head)}` : "none found";
+  const foreign = foreignVerdictAuthors(comments);
+  return foreign.length > 0 ? `${seen}; ignored VERDICT from ${foreign.join(", ")}` : seen;
+};
 
 export function planMerge(
   pr: PullForMerge,
@@ -328,7 +338,7 @@ export function planMerge(
   const review = classifyReview(pr).agent;
   if (review?.verdict !== "PASS" || !review.current) {
     return refuse(
-      `${n} needs an agent review PASS on head ${shortSha(pr.headRefOid)} (${reviewSeen(review)})`,
+      `${n} needs an agent review PASS on head ${shortSha(pr.headRefOid)} (${reviewSeen(review, pr.comments)})`,
     );
   }
   if (!MERGEABLE_STATES.has(pr.mergeStateStatus)) {
@@ -361,33 +371,40 @@ export interface IssueForClose {
   readonly comments: readonly string[];
 }
 
-/** A PR that references the Issue (Issue timeline cross-references). */
+/**
+ * A PR of this repository that references the Issue (Issue timeline cross-references; PRs of
+ * other repositories are dropped when the timeline is parsed).
+ */
 export interface ReferencingPull {
   readonly number: number;
   readonly merged: boolean;
+  /** ISO 8601 UTC timestamp; null while unmerged. */
+  readonly mergedAt: string | null;
   readonly baseRefName: string;
   readonly headRefOid: string;
   readonly body: string;
-  readonly comments: readonly string[];
+  readonly comments: readonly AuthoredComment[];
 }
 
 /**
- * Ticks the Issue's AC from the `AC-<n>` lines of the agent review PASS on the merged head of
- * the newest merged PR into develop with `Issue: #N`. Refuses on a missing PASS, a missing line
- * or a `not met`; done when every box is already ticked.
+ * Ticks the Issue's AC from the `AC-<n>` lines of the Coordinator's agent review PASS on the
+ * merged head of the most recently merged (by `mergedAt`) PR into develop with `Issue: #N`.
+ * Refuses on a missing PASS, a missing line or a `not met`; done when every box is ticked.
  */
 export function planTickCriteria(issue: IssueForClose, pulls: readonly ReferencingPull[]): Plan {
   const n = String(issue.number);
+  // GitHub's ISO timestamps share one format (UTC, `Z`), so they sort as strings.
   const pr = pulls
     .filter((p) => p.merged && p.baseRefName === BASE_BRANCH)
     .filter((p) => linkedIssue(p.body) === issue.number)
+    .sort((a, b) => (a.mergedAt ?? "").localeCompare(b.mergedAt ?? ""))
     .at(-1);
   if (!pr) return refuse(`no merged PR into ${BASE_BRANCH} has the line "Issue: #${n}"`);
   const p = `PR #${String(pr.number)}`;
   const review = latestAgentReview(pr.comments);
   if (review?.verdict !== "PASS" || !pr.headRefOid.startsWith(review.head)) {
     const want = `${p} needs an agent review PASS on its merged head ${shortSha(pr.headRefOid)}`;
-    return refuse(`${want} (${reviewSeen(review)})`);
+    return refuse(`${want} (${reviewSeen(review, pr.comments)})`);
   }
   const tick = tickAcceptanceCriteria(issue.body, parseAcLines(review.body));
   if (tick.kind === "refuse") return refuse(`#${n} AC: ${tick.reason} (review on ${p})`);
