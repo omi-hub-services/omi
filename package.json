@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.19.2",
     "dependency-cruiser": "18.7.0",
     "eslint": "10.13.0",
@@ -38,6 +39,7 @@
     "yaml": "2.9.1"
   },
   "dependencies": {
+    "better-sqlite3": "13.0.3",
     "zod": "4.6.7"
   }
 }
