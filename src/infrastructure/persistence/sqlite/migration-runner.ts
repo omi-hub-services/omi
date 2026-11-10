@@ -79,56 +79,77 @@ export function checksumOf(sql: string): string {
  *
  * Refuses (MigrationHistoryError, nothing applied) when an applied migration's checksum or name
  * changed, or when the database records a migration this code does not know (a newer schema).
- * Re-running with nothing pending is a no-op.
+ * Re-running with nothing pending is a no-op. Foreign key enforcement is disabled outside the
+ * transaction for table rebuilds, checked before commit and restored on success or failure.
+ * Calling from an existing transaction is refused before changing connection settings.
  */
 export function applyMigrations(
   db: StateDatabase,
   migrations: readonly Migration[],
 ): MigrationResult {
-  return runInTransaction(db, () => {
-    db.exec(`CREATE TABLE IF NOT EXISTS ${MIGRATION_HISTORY_TABLE} (
-      version INTEGER PRIMARY KEY CHECK (version > 0),
-      name TEXT NOT NULL UNIQUE,
-      checksum TEXT NOT NULL,
-      applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-    ) STRICT`);
+  // SQLite ignores foreign_keys changes inside a transaction. Rebuilds must temporarily
+  // disable enforcement before BEGIN; foreign_key_check below validates before commit.
+  if (db.inTransaction) {
+    throw new MigrationHistoryError("migrations must run outside an existing transaction");
+  }
+  try {
+    setForeignKeys(db, false);
+    return runInTransaction(db, () => {
+      db.exec(`CREATE TABLE IF NOT EXISTS ${MIGRATION_HISTORY_TABLE} (
+        version INTEGER PRIMARY KEY CHECK (version > 0),
+        name TEXT NOT NULL UNIQUE,
+        checksum TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      ) STRICT`);
 
-    const applied = readHistory(db);
-    const known = new Map(migrations.map((m) => [m.version, m]));
-    for (const record of applied) {
-      const migration = known.get(record.version);
-      if (migration === undefined) {
-        throw new MigrationHistoryError(
-          `database has migration ${record.name} that this version does not know; refusing to run an older omi-squad against a newer schema`,
-        );
+      const applied = readHistory(db);
+      const known = new Map(migrations.map((m) => [m.version, m]));
+      for (const record of applied) {
+        const migration = known.get(record.version);
+        if (migration === undefined) {
+          throw new MigrationHistoryError(
+            `database has migration ${record.name} that this version does not know; refusing to run an older omi-squad against a newer schema`,
+          );
+        }
+        if (migration.name !== record.name || migration.checksum !== record.checksum) {
+          throw new MigrationHistoryError(
+            `migration ${record.name} changed after it was applied (recorded checksum ${record.checksum}, file ${migration.name} has ${migration.checksum}); never edit an applied migration, add a new one`,
+          );
+        }
       }
-      if (migration.name !== record.name || migration.checksum !== record.checksum) {
-        throw new MigrationHistoryError(
-          `migration ${record.name} changed after it was applied (recorded checksum ${record.checksum}, file ${migration.name} has ${migration.checksum}); never edit an applied migration, add a new one`,
-        );
-      }
-    }
 
-    const appliedVersions = new Set(applied.map((record) => record.version));
-    const pending = [...migrations]
-      .sort((a, b) => a.version - b.version)
-      .filter((m) => !appliedVersions.has(m.version));
-    const record = db.prepare(
-      `INSERT INTO ${MIGRATION_HISTORY_TABLE} (version, name, checksum) VALUES (?, ?, ?)`,
-    );
-    for (const migration of pending) {
-      db.exec(migration.sql);
-      record.run(migration.version, migration.name, migration.checksum);
-    }
-
-    const violations = db.pragma("foreign_key_check");
-    if (Array.isArray(violations) && violations.length > 0) {
-      throw new MigrationHistoryError(
-        `migrations left foreign key violations: ${JSON.stringify(violations)}`,
+      const appliedVersions = new Set(applied.map((record) => record.version));
+      const pending = [...migrations]
+        .sort((a, b) => a.version - b.version)
+        .filter((m) => !appliedVersions.has(m.version));
+      const record = db.prepare(
+        `INSERT INTO ${MIGRATION_HISTORY_TABLE} (version, name, checksum) VALUES (?, ?, ?)`,
       );
-    }
-    return { applied: pending };
-  });
+      for (const migration of pending) {
+        db.exec(migration.sql);
+        record.run(migration.version, migration.name, migration.checksum);
+      }
+
+      const violations = db.pragma("foreign_key_check");
+      if (Array.isArray(violations) && violations.length > 0) {
+        throw new MigrationHistoryError(
+          `migrations left foreign key violations: ${JSON.stringify(violations)}`,
+        );
+      }
+      return { applied: pending };
+    });
+  } finally {
+    setForeignKeys(db, true);
+  }
+}
+
+function setForeignKeys(db: StateDatabase, enabled: boolean): void {
+  db.pragma(`foreign_keys = ${enabled ? "ON" : "OFF"}`);
+  if (db.pragma("foreign_keys", { simple: true }) !== (enabled ? 1 : 0)) {
+    throw new MigrationHistoryError(
+      `SQLite refused to ${enabled ? "restore" : "disable"} foreign keys for migrations`,
+    );
+  }
 }
 
 /** The recorded migration history in version order; empty before the first migration. */

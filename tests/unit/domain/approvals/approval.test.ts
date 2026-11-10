@@ -66,6 +66,19 @@ describe("evaluateApproval", () => {
     });
   });
 
+  it("does not count a rejection from an actor outside the allowlist", () => {
+    expect(
+      evaluateApproval(
+        approved(release(HEAD), { decision: "rejected", actor: "mallory" }),
+        expecting(release(HEAD)),
+      ),
+    ).toEqual({
+      allowed: false,
+      reason: "ACTOR_NOT_ALLOWED",
+      reasons: ["ACTOR_NOT_ALLOWED"],
+    });
+  });
+
   it("refuses an approval for another PR", () => {
     const other: ApprovalSubject = { kind: "release", pullRequestId: "pr-10", headSha: HEAD };
     expect(evaluateApproval(approved(other), expecting(release(HEAD)))).toMatchObject({

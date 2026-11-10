@@ -38,7 +38,11 @@ export function evaluateApproval(
   expected: ApprovalExpectation,
 ): Decision<ApprovalInvalidReason> {
   if (approval === undefined) return decide(["NO_APPROVAL"]);
-  if (approval.decision === "rejected") return decide(["APPROVAL_REJECTED"]);
+  if (approval.decision === "rejected") {
+    return decide([
+      expected.allowedActors.includes(approval.actor) ? "APPROVAL_REJECTED" : "ACTOR_NOT_ALLOWED",
+    ]);
+  }
 
   const refusals: ApprovalInvalidReason[] = [];
   if (approval.subject.kind !== expected.subject.kind) {
