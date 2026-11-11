@@ -37,9 +37,18 @@ export interface ProcessExit {
   leftoverProcessesKilled: boolean;
 }
 
+/** Who gets the polite signal. The group is always the SIGKILL target after the grace period. */
+export type CancelScope = "child" | "group";
+
 export interface SupervisedProcess {
-  /** Sends `signal` to the child, then kills its group after the grace period if it is alive. */
-  cancel(signal?: NodeJS.Signals): void;
+  /** Process id of the child, which is also the id of the process group it leads. */
+  readonly pid: number;
+  /**
+   * Sends `signal` to the child (`scope: "child"`, the default) or to every member of its group
+   * (`scope: "group"`, for a worker that runs tool subprocesses), then kills the group after the
+   * grace period if it is alive. Idempotent: only the first call has an effect.
+   */
+  cancel(signal?: NodeJS.Signals, scope?: CancelScope): void;
   readonly exit: Promise<ProcessExit>;
 }
 
@@ -112,9 +121,10 @@ function supervise(
   let stdoutChars = 0;
   let stderr = "";
 
-  const stop = (signal: NodeJS.Signals): void => {
+  const stop = (signal: NodeJS.Signals, scope: CancelScope = "child"): void => {
     if (state.exited) return;
-    child.kill(signal);
+    if (scope === "group") killGroup(pid, signal);
+    else child.kill(signal);
     timers.push(
       setTimeout(() => {
         if (state.exited || !isGroupAlive(pid)) return;
@@ -124,10 +134,10 @@ function supervise(
     );
   };
 
-  const cancel = (signal: NodeJS.Signals = "SIGINT"): void => {
+  const cancel = (signal: NodeJS.Signals = "SIGINT", scope: CancelScope = "child"): void => {
     if (state.exited || state.cancelRequested) return;
     state.cancelRequested = true;
-    stop(signal);
+    stop(signal, scope);
   };
 
   const overflow = (): void => {
@@ -197,5 +207,5 @@ function supervise(
     });
   });
 
-  return { cancel, exit };
+  return { pid, cancel, exit };
 }

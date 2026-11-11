@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -164,6 +164,35 @@ describe("startSupervisedProcess", () => {
     expect(exit.leftoverProcessesKilled).toBe(true);
     // SIGKILL is delivered at close; the init process reaps the orphan shortly after.
     await waitFor(() => !isAlive(pid), "the group member to die");
+  });
+
+  it("exposes the group id and, with scope group, interrupts group members too", async () => {
+    const path = script(
+      "group-members.mjs",
+      `import { spawn } from "node:child_process";
+       import { writeFileSync } from "node:fs";
+       const member = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], {
+         stdio: "ignore",
+       });
+       member.once("exit", (code, signal) => {
+         writeFileSync(process.argv[2], String(signal));
+         process.exit(0);
+       });
+       process.on("SIGINT", () => undefined); // survives; only the member is interrupted
+       console.log("member " + member.pid);
+       setInterval(() => undefined, 1000);`,
+    );
+    const marker = join(dir, "member-signal.txt");
+    const lines: string[] = [];
+    const supervised = await start(path, lines, { args: [path, marker] });
+    await waitFor(() => lines.length > 0, "the member pid");
+    expect(supervised.pid).toBeGreaterThan(1);
+    const memberPid = Number((lines[0] ?? "").replace("member ", ""));
+    expect(isAlive(memberPid)).toBe(true);
+    supervised.cancel("SIGINT", "group");
+    const exit = await supervised.exit;
+    expect(readFileSync(marker, "utf8")).toBe("SIGINT");
+    expect(exit).toMatchObject({ exitCode: 0, cancelRequested: true, escalated: false });
   });
 
   it("cancels a run that exceeds its time limit and reports it as timed out", async () => {
