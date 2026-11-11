@@ -4,6 +4,7 @@
 // what can be committed. Changing an allowlist here requires updating
 // architecture.md §3 and an ADR first.
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
 const ROOT_FILES = new Set([
@@ -59,7 +60,7 @@ const SRC_DIRS = new Set([
 const BOOTSTRAP_FILES = new Set(["cli.ts", "runtime.ts", "container.ts"]);
 const TEST_DIRS = ["unit", "integration", "contract", "e2e", "live"].map((d) => `tests/${d}/`);
 
-const KEBAB_TS = /^[a-z0-9]+(-[a-z0-9]+)*\.ts$/;
+const KEBAB_TS = /^[a-z0-9]+(-[a-z0-9]+)*((\.contract)?\.(test|spec))?\.ts$/;
 const VAGUE_TOKENS = new Set([
   "utils",
   "util",
@@ -71,10 +72,11 @@ const VAGUE_TOKENS = new Set([
   "new",
   "v2",
 ]);
+const VAGUE_FRAGMENTS = ["utils", "helpers", "misc", "final", "new", "v2"];
 const FORBIDDEN_FILES: { pattern: RegExp; reason: string }[] = [
   { pattern: /(^|\/)\.env(\..*)?$/, reason: "environment/secret file" },
   {
-    pattern: /\.(sqlite|sqlite-wal|sqlite-shm|log|pem|key)$/,
+    pattern: /\.(sqlite|sqlite-wal|sqlite-shm|db|db-wal|db-shm|log|pem|key)$/,
     reason: "state, log or key material",
   },
   { pattern: /(^|\/)(credentials?|auth)\.json$/, reason: "credential file" },
@@ -103,32 +105,41 @@ export function findViolations(files: readonly string[]): string[] {
       continue;
     }
 
-    // tests/fixtures/ holds deliberately misplaced sample trees for the guard tests.
-    const isFixture = file.startsWith("tests/fixtures/");
-    if (
-      /\.(test|spec)\.ts$/.test(name) &&
-      !isFixture &&
-      !TEST_DIRS.some((d) => file.startsWith(d))
-    ) {
+    if (/\.(test|spec)\.ts$/.test(name) && !TEST_DIRS.some((d) => file.startsWith(d))) {
       out.push(`${file}: test files belong under ${TEST_DIRS.join(", ")}`);
     }
 
-    if (top === "src" && name !== ".gitkeep") {
+    for (const directory of parts.slice(0, -1)) {
+      if (
+        directory.split("-").some((token) => VAGUE_TOKENS.has(token)) ||
+        VAGUE_FRAGMENTS.some((fragment) => directory.includes(fragment))
+      ) {
+        out.push(`${file}: vague directory; name the responsibility (architecture.md §14.6)`);
+      }
+    }
+    if (name.endsWith(".ts")) {
+      if (!KEBAB_TS.test(name)) {
+        out.push(`${file}: TypeScript files must be kebab-case .ts`);
+      }
+      const stem = name.replace(/(\.contract)?\.(test|spec)\.ts$|\.ts$/, "");
+      if (
+        stem === "manager" ||
+        stem.split("-").some((token) => VAGUE_TOKENS.has(token)) ||
+        VAGUE_FRAGMENTS.some((fragment) => stem.includes(fragment))
+      ) {
+        out.push(`${file}: vague name; name the responsibility (architecture.md §14.6)`);
+      }
+    }
+
+    if (top === "src") {
+      if (name !== ".gitkeep" && !name.endsWith(".ts")) {
+        out.push(`${file}: source files must be kebab-case .ts`);
+      }
       const dir = parts.slice(0, -1).join("/");
       if (!SRC_DIRS.has(dir)) {
         out.push(`${file}: "${dir}/" is not a module directory from architecture.md §3`);
-      } else if (dir === "src/bootstrap" && !BOOTSTRAP_FILES.has(name)) {
+      } else if (dir === "src/bootstrap" && name !== ".gitkeep" && !BOOTSTRAP_FILES.has(name)) {
         out.push(`${file}: bootstrap holds only ${[...BOOTSTRAP_FILES].join(", ")}`);
-      }
-      if (!KEBAB_TS.test(name)) {
-        out.push(`${file}: source files must be kebab-case .ts`);
-      } else if (
-        name
-          .slice(0, -3)
-          .split("-")
-          .some((t) => VAGUE_TOKENS.has(t))
-      ) {
-        out.push(`${file}: vague name; name the responsibility (architecture.md §14.6)`);
       }
     }
   }
@@ -141,7 +152,7 @@ function listFiles(dir: string): string[] {
     ["-C", dir, "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
     { encoding: "utf8" },
   );
-  return stdout.split("\0").filter((f) => f.length > 0);
+  return stdout.split("\0").filter((f) => f.length > 0 && existsSync(resolve(dir, f)));
 }
 
 if (import.meta.main) {

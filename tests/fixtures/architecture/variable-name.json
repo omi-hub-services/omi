@@ -1,0 +1,7 @@
+{
+  "guard": "naming",
+  "files": {
+    "src/domain/tasks/task-status.ts": "export let bad_variable = 1;"
+  },
+  "message": "@typescript-eslint/naming-convention"
+}

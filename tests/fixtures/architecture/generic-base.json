@@ -1,0 +1,7 @@
+{
+  "guard": "naming",
+  "files": {
+    "src/domain/tasks/task-status.ts": "export class BaseAgent {}"
+  },
+  "message": "@typescript-eslint/naming-convention"
+}

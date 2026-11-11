@@ -1,0 +1,7 @@
+{
+  "guard": "naming",
+  "files": {
+    "src/domain/tasks/task-status.ts": "export const id = Math.random();"
+  },
+  "message": "Pass randomness and IDs in through a port"
+}

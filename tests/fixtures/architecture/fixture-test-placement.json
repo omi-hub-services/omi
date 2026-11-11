@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "tests/fixtures/task.test.ts": ""
+  },
+  "message": "test files belong under"
+}

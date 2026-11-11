@@ -1,15 +1,8 @@
-import type { Lease, LeaseStore } from "../ports/lease-store.js";
-import type { StateChange, StateUnitOfWork } from "../ports/state-unit-of-work.js";
+import type { LeaseStore, ProjectSession } from "../ports/lease-store.js";
+import type { StateUnitOfWork } from "../ports/state-unit-of-work.js";
 
 /** One key per project database; no PID or filesystem lock is a second authority. */
 export const PROJECT_OWNER_LEASE_KEY = "project-owner";
-export interface ProjectSession {
-  readonly lease: Lease;
-  renew(): boolean;
-  record(kind: string, payload: Readonly<Record<string, unknown>>): void;
-  release(): void;
-  commit(change: Omit<StateChange, "fence" | "at">): ReturnType<StateUnitOfWork["commit"]>;
-}
 export function claimProjectSession(deps: {
   leases: LeaseStore;
   state: StateUnitOfWork;

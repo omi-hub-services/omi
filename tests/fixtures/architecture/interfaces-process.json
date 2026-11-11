@@ -1,0 +1,7 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/interfaces/ipc/protocol.ts": "import \"node:child_process\";"
+  },
+  "message": "interfaces-no-sql-github-spawn"
+}

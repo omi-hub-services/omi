@@ -1,0 +1,7 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/application/contracts/input.ts": "import \"yaml\";"
+  },
+  "message": "application-only-ports"
+}

@@ -1,3 +1,5 @@
+import type { StateChange, StateUnitOfWork } from "./state-unit-of-work.js";
+
 /**
  * Leases with a fencing token (architecture.md §8): one holder per resource key, and every new
  * acquisition of a key gets a higher `generation`. A write or completion that carries an older
@@ -60,4 +62,12 @@ export interface LeaseStore {
   renew(request: RenewLeaseRequest): RenewLeaseResult;
   /** Marks explicit release with expiry equal to acquisition; retains owner and generation. */
   release(request: LeaseHolderRequest): ReleaseLeaseResult;
+}
+
+export interface ProjectSession {
+  readonly lease: Lease;
+  renew(): boolean;
+  record(kind: string, payload: Readonly<Record<string, unknown>>): void;
+  release(): void;
+  commit(change: Omit<StateChange, "fence" | "at">): ReturnType<StateUnitOfWork["commit"]>;
 }

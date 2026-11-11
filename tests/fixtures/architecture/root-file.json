@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "stray-script.js": ""
+  },
+  "message": "root file not in the allowlist"
+}

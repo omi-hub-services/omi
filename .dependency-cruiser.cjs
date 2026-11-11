@@ -1,10 +1,8 @@
 // Import-direction rules from docs/architecture/architecture.md §3.4.
 // Paths are relative to the working directory, so the same config also runs
-// against tests/fixtures/architecture/* in the guard tests.
+// against the materialized architecture fixtures in the guard tests.
 // Exceptions need a name, reason, scope and an ADR (architecture.md §14). No wildcards.
 
-const IO_CORE =
-  "^(node:)?(fs|fs/promises|child_process|net|http|https|http2|dgram|tls|worker_threads|cluster|sqlite)$";
 // dependency-cruiser matches `to.path` against the resolved file (node_modules/<pkg>/...), not
 // the import specifier, so an anchored `^better-sqlite3` never matched (found in OMI-011).
 const IO_NPM = "(^|/)node_modules/(better-sqlite3|@octokit|execa)/";
@@ -43,17 +41,16 @@ module.exports = {
     {
       name: "application-only-ports",
       severity: "error",
-      comment:
-        "Application depends on domain and its own ports, never on adapters, interfaces or bootstrap.",
+      comment: "Application imports domain/application and Zod only; I/O belongs behind ports.",
       from: { path: "^src/application/" },
-      to: { path: "^src/(infrastructure|interfaces|bootstrap)/" },
+      to: { pathNot: "^src/(domain|application)/|(^|/)node_modules/zod/" },
     },
     {
       name: "application-no-io",
       severity: "error",
       comment: "Application performs I/O only through ports.",
       from: { path: "^src/application/" },
-      to: { dependencyTypes: ["core"], path: IO_CORE },
+      to: { dependencyTypes: ["core"] },
     },
     {
       name: "application-no-io-libraries",
@@ -64,23 +61,24 @@ module.exports = {
     {
       name: "infrastructure-not-to-interfaces-or-bootstrap",
       severity: "error",
-      comment: "Adapters implement application ports; they do not call CLI handlers or wiring.",
+      comment:
+        "Adapters depend on application ports/contracts, never services, use cases, handlers or wiring.",
       from: { path: "^src/infrastructure/" },
-      to: { path: "^src/(interfaces|bootstrap)/" },
+      to: { path: "^src/(interfaces|bootstrap)/|^src/application/(use-cases|services)/" },
     },
     {
       name: "interfaces-not-to-infrastructure",
       severity: "error",
       comment: "Interfaces call use cases; bootstrap injects adapters.",
       from: { path: "^src/interfaces/" },
-      to: { path: "^src/(infrastructure|bootstrap)/" },
+      to: { path: "^src/(domain|infrastructure|bootstrap)/|^src/application/services/" },
     },
     {
       name: "interfaces-no-sql-github-spawn",
       severity: "error",
-      comment: "CLI/IPC handlers never run SQL, GitHub calls or spawn processes directly.",
+      comment: "CLI/IPC handlers never run SQL, HTTP/GitHub calls or spawn processes directly.",
       from: { path: "^src/interfaces/" },
-      to: { path: `^(node:)?(child_process|sqlite)$|${IO_NPM}` },
+      to: { path: `^(node:)?(child_process|sqlite|http|https|http2)$|${IO_NPM}` },
     },
     {
       name: "only-bootstrap-imports-bootstrap",
@@ -88,6 +86,13 @@ module.exports = {
       comment: "Bootstrap is the composition root; nothing depends on it.",
       from: { path: "^src/", pathNot: "^src/bootstrap/" },
       to: { path: "^src/bootstrap/" },
+    },
+    {
+      name: "src-only-source-modules",
+      severity: "error",
+      comment: "Production code must not depend on repository config, templates or dev tooling.",
+      from: { path: "^src/" },
+      to: { dependencyTypes: ["local", "localmodule"], pathNot: "^src/|(^|/)node_modules/" },
     },
     {
       name: "src-not-to-tests-or-tools",
@@ -100,7 +105,6 @@ module.exports = {
     doNotFollow: { path: "node_modules" },
     // Type-only imports count too: a wrong-direction `import type` is still a wrong dependency.
     tsPreCompilationDeps: true,
-    exclude: { path: "(^|/)(dist|coverage|\\.tmp)/" },
     // NodeNext: source imports "./x.js" for "./x.ts"; dependency-cruiser maps this itself.
     // The not-to-unresolvable rule plus the valid fixture prove the mapping works.
     enhancedResolveOptions: { extensions: [".ts", ".js"] },

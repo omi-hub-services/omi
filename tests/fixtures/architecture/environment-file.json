@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "templates/project/.env.local": ""
+  },
+  "message": "environment/secret file"
+}

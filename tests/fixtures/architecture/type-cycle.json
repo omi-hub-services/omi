@@ -1,0 +1,8 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/domain/tasks/task.ts": "import type { Status } from \"./status.js\"; export interface Task { status: Status }",
+    "src/domain/tasks/status.ts": "import type { Task } from \"./task.js\"; export interface Status { task: Task }"
+  },
+  "message": "no-circular"
+}

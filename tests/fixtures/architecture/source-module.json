@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "src/domain/widgets/widget.ts": ""
+  },
+  "message": "not a module directory"
+}
