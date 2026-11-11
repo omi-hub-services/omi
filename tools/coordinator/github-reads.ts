@@ -1,5 +1,11 @@
 // Read-only gh calls shared by the status and flow scripts.
-import { BASE_BRANCH, REPO_SLUG } from "./coordinator-settings.ts";
+import { BASE_BRANCH, OWNER, PROJECT_NUMBER, REPO, REPO_SLUG } from "./coordinator-settings.ts";
+import {
+  parseSnapshotPage,
+  SNAPSHOT_QUERY,
+  type OpenPull,
+  type ProjectItem,
+} from "./github-snapshot.ts";
 import {
   asArray,
   asObject,
@@ -9,6 +15,30 @@ import {
   type JsonObject,
 } from "./json-shape.ts";
 import { runChecked, type Runner } from "./process-runner.ts";
+
+/** Every Project item (all pages) plus the open PRs; shared by status and `flow.ts promote`. */
+export async function readProject(run: Runner) {
+  const items: ProjectItem[] = [];
+  let pulls: readonly OpenPull[] = [];
+  let title: string;
+  let after: string | null = null;
+  do {
+    const page = parseSnapshotPage(
+      await graphql(run, SNAPSHOT_QUERY, {
+        owner: OWNER,
+        repo: REPO,
+        project: PROJECT_NUMBER,
+        after,
+        withPulls: after === null,
+      }),
+    );
+    title = page.projectTitle;
+    items.push(...page.items);
+    if (page.pulls) pulls = page.pulls;
+    after = page.nextCursor;
+  } while (after !== null);
+  return { title, items, pulls };
+}
 
 /** GraphQL request on stdin, so no query text or variable ends up on a command line. */
 export async function graphql(

@@ -376,15 +376,15 @@ export interface ReadyTask {
 }
 
 /**
- * Ready, open, non-Epic Issues split into unblocked (every blocker closed) and blocked; both
- * sorted by priority, then milestone, then Issue number. An unknown blocker count is blocked.
+ * Open, non-Epic Issues in one Status split into unblocked (every blocker closed) and blocked;
+ * both sorted by priority, then milestone, then Issue number. An unknown blocker count is blocked.
  */
-export function partitionReady(items: readonly ProjectItem[]): {
-  unblocked: ReadyTask[];
-  blocked: ReadyTask[];
-} {
+export function partitionByStatus(
+  items: readonly ProjectItem[],
+  status: string,
+): { unblocked: ReadyTask[]; blocked: ReadyTask[] } {
   const ready = items
-    .filter((i) => i.kind === "Issue" && i.status === "Ready" && i.state === "OPEN")
+    .filter((i) => i.kind === "Issue" && i.status === status && i.state === "OPEN")
     .filter((i) => i.workType !== "Epic")
     .sort(
       (a, b) =>
@@ -400,6 +400,11 @@ export function partitionReady(items: readonly ProjectItem[]): {
     unblocked: ready.filter((r) => r.openBlockers.length === 0 && !r.item.blockersTruncated),
     blocked: ready.filter((r) => r.openBlockers.length > 0 || r.item.blockersTruncated),
   };
+}
+
+/** Ready, open, non-Epic Issues split by blockers (see partitionByStatus). */
+export function partitionReady(items: readonly ProjectItem[]) {
+  return partitionByStatus(items, "Ready");
 }
 
 /** Status and Issue state that disagree (Done must follow a real close, and vice versa). */
