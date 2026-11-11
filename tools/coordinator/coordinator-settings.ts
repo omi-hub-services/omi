@@ -134,3 +134,6 @@ export function wslTarget(
     repoDir: env.OMI_WSL_REPO_DIR ?? "/home/ttin/github/omi",
   };
 }
+
+/** Shared minimum for usage endpoint calls and watch quota polls (OMI-068). */
+export const QUOTA_MIN_INTERVAL_MS = 300_000;

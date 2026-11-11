@@ -46,13 +46,15 @@ no place in the folder map.
      collector sent on stdin (the bash payload stays quote-free): **Codex** through
      `codex app-server` JSON-RPC `account/rateLimits/read` (no model call, free); **Claude** from
      the OAuth usage endpoint (OMI-065, ADR-0033: free, realtime, per-model weekly windows such
-     as `Fable 99%`), falling back to the newest `rate_limit_event` in the worker logs
+     as `Fable 99%`), falling back to the last good cached API/probe reading, then the newest
+     `rate_limit_event` in the worker logs
      `~/omi-runs/omi-NNN-<profile>-<ts>.jsonl` on an expired token, HTTP error or unknown shape
      (the log name carries the profile; older logs without it are ignored unless
      `legacyLogProfile` is set). `--probe` spends one minimal
      `claude -p --model haiku --max-turns 1 --tools ""` call per profile and takes precedence
      over both, so `status.ts` never probes and `/omi-next` probes once before dispatch.
-     Per-model windows are display only; `pick-profile --model NAME` refuses a profile whose
+     Per-model windows are display only unless assigned to the worker; `pick-profile` automatically
+     checks its inferred Claude model (`--model NAME` overrides that check) and refuses a profile whose
      window for that model is below the 7d threshold. Results are redacted at the parse
      boundary (percentages, reset times, status, plan, reset-credit count, data age; never
      `accountId`, emails, tokens or credit ids). `pickProfile` is pure: score = share left of the
@@ -77,8 +79,9 @@ no place in the folder map.
 
 ## Model and effort policy (OMI-058)
 
-`flow.ts pick-profile N` keeps quota-based profile selection unchanged, then uses the existing
-Issue GraphQL read for Workflow, Work Type, Area, Priority and labels. `effort-policy.ts` is
+`flow.ts pick-profile N` uses the existing
+Issue GraphQL read for Workflow, Work Type, Area, Priority and labels before selecting profiles,
+so the inferred Claude model participates in weekly quota filtering (OMI-068). `effort-policy.ts` is
 pure; AC counts reuse `acceptance-criteria.ts`'s top-level counting convention. Rules, in order:
 
 - An exact `complexity:low|medium|high` label overrides inference, including missing fields.
@@ -187,7 +190,7 @@ Issues, Epics, PRs and drafts are excluded from readiness warnings.
 ## Terminal watch (OMI-064)
 
 Run `node tools/coordinator/watch.ts [--interval <seconds>]` in a terminal pane (default 5
-seconds). Workers refresh at that interval; quota is read every 60 seconds without paid
+seconds). Workers refresh at that interval; quota is read every five minutes without paid
 probes. Each worker uses its stdout log from `/proc/<pid>/fd/1` for task/profile, turn count
 and the last action. Claude counts assistant messages (the result's `num_turns` is authoritative);
 Codex counts `turn.started` events. Logs are streamed to count the whole run while retaining
@@ -205,7 +208,7 @@ as the terminal watch on a small localhost page (`/omi-watch` opens it). `--open
 answers `omi-watch`, it only opens another window and exits. The server uses `node:http`, binds
 `127.0.0.1` only and rejects any `Host` or `Origin` other than `127.0.0.1:<port>` or
 `localhost:<port>` (DNS rebinding). `GET /events` is SSE, one snapshot per data change (workers
-every 5 seconds, quota every 60). The snapshot is built by a pure function and the page shows
+every 5 seconds, quota every five minutes). The snapshot is built by a pure function and the page shows
 external strings only through `textContent`, under a CSP that allows its two inline blocks by
 hash. `POST /probe` runs the paid Haiku probe only with the header `X-Omi-Watch: 1`, which the
 page sends after the user confirms in the UI; nothing probes automatically. The server exits 60
@@ -299,3 +302,13 @@ It names `git -C <main-checkout> branch -d <branch>` for recovery after verifyin
 is merged into `origin/develop`, with a HEAD containing the branch; it skips log retention.
 An already absent branch in an accessible checkout reports `done:`. A dry run only probes and
 prints the planned commands; it does not fetch, remove a worktree, update refs or change logs.
+
+## Watch and quota resilience (OMI-068)
+
+The collector shares a redacted last-good Claude cache and endpoint call reservations under WSL
+`~/omi-runs` (ADR-0033), including across separate status/watch processes. Both watch modes use the
+five-minute minimum in `coordinator-settings.ts`; multiple web windows reuse one localhost server
+and poller. Expired reset times use one pure display function and are omitted; window percentages
+return to 100. Poller failures go to `onError`: terminal cleanup/rejection via `fail`, or one-line
+web logging with the server kept alive. Worker parsing includes parent PIDs and collapses a Codex
+wrapper/binary pair to its root process; matching stdout JSONL paths also collapse duplicate rows.

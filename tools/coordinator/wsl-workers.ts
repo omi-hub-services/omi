@@ -9,7 +9,7 @@ const MAX_LINE = 65536;
 /** Payload for `bash -lc`; free of `"` and `\` so it survives Windows command-line quoting. */
 export const WORKER_PROBE = [
   "echo @@ps",
-  "ps -eo pid=,etimes=,args=",
+  "ps -eo pid=,etimes=,ppid=,args=",
   "echo @@log",
   `f=$(ls -t $HOME/${RUNS_DIR_FROM_HOME}/*.jsonl 2>/dev/null | head -n 1)`,
   // `[ -n $f ]` would be true for an empty $f without quotes, hence the length test.
@@ -66,10 +66,14 @@ function workerTool(args: readonly string[]): "claude" | "codex" | null {
 /** Worker argv (prompts, paths, flags) is read only to classify the process, never kept. */
 export function parseProcesses(psOutput: string): WorkerProcess[] {
   const out: WorkerProcess[] = [];
+  const parents = new Map<number, number>();
   for (const line of psOutput.split("\n")) {
     const m = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
     if (!m?.[1] || !m[2] || !m[3]) continue;
-    const args = m[3].trim().split(/\s+/);
+    const parent = /^(\d+)\s+(.+)$/.exec(m[3]);
+    const command = parent?.[2] ?? m[3];
+    if (parent?.[1]) parents.set(Number(m[1]), Number(parent[1]));
+    const args = command.trim().split(/\s+/);
     const tool = workerTool(args);
     if (!tool) continue;
     out.push({
@@ -77,10 +81,20 @@ export function parseProcesses(psOutput: string): WorkerProcess[] {
       tool,
       headless: args.includes("-p") || args.includes("--print") || args.includes("exec"),
       elapsedSeconds: Number(m[2]),
-      ...parseWorkerArgs(m[3], tool),
+      ...parseWorkerArgs(command, tool),
     });
   }
-  return out;
+  return out.filter((p) => {
+    if (p.tool !== "codex") return true;
+    const visited = new Set<number>([p.pid]);
+    let parent = parents.get(p.pid);
+    while (parent !== undefined && !visited.has(parent)) {
+      visited.add(parent);
+      if (out.some((other) => other.pid === parent && other.tool === p.tool)) return false;
+      parent = parents.get(parent);
+    }
+    return true;
+  });
 }
 
 /** ps flattens argv: accept quoted flag values but never retain prompts or full argv. */
@@ -257,12 +271,23 @@ function attachProcessLogs(report: WorkerReport, stdout: string): WorkerReport {
       },
     });
   }
+  const seen = new Set<string>();
   return {
     ...report,
-    processes: report.processes.map((p) => {
-      const entry = logs.get(p.pid);
-      return { ...p, ...workerLogIdentity(entry?.path ?? "", p.tool), log: entry?.log ?? null };
-    }),
+    processes: [...report.processes]
+      .sort((a, b) => b.elapsedSeconds - a.elapsedSeconds || a.pid - b.pid)
+      .filter((p) => {
+        const path = logs.get(p.pid)?.path;
+        if (!path) return true;
+        const key = `${p.tool}:${path}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((p) => {
+        const entry = logs.get(p.pid);
+        return { ...p, ...workerLogIdentity(entry?.path ?? "", p.tool), log: entry?.log ?? null };
+      }),
   };
 }
 

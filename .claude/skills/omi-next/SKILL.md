@@ -144,6 +144,20 @@ must contain:
 FAIL → resume the worker with the findings, then repeat 4–5 for the new SHA (limit: 2 rounds,
 then Architect, then 2 more; design-patterns.md; then ask the PO).
 
+**Parallel tasks, one review each (OMI-069, ADR-0014).** Before step 4, merge `origin/develop`
+into a finished branch so the review sees the current base. A PR that goes `BEHIND` *after* its
+PASS (another task merged first) is synced with a script, not re-reviewed:
+
+```
+node tools/coordinator/flow.ts sync <branch> --reviewed <sha> --dry-run
+node tools/coordinator/flow.ts sync <branch> --reviewed <sha>   # merge develop, check, push, carried PASS
+```
+
+Then merge with `--head` set to the new head. `merge`/`close` accept the carried PASS only for a
+clean merge commit. `refused:` with conflicted files → resolve the conflict, then a fresh
+subagent reviews only the conflict resolution (diff between the automatic merge tree and the
+head), not the whole task.
+
 ## 6. Merge, close, clean up
 
 ```
