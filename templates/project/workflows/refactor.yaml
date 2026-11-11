@@ -1,0 +1,57 @@
+schema_version: 1
+id: refactor
+version: 1
+selection:
+  task_types: [refactor]
+quality_policy: task-default
+# Architect identifies the behavior baseline before structural changes.
+# existing-tests-unchanged evidence compares the original test files with the head.
+# existing-tests-passing evidence records that unchanged suite passing on the head.
+# Rework uses the shared 2 + Architect + 2 controller, never a DAG back-edge.
+steps:
+  - id: analyze
+    role: architect
+    needs: []
+    skills: [requirements-analysis, minimal-change]
+    rules: [project-baseline, approval-gates, evidence-and-tests, architecture-boundaries]
+    capability_profile: analysis
+    output_contract: analysis-result-v1
+  - id: implement
+    role: developer
+    needs: [analyze]
+    skills: [minimal-change]
+    rules: [project-baseline, approval-gates, evidence-and-tests, architecture-boundaries]
+    capability_profile: coding
+    output_contract: implementation-result-v1
+  - id: verify
+    role: qa
+    needs: [implement]
+    skills: [verification-before-completion]
+    rules: [project-baseline, approval-gates, evidence-and-tests]
+    capability_profile: testing
+    output_contract: verification-result-v1
+  - id: review
+    role: reviewer
+    needs: [verify]
+    skills: [independent-review]
+    rules: [project-baseline, approval-gates, evidence-and-tests]
+    capability_profile: review
+    output_contract: review-result-v1
+gates:
+  # Reuse the approved baseline; scope changes require a fresh PO decision.
+  - id: scope-approved
+    before: implement
+    policy: approved-business-baseline
+  # Evidence policies are required check ids, verified by recordStepResult against
+  # nonempty hashed artifacts; the Coordinator supplies them at dispatch.
+  - id: existing-tests-unchanged
+    after: verify
+    policy: existing-tests-unchanged
+  - id: existing-tests-passing
+    after: verify
+    policy: existing-tests-passing
+  # Independent review, current head/base checks and confirmed develop merge use
+  # the existing delivery gates (ADR-0034); a worker cannot approve its own work.
+  - id: ready-to-merge
+    after: review
+    policy: develop-merge
