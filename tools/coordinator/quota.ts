@@ -425,6 +425,12 @@ export function evaluate(
     reasons.push(`limit reached (${r.status ?? "unknown"})`);
     resets.push(...pending);
   }
+  // Limited with no window carrying a reset time: nothing says when it clears, so stay blocked.
+  const anyResetsAt = [r.fiveHour, r.sevenDay].some((w) => w?.resetsAt != null);
+  if (r.limited && reasons.length === 0 && !anyResetsAt) {
+    reasons.push(`limit reached (${r.status ?? "unknown"}), no reset time`);
+    resets.push(null);
+  }
   const known = [fiveHourLeft, sevenDayLeft].filter((n): n is number => n !== null);
   const penalty = q.sharesCoordinatorAccount ? settings.coordinatorSharedPenalty : 0;
   const blockedUntil =

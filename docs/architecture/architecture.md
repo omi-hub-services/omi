@@ -202,14 +202,14 @@ steps:
   - id: implement
     role: developer
     needs: [analyze]
-    skills: [implementation, verification]
+    skills: [test-driven-development, minimal-change]
     rules: [project-baseline, architecture-boundaries]
     capability_profile: coding
     output_contract: implementation-result-v1
   - id: verify
     role: qa
     needs: [implement]
-    skills: [verification]
+    skills: [verification-before-completion]
     capability_profile: testing
     output_contract: verification-result-v1
   - id: review
@@ -446,7 +446,7 @@ CI kiểm tra root allowlist, import direction, cycles, file naming, generated s
 | ADR-0006 | Supervisor gắn Coordinator | Dừng theo phiên, không chạy daemon tự trị |
 | ADR-0007 | One writer/worktree, serialized merge | Giảm xung đột và chứng cứ stale |
 | ADR-0008 | Full project permissions + external gates | Giữ quyền tự chủ PO chọn, minh bạch giới hạn local |
-| ADR-0009 | Chọn lọc skills thành bộ riêng | Tránh nhiều framework cùng điều phối |
+| ADR-0019 | Chọn lọc skills thành bộ riêng, có provenance | Tránh nhiều framework cùng điều phối |
 | ADR-0010 | Runtime version riêng mỗi project | Update có kiểm soát, không phụ thuộc global install |
 | ADR-0012 | Coordinator trên Windows, runtime/worker trong WSL2 | Quyết định PO 10/11/2026; lifecycle xuyên ranh giới cần PoC (OMI-005) |
 | ADR-0014 | Dev tooling Coordinator ở `tools/coordinator/` | Tạm thời tới khi có CLI `omi`; script trước, LLM sau (OMI-050) |

@@ -74,14 +74,15 @@ the `--cd /home/...` path into a Windows path (`Wsl/ERROR_PATH_NOT_FOUND`); Powe
 prefix.
 
 ```
-MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-24.04 --cd /home/<user>/github/omi --exec bash -lc "source ~/.nvm/nvm.sh >/dev/null; export CLAUDE_CONFIG_DIR=\$HOME/.claude-profiles/<profile>; unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; ts=\$(date +%Y%m%d-%H%M%S); claude -p --output-format stream-json --verbose --max-turns 200 --permission-mode acceptEdits --allowedTools Read Edit Write Grep Glob TodoWrite 'Bash(git status*)' 'Bash(git diff*)' 'Bash(git log*)' 'Bash(git show*)' 'Bash(git add *)' 'Bash(git commit *)' 'Bash(git switch *)' 'Bash(git fetch*)' 'Bash(git rev-parse *)' 'Bash(git restore *)' 'Bash(git ls-files*)' 'Bash(git grep *)' 'Bash(npm run *)' 'Bash(npm ci)' 'Bash(node *)' 'Bash(gh issue view *)' 'Bash(gh issue list *)' 'Bash(gh pr view *)' 'Bash(gh pr list *)' 'Bash(gh pr diff *)' 'Bash(gh project item-list *)' 'Bash(gh project field-list *)' 'Bash(gh project view *)' 'Bash(ls *)' 'Bash(cat *)' 'Bash(mkdir *)' 'Bash(ps *)' --disallowedTools 'Bash(git push*)' 'Bash(git reset --hard*)' 'Bash(gh api*)' 'Bash(npm install*)' 'Bash(git commit --no-verify*)' 'Bash(git commit --amend*)' 'Bash(git switch --discard-changes*)' 'Bash(git switch -C*)' 'Bash(git switch -f*)' < ~/omi-runs/omi-NNN-prompt.md > ~/omi-runs/omi-NNN-<profile>-\$ts.jsonl 2> ~/omi-runs/omi-NNN-<profile>-\$ts.err; echo exit=\$?"
+MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-24.04 --cd /home/<user>/github/omi --exec bash -lc "source ~/.nvm/nvm.sh >/dev/null; export CLAUDE_CONFIG_DIR=\$HOME/.claude-profiles/<profile>; unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; ts=\$(date +%Y%m%d-%H%M%S); claude -p --output-format stream-json --verbose --max-turns 200 --permission-mode acceptEdits --allowedTools Read Edit Write Grep Glob TodoWrite 'Bash(git status*)' 'Bash(git diff*)' 'Bash(git log*)' 'Bash(git show*)' 'Bash(git add *)' 'Bash(git commit *)' 'Bash(git switch *)' 'Bash(git fetch*)' 'Bash(git rev-parse *)' 'Bash(git restore *)' 'Bash(git ls-files*)' 'Bash(git grep *)' 'Bash(npm run *)' 'Bash(npm ci)' 'Bash(node *)' 'Bash(gh issue view *)' 'Bash(gh issue list *)' 'Bash(gh pr view *)' 'Bash(gh pr list *)' 'Bash(gh pr diff *)' 'Bash(gh project item-list *)' 'Bash(gh project field-list *)' 'Bash(gh project view *)' 'Bash(ls *)' 'Bash(cat *)' 'Bash(mkdir *)' 'Bash(ps *)' --disallowedTools 'Bash(git push*)' 'Bash(git reset --hard*)' 'Bash(gh api*)' 'Bash(npm install*)' 'Bash(git commit --no-verify*)' 'Bash(git commit -n*)' 'Bash(git commit --amend*)' 'Bash(git switch --discard-changes*)' 'Bash(git switch -C*)' 'Bash(git switch -f*)' 'Bash(git switch --force*)' < ~/omi-runs/omi-NNN-prompt.md > ~/omi-runs/omi-NNN-<profile>-\$ts.jsonl 2> ~/omi-runs/omi-NNN-<profile>-\$ts.err; echo exit=\$?"
 ```
 
 - This allowlist is the default for every task: specific git subcommands, `npm run`/`npm ci`,
   read-only `gh`, `node`, `ls`, `cat`, `mkdir`, `ps`. `--disallowedTools` wins over
   `--allowedTools`, so push, hard reset, `gh api`, `npm install`, `git commit --no-verify` /
-  `--amend` and `git switch --discard-changes` / `-C` / `-f` stay denied even if a pattern
-  above would match. Denials appear as `permission_denials` in the final `result`
+  `-n` / `--amend` and `git switch --discard-changes` / `-C` / `-f` / `--force` stay denied even if a pattern
+  above would match (flag-first forms only; a flag after other arguments is a known gap,
+  ADR-0014). Denials appear as `permission_denials` in the final `result`
   event of the log.
 - **Extra permissions for one task** (e.g. a `gh api` GET, `npm install` of a dependency the
   Issue approves) are added to that task's dispatch command only, named in that task's prompt

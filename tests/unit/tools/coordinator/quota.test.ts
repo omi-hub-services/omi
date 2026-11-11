@@ -322,18 +322,32 @@ describe("pickProfile", () => {
       sevenDay: { usedPercent: 50, resetsAt: NOW - 1 },
     });
     expect(pickProfile("claude", [quota("claude", "a", old)], settings, NOW).ok).toBe(true);
-    // Without any reset time there is nothing left to wait for either.
-    const noReset = reading(0, 0, {
+    // One window still to reset keeps it blocked until then.
+    const partly = { ...old, sevenDay: { usedPercent: 50, resetsAt: NOW + H } };
+    const r = pickProfile("claude", [quota("claude", "a", partly)], settings, NOW);
+    expect(r).toMatchObject({ ok: false, earliestReset: NOW + H });
+  });
+
+  it("blocks a limited reading with no window reset time", () => {
+    const noWindows = reading(0, 0, {
       limited: true,
       status: "rejected",
       fiveHour: null,
       sevenDay: null,
     });
-    expect(pickProfile("claude", [quota("claude", "a", noReset)], settings, NOW).ok).toBe(true);
-    // One window still to reset keeps it blocked until then.
-    const partly = { ...old, sevenDay: { usedPercent: 50, resetsAt: NOW + H } };
-    const r = pickProfile("claude", [quota("claude", "a", partly)], settings, NOW);
-    expect(r).toMatchObject({ ok: false, earliestReset: NOW + H });
+    const r = pickProfile("claude", [quota("claude", "a", noWindows)], settings, NOW);
+    expect(r).toMatchObject({ ok: false, earliestReset: null });
+    expect(!r.ok && r.reason).toContain("limit reached (rejected), no reset time");
+    const nullResets = reading(10, 10, {
+      limited: true,
+      status: "rejected",
+      fiveHour: { usedPercent: 10, resetsAt: null },
+      sevenDay: { usedPercent: 10, resetsAt: null },
+    });
+    expect(pickProfile("claude", [quota("claude", "a", nullResets)], settings, NOW).ok).toBe(false);
+    // A usable second profile is still chosen.
+    const both = [quota("claude", "a", noWindows), quota("claude", "b", reading(10, 10))];
+    expect(pickProfile("claude", both, settings, NOW).ok).toBe(true);
   });
 
   it("claude+codex-live needs both tools; codex alone ignores Claude profiles", () => {

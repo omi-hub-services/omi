@@ -124,10 +124,14 @@ replaces this temporary tooling in the product.
 - Residual risk (OMI-051, updated OMI-052): the worker allowlist in `/omi-next` is narrow
   (specific git subcommands, read-only `gh`, `npm run`/`npm ci`, `node`) and `git push`,
   `git reset --hard`, `gh api`, `npm install`, `git commit --no-verify`/`--amend` and
-  `git switch --discard-changes`/`-C`/`-f` are denied, but a worker can still run arbitrary
+  `git switch --discard-changes`/`-C`/`-f`, `git commit -n*` and `git switch --force*` are
+  denied, but a worker can still run arbitrary
   code through `node` or `npm run` with the PO's WSL `gh`/git login, so the allowlist limits
   mistakes, not a hostile worker. A separate read-only token for workers is a PO decision and
   out of scope here (OMI-004 / runtime).
+- Known gap, accepted by the PO (OMI-055): deny rules match a command prefix, so a flag placed
+  after other arguments (`git commit -m x --no-verify`, `git commit -m x --amend`) is not
+  caught. Only the flag-first forms are blocked.
 - Agent review comments are bound to the Coordinator account (OMI-052): another account's
   `VERDICT: PASS` no longer counts for `merge`, `close` or `status`. What remains is that the
   binding is to an account, not to a review run: anything that can post as the Coordinator's

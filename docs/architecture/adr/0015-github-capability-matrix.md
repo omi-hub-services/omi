@@ -94,7 +94,8 @@ The PoC is an opt-in live probe, not production code (same pattern as ADR-0013):
 
 The probe refuses to start when `--repo` is `omi-hub-services/omi` (any case) or `--project` is
 `1`. Later phases take repo and Project only from the state file and re-apply the same check.
-Every single `gh` call is checked again: no argument or request body may name the production
+Every `gh` call is checked again, except that node IDs read from the state file are trusted and
+not re-checked: no argument or request body may name the production
 repository, and a `gh project <sub> <number>` call must use the sandbox number. A refusal aborts
 the phase before any request is sent.
 
