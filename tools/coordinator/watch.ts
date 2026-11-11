@@ -10,7 +10,7 @@ import {
   type WslTarget,
 } from "./coordinator-settings.ts";
 import { createProcessRunner, type Runner } from "./process-runner.ts";
-import { localTime, readQuota, windowLeft, type QuotaReport } from "./quota.ts";
+import { localTime, modelLeftText, readQuota, windowLeft, type QuotaReport } from "./quota.ts";
 import { readWorkers, type Workers } from "./wsl-workers.ts";
 
 export const ANSI = {
@@ -101,6 +101,8 @@ export function renderWatch(screen: WatchScreen): string {
       (left5 !== null && left5 < screen.settings.minFiveHourLeftPercent) ||
       (left7 !== null && left7 < screen.settings.minSevenDayLeftPercent);
     const ageSeconds = Math.max(0, screen.now - r.observedAt);
+    const scoped = modelLeftText(r, screen.now).map(clean);
+    const models = scoped.length > 0 ? `  ${scoped.join(" ")}` : "";
     const age = ageSeconds < 60 ? "live" : `${String(Math.floor(ageSeconds / 60))} min ago`;
     const reset = r.fiveHour?.resetsAt;
     const resetDate = reset === null || reset === undefined ? null : new Date(reset * 1000);
@@ -111,7 +113,7 @@ export function renderWatch(screen: WatchScreen): string {
     out.push(
       paint(
         fit(
-          `  ${profile.tool} ${clean(profile.profile)}  ${percent(left5)} / ${percent(left7)}  reset ${resetText}  ${age}`,
+          `  ${profile.tool} ${clean(profile.profile)}  ${percent(left5)} / ${percent(left7)}${models}  reset ${resetText}  ${age}`,
         ),
         `${low ? ANSI.yellow : ""}${ageSeconds > 1800 ? ANSI.dim : ""}`,
       ),

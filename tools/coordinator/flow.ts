@@ -87,7 +87,7 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   cleanup <branch>                            delete the merged local branch (WSL and host), then
                                               archive its worker logs in ~/omi-runs
   prune-runs                                  one-time log sweep for every Done task
-  pick-profile <issue> [--kind claude|codex|claude+codex-live] [--probe] [--json]
+  pick-profile <issue> [--kind claude|codex|claude+codex-live] [--probe] [--model NAME] [--json]
                                               worker profile by quota (--probe: 1 Haiku call/profile)`;
 
 export interface Context {
@@ -455,6 +455,7 @@ export async function pickProfileCommand(
   kind: string,
   probe: boolean,
   json = false,
+  model: string | null = null,
 ): Promise<number> {
   if (!(WORKER_KINDS as readonly string[]).includes(kind)) {
     throw new Error(`--kind must be one of ${WORKER_KINDS.join(", ")}`);
@@ -469,7 +470,14 @@ export async function pickProfileCommand(
     else console.error(`${label}: refused: quota unavailable (${quota.reason.slice(0, 200)})`);
     return 1;
   }
-  const result = pickProfile(kind as WorkerKind, quota.profiles, QUOTA_SETTINGS, quota.now, probe);
+  const result = pickProfile(
+    kind as WorkerKind,
+    quota.profiles,
+    QUOTA_SETTINGS,
+    quota.now,
+    probe,
+    model,
+  );
   const lines = formatPick(label, result);
   if (result.ok) {
     const issueData = await readIssue(ctx, issue);
@@ -515,6 +523,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       "comment-file": { type: "string" },
       kind: { type: "string", default: "claude" },
       probe: { type: "boolean", default: false },
+      model: { type: "string" },
       json: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
@@ -590,7 +599,14 @@ export async function main(argv: readonly string[], context?: Context): Promise<
     case "prune-runs":
       return (await pruneRuns(ctx, dry)) ? 0 : 1;
     case "pick-profile":
-      return pickProfileCommand(ctx, issueNumber(a), values.kind, values.probe, values.json);
+      return pickProfileCommand(
+        ctx,
+        issueNumber(a),
+        values.kind,
+        values.probe,
+        values.json,
+        values.model ?? null,
+      );
     default:
       console.error(`unknown subcommand "${sub}"\n${USAGE}`);
       return 2;

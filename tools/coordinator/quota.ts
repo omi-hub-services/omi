@@ -129,12 +129,52 @@ function claudeProbe(profile) {
   });
 }
 
+// OAuth usage endpoint (undocumented; ADR-0033). The access token is read here, sent only to
+// api.anthropic.com and never emitted: a failure carries an HTTP status or an error kind, nothing
+// else. The token is not refreshed and nothing is written to the profile directory.
+const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+const usageFail = (profile, message) => emit({ kind: "error", tool: "claude-usage", profile, message });
+
+async function claudeUsage(profile) {
+  let oauth;
+  try {
+    const raw = JSON.parse(readFileSync(join(home, ".claude-profiles", profile, ".credentials.json"), "utf8"));
+    oauth = raw && raw.claudeAiOauth;
+  } catch { return usageFail(profile, "no readable credentials"); }
+  if (!oauth || typeof oauth.accessToken !== "string" || oauth.accessToken === "") return usageFail(profile, "no access token");
+  if (typeof oauth.expiresAt === "number" && oauth.expiresAt <= Date.now()) return usageFail(profile, "token expired");
+  let res;
+  try {
+    res = await fetch(USAGE_URL, {
+      headers: { Authorization: "Bearer " + oauth.accessToken, "anthropic-beta": "oauth-2025-04-20", "User-Agent": "omi-coordinator-quota" },
+      redirect: "error",
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (e) { return usageFail(profile, e && e.name === "TimeoutError" ? "timeout" : "network error"); }
+  if (!res.ok) return usageFail(profile, "HTTP " + res.status);
+  let body;
+  try { body = await res.json(); } catch { return usageFail(profile, "response is not JSON"); }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return usageFail(profile, "unexpected response shape");
+  // Forward only the fields the parser reads.
+  const win = (w) => (w && typeof w === "object" ? { utilization: w.utilization, resets_at: w.resets_at } : null);
+  const limits = Array.isArray(body.limits)
+    ? body.limits.map((l) => {
+        const m = l && l.scope && l.scope.model;
+        return l && typeof l === "object"
+          ? { kind: l.kind, percent: l.percent, resets_at: l.resets_at, model: m && typeof m.display_name === "string" ? m.display_name : null }
+          : null;
+      })
+    : null;
+  emit({ kind: "usage", profile, usage: { five_hour: win(body.five_hour), seven_day: win(body.seven_day), limits } });
+}
+
 emit({ kind: "now", now: Math.floor(Date.now() / 1000) });
 logs();
-const jobs = targets.map((t) => {
+const jobs = targets.map(async (t) => {
   const [tool, profile] = t.split(":");
   if (tool === "codex") return codex(profile);
-  return probe === "1" ? claudeProbe(profile) : Promise.resolve();
+  await claudeUsage(profile);
+  if (probe === "1") await claudeProbe(profile);
 });
 await Promise.all(jobs);
 `;
@@ -170,8 +210,16 @@ export interface QuotaWindow {
   readonly resetsAt: number | null;
 }
 
+/** Weekly window scoped to one model (usage endpoint `weekly_scoped`), e.g. "Fable". */
+export interface ModelWindow {
+  readonly model: string;
+  readonly usedPercent: number;
+  /** Unix seconds. */
+  readonly resetsAt: number | null;
+}
+
 export interface QuotaReading {
-  readonly source: "codex-app-server" | "claude-log" | "claude-probe";
+  readonly source: "codex-app-server" | "claude-log" | "claude-probe" | "claude-usage-api";
   /** Unix seconds when the numbers were current (log mtime for Claude logs). */
   readonly observedAt: number;
   readonly fiveHour: QuotaWindow | null;
@@ -182,6 +230,8 @@ export interface QuotaReading {
   readonly planType: string | null;
   /** Codex free reset credits left; reported only, never spent by tooling. */
   readonly resetCredits: number | null;
+  /** Per-model weekly windows; only the usage endpoint reports them. */
+  readonly modelWindows: readonly ModelWindow[];
 }
 
 export interface ProfileQuota extends WorkerProfile {
@@ -216,6 +266,7 @@ export function parseCodexRateLimits(result: unknown, observedAt: number): Quota
     limited: reached !== null,
     planType: text(limits.planType),
     resetCredits: num(objOrNull(root.rateLimitResetCredits)?.availableCount),
+    modelWindows: [],
   };
 }
 
@@ -245,6 +296,56 @@ export function parseClaudeRateLimitEvent(
     limited: status === "rejected",
     planType: null,
     resetCredits: null,
+    modelWindows: [],
+  };
+}
+
+const iso = (v: unknown): number | null => {
+  if (typeof v !== "string") return null;
+  const ms = Date.parse(v);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+};
+
+/** `utilization` is 0-100 here, unlike the 0-1 of the log event. Null stays null; junk throws. */
+function usageWindow(raw: unknown, name: string): QuotaWindow | null {
+  if (raw === null || raw === undefined) return null;
+  const w = objOrNull(raw);
+  const used = num(w?.utilization);
+  if (used === null) throw new Error(`usage ${name} has no numeric utilization`);
+  return { usedPercent: round1(used), resetsAt: iso(w?.resets_at) };
+}
+
+/**
+ * The collector's trimmed `/api/oauth/usage` body (ADR-0033): `five_hour` / `seven_day` windows
+ * and `limits[]`, of which only `weekly_scoped` entries with a model name are kept. Throws on a
+ * shape with neither window, so the caller falls back to the log.
+ */
+export function parseClaudeUsage(usage: unknown, observedAt: number): QuotaReading {
+  const root = asObject(usage, "claude usage");
+  const fiveHour = usageWindow(root.five_hour, "five_hour");
+  const sevenDay = usageWindow(root.seven_day, "seven_day");
+  if (fiveHour === null && sevenDay === null)
+    throw new Error("usage has no five_hour or seven_day");
+  const limits = Array.isArray(root.limits) ? (root.limits as unknown[]) : [];
+  const modelWindows = limits.flatMap((l): ModelWindow[] => {
+    const e = objOrNull(l);
+    const model = text(e?.model);
+    const percent = num(e?.percent);
+    if (e?.kind !== "weekly_scoped" || model === null || model === "" || percent === null)
+      return [];
+    return [{ model, usedPercent: round1(percent), resetsAt: iso(e.resets_at) }];
+  });
+  const full = [fiveHour, sevenDay].some((w) => w !== null && w.usedPercent >= 100);
+  return {
+    source: "claude-usage-api",
+    observedAt,
+    fiveHour,
+    sevenDay,
+    status: full ? "rejected" : "allowed",
+    limited: full,
+    planType: null,
+    resetCredits: null,
+    modelWindows,
   };
 }
 
@@ -272,6 +373,7 @@ export function parseQuotaOutput(
   const codex = new Map<string, QuotaReading>();
   const probes = new Map<string, QuotaReading>();
   const logs = new Map<string, QuotaReading>();
+  const usages = new Map<string, QuotaReading>();
   const notes = new Map<string, string>();
   const key = (tool: string, profile: string) => `${tool}:${profile}`;
   const claudeNames = profiles.filter((p) => p.tool === "claude").map((p) => p.profile);
@@ -284,6 +386,7 @@ export function parseQuotaOutput(
     const profile = text(o.profile) ?? "";
     try {
       if (o.kind === "codex") codex.set(profile, parseCodexRateLimits(o.result, now));
+      else if (o.kind === "usage") usages.set(profile, parseClaudeUsage(o.usage, now));
       else if (o.kind === "probe") {
         probes.set(profile, parseClaudeRateLimitEvent(o.event, now, "claude-probe"));
       } else if (o.kind === "log") {
@@ -297,7 +400,8 @@ export function parseQuotaOutput(
       }
     } catch (error) {
       const what = error instanceof Error ? error.message : "unrecognised shape";
-      notes.set(key(o.kind === "codex" ? "codex" : "claude", profile), `unreadable data: ${what}`);
+      const tool = o.kind === "codex" ? "codex" : o.kind === "usage" ? "claude-usage" : "claude";
+      notes.set(key(tool, profile), `unreadable data: ${what}`);
     }
   }
   return {
@@ -306,12 +410,19 @@ export function parseQuotaOutput(
       const reading =
         p.tool === "codex"
           ? (codex.get(p.profile) ?? null)
-          : (probes.get(p.profile) ?? logs.get(p.profile) ?? null);
+          : (probes.get(p.profile) ?? usages.get(p.profile) ?? logs.get(p.profile) ?? null);
       const fallback =
         p.tool === "claude"
           ? `no worker log named with this profile in ~/${RUNS_DIR_FROM_HOME}`
           : null;
-      const note = reading ? null : (notes.get(key(p.tool, p.profile)) ?? fallback);
+      // A usage-endpoint failure is kept even when a log reading stands in for it.
+      const usageNote = p.tool === "claude" ? notes.get(key("claude-usage", p.profile)) : undefined;
+      const note = reading
+        ? reading.source === "claude-log" && usageNote
+          ? `usage api: ${usageNote}`
+          : null
+        : (notes.get(key(p.tool, p.profile)) ??
+          (usageNote ? `usage api: ${usageNote}; ${fallback ?? ""}` : fallback));
       return { ...p, reading, note };
     }),
   };
@@ -379,8 +490,20 @@ export type PickResult =
       readonly ranked: readonly Candidate[];
     };
 
+/** The weekly window of `model` (case-insensitive exact name), if the reading has one. */
+export function findModelWindow(
+  windows: readonly ModelWindow[],
+  model: string,
+): ModelWindow | undefined {
+  const wanted = model.trim().toLowerCase();
+  return windows.find((w) => w.model.trim().toLowerCase() === wanted);
+}
+
 /** Share (%) of a window left; a window whose reset time has passed is full again. */
-export function windowLeft(w: QuotaWindow | null, now: number): number | null {
+export function windowLeft(
+  w: Pick<QuotaWindow, "usedPercent" | "resetsAt"> | null,
+  now: number,
+): number | null {
   if (w === null) return null;
   if (w.resetsAt !== null && w.resetsAt <= now) return 100;
   return round1(Math.max(0, 100 - w.usedPercent));
@@ -396,6 +519,7 @@ export function evaluate(
   settings: QuotaSettings,
   now: number,
   probed = false,
+  model: string | null = null,
 ): Candidate {
   const r = q.reading;
   const base = { tool: q.tool, profile: q.profile, resetCredits: r?.resetCredits ?? null };
@@ -415,6 +539,17 @@ export function evaluate(
   if (sevenDayLeft !== null && sevenDayLeft < settings.minSevenDayLeftPercent) {
     reasons.push(`7d ${String(sevenDayLeft)}% left < ${String(settings.minSevenDayLeftPercent)}%`);
     resets.push(r.sevenDay?.resetsAt ?? null);
+  }
+  // A per-model weekly window is display-only, except for a worker assigned exactly that model.
+  const scoped = model === null ? undefined : findModelWindow(r.modelWindows, model);
+  if (scoped) {
+    const left = windowLeft(scoped, now);
+    if (left !== null && left < settings.minSevenDayLeftPercent) {
+      reasons.push(
+        `${scoped.model} weekly ${String(left)}% left < ${String(settings.minSevenDayLeftPercent)}%`,
+      );
+      resets.push(scoped.resetsAt);
+    }
   }
   // A reported limit only blocks while a window is still to reset: once every reset time has
   // passed, an old `rejected` reading no longer says anything about now.
@@ -463,7 +598,9 @@ export function rankCandidates(candidates: readonly Candidate[]): Candidate[] {
 /**
  * Chooses the worker profile(s) for a task kind. `claude+codex-live` needs a Claude writer and a
  * Codex profile for live tests, both above threshold. Codex reset credits are never spent here.
- * Without `probed` a profile with no quota data is never chosen (see `evaluate`).
+ * Without `probed` a profile with no quota data is never chosen (see `evaluate`). `model` is the
+ * Claude worker's model: a profile whose weekly window for exactly that model is below the 7d
+ * threshold is refused with a reason; per-model windows never change the score.
  */
 export function pickProfile(
   kind: WorkerKind,
@@ -471,6 +608,7 @@ export function pickProfile(
   settings: QuotaSettings,
   now: number,
   probed = false,
+  model: string | null = null,
 ): PickResult {
   const tools: WorkerProfile["tool"][] =
     kind === "claude+codex-live" ? ["claude", "codex"] : [kind];
@@ -480,7 +618,9 @@ export function pickProfile(
   const waits: (number | null)[] = [];
   for (const tool of tools) {
     const list = rankCandidates(
-      quotas.filter((q) => q.tool === tool).map((q) => evaluate(q, settings, now, probed)),
+      quotas
+        .filter((q) => q.tool === tool)
+        .map((q) => evaluate(q, settings, now, probed, tool === "claude" ? model : null)),
     );
     ranked.push(...list);
     const best = list.find((c) => c.blocked === null);
@@ -530,6 +670,14 @@ function windowText(label: string, w: QuotaWindow | null, now: number): string {
   return `${label} ${String(left)}% left${reset}`;
 }
 
+/** Weekly share left per model, e.g. `Fable 99%`; empty without model windows. */
+export function modelLeftText(r: QuotaReading, now: number): string[] {
+  return r.modelWindows.flatMap((w) => {
+    const left = windowLeft(w, now);
+    return left === null ? [] : [`${w.model} ${String(left)}%`];
+  });
+}
+
 /** One status line per profile: tool, profile, 5h/7d left with local reset times, data age. */
 export function formatQuotaLine(q: ProfileQuota, now: number): string {
   const head = `${q.tool} ${q.profile}${q.sharesCoordinatorAccount ? " (shares Coordinator account)" : ""}`;
@@ -540,17 +688,19 @@ export function formatQuotaLine(q: ProfileQuota, now: number): string {
     windowText("7d", r.sevenDay, now),
     r.status ?? "status -",
   ];
+  if (r.modelWindows.length > 0) parts.push(`weekly ${modelLeftText(r, now).join(", ")}`);
   if (r.planType) parts.push(`plan ${r.planType}`);
   if (r.resetCredits !== null) parts.push(`${String(r.resetCredits)} reset credits (PO decision)`);
   parts.push(`data ${age(now - r.observedAt)} old (${r.source})`);
-  return `${head}: ${parts.join(", ")}`;
+  const fell = q.note ? ` [${q.note}]` : "";
+  return `${head}: ${parts.join(", ")}${fell}`;
 }
 
 /** status.ts "Quota" section: one line per configured profile, `unknown` without data. */
 export function formatQuotaSection(quota: QuotaReport): string[] {
   if (!quota.available) return [`Quota: unavailable (${quota.reason.slice(0, 120)})`];
   return [
-    "Quota (share left, resets in local time; no probe — pick-profile --probe refreshes Claude):",
+    "Quota (share left, resets in local time; Claude from the usage endpoint, log fallback; no probe):",
     ...quota.profiles.map((q) => `  ${formatQuotaLine(q, quota.now)}`),
   ];
 }

@@ -31,6 +31,7 @@ const reading: QuotaReading = {
   status: "allowed",
   planType: null,
   resetCredits: null,
+  modelWindows: [],
 };
 const screen: WatchScreen = {
   workers: { available: true, processes: [], latestLog: null },
@@ -137,6 +138,16 @@ describe("watch rendering", () => {
       expect(output).not.toContain(ANSI.yellow);
     },
   );
+
+  it("shows the weekly share left per model when the reading has one", () => {
+    const withModel = {
+      ...reading,
+      modelWindows: [{ model: "Fable", usedPercent: 1, resetsAt: null }],
+    };
+    const rendered = renderWatch({ ...screen, quota: quotaWith(withModel) });
+    expect(rendered).toContain("5% / 80%  Fable 99%");
+    expect(renderWatch({ ...screen, quota: quotaWith(reading) })).not.toContain("Fable");
+  });
 
   it("keeps a pending low window yellow when only the other window has reset", () => {
     const output = renderWatch({

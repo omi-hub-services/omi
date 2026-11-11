@@ -45,11 +45,15 @@ no place in the folder map.
    - `quota.ts` — worker subscription quota (OMI-053), read in one WSL call by a small Node
      collector sent on stdin (the bash payload stays quote-free): **Codex** through
      `codex app-server` JSON-RPC `account/rateLimits/read` (no model call, free); **Claude** from
-     the newest `rate_limit_event` in the worker logs `~/omi-runs/omi-NNN-<profile>-<ts>.jsonl`
+     the OAuth usage endpoint (OMI-065, ADR-0033: free, realtime, per-model weekly windows such
+     as `Fable 99%`), falling back to the newest `rate_limit_event` in the worker logs
+     `~/omi-runs/omi-NNN-<profile>-<ts>.jsonl` on an expired token, HTTP error or unknown shape
      (the log name carries the profile; older logs without it are ignored unless
-     `legacyLogProfile` is set). Claude has no free read: `--probe` spends one minimal
-     `claude -p --model haiku --max-turns 1 --tools ""` call per profile, so `status.ts` never
-     probes and `/omi-next` probes once before dispatch. Results are redacted at the parse
+     `legacyLogProfile` is set). `--probe` spends one minimal
+     `claude -p --model haiku --max-turns 1 --tools ""` call per profile and takes precedence
+     over both, so `status.ts` never probes and `/omi-next` probes once before dispatch.
+     Per-model windows are display only; `pick-profile --model NAME` refuses a profile whose
+     window for that model is below the 7d threshold. Results are redacted at the parse
      boundary (percentages, reset times, status, plan, reset-credit count, data age; never
      `accountId`, emails, tokens or credit ids). `pickProfile` is pure: score = share left of the
      tighter window minus a penalty for the profile sharing the Coordinator's account; stale or
