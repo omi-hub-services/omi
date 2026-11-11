@@ -239,11 +239,13 @@ export function planCleanup(branch: string, side: StepSide, state: CleanupState 
     return {
       kind: "run",
       steps: [
+        step("git", "-C", tree.path, "fetch", "origin"),
+        step("git", "-C", tree.path, "switch", "--detach", `origin/${BASE_BRANCH}`),
+        step("git", "-C", tree.path, "branch", "-d", branch),
         git("worktree", "remove", "--", tree.path),
         ...(tree.mainBranch === `refs/heads/${BASE_BRANCH}`
           ? [git("merge", "--ff-only", `origin/${BASE_BRANCH}`)]
           : []),
-        git("branch", "-d", branch),
       ],
     };
   }
