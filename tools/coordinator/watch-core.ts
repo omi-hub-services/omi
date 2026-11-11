@@ -1,8 +1,13 @@
 // Logic shared by the terminal watch (watch.ts) and the web watch (watch-web.ts): the colour
 // rules, text cleaning and the non-overlapping worker/quota poller (OMI-064, OMI-067, ADR-0014).
-import type { QuotaSettings, WorkerProfile, WslTarget } from "./coordinator-settings.ts";
+import {
+  QUOTA_MIN_INTERVAL_MS,
+  type QuotaSettings,
+  type WorkerProfile,
+  type WslTarget,
+} from "./coordinator-settings.ts";
 import type { Runner } from "./process-runner.ts";
-import { readQuota, type QuotaReport } from "./quota.ts";
+import { localTime, readQuota, type QuotaReport } from "./quota.ts";
 import { readWorkers, type WorkerLogSummary, type Workers } from "./wsl-workers.ts";
 
 /** A quota reading older than this is shown dim. */
@@ -34,6 +39,13 @@ export function windowsLow(
   );
 }
 
+/** Shared reset display: elapsed windows have no pending reset time. */
+export function resetText(resetsAt: number | null | undefined, now: number, clockOnly: boolean) {
+  if (resetsAt == null || !Number.isFinite(resetsAt) || resetsAt <= now) return null;
+  const local = localTime(resetsAt);
+  return clockOnly ? local.slice(11, 16) : local.slice(5, 16);
+}
+
 export interface WatchPollerOptions {
   readonly run: Runner;
   readonly target: WslTarget;
@@ -43,6 +55,7 @@ export interface WatchPollerOptions {
   readonly quotaIntervalMs?: number;
   /** Called after every refresh and when a probe starts; never after `stop`. */
   readonly onChange: () => void;
+  readonly onError?: (error: unknown) => void;
 }
 
 export interface WatchPoller {
@@ -76,12 +89,18 @@ export function createWatchPoller(options: WatchPollerOptions): WatchPoller {
   const notify = () => {
     if (!stopped) onChange();
   };
+  const reportError = (error: unknown) => {
+    if (!stopped) options.onError?.(error);
+  };
   const refreshWorkers = async () => {
     if (workerBusy || stopped) return;
     workerBusy = true;
-    workers = await readWorkers(run, target);
-    workerBusy = false;
-    notify();
+    try {
+      workers = await readWorkers(run, target);
+      notify();
+    } finally {
+      workerBusy = false;
+    }
   };
   const refreshQuota = async (probe = false): Promise<void> => {
     if (stopped) return;
@@ -91,10 +110,13 @@ export function createWatchPoller(options: WatchPollerOptions): WatchPoller {
     }
     quotaBusy = true;
     probing = probe;
-    notify();
-    quota = await readQuota(run, target, profiles, settings, probe);
-    quotaBusy = false;
-    probing = false;
+    try {
+      notify();
+      quota = await readQuota(run, target, profiles, settings, probe);
+    } finally {
+      quotaBusy = false;
+      probing = false;
+    }
     notify();
     if (probeQueued) {
       probeQueued = false;
@@ -119,18 +141,21 @@ export function createWatchPoller(options: WatchPollerOptions): WatchPoller {
       started = true;
       timers = [
         setInterval(() => {
-          void refreshWorkers();
+          void refreshWorkers().catch(reportError);
         }, options.workerIntervalMs),
-        setInterval(() => {
-          void refreshQuota();
-        }, options.quotaIntervalMs ?? 60_000),
+        setInterval(
+          () => {
+            void refreshQuota().catch(reportError);
+          },
+          Math.max(options.quotaIntervalMs ?? QUOTA_MIN_INTERVAL_MS, QUOTA_MIN_INTERVAL_MS),
+        ),
       ];
-      void refreshWorkers();
-      void refreshQuota();
+      void refreshWorkers().catch(reportError);
+      void refreshQuota().catch(reportError);
     },
     probe() {
       probeQueued = false;
-      void refreshQuota(true);
+      void refreshQuota(true).catch(reportError);
     },
     stop() {
       if (stopped) return;

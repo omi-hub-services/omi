@@ -3,8 +3,15 @@
 // terminal watch. Strings from outside are stripped of control characters here and rendered only
 // through `textContent` by the page.
 import type { QuotaSettings, WorkerProfile } from "./coordinator-settings.ts";
-import { localTime, windowLeft, type QuotaReport, type QuotaWindow } from "./quota.ts";
-import { clean, STALE_AFTER_SECONDS, windowsLow, workerTone, type Tone } from "./watch-core.ts";
+import { windowLeft, type QuotaReport, type QuotaWindow } from "./quota.ts";
+import {
+  clean,
+  resetText,
+  STALE_AFTER_SECONDS,
+  windowsLow,
+  workerTone,
+  type Tone,
+} from "./watch-core.ts";
 import type { Workers } from "./wsl-workers.ts";
 
 export interface WorkerView {
@@ -89,13 +96,6 @@ export interface SnapshotInput {
 }
 
 const orDash = (s: string | null | undefined) => clean(s ?? "") || "-";
-
-function resetText(resetsAt: number | null | undefined, now: number, clockOnly: boolean) {
-  if (resetsAt === null || resetsAt === undefined || !Number.isFinite(resetsAt)) return null;
-  if (resetsAt <= now) return null;
-  const local = localTime(resetsAt);
-  return clockOnly ? local.slice(11, 16) : local.slice(5, 16);
-}
 
 function windowView(
   w: QuotaWindow | null,
