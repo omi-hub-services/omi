@@ -24,6 +24,7 @@ import {
   type WslTarget,
 } from "./coordinator-settings.ts";
 import {
+  assertSha,
   assertTaskBranch,
   planCheck,
   planCleanup,
@@ -41,10 +42,26 @@ import {
   type PullForMerge,
   type ReferencingPull,
   type StatusField,
+  type Step,
 } from "./flow-plans.ts";
 import { localGit, probeBranch, probeCleanupWsl, wslGit, type ProbeOptions } from "./git-probe.ts";
 import { graphql, readProject, readRequiredChecks } from "./github-reads.ts";
-import { parsePull, PULL_FIELDS, type Blocker } from "./github-snapshot.ts";
+import {
+  agentReviewOn,
+  latestAgentReview,
+  parsePull,
+  PULL_FIELDS,
+  type Blocker,
+} from "./github-snapshot.ts";
+import {
+  carriedComment,
+  conflictRefusal,
+  decideSync,
+  judgeCarriedHead,
+  parseMergeTree,
+  type CarryJudgement,
+} from "./carried-pass.ts";
+import { judgeCarryChain, readCarryFacts } from "./carry-git.ts";
 import { judgePromotion, promotableBacklog } from "./promote.ts";
 import {
   asArray,
@@ -53,6 +70,7 @@ import {
   asObject,
   asString,
   authoredComments,
+  type AuthoredComment,
   commentBodies,
   nodes,
   optObject,
@@ -82,6 +100,8 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   push <branch>                               WSL: git push -u origin <branch>
   check <branch> --head <sha>                 WSL: npm run check on exactly <sha>
   open-pr <issue> <branch> --title <t> --body-file <f>
+  sync <branch> --reviewed <sha>              WSL: merge origin/${BASE_BRANCH}, check, push, carry the PASS
+                                              (clean merges only; a conflict is aborted and refused)
   merge <pr> --head <sha>                     checks green, agent PASS @head, merge state clean
   close <issue> --comment-file <f>            tick AC from the review + comment + close + Done
   cleanup <branch>                            delete the merged local branch (WSL and host), then
@@ -510,6 +530,205 @@ export async function pickProfileCommand(
   return result.ok ? 0 : 1;
 }
 
+// ── carried PASS (OMI-069) ───────────────────────────────────────────────────
+const wslSide = (...argv: string[]): Step => ({ side: "wsl", argv });
+
+/**
+ * Git's verdict on a carried PASS of `head`, or undefined when the newest review on `head` is not
+ * a carried one. Fetches first (not with --dry-run) so origin/develop is current.
+ */
+async function carryFor(
+  ctx: Context,
+  comments: readonly AuthoredComment[],
+  head: string,
+  dryRun: boolean,
+): Promise<CarryJudgement | undefined> {
+  const review = latestAgentReview(comments);
+  if (!review?.carriedFrom || !head.startsWith(review.head)) return undefined;
+  const git = wslGit(ctx.target);
+  if (!dryRun) await ctx.run(git(["fetch", "--prune", "--quiet", "origin"]));
+  return judgeCarryChain(ctx.run, git, comments, head);
+}
+
+async function carriesFor(
+  ctx: Context,
+  pulls: readonly ReferencingPull[],
+  dryRun: boolean,
+): Promise<Map<number, CarryJudgement>> {
+  const out = new Map<number, CarryJudgement>();
+  for (const p of pulls) {
+    if (!p.merged || p.baseRefName !== BASE_BRANCH) continue;
+    const judged = await carryFor(ctx, p.comments, p.headRefOid, dryRun);
+    if (judged) out.set(p.number, judged);
+  }
+  return out;
+}
+
+/**
+ * Merges origin/develop into the reviewed head and carries the PASS over the clean merge:
+ * merge, check on the new head, push, comment. A conflict is aborted and refused with the files.
+ */
+export async function syncCommand(
+  ctx: Context,
+  branch: string,
+  reviewedArg: string,
+  dryRun: boolean,
+): Promise<number> {
+  const label = `sync ${branch}`;
+  assertTaskBranch(branch);
+  assertSha(reviewedArg);
+  const git = wslGit(ctx.target);
+  const stop = async (plan: Plan) => ((await execute(ctx, label, plan, dryRun)) ? 0 : 1);
+  const state = await probeWsl(ctx, branch, { fetch: !dryRun, remote: true });
+  const open = (await readExistingPulls(ctx, branch)).find(
+    (p) => p.state === "OPEN" && p.baseRefName === BASE_BRANCH,
+  );
+  const pull = open ? await readPull(ctx, open.number) : null;
+  const comments = pull?.comments ?? [];
+  const resolved = await ctx.run(
+    git(["rev-parse", "--verify", "--quiet", `${reviewedArg}^{commit}`]),
+  );
+  if (resolved.code !== 0)
+    return stop({ kind: "refuse", reason: `${reviewedArg} is not a known commit` });
+  const reviewed = resolved.stdout.trim();
+  const sameHead = state.head === reviewed;
+  const judge = async (sha: string): Promise<CarryJudgement> =>
+    judgeCarryChain(ctx.run, git, comments, sha);
+  const headCarry = sameHead
+    ? null
+    : await readCarryFacts(ctx.run, git, state.head).then(
+        (facts) => judgeCarriedHead(facts, reviewed),
+        (error: unknown): CarryJudgement => ({
+          ok: false,
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+      );
+  const decision = decideSync({
+    branch,
+    reviewed,
+    current: state.current,
+    head: state.head,
+    clean: state.clean,
+    remote: state.remote,
+    pull: pull && { number: pull.number, comments },
+    developInHead:
+      (await ctx.run(git(["merge-base", "--is-ancestor", `origin/${BASE_BRANCH}`, "HEAD"])))
+        .code === 0,
+    newest: latestAgentReview(comments),
+    reviewedPass: await judge(reviewed),
+    headCarry,
+    headPass: !sameHead && agentReviewOn(comments, state.head) ? await judge(state.head) : null,
+  });
+  if (decision.kind === "refuse") return stop(decision);
+  if (decision.kind === "done") return stop(decision);
+  if (!pull) throw new Error("unreachable: sync decided to run without a PR");
+
+  if (dryRun) {
+    if (decision.kind === "merge") {
+      const preview = await ctx.run(
+        git(["merge-tree", "--write-tree", "--name-only", state.head, `origin/${BASE_BRANCH}`]),
+      );
+      const tree = parseMergeTree(preview.code, preview.stdout, preview.stderr);
+      if (!tree.clean) return stop({ kind: "refuse", reason: conflictRefusal(branch, tree.files) });
+    }
+    const merge =
+      decision.kind === "merge"
+        ? [wslSide("git", "merge", "--no-edit", `origin/${BASE_BRANCH}`)]
+        : [];
+    const check =
+      decision.kind === "resume" && decision.commented
+        ? []
+        : [{ side: "wsl", argv: ["npm", "run", "check"], needsNode: true } as const];
+    const comment =
+      decision.kind === "resume" && decision.commented
+        ? []
+        : [
+            {
+              side: "host",
+              argv: [
+                "gh",
+                "pr",
+                "comment",
+                String(pull.number),
+                "-R",
+                REPO_SLUG,
+                "--body-file",
+                "-",
+              ],
+              input: carriedComment({
+                newHead: "<new head>",
+                reviewed,
+                oldReviewBody: agentReviewOn(comments, reviewed)?.body ?? "",
+                developCommit: "<origin/develop>",
+                checkNote: "<npm run check result>",
+              }),
+            } as const,
+          ];
+    const steps = [...merge, ...check, wslSide("git", "push", "-u", "origin", branch), ...comment];
+    return stop({
+      kind: "run",
+      note: "steps run one at a time; check, push and the comment only after a clean merge",
+      steps,
+    });
+  }
+
+  if (decision.kind === "merge") {
+    const merged = await ctx.run(git(["merge", "--no-edit", `origin/${BASE_BRANCH}`]));
+    if (merged.code !== 0) {
+      const midMerge = await ctx.run(git(["rev-parse", "--quiet", "--verify", "MERGE_HEAD"]));
+      if (midMerge.code !== 0) {
+        return stop({
+          kind: "refuse",
+          reason: `git merge failed: ${merged.stderr.trim() || merged.stdout.trim()}`,
+        });
+      }
+      const listed = await ctx.run(git(["diff", "--name-only", "--diff-filter=U"]));
+      const files = listed.stdout.split("\n").filter(Boolean);
+      await runChecked(ctx.run, git(["merge", "--abort"]));
+      return stop({ kind: "refuse", reason: conflictRefusal(branch, files) });
+    }
+  }
+  const newHead = (await runChecked(ctx.run, git(["rev-parse", "HEAD"]))).trim();
+  const facts = await readCarryFacts(ctx.run, git, newHead);
+  const carried = judgeCarriedHead(facts, reviewed);
+  if (!carried.ok) {
+    return stop({
+      kind: "refuse",
+      reason: `merge did not produce a clean sync: ${carried.reason}`,
+    });
+  }
+  const commented = decision.kind === "resume" && decision.commented;
+  if (!commented) {
+    const checkPlan = planCheck(branch, newHead, await probeWsl(ctx, branch));
+    if (!(await execute(ctx, `${label} (check)`, checkPlan, false))) return 1;
+  }
+  const after = await probeWsl(ctx, branch, { remote: true });
+  if (
+    !(await execute(ctx, `${label} (push)`, planPush(branch, after.local, after.remote), false))
+  ) {
+    return 1;
+  }
+  if (commented) return 0;
+  const body = carriedComment({
+    newHead,
+    reviewed,
+    oldReviewBody: agentReviewOn(comments, reviewed)?.body ?? "",
+    developCommit: carried.developCommit,
+    checkNote: `\`npm run check\` passed on \`${newHead.slice(0, 7)}\``,
+  });
+  const post: Plan = {
+    kind: "run",
+    steps: [
+      {
+        side: "host",
+        argv: ["gh", "pr", "comment", String(pull.number), "-R", REPO_SLUG, "--body-file", "-"],
+        input: body,
+      },
+    ],
+  };
+  return (await execute(ctx, `${label} (comment)`, post, false)) ? 0 : 1;
+}
+
 export async function main(argv: readonly string[], context?: Context): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...argv],
@@ -518,6 +737,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       "dry-run": { type: "boolean", default: false },
       file: { type: "string" },
       head: { type: "string" },
+      reviewed: { type: "string" },
       title: { type: "string" },
       "body-file": { type: "string" },
       "comment-file": { type: "string" },
@@ -585,14 +805,18 @@ export async function main(argv: readonly string[], context?: Context): Promise<
     case "merge": {
       const head = required(values.head, "--head");
       const pr = await readPull(ctx, issueNumber(a));
-      return go(planMerge(pr, head, await readRequiredChecks(ctx.run)));
+      const carry = await carryFor(ctx, pr.comments, pr.headRefOid, dry);
+      return go(planMerge(pr, head, await readRequiredChecks(ctx.run), carry));
     }
+    case "sync":
+      return syncCommand(ctx, taskBranch(a), required(values.reviewed, "--reviewed"), dry);
     case "close": {
       const n = issueNumber(a);
       const comment = readFileSync(required(values["comment-file"], "--comment-file"), "utf8");
       const issue = await readIssue(ctx, n);
       const target = { number: n, ...issue };
-      return go(planClose(target, comment, issue.field, issue.item, issue.pulls));
+      const carries = await carriesFor(ctx, issue.pulls, dry);
+      return go(planClose(target, comment, issue.field, issue.item, issue.pulls, carries));
     }
     case "cleanup":
       return (await cleanup(ctx, taskBranch(a), dry)) ? 0 : 1;
