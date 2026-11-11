@@ -1,3 +1,8 @@
+import { installProjectTool } from "../application/use-cases/project/install-project-tool.js";
+import { inspectInstallation } from "../application/use-cases/project/inspect-installation.js";
+import { createProjectInstallation } from "../infrastructure/config/install-project-package.js";
+import { createInstallationDoctor } from "../infrastructure/processes/installation-doctor.js";
+import { fileURLToPath } from "node:url";
 import type { AttemptStore } from "../application/ports/attempt-store.js";
 import type { ProjectSession } from "../application/ports/lease-store.js";
 import {
@@ -83,6 +88,16 @@ export interface CliWiringOptions {
 export function createCliEnvironment(options: CliWiringOptions): CliEnvironment {
   return {
     sendCommand,
+    installation: {
+      install: (input) =>
+        installProjectTool(
+          createProjectInstallation({
+            sourceRoot: fileURLToPath(new URL("../..", import.meta.url)),
+          }),
+          input,
+        ),
+      doctor: (input) => inspectInstallation(createInstallationDoctor(), input),
+    },
     launchSession: launchWindowsSession,
     defaultSocketPath: options.socketPath,
     timeoutMs: options.timeoutMs ?? 5_000,

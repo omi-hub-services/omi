@@ -22,7 +22,8 @@
     "test:contract": "vitest run tests/contract",
     "test:e2e": "vitest run tests/e2e",
     "test:live": "vitest run tests/live",
-    "check": "npm run typecheck && npm run build && npm run lint && npm run format:check && npm run check:architecture && npm run check:backlog && npm run schemas:check && npm run test:unit && npm run test:integration && npm run test:contract && npm run test:e2e"
+    "check": "npm run typecheck && npm run build && npm run lint && npm run format:check && npm run check:architecture && npm run check:backlog && npm run schemas:check && npm run test:unit && npm run test:integration && npm run test:contract && npm run test:e2e && npm run pack:check",
+    "pack:check": "node tools/check-package.ts"
   },
   "prettier": {
     "printWidth": 100,
@@ -37,12 +38,21 @@
     "prettier": "3.9.10",
     "typescript": "6.0.3",
     "typescript-eslint": "8.72.1",
-    "vitest": "4.1.12",
-    "yaml": "2.9.1"
+    "vitest": "4.1.12"
   },
   "dependencies": {
     "better-sqlite3": "13.0.3",
     "commander": "15.0.0",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "yaml": "2.9.1"
+  },
+  "files": [
+    "dist/",
+    "templates/",
+    "schemas/",
+    "migrations/"
+  ],
+  "bin": {
+    "omi-squad": "dist/bootstrap/cli.js"
   }
 }

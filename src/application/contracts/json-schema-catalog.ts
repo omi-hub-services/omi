@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { frameworkLockSchema, installationInputSchema } from "./project-installation.js";
 import { commandSchema } from "./command.js";
 import { contextPacketSchema } from "./context.js";
 import { modelsConfigSchema } from "./model-capability.js";
@@ -14,6 +15,8 @@ export interface GeneratedSchemaFile {
 }
 
 const CONTRACTS: readonly { name: string; schema: z.ZodType }[] = [
+  { name: "framework-lock", schema: frameworkLockSchema },
+  { name: "project-installation", schema: installationInputSchema },
   { name: "workflow", schema: workflowSchema },
   { name: "project-config", schema: projectConfigSchema },
   { name: "models-config", schema: modelsConfigSchema },
