@@ -24,7 +24,11 @@ export function createSqliteStateUnitOfWork(db: StateDatabase): StateUnitOfWork 
   );
   const cas = {
     workflow_run: db.prepare(
-      `UPDATE ${TABLE_BY_KIND.workflow_run} SET status = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?`,
+      // A finished run is closed in the same statement, which frees the one-active-run-per-task
+      // index for a later run of the same task.
+      `UPDATE ${TABLE_BY_KIND.workflow_run} SET status = ?, version = version + 1, updated_at = ?,
+         closed_at = CASE WHEN ? IN ('succeeded', 'cancelled') THEN ? ELSE closed_at END
+       WHERE id = ? AND version = ?`,
     ),
     step_run: db.prepare(
       `UPDATE ${TABLE_BY_KIND.step_run} SET status = ?, version = version + 1, updated_at = ? WHERE id = ? AND version = ?`,
@@ -115,12 +119,17 @@ export function createSqliteStateUnitOfWork(db: StateDatabase): StateUnitOfWork 
           }
           newVersion = request.version;
         } else {
-          const updated = cas[target.kind].run(
-            target.toStatus,
-            change.at,
-            target.id,
-            target.expectedVersion,
-          );
+          const updated =
+            target.kind === "workflow_run"
+              ? cas.workflow_run.run(
+                  target.toStatus,
+                  change.at,
+                  target.toStatus,
+                  change.at,
+                  target.id,
+                  target.expectedVersion,
+                )
+              : cas.step_run.run(target.toStatus, change.at, target.id, target.expectedVersion);
           if (updated.changes === 0) {
             const found = exists[target.kind].get(target.id) !== undefined;
             return { ok: false, reason: found ? "STALE_VERSION" : "NOT_FOUND" };
