@@ -18,9 +18,11 @@ you cannot fix.
 ## 1. Pick (judge)
 
 `node tools/coordinator/status.ts --json`. With an argument, take the item whose `planKey`
-matches; it must be in `ready` (Ready, all blockers closed), otherwise stop and say why. Without
-one, take `ready[0]` unless the status gives a reason not to. Unfinished work in flight (an open
-PR, a running worker) comes first. Read the Issue (`gh issue view N`) and the docs CLAUDE.md
+matches; if it is in Backlog, run `node tools/coordinator/flow.ts promote N` first (OMI-060:
+Backlog → Ready only when every blocker is closed and the readiness gate passes). It must then be
+in `ready`; on `refused:` stop and say why. Without one, take `ready[0]`; if `ready` is empty, run
+`flow.ts promote` (no N: first entry under "Backlog, all blockers closed") and take that Issue.
+Unfinished work in flight (an open PR, a running worker) comes first. Read the Issue (`gh issue view N`) and the docs CLAUDE.md
 lists.
 
 **New Issues** are created only with `node tools/coordinator/flow.ts new-issue --file <spec.md>`
