@@ -144,7 +144,11 @@ describe("runWorkerUnderOwner", () => {
     const result = await run.result;
 
     expect(result.ownerGone).toEqual({ reason: "channel-closed" });
-    expect(result.workerExit).toMatchObject({ exitCode: 0, cancelRequested: true, escalated: false });
+    expect(result.workerExit).toMatchObject({
+      exitCode: 0,
+      cancelRequested: true,
+      escalated: false,
+    });
     await waitFor(() => !isRunning(toolPid), "the tool subprocess to die");
     expect(readFileSync(join(workDir, "uncommitted.txt"), "utf8")).toBe("work in progress");
     expect(readFileSync(join(workDir, "checkpoint.txt"), "utf8")).toBe("interrupted");

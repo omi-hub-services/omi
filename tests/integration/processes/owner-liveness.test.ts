@@ -18,7 +18,9 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function watch(overrides: Partial<OwnerLivenessOptions> = {}): ReturnType<typeof watchOwnerLiveness> {
+function watch(
+  overrides: Partial<OwnerLivenessOptions> = {},
+): ReturnType<typeof watchOwnerLiveness> {
   return watchOwnerLiveness({ channel, signalSource: signals, ...overrides });
 }
 
@@ -61,13 +63,16 @@ describe("watchOwnerLiveness", () => {
     await expect(watcher.gone).resolves.toEqual({ reason: "signal", signal: "SIGHUP" });
   });
 
-  it("installs signal handlers before returning, and removes them afterwards", async () => {
+  it("installs signal handlers before returning and keeps them until dispose", async () => {
     const watcher = watch({ signals: ["SIGTERM"] });
     expect(signals.listenerCount("SIGTERM")).toBe(1);
     signals.emit("SIGTERM");
     await watcher.gone;
-    expect(signals.listenerCount("SIGTERM")).toBe(0);
+    // A repeated signal while the worker group is being stopped must still be swallowed.
+    expect(signals.listenerCount("SIGTERM")).toBe(1);
     expect(channel.listenerCount("data")).toBe(0);
+    watcher.dispose();
+    expect(signals.listenerCount("SIGTERM")).toBe(0);
   });
 
   it("reports the first reason only", async () => {

@@ -1,8 +1,4 @@
-import {
-  watchOwnerLiveness,
-  type OwnerGone,
-  type OwnerLivenessOptions,
-} from "./owner-liveness.js";
+import { watchOwnerLiveness, type OwnerGone, type OwnerLivenessOptions } from "./owner-liveness.js";
 import {
   startSupervisedProcess,
   type ProcessExit,

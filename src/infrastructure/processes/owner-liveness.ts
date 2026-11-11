@@ -36,8 +36,10 @@ export interface OwnerLivenessWatch {
   /** Resolves once, with the first thing that shows the owner is gone. */
   readonly gone: Promise<OwnerGone>;
   /**
-   * Removes every listener and timer. Call it when the run ends for another reason; `gone` then
-   * never resolves.
+   * Removes every listener and timer. Signal handlers stay installed after `gone` resolves (a
+   * repeated signal must not kill the runtime while it stops the worker) until this is called.
+   * Calling it before `gone` resolved means the run ended for another reason; `gone` then never
+   * resolves.
    */
   dispose(): void;
 }
@@ -63,10 +65,8 @@ export function watchOwnerLiveness(options: OwnerLivenessOptions): OwnerLiveness
     resolveGone = resolve;
   });
 
-  const dispose = (): void => {
+  const stopWatchingChannel = (): void => {
     clearTimeout(heartbeatTimer);
-    for (const [signal, handler] of signalHandlers) signalSource.off(signal, handler);
-    signalHandlers.clear();
     options.channel.off("data", onData);
     options.channel.off("end", onClosed);
     options.channel.off("close", onClosed);
@@ -74,20 +74,26 @@ export function watchOwnerLiveness(options: OwnerLivenessOptions): OwnerLiveness
     options.channel.on("error", () => undefined);
   };
 
+  const removeSignalHandlers = (): void => {
+    for (const [signal, handler] of signalHandlers) signalSource.off(signal, handler);
+    signalHandlers.clear();
+  };
+
   const settle = (result: OwnerGone): void => {
     if (settled) return;
     settled = true;
-    dispose();
+    // Signal handlers stay until dispose(): a second SIGTERM while the worker group is being
+    // stopped must not kill the runtime halfway, which would orphan the group.
+    stopWatchingChannel();
     resolveGone(result);
   };
 
   function armHeartbeat(): void {
     if (options.heartbeatTimeoutMs === undefined) return;
     clearTimeout(heartbeatTimer);
-    heartbeatTimer = setTimeout(
-      () => settle({ reason: "heartbeat-lost" }),
-      options.heartbeatTimeoutMs,
-    );
+    heartbeatTimer = setTimeout(() => {
+      settle({ reason: "heartbeat-lost" });
+    }, options.heartbeatTimeoutMs);
   }
 
   function onData(chunk: string | Buffer): void {
@@ -111,7 +117,9 @@ export function watchOwnerLiveness(options: OwnerLivenessOptions): OwnerLiveness
   }
 
   for (const signal of options.signals ?? []) {
-    const handler = (): void => settle({ reason: "signal", signal });
+    const handler = (): void => {
+      settle({ reason: "signal", signal });
+    };
     signalHandlers.set(signal, handler);
     signalSource.on(signal, handler);
   }
@@ -126,7 +134,8 @@ export function watchOwnerLiveness(options: OwnerLivenessOptions): OwnerLiveness
     gone,
     dispose: () => {
       settled = true;
-      dispose();
+      stopWatchingChannel();
+      removeSignalHandlers();
     },
   };
 }
