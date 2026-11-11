@@ -23,6 +23,10 @@ function item(over: Partial<ProjectItem> & { number: number }): ProjectItem {
     priority: "P1",
     workType: "Task",
     planKey: `OMI-${String(over.number).padStart(3, "0")}`,
+    body: "",
+    workflow: null,
+    role: null,
+    area: null,
     milestone: "M1 — Core foundation",
     blockers: [],
     blockersTruncated: false,
@@ -237,6 +241,7 @@ describe("parseSnapshotPage", () => {
               planKey: { text: "OMI-006" },
               content: {
                 __typename: "Issue",
+                body: "",
                 number: 7,
                 title: "[OMI-006] PoC GitHub capability",
                 state: "OPEN",

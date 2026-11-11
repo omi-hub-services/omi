@@ -7,6 +7,7 @@ import {
   REPO_SLUG,
   type WslTarget,
 } from "./coordinator-settings.ts";
+import { issueReadinessReasons, type IssueReadiness } from "./issue-readiness.ts";
 import { parseAcLines, tickAcceptanceCriteria } from "./acceptance-criteria.ts";
 import {
   classifyReview,
@@ -112,7 +113,13 @@ export function planSetStatus(
   wanted: string,
   field: StatusField,
   item: IssueItem | null,
+  readiness?: IssueReadiness,
 ): Plan {
+  if (wanted === "Ready" || wanted === "In Progress") {
+    if (!readiness) return refuse(`#${String(issue)}: missing readiness data`);
+    const reasons = issueReadinessReasons(readiness);
+    if (reasons.length > 0) return refuse(`#${String(issue)}: ${reasons.join("; ")}`);
+  }
   const option = field.options.find((o) => o.name === wanted);
   if (!option) {
     return refuse(

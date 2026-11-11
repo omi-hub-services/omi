@@ -97,6 +97,69 @@ The Coordinator consumes this advice and passes explicit CLI flags; no model inv
 retry escalation or native CLI configuration change is introduced by this policy. OMI-057
 replaces this temporary tooling in the product.
 
+## Issue creation and readiness gate (OMI-059)
+
+New task Issues are created only through
+`node tools/coordinator/flow.ts new-issue --file <spec.md> [--dry-run]`.
+`issue-spec.ts` owns pure parsing, validation and next-key allocation; `issue-creation.ts`
+performs I/O through the existing injectable runner. No new dependency or product module.
+
+The Markdown spec starts with YAML frontmatter. All keys below are required; `milestone`
+is the exact GitHub milestone title, `epic` is an existing Epic Issue number, and `blockedBy`
+is a list of existing Issue numbers (an empty list is allowed). Single-select values must
+match the live Project options. Creating Epics is outside this command's scope.
+
+```markdown
+---
+title: Validate a task
+priority: P1
+workType: Task
+workflow: feature
+role: Developer
+area: tooling
+milestone: M1 — Core foundation
+epic: 1
+blockedBy: []
+---
+## Mục tiêu
+Make task input complete.
+## Phạm vi
+Validate task input.
+## Acceptance criteria
+- [ ] Incomplete input is refused.
+## Dependencies
+None.
+```
+
+The command validates local input before contacting GitHub, then reads live field options,
+all repository Issues (including closed Issues), Project Plan Keys and milestones. Reads of
+Issues, Project items and milestones are paginated. It allocates the largest existing
+`OMI-NNN` key plus one, considering body markers, title prefixes and Project values; Epic
+keys do not consume task keys. It adds `[OMI-NNN]` to the title and the bootstrap-compatible
+`<!-- omi-squad:plan-key=OMI-NNN -->` marker to the body, creates the Issue with its milestone,
+adds it to the Project, sets Priority, Work Type, Workflow, Role, Area, Plan Key and Status
+`Backlog`, then attaches native parent and blocked-by relationships.
+
+A real run saves the allocated marker into the spec **before** creating the remote Issue.
+Keep that spec for retries: if its marker already exists on an Issue, the command prints
+`done:` without creating another Issue. This also means a remote failure after creation
+requires the Coordinator to inspect and finish any incomplete Project/relationship writes;
+`done:` acknowledges the existing Issue, not atomic completion of all writes. Do not remove
+the marker and retry after such a failure. Run one creation at a time: allocation is a
+read-then-write operation, not a cross-process lock. `--dry-run` prints the key, title, body,
+fields, milestone and relationships without changing GitHub or the spec. Invalid input
+prints `refused:` and performs no writes.
+
+`issue-readiness.ts` is a pure gate shared by flow and status. An Issue needs an `OMI-NNN`
+Project Plan Key matching exactly one body marker, nonblank Priority, Work Type, Workflow,
+Role and Area, and at least one top-level AC using the existing counting convention.
+`set-status N Ready|"In Progress"` and `start-branch N <slug>` refuse with all reasons before
+any writes or git probes, including when the requested status/branch would otherwise be
+already done. Other status transitions retain their existing gates. `status.ts` adds an
+Attention line for each open non-Epic Issue failing readiness, including legacy Issues
+already In Progress or Done; it reports them without throwing or repairing them. Closed
+Issues, Epics, PRs and drafts are excluded from readiness warnings.
+
 ## Boundaries
 
 - This is not product code. `src/` must never import `tools/` (already enforced by

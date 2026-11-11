@@ -72,7 +72,21 @@ describe("branch names", () => {
 describe("planSetStatus", () => {
   it("is done when the item already has the Status", () => {
     expect(
-      planSetStatus(61, "In Progress", field, { itemId: "I", status: "In Progress" }).kind,
+      planSetStatus(
+        61,
+        "In Progress",
+        field,
+        { itemId: "I", status: "In Progress" },
+        {
+          planKey: "OMI-050",
+          body: "## Acceptance criteria\n- [ ] works\n<!-- omi-squad:plan-key=OMI-050 -->",
+          priority: "P1",
+          workType: "Task",
+          workflow: "feature",
+          role: "Developer",
+          area: "tools",
+        },
+      ).kind,
     ).toBe("done");
   });
 

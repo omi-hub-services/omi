@@ -125,6 +125,7 @@ checked license.
   creating/pushing/deleting branches, opening and merging PRs, closing Issues — go through
   scripts (`tools/coordinator/`, later the `omi` CLI; ADR-0014), not hand-written `gh`/`git`
   sequences or LLM reasoning. Use the skills `/omi-status` and `/omi-next`.
+- New Issues are created only with `node tools/coordinator/flow.ts new-issue --file <spec.md>` (use `--dry-run` to preview).
 - Use the LLM only for judgement: choosing between tasks, writing worker prompts, reviewing,
   and deciding what to do when a step fails or is refused.
 - A script that refuses a step is a gate, not an obstacle: fix the cause or ask the PO; never
