@@ -11,15 +11,16 @@ export function effortRank(effort: Effort): number {
   return EFFORT_LEVELS.indexOf(effort);
 }
 
-/** Minimum capability a step needs from the executor that runs it. */
-export const capabilityProfileSchema = z.strictObject({
-  min_effort: effortSchema,
-});
-export type CapabilityProfile = z.infer<typeof capabilityProfileSchema>;
-
 export const EXECUTORS = ["claude-code", "codex"] as const;
 export const executorSchema = z.enum(EXECUTORS);
 export type Executor = z.infer<typeof executorSchema>;
+
+/** Minimum capability a step needs; an explicit tool requirement forbids cross-tool failover. */
+export const capabilityProfileSchema = z.strictObject({
+  min_effort: effortSchema,
+  required_executor: executorSchema.optional(),
+});
+export type CapabilityProfile = z.infer<typeof capabilityProfileSchema>;
 
 /** Name passed to the CLI (`--model`). Not a credential; cannot start with `-`, so never a flag. */
 export const modelNameSchema = z

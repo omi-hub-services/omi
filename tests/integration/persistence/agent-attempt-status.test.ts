@@ -12,7 +12,10 @@ import {
   loadMigrations,
   readHistory,
 } from "../../../src/infrastructure/persistence/sqlite/migration-runner.ts";
-const migrations = loadMigrations(resolve("migrations"));
+// This suite pins migration 0005 without incorporating later additive schema changes.
+const migrations = loadMigrations(resolve("migrations")).filter(
+  (migration) => migration.version <= 5,
+);
 let dir: string;
 let db: StateDatabase;
 beforeEach(() => {

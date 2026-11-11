@@ -57,7 +57,7 @@ export function evaluateProfileAvailability(
     case "busy":
       if (profile.lastProbeAt === undefined) {
         refusals.push("NOT_PROBED");
-      } else if (now - profile.lastProbeAt >= probeTtlMs) {
+      } else if (now < profile.lastProbeAt || now - profile.lastProbeAt >= probeTtlMs) {
         refusals.push("PROBE_STALE");
       }
       break;
