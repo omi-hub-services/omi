@@ -172,6 +172,34 @@ describe("evaluateApproval", () => {
     ).toEqual({ allowed: true });
   });
 
+  it("compares GitHub allowlist logins without case sensitivity, including rejections", () => {
+    const github = approved(release(HEAD), { actor: "Po" });
+    expect(evaluateApproval(github, expecting(release(HEAD), { allowedActors: ["pO"] }))).toEqual({
+      allowed: true,
+    });
+    expect(
+      evaluateApproval(
+        { ...github, decision: "rejected" },
+        expecting(release(HEAD), { allowedActors: ["pO"] }),
+      ),
+    ).toMatchObject({ reason: "APPROVAL_REJECTED" });
+    expect(
+      evaluateApproval(
+        { ...github, source: "po-cli" },
+        expecting(release(HEAD), { allowedActors: ["pO"] }),
+      ),
+    ).toMatchObject({ reason: "ACTOR_NOT_ALLOWED" });
+  });
+
+  it("refuses GitHub self approval even when the author login uses different casing", () => {
+    expect(
+      evaluateApproval(
+        approved(release(HEAD), { actor: "Po" }),
+        expecting(release(HEAD), { allowedActors: ["pO"], authorActor: "PO" }),
+      ),
+    ).toMatchObject({ reason: "SELF_APPROVAL" });
+  });
+
   it("reports every failure, most important first", () => {
     const decision = evaluateApproval(
       approved(release(HEAD), { actor: "mallory", expiresAt: 1 }),

@@ -161,6 +161,8 @@ export function createIpcServer(options: IpcServerOptions): IpcServer {
       draining = true;
       // One request at a time per connection: a pipelining client cannot grow memory unboundedly.
       socket.pause();
+      // A handler awaiting a bounded PO confirmation is active work, not an idle peer.
+      socket.setTimeout(0);
       try {
         for (let event = queue.shift(); event !== undefined; event = queue.shift()) {
           let response: IpcResponse;
@@ -191,6 +193,7 @@ export function createIpcServer(options: IpcServerOptions): IpcServer {
             socket.destroy();
           }, OVERSIZED_CLOSE_GRACE_MS).unref();
         } else if (!socket.destroyed) {
+          socket.setTimeout(idleTimeoutMs);
           socket.resume();
         }
       }
