@@ -44,6 +44,8 @@ export interface FakePull extends FakeIssue {
   mergeableState?: string;
   merged?: boolean;
   mergeCommitSha?: string | null;
+  /** ISO time the PR was merged; only meaningful with `merged`. */
+  mergedAt?: string;
 }
 export interface FakeCheckRun {
   readonly repo: string;
@@ -253,7 +255,15 @@ export class FakeGithub implements GithubTransport {
         const input = payloadOf(request);
         const head = text(input["head"]);
         const base = text(input["base"]);
-        if (this.pulls.some((p) => p.repo === repo && p.head === head && p.base === base)) {
+        if (
+          this.pulls.some(
+            (p) =>
+              p.repo === repo &&
+              p.head === head &&
+              p.base === base &&
+              (p.state ?? (p.merged === true ? "closed" : "open")) === "open",
+          )
+        ) {
           return this.json(422, { message: "Validation Failed: A pull request already exists" });
         }
         const pull: FakePull = {
@@ -272,6 +282,12 @@ export class FakeGithub implements GithubTransport {
           .filter((p) => p.repo === repo)
           .filter((p) => head === null || `${repo.split("/")[0] ?? ""}:${p.head}` === head)
           .filter((p) => base === null || p.base === base)
+          .filter((p) => {
+            // Like GitHub: `state` is open (default), closed or all.
+            const wanted = url.searchParams.get("state") ?? "open";
+            const state = p.state ?? (p.merged === true ? "closed" : "open");
+            return wanted === "all" || wanted === state;
+          })
           .map((p) => this.pullWire(p)),
       );
     }
@@ -288,6 +304,7 @@ export class FakeGithub implements GithubTransport {
       draft: p.draft ?? false,
       merged: p.merged ?? false,
       merge_commit_sha: p.mergeCommitSha ?? null,
+      merged_at: p.merged === true ? (p.mergedAt ?? p.createdAt) : null,
       mergeable_state: p.mergeableState ?? "clean",
       user: { login: p.author ?? this.authenticatedLogin },
       html_url: `https://github.com/${p.repo}/pull/${String(p.number)}`,
