@@ -8,8 +8,18 @@ import type {
   SendRequest,
 } from "../../application/ports/github-remote.js";
 import { hasOperationMarker, operationMarker } from "../../domain/delivery/operation-marker.js";
+import { writeOutcome } from "./github-rest-client.js";
 import type { GithubRestClient, PageVisit } from "./github-rest-client.js";
 import { lookupProjectCopy, sendProjectCopy } from "./github-project-copy.js";
+import {
+  isStateOperation,
+  lookupStateOperation,
+  sendStateOperation,
+} from "./github-state-operations.js";
+import type { StateOperation } from "./github-state-operations.js";
+
+/** Operations that create a body carrying the marker. */
+type MarkedOperation = Exclude<GithubOperation, { type: "project.copy" } | StateOperation>;
 
 /**
  * GitHub side effects of the outbox, over the REST client. Every created Issue, comment or PR
@@ -20,43 +30,32 @@ import { lookupProjectCopy, sendProjectCopy } from "./github-project-copy.js";
 export function createGithubRemote(client: GithubRestClient): GithubRemote {
   return {
     async send(request: SendRequest): Promise<SendOutcome> {
-      if (request.operation.type === "project.copy") {
-        return sendProjectCopy(client, request.operation, request.operationKey);
+      const operation = request.operation;
+      if (operation.type === "project.copy") {
+        return sendProjectCopy(client, operation, request.operationKey);
       }
+      if (isStateOperation(operation)) return sendStateOperation(client, operation);
       const marker = operationMarker(request.operationKey);
-      const call = writeCall(request.operation, marker);
+      const call = writeCall(operation, marker);
       const result = await client.request({
         method: "POST",
         path: call.path,
         body: call.body,
       });
-      switch (result.kind) {
-        case "ok": {
-          const parsed = call.identity.safeParse(result.json);
-          // The write happened; without an id the marker read-back will find and record it.
-          return parsed.success
-            ? { kind: "succeeded", remoteIdentity: call.format(parsed.data) }
-            : { kind: "outcome_unknown", code: "INVALID_RESPONSE" };
-        }
-        case "rejected":
-          return result.retryable
-            ? {
-                kind: "rejected_retryable",
-                code: result.code,
-                ...(result.retryAfterMs === undefined ? {} : { retryAfterMs: result.retryAfterMs }),
-              }
-            : { kind: "rejected_final", code: result.code };
-        case "unknown":
-        case "unavailable":
-          return { kind: "outcome_unknown", code: result.code };
-      }
+      // The write happened; without an id the marker read-back will find and record it.
+      return writeOutcome(result, (json) => {
+        const parsed = call.identity.safeParse(json);
+        return parsed.success ? call.format(parsed.data) : undefined;
+      });
     },
 
     async lookup(request: LookupRequest): Promise<LookupOutcome> {
-      if (request.operation.type === "project.copy") {
-        return lookupProjectCopy(client, request.operation, request.operationKey);
+      const operation = request.operation;
+      if (operation.type === "project.copy") {
+        return lookupProjectCopy(client, operation, request.operationKey);
       }
-      const scan = listing(request.operation, request.operationKey, request.notBefore);
+      if (isStateOperation(operation)) return lookupStateOperation(client, operation);
+      const scan = listing(operation, request.operationKey, request.notBefore);
       let found: string | undefined;
       const pages = await client.readPages(scan.path, (page): PageVisit => {
         const items = z.array(z.looseObject({})).safeParse(page);
@@ -92,10 +91,7 @@ interface WriteCall {
   readonly format: (response: { id: number } | { number: number }) => string;
 }
 
-function writeCall(
-  operation: Exclude<GithubOperation, { type: "project.copy" }>,
-  marker: string,
-): WriteCall {
+function writeCall(operation: MarkedOperation, marker: string): WriteCall {
   switch (operation.type) {
     case "issue.comment":
       return {
@@ -139,11 +135,7 @@ interface Listing {
 /** Local and remote clocks differ a little; read back from slightly before the intent. */
 const CLOCK_SKEW_MS = 5 * 60_000;
 
-function listing(
-  operation: Exclude<GithubOperation, { type: "project.copy" }>,
-  operationKey: string,
-  notBefore: string,
-): Listing {
+function listing(operation: MarkedOperation, operationKey: string, notBefore: string): Listing {
   const since = encodeURIComponent(new Date(Date.parse(notBefore) - CLOCK_SKEW_MS).toISOString());
   const bodyHasMarker = (item: Record<string, unknown>): boolean =>
     typeof item["body"] === "string" && hasOperationMarker(item["body"], operationKey);

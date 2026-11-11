@@ -17,6 +17,7 @@ const branchSchema = z
   .min(1)
   .max(255)
   .regex(/^[A-Za-z0-9._/-]+$/, "must be a plain branch name");
+export const shaSchema = z.string().regex(/^[0-9a-f]{40}$/, "must be a full lowercase commit SHA");
 
 export const githubOperationSchema = z.discriminatedUnion("type", [
   z.strictObject({
@@ -46,6 +47,35 @@ export const githubOperationSchema = z.discriminatedUnion("type", [
     base: branchSchema,
     title: titleSchema,
     body: bodySchema,
+  }),
+  /**
+   * Merge commit (never squash or rebase, so the reviewed head stays in history) guarded by the
+   * reviewed head: GitHub refuses with 409 when the PR head moved. Its read-back is the PR's own
+   * merged state, not a marker; a merge is not a body the adapter can tag.
+   */
+  z.strictObject({
+    type: z.literal("pull_request.merge"),
+    repo: repoSchema,
+    pullNumber: positiveInt,
+    headSha: shaSchema,
+    mergeMethod: z.literal("merge"),
+  }),
+  /**
+   * Replaces an Issue body that is still exactly `fromBody`. No marker is written, because only
+   * the Acceptance criteria section may change; the read-back compares the body itself.
+   */
+  z.strictObject({
+    type: z.literal("issue.update_body"),
+    repo: repoSchema,
+    issueNumber: positiveInt,
+    fromBody: bodySchema,
+    body: bodySchema,
+  }),
+  /** Closes an Issue as completed; the read-back is the Issue's state. */
+  z.strictObject({
+    type: z.literal("issue.close"),
+    repo: repoSchema,
+    issueNumber: positiveInt,
   }),
 ]);
 export type GithubOperation = z.infer<typeof githubOperationSchema>;

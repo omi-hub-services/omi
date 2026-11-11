@@ -10,17 +10,16 @@ import {
 import type { PrMapping } from "../../contracts/pr-delivery.js";
 import { DeliveryError } from "../../ports/pr-delivery.js";
 import type { PrDeliveryReader, PrMappingStore } from "../../ports/pr-delivery.js";
-import { queueGithubOperation } from "../../services/queue-github-operation.js";
-import type { GithubOperationQueueDeps } from "../../services/queue-github-operation.js";
-import { reconcileGithub } from "../sync/reconcile-github.js";
-import { flushOutbox } from "../sync/flush-outbox.js";
-import type { FlushOutboxDeps } from "../sync/flush-outbox.js";
+import {
+  deliverGithubOperation,
+  reconcileGithubOperation,
+} from "../../services/deliver-github-operation.js";
+import type { DeliverGithubOperationDeps } from "../../services/deliver-github-operation.js";
 
-export type PreparePrDeps = GithubOperationQueueDeps &
-  FlushOutboxDeps & {
-    readonly reader: PrDeliveryReader;
-    readonly mappings: PrMappingStore;
-  };
+export type PreparePrDeps = DeliverGithubOperationDeps & {
+  readonly reader: PrDeliveryReader;
+  readonly mappings: PrMappingStore;
+};
 export type PreparePrResult =
   | { readonly status: "verified"; readonly mapping: PrMapping }
   | { readonly status: "pending"; readonly operationKey: string; readonly state: string };
@@ -87,7 +86,7 @@ export async function preparePr(deps: PreparePrDeps, input: unknown): Promise<Pr
     throw new DeliveryError("PR_VERIFICATION_FAILED");
   if (previous !== undefined && previous.prNumber !== verified.number)
     throw new DeliveryError("MAPPING_CONFLICT");
-  await reconcileGithub({ ...deps, outbox: scopedOutbox(deps, key) });
+  await reconcileGithubOperation(deps, key);
   const backlink = `PR: https://github.com/${repository}/pull/${String(verified.number)}\nTask: ${taskId}\nIssue: #${String(issueNumber)}`;
   if (!(await deps.reader.hasBacklink(repository, issueNumber, backlink, backlinkKey))) {
     const pending = await deliver(deps, backlinkKey, {
@@ -100,7 +99,7 @@ export async function preparePr(deps: PreparePrDeps, input: unknown): Promise<Pr
     if (!(await deps.reader.hasBacklink(repository, issueNumber, backlink, backlinkKey)))
       throw new DeliveryError("BACKLINK_VERIFICATION_FAILED");
   }
-  await reconcileGithub({ ...deps, outbox: scopedOutbox(deps, backlinkKey) });
+  await reconcileGithubOperation(deps, backlinkKey);
   const mapping = prMappingSchema.parse({
     projectId,
     taskId,
@@ -120,29 +119,9 @@ async function deliver(
   key: string,
   operation: GithubOperation,
 ): Promise<Extract<PreparePrResult, { status: "pending" }> | undefined> {
-  queueGithubOperation(deps, key, operation);
-  await flushOutbox({ ...deps, outbox: scopedOutbox(deps, key) });
-  const row = deps.outbox.get(key);
-  if (row?.state === "failed") throw new DeliveryError(row.lastError ?? "OPERATION_FAILED");
-  return row?.state === "succeeded"
+  const outcome = await deliverGithubOperation(deps, key, operation);
+  if (outcome.kind === "failed") throw new DeliveryError(outcome.code);
+  return outcome.kind === "succeeded"
     ? undefined
-    : {
-        status: "pending",
-        operationKey: key,
-        state: row?.state ?? "missing",
-      };
-}
-
-/** A preparation call must not flush or reconcile another task's queued operations. */
-function scopedOutbox(deps: PreparePrDeps, key: string): PreparePrDeps["outbox"] {
-  return {
-    get: deps.outbox.get.bind(deps.outbox),
-    transition: deps.outbox.transition.bind(deps.outbox),
-    listUnresolved: () => deps.outbox.listUnresolved().filter((row) => row.operationKey === key),
-    listDue: (now, limit) =>
-      deps.outbox
-        .listDue(now, Number.MAX_SAFE_INTEGER)
-        .filter((row) => row.operationKey === key)
-        .slice(0, limit),
-  };
+    : { status: "pending", operationKey: outcome.operationKey, state: outcome.state };
 }

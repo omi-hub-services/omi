@@ -1,6 +1,7 @@
 import {
   TransportError,
   type GithubTransport,
+  type HttpMethod,
   type HttpRequest,
   type HttpResponse,
   type TransportFailure,
@@ -26,12 +27,36 @@ export interface FakeIssue {
   readonly number: number;
   readonly repo: string;
   readonly title: string;
-  readonly body: string;
+  body: string;
   readonly createdAt: string;
+  state?: "open" | "closed";
 }
 export interface FakePull extends FakeIssue {
   readonly head: string;
   readonly base: string;
+  /** Merge-related state; defaults describe an open, clean, unmerged PR. */
+  headSha?: string;
+  author?: string;
+  draft?: boolean;
+  mergeableState?: string;
+  merged?: boolean;
+  mergeCommitSha?: string | null;
+}
+export interface FakeCheckRun {
+  readonly repo: string;
+  readonly id: number;
+  readonly name: string;
+  readonly headSha: string;
+  readonly status: "queued" | "in_progress" | "completed";
+  readonly conclusion: string | null;
+}
+export interface FakeReview {
+  readonly repo: string;
+  readonly pullNumber: number;
+  readonly login: string;
+  readonly type: "User" | "Bot";
+  readonly state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
+  readonly commitId: string;
 }
 
 export type FaultEffect =
@@ -50,7 +75,7 @@ export type FaultEffect =
   | { readonly type: "apply_then_status"; readonly status: number };
 
 export interface Fault {
-  readonly method?: "GET" | "POST";
+  readonly method?: HttpMethod;
   /** The fault only hits requests whose path contains this text. */
   readonly pathIncludes?: string;
   /** How many matching requests it hits; default 1. */
@@ -69,6 +94,18 @@ export class FakeGithub implements GithubTransport {
   readonly issues: FakeIssue[] = [];
   readonly pulls: FakePull[] = [];
   readonly requests: { readonly method: string; readonly path: string }[] = [];
+  /** `<repo>:<branch>` → head commit SHA. */
+  readonly branches = new Map<string, string>();
+  /** Commit SHA → its repository and parents; merges add their merge commit here. */
+  readonly commits = new Map<string, { readonly repo: string; readonly parents: string[] }>();
+  readonly checkRuns: FakeCheckRun[] = [];
+  /** Commit statuses in creation order (served newest first, like GitHub). */
+  readonly statuses: { repo: string; sha: string; context: string; state: string }[] = [];
+  readonly reviews: FakeReview[] = [];
+  /** `<repo>:<branch>` → active ruleset rules for the branch (GitHub's wire shape). */
+  readonly rules = new Map<string, unknown[]>();
+  /** Login of the credential the runtime uses. */
+  authenticatedLogin = "omi-bot";
   offline = false;
   /** Sent on every response as X-RateLimit-Remaining / -Reset (epoch seconds). */
   rateLimit: { remaining: number; resetEpochSeconds: number } | undefined;
@@ -147,23 +184,18 @@ export class FakeGithub implements GithubTransport {
     const url = new URL(request.path, "https://api.github.com/");
     const route = url.pathname;
 
+    const merged = this.handleMergeRoutes(request, url);
+    if (merged !== undefined) return merged;
+
     const detail = /^\/repos\/([^/]+\/[^/]+)\/(issues|pulls)\/(\d+)$/.exec(route);
     if (request.method === "GET" && detail?.[1] !== undefined && detail[3] !== undefined) {
       const [repo, number] = [detail[1], Number(detail[3])];
-      const item = (detail[2] === "pulls" ? this.pulls : this.issues).find(
-        (candidate) => candidate.repo === repo && candidate.number === number,
-      );
-      if (item === undefined) return this.json(404, {});
-      return this.json(
-        200,
-        "head" in item
-          ? this.pullWire(item as FakePull)
-          : {
-              number: item.number,
-              body: item.body,
-              html_url: `https://github.com/${repo}/issues/${String(number)}`,
-            },
-      );
+      if (detail[2] === "pulls") {
+        const pull = this.findPull(repo, number);
+        return pull === undefined ? this.json(404, {}) : this.json(200, this.pullWire(pull));
+      }
+      const issue = this.issues.find((i) => i.repo === repo && i.number === number);
+      return issue === undefined ? this.json(404, {}) : this.json(200, this.issueWire(issue));
     }
 
     const comments = /^\/repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/comments$/.exec(route);
@@ -249,11 +281,214 @@ export class FakeGithub implements GithubTransport {
       number: p.number,
       title: p.title,
       body: p.body,
-      state: "open",
+      state: p.state ?? "open",
+      draft: p.draft ?? false,
+      merged: p.merged ?? false,
+      merge_commit_sha: p.mergeCommitSha ?? null,
+      mergeable_state: p.mergeableState ?? "clean",
+      user: { login: p.author ?? this.authenticatedLogin },
       html_url: `https://github.com/${p.repo}/pull/${String(p.number)}`,
-      head: { ref: p.head, repo: { full_name: p.repo } },
+      head: { ref: p.head, sha: p.headSha ?? "0".repeat(40), repo: { full_name: p.repo } },
       base: { ref: p.base, repo: { full_name: p.repo } },
     };
+  }
+
+  private issueWire(issue: FakeIssue): unknown {
+    return {
+      number: issue.number,
+      title: issue.title,
+      body: issue.body,
+      state: issue.state ?? "open",
+      html_url: `https://github.com/${issue.repo}/issues/${String(issue.number)}`,
+    };
+  }
+
+  private findPull(repo: string, number: number): FakePull | undefined {
+    return this.pulls.find((p) => p.repo === repo && p.number === number);
+  }
+
+  /** Routes the merge flow uses: merge, reviews, checks, rules, branches, commits, Issue edits. */
+  private handleMergeRoutes(request: HttpRequest, url: URL): HttpResponse | undefined {
+    const route = url.pathname;
+    if (request.method === "GET" && route === "/user") {
+      return this.json(200, { login: this.authenticatedLogin });
+    }
+    const repoRoute = /^\/repos\/([^/]+\/[^/]+)\/(.+)$/.exec(route);
+    const repo = repoRoute?.[1];
+    const rest = repoRoute?.[2];
+    if (repo === undefined || rest === undefined) return undefined;
+    const get = request.method === "GET";
+
+    const merge = /^pulls\/(\d+)\/merge$/.exec(rest);
+    if (request.method === "PUT" && merge?.[1] !== undefined) {
+      return this.merge(repo, Number(merge[1]), payloadOf(request));
+    }
+    const reviews = /^pulls\/(\d+)\/reviews$/.exec(rest);
+    if (get && reviews?.[1] !== undefined) {
+      const number = Number(reviews[1]);
+      return this.page(
+        url,
+        this.reviews
+          .filter((r) => r.repo === repo && r.pullNumber === number)
+          .map((r, index) => ({
+            id: index + 1,
+            user: { login: r.login, type: r.type },
+            state: r.state,
+            commit_id: r.commitId,
+          })),
+      );
+    }
+    const issue = /^issues\/(\d+)$/.exec(rest);
+    if (request.method === "PATCH" && issue?.[1] !== undefined) {
+      const found = this.issues.find((i) => i.repo === repo && i.number === Number(issue[1]));
+      if (found === undefined) return this.json(404, {});
+      const input = payloadOf(request);
+      if (typeof input["body"] === "string") found.body = input["body"];
+      if (input["state"] === "closed" || input["state"] === "open") found.state = input["state"];
+      return this.json(200, this.issueWire(found));
+    }
+    if (!get) return undefined;
+
+    const branch = /^branches\/([^/]+)$/.exec(rest);
+    if (branch?.[1] !== undefined) {
+      const name = decodeURIComponent(branch[1]);
+      const sha = this.branches.get(`${repo}:${name}`);
+      return sha === undefined
+        ? this.json(404, { message: "Branch not found" })
+        : this.json(200, { name, commit: { sha } });
+    }
+    const rules = /^rules\/branches\/([^/]+)$/.exec(rest);
+    if (rules?.[1] !== undefined) {
+      return this.page(url, this.rules.get(`${repo}:${decodeURIComponent(rules[1])}`) ?? []);
+    }
+    const checkRuns = /^commits\/([0-9a-f]{40})\/check-runs$/.exec(rest);
+    if (checkRuns?.[1] !== undefined) {
+      const runs = this.checkRuns
+        .filter((c) => c.repo === repo && c.headSha === checkRuns[1])
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          head_sha: c.headSha,
+          status: c.status,
+          conclusion: c.conclusion,
+        }));
+      return this.json(200, { total_count: runs.length, check_runs: runs });
+    }
+    const statuses = /^commits\/([0-9a-f]{40})\/statuses$/.exec(rest);
+    if (statuses?.[1] !== undefined) {
+      return this.page(
+        url,
+        this.statuses
+          .filter((s) => s.repo === repo && s.sha === statuses[1])
+          .reverse()
+          .map((s) => ({ context: s.context, state: s.state })),
+      );
+    }
+    const commit = /^commits\/([0-9a-f]{40})$/.exec(rest);
+    if (commit?.[1] !== undefined) {
+      const found = this.commits.get(commit[1]);
+      return found?.repo !== repo
+        ? this.json(404, { message: "No commit found" })
+        : this.json(200, { sha: commit[1], parents: found.parents.map((sha) => ({ sha })) });
+    }
+    const compare = /^compare\/([^.]+)\.\.\.(.+)$/.exec(rest);
+    if (compare?.[1] !== undefined && compare[2] !== undefined) {
+      const base = this.resolve(repo, decodeURIComponent(compare[1]));
+      const head = this.resolve(repo, decodeURIComponent(compare[2]));
+      if (base === undefined || head === undefined) return this.json(404, {});
+      const status =
+        base === head
+          ? "identical"
+          : this.reaches(head, base)
+            ? "ahead"
+            : this.reaches(base, head)
+              ? "behind"
+              : "diverged";
+      return this.json(200, { status });
+    }
+    return undefined;
+  }
+
+  /** Merge commit only; refuses like GitHub: moved head 409, unmergeable or protected 405. */
+  private merge(repo: string, number: number, input: Record<string, unknown>): HttpResponse {
+    const pull = this.findPull(repo, number);
+    if (pull === undefined) return this.json(404, { message: "Not Found" });
+    const headSha = pull.headSha ?? "0".repeat(40);
+    if (pull.merged === true || (pull.state ?? "open") !== "open" || pull.draft === true) {
+      return this.json(405, { message: "Pull Request is not mergeable" });
+    }
+    if (typeof input["sha"] === "string" && input["sha"] !== headSha) {
+      return this.json(409, {
+        message: "Head branch was modified. Review and try the merge again.",
+      });
+    }
+    if (input["merge_method"] !== "merge") {
+      return this.json(405, { message: "Merge method not allowed" });
+    }
+    if (!["clean", "has_hooks"].includes(pull.mergeableState ?? "clean")) {
+      return this.json(405, { message: "Pull Request is not mergeable" });
+    }
+    if (this.approvalsOnHead(pull, headSha) < this.requiredApprovals(repo, pull.base)) {
+      return this.json(405, { message: "At least 1 approving review is required." });
+    }
+    const baseKey = `${repo}:${pull.base}`;
+    const baseHead = this.branches.get(baseKey);
+    const mergeSha = (this.nextId += 1).toString(16).padStart(40, "e");
+    this.commits.set(mergeSha, {
+      repo,
+      parents: baseHead === undefined ? [headSha] : [baseHead, headSha],
+    });
+    this.branches.set(baseKey, mergeSha);
+    pull.merged = true;
+    pull.mergeCommitSha = mergeSha;
+    pull.state = "closed";
+    return this.json(200, {
+      sha: mergeSha,
+      merged: true,
+      message: "Pull Request successfully merged",
+    });
+  }
+
+  private requiredApprovals(repo: string, branch: string): number {
+    let required = 0;
+    for (const rule of this.rules.get(`${repo}:${branch}`) ?? []) {
+      const parameters = (rule as { type?: string; parameters?: Record<string, unknown> })
+        .parameters;
+      const count = parameters?.["required_approving_review_count"];
+      if (typeof count === "number") required = Math.max(required, count);
+    }
+    return required;
+  }
+
+  private approvalsOnHead(pull: FakePull, headSha: string): number {
+    const latest = new Map<string, FakeReview>();
+    for (const review of this.reviews) {
+      if (review.repo !== pull.repo || review.pullNumber !== pull.number) continue;
+      if (review.state !== "COMMENTED") latest.set(review.login, review);
+    }
+    const author = pull.author ?? this.authenticatedLogin;
+    return [...latest.values()].filter(
+      (r) => r.state === "APPROVED" && r.commitId === headSha && r.login !== author,
+    ).length;
+  }
+
+  private resolve(repo: string, ref: string): string | undefined {
+    if (/^[0-9a-f]{40}$/.test(ref)) return ref;
+    return this.branches.get(`${repo}:${ref}`);
+  }
+
+  /** True when `ancestor` is reachable from `from` through recorded parents. */
+  private reaches(from: string, ancestor: string): boolean {
+    const seen = new Set<string>();
+    const queue = [from];
+    while (queue.length > 0) {
+      const sha = queue.shift();
+      if (sha === undefined || seen.has(sha)) continue;
+      if (sha === ancestor) return true;
+      seen.add(sha);
+      queue.push(...(this.commits.get(sha)?.parents ?? []));
+    }
+    return false;
   }
 
   private page(url: URL, items: readonly unknown[]): HttpResponse {
