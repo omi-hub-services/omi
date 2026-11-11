@@ -1,4 +1,12 @@
+import type { UncommittedManifest } from "../contracts/checkpoint.js";
 import type { Lease } from "./lease-store.js";
+
+export interface UncommittedLimits {
+  /** Defaults to 500. More changed files set `truncated`. */
+  readonly maxEntries?: number;
+  /** Files above this size are listed without a hash. Defaults to 10 MiB. */
+  readonly maxFileBytes?: number;
+}
 
 export interface TaskWorkspaceId {
   readonly taskId: string;
@@ -69,6 +77,12 @@ export interface GitWorkspace {
    */
   createTask(request: WorkspaceLeaseRequest): GitWorkspaceResult<TaskWorkspace>;
   inspect(worktreePath: string): GitWorkspaceResult<WorkspaceState>;
+  /** Bounded manifest of staged, unstaged and untracked files (path, status, content hash). Never
+   * copies contents, never stashes or resets, and leaves credential-looking paths out. */
+  listUncommitted(
+    worktreePath: string,
+    limits?: UncommittedLimits,
+  ): GitWorkspaceResult<UncommittedManifest>;
   /** Explicit release is required even after expiry. All adapters must share the project store. */
   acquireWriter(request: WorkspaceLeaseRequest): GitWorkspaceResult<Lease>;
   renewWriter(

@@ -11,6 +11,7 @@ import type { StepResult } from "../../contracts/result.js";
 import type { AttemptStore, StepRunReader } from "../../ports/attempt-store.js";
 import { ArtifactError } from "../../ports/artifact-store.js";
 import type { ArtifactStore } from "../../ports/artifact-store.js";
+import type { BoundaryCheckpointHook } from "../../ports/checkpoint-hook.js";
 import type { GitWorkspace } from "../../ports/git-workspace.js";
 import type { StateUnitOfWork } from "../../ports/state-unit-of-work.js";
 
@@ -29,6 +30,8 @@ export interface RecordStepResultDependencies {
   readonly artifacts: ArtifactStore;
   readonly workspaces: GitWorkspace;
   readonly unitOfWork: StateUnitOfWork;
+  /** Business checkpoint after the output is confirmed (OMI-026); absent means none is taken. */
+  readonly checkpoint?: BoundaryCheckpointHook;
   readonly now: () => number;
   readonly nextId: () => string;
 }
@@ -67,6 +70,8 @@ export type RecordStepResult =
       readonly stepStatus: Extract<StepStatus, "succeeded" | "failed">;
       readonly attemptStatus: Extract<AgentAttemptStatus, "succeeded" | "failed">;
       readonly failure?: StepFailureReason;
+      /** Set only when a checkpoint hook is wired and it failed; the step outcome still stands. */
+      readonly checkpointFailure?: string;
     }
   | { readonly ok: false; readonly reason: RecordStepRefusal; readonly detail?: string };
 
@@ -182,11 +187,23 @@ export function recordStepResult(
     generation,
     now: new Date(deps.now()).toISOString(),
   });
+  // The writer is released and the outcome is committed: this is the confirmed-output boundary.
+  // The outcome cannot be undone, so a failed checkpoint is reported, not turned into a refusal.
+  const checkpoint = deps.checkpoint?.({
+    kind: "after-output",
+    runId: step.runId,
+    stepRunId: step.id,
+    stepId: step.stepId,
+    attemptId: attempt.id,
+    workspacePath: attempt.workspace.path,
+    outputs: succeeded && "report" in verdict ? verdict.report.artifacts : [],
+  });
   return {
     ok: true,
     stepStatus: stepOutcome.to,
     attemptStatus: attemptOutcome.to,
     ...(failure === undefined ? {} : { failure }),
+    ...(checkpoint === undefined || checkpoint.ok ? {} : { checkpointFailure: checkpoint.reason }),
   };
 }
 

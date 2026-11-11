@@ -15,6 +15,7 @@ import { AgentExecutorError } from "../../ports/agent-executor.js";
 import type { AttemptRecord, AttemptStore, StepRunReader } from "../../ports/attempt-store.js";
 import { ArtifactError } from "../../ports/artifact-store.js";
 import type { ArtifactStore } from "../../ports/artifact-store.js";
+import type { BoundaryCheckpointHook } from "../../ports/checkpoint-hook.js";
 import type { GitWorkspace } from "../../ports/git-workspace.js";
 import type { Lease } from "../../ports/lease-store.js";
 import type { StateUnitOfWork } from "../../ports/state-unit-of-work.js";
@@ -74,6 +75,8 @@ export interface DispatchStepDependencies {
   readonly executor: AgentExecutor;
   readonly unitOfWork: StateUnitOfWork;
   readonly leaseTtlMs: number;
+  /** Business checkpoint at the dispatch boundary (OMI-026); absent means none is taken. */
+  readonly checkpoint?: BoundaryCheckpointHook;
   readonly now: () => number;
   readonly nextId: () => string;
 }
@@ -91,6 +94,8 @@ export type DispatchRefusal =
   | "INPUT_ARTIFACT_INVALID"
   | "WORKSPACE_UNAVAILABLE"
   | "CONTEXT_REJECTED"
+  /** The before-dispatch checkpoint could not be written; nothing was dispatched. */
+  | "CHECKPOINT_FAILED"
   /** The state change was refused (stale version, lease fence, missing row). */
   | "STATE_REJECTED"
   | "EXECUTOR_START_FAILED";
@@ -200,6 +205,21 @@ export async function dispatchStep(
   };
 
   try {
+    // The worktree exists and no writer runs yet, so this is the stable point to snapshot before
+    // any attempt, packet or state change exists. A failed checkpoint refuses the dispatch.
+    const checkpoint = deps.checkpoint?.({
+      kind: "before-dispatch",
+      runId: step.runId,
+      stepRunId: step.id,
+      stepId: step.stepId,
+      workspacePath: created.value.path,
+      outputs: [],
+    });
+    if (checkpoint !== undefined && !checkpoint.ok) {
+      release();
+      return { ok: false, reason: "CHECKPOINT_FAILED", detail: checkpoint.reason };
+    }
+
     const attemptId = deps.nextId();
     const previous = deps.attempts.latestForStep(step.id);
     const attemptNumber = (previous?.attemptNumber ?? 0) + 1;
