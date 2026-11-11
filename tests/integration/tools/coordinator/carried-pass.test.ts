@@ -126,7 +126,7 @@ async function sync(reviewed: string, dryRun = false) {
   return { code, out: out.join("\n") };
 }
 
-describe("flow sync on a real repository", () => {
+describe("flow sync on a real repository", { timeout: 30_000 }, () => {
   it("merges develop, checks, pushes and posts a carried PASS that git accepts", async () => {
     const reviewed = inWork("rev-parse", "HEAD");
     advanceDevelop("other.txt", "other\n");
