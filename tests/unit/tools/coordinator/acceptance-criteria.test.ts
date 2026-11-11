@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  countAcceptanceCriteria,
   parseAcLines,
   tickAcceptanceCriteria,
 } from "../../../../tools/coordinator/acceptance-criteria.ts";
@@ -126,5 +127,14 @@ describe("tickAcceptanceCriteria", () => {
     expect(
       tickAcceptanceCriteria("## Acceptance criteria\nnone\n## Next\n- [ ] x", met(1)),
     ).toEqual({ kind: "refuse", reason: "the Acceptance criteria section has no checkboxes" });
+  });
+});
+
+describe("countAcceptanceCriteria", () => {
+  it("shares the closing convention for nested, fenced, checked and sub-heading boxes", () => {
+    expect(countAcceptanceCriteria(BODY)).toBe(4);
+    expect(countAcceptanceCriteria(BODY.replaceAll("\n", "\r\n"))).toBe(4);
+    expect(countAcceptanceCriteria("## Scope\n- [ ] x")).toBe(0);
+    expect(countAcceptanceCriteria("## Acceptance criteria\nnone")).toBe(0);
   });
 });

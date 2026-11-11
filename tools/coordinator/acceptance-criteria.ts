@@ -61,6 +61,13 @@ export type TickResult =
 
 const list = (ns: readonly number[]) => ns.map((n) => `AC-${String(n)}`).join(", ");
 
+/** Uses the same top-level counting convention as closing evidence. */
+export function countAcceptanceCriteria(body: string): number {
+  const lines = body.split(/(?<=\n)/);
+  const start = lines.findIndex((line) => HEADING.test(line));
+  return start === -1 ? 0 : criterionLines(lines, start).length;
+}
+
 /** Ticks every criterion when the review has a `met` line for each and nothing else. */
 export function tickAcceptanceCriteria(
   body: string,
