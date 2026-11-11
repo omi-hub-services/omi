@@ -71,6 +71,32 @@ no place in the folder map.
 6. Skills `.claude/skills/omi-status` and `.claude/skills/omi-next` (architecture.md §3:
    `.claude/` holds Claude Code instructions for developing this repository) call the scripts.
 
+## Model and effort policy (OMI-058)
+
+`flow.ts pick-profile N` keeps quota-based profile selection unchanged, then uses the existing
+Issue GraphQL read for Workflow, Work Type, Area, Priority and labels. `effort-policy.ts` is
+pure; AC counts reuse `acceptance-criteria.ts`'s top-level counting convention. Rules, in order:
+
+- An exact `complexity:low|medium|high` label overrides inference, including missing fields.
+  Conflicting labels choose the highest complexity, independent of label order.
+- Any missing/blank Project field defaults to `medium`, naming the missing fields in the reason.
+- Research, Spike/PoC, runtime/adapters/github with live tests, or P0 with more than five AC
+  selects `high`. The live-test signal is the existing `--kind claude+codex-live`; PoCs normally
+  use Workflow research or Work Type Spike (literal PoC values are also recognized).
+- Workflow docs or Work Type Docs selects `low`; otherwise one to three AC in a non-runtime
+  Area selects `low`. Domain, runtime, adapters and github are treated as runtime code Areas;
+  zero AC does not establish a small task. Remaining work defaults to `medium`.
+
+`coordinator-settings.ts` owns the mapping: Claude uses `claude-sonnet-5-5` at low/medium and
+`claude-opus-5-5` at high; Codex uses `gpt-6.1-sol` throughout; the Claude reviewer subagent uses
+`sonnet` at low/medium and `opus` at high. Effort matches complexity for all three. This reserves
+Opus for high complexity while keeping Codex's model stable. Output includes model, effort,
+complexity and reason for each chosen tool and the reviewer; `--json` adds the same fields to
+`chosen` and `reviewer`, with the decision also at the top level. Refusals remain refusals.
+The Coordinator consumes this advice and passes explicit CLI flags; no model invocation,
+retry escalation or native CLI configuration change is introduced by this policy. OMI-057
+replaces this temporary tooling in the product.
+
 ## Boundaries
 
 - This is not product code. `src/` must never import `tools/` (already enforced by

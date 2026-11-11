@@ -6,8 +6,11 @@
 // the argv it needs. Auth comes from the local gh/git logins; nothing token-like is printed.
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { countAcceptanceCriteria } from "./acceptance-criteria.ts";
+import { inferComplexity, type EffortInput } from "./effort-policy.ts";
 import {
   BASE_BRANCH,
+  EFFORT_POLICY,
   OWNER,
   PROJECT_NUMBER,
   QUOTA_SETTINGS,
@@ -64,7 +67,7 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   merge <pr> --head <sha>                     checks green, agent PASS @head, merge state clean
   close <issue> --comment-file <f>            tick AC from the review + comment + close + Done
   cleanup <branch>                            delete the merged local branch (WSL and host)
-  pick-profile <issue> [--kind claude|codex|claude+codex-live] [--probe]
+  pick-profile <issue> [--kind claude|codex|claude+codex-live] [--probe] [--json]
                                               worker profile by quota (--probe: 1 Haiku call/profile)`;
 
 export interface Context {
@@ -80,6 +83,7 @@ query($owner: String!, $repo: String!, $number: Int!, $project: Int!) {
   organization(login: $owner) { projectV2(number: $project) { id
     field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } } }
   repository(owner: $owner, name: $repo) { issue(number: $number) { state body
+    labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
     comments(last: 100) { nodes { body } }
     timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 30) { nodes {
       ... on CrossReferencedEvent { source { ... on PullRequest {
@@ -87,11 +91,16 @@ query($owner: String!, $repo: String!, $number: Int!, $project: Int!) {
         comments(last: 50) { nodes { author { login } body } } } } } } }
     projectItems(first: 20) { nodes { id project { id }
       status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      workflow: fieldValueByName(name: "Workflow") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      workType: fieldValueByName(name: "Work Type") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      area: fieldValueByName(name: "Area") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      priority: fieldValueByName(name: "Priority") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       planKey: fieldValueByName(name: "Plan Key") { ... on ProjectV2ItemFieldTextValue { text } }
     } } } }
 }`;
 
 interface IssueContext {
+  readonly effortInput: EffortInput;
   readonly field: StatusField;
   readonly item: IssueItem | null;
   readonly planKey: string | null;
@@ -140,7 +149,22 @@ async function readIssue(ctx: Context, number: number): Promise<IssueContext> {
   const item = nodes(issue, "projectItems", "issue")
     .map((n) => asObject(n, "projectItem"))
     .find((n) => asObject(n.project, "project").id === projectId);
+  const labels = asObject(issue.labels, "issue.labels");
+  if (asBoolean(asObject(labels.pageInfo, "labels.pageInfo").hasNextPage, "labels.hasNextPage")) {
+    throw new Error("Issue labels truncated; cannot determine complexity override");
+  }
+  const select = (name: string) => optString(optObject(item?.[name], name)?.name, `${name}.name`);
   return {
+    effortInput: {
+      workflow: select("workflow"),
+      workType: select("workType"),
+      area: select("area"),
+      priority: select("priority"),
+      acCount: countAcceptanceCriteria(asString(issue.body, "issue.body")),
+      labels: nodes(issue, "labels", "issue").map((raw) =>
+        asString(asObject(raw, "label").name, "label.name"),
+      ),
+    },
     field: {
       projectId,
       fieldId: asString(field.id, "Status field id"),
@@ -280,12 +304,13 @@ function taskBranch(raw: string | undefined): string {
   return branch;
 }
 
-/** Read-only; the Issue number only labels the output. Never spends a Codex reset credit. */
-async function pickProfileCommand(
+/** Read-only model/effort advice after quota selection. Never spends a Codex reset credit. */
+export async function pickProfileCommand(
   ctx: Context,
   issue: number,
   kind: string,
   probe: boolean,
+  json = false,
 ): Promise<number> {
   if (!(WORKER_KINDS as readonly string[]).includes(kind)) {
     throw new Error(`--kind must be one of ${WORKER_KINDS.join(", ")}`);
@@ -293,12 +318,42 @@ async function pickProfileCommand(
   const label = `pick-profile ${String(issue)}`;
   const quota = await readQuota(ctx.run, ctx.target, WORKER_PROFILES, QUOTA_SETTINGS, probe);
   if (!quota.available) {
-    console.error(`${label}: refused: quota unavailable (${quota.reason.slice(0, 200)})`);
+    if (json)
+      console.log(
+        JSON.stringify({ ok: false, reason: `quota unavailable: ${quota.reason.slice(0, 200)}` }),
+      );
+    else console.error(`${label}: refused: quota unavailable (${quota.reason.slice(0, 200)})`);
     return 1;
   }
   const result = pickProfile(kind as WorkerKind, quota.profiles, QUOTA_SETTINGS, quota.now, probe);
   const lines = formatPick(label, result);
-  if (result.ok) console.log(lines.join("\n"));
+  if (result.ok) {
+    const issueData = await readIssue(ctx, issue);
+    const decision = inferComplexity({
+      ...issueData.effortInput,
+      hasLiveTests: kind === "claude+codex-live",
+    });
+    const chosen = result.chosen.map((candidate) => ({
+      ...candidate,
+      ...EFFORT_POLICY[candidate.tool][decision.complexity],
+      ...decision,
+    }));
+    const reviewer = { ...EFFORT_POLICY.reviewer[decision.complexity], ...decision };
+    if (json) console.log(JSON.stringify({ ...result, ...decision, chosen, reviewer }));
+    else {
+      for (const candidate of chosen) {
+        lines.push(
+          `  ${candidate.tool} model: ${candidate.model} effort: ${candidate.effort}` +
+            ` (complexity ${candidate.complexity}: ${candidate.reason})`,
+        );
+      }
+      lines.push(
+        `reviewer: ${reviewer.model} ${reviewer.effort}` +
+          ` (complexity ${reviewer.complexity}: ${reviewer.reason})`,
+      );
+      console.log(lines.join("\n"));
+    }
+  } else if (json) console.log(JSON.stringify(result));
   else console.error(lines.join("\n"));
   return result.ok ? 0 : 1;
 }
@@ -315,6 +370,7 @@ async function main(argv: readonly string[]): Promise<number> {
       "comment-file": { type: "string" },
       kind: { type: "string", default: "claude" },
       probe: { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
     },
   });
@@ -378,7 +434,7 @@ async function main(argv: readonly string[]): Promise<number> {
     case "cleanup":
       return (await cleanup(ctx, taskBranch(a), dry)) ? 0 : 1;
     case "pick-profile":
-      return pickProfileCommand(ctx, issueNumber(a), values.kind, values.probe);
+      return pickProfileCommand(ctx, issueNumber(a), values.kind, values.probe, values.json);
     default:
       console.error(`unknown subcommand "${sub}"\n${USAGE}`);
       return 2;

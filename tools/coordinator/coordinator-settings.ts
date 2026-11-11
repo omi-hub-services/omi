@@ -2,6 +2,31 @@
 // Values come from docs/planning/github-project.md; option IDs are read live, never stored here.
 // The WSL distro and checkout can be overridden for another machine with OMI_WSL_DISTRO and
 // OMI_WSL_REPO_DIR.
+import type { Complexity } from "./effort-policy.ts";
+
+export interface ModelEffort {
+  readonly model: string;
+  readonly effort: Complexity;
+}
+
+/** Explicit worker CLI models and Claude reviewer subagent aliases (OMI-058). */
+export const EFFORT_POLICY = {
+  claude: {
+    low: { model: "claude-sonnet-5-5", effort: "low" },
+    medium: { model: "claude-sonnet-5-5", effort: "medium" },
+    high: { model: "claude-opus-5-5", effort: "high" },
+  },
+  codex: {
+    low: { model: "gpt-6.1-sol", effort: "low" },
+    medium: { model: "gpt-6.1-sol", effort: "medium" },
+    high: { model: "gpt-6.1-sol", effort: "high" },
+  },
+  reviewer: {
+    low: { model: "sonnet", effort: "low" },
+    medium: { model: "sonnet", effort: "medium" },
+    high: { model: "opus", effort: "high" },
+  },
+} as const satisfies Record<"claude" | "codex" | "reviewer", Record<Complexity, ModelEffort>>;
 
 export const OWNER = "omi-hub-services";
 export const REPO = "omi";
