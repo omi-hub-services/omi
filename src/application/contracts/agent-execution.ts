@@ -135,6 +135,17 @@ export const executionResultSchema = z.strictObject({
   effort: z.strictObject({ requested: effortSchema, actual: effortSchema.optional() }),
   authMode: z.enum(["subscription", "api-key", "unknown"]),
   numTurns: z.number().int().nonnegative().optional(),
+  /**
+   * What the CLI said it started with: native skills, plugins and auto-memory paths. Workers must
+   * report all three empty (ADR-0019, decision update 2026-11-11); absent when not reported.
+   */
+  workerEnvironment: z
+    .strictObject({
+      skills: z.array(z.string().min(1).max(128)).max(256),
+      plugins: z.array(z.string().min(1).max(128)).max(256),
+      memoryPaths: z.array(z.string().min(1).max(1024)).max(256),
+    })
+    .optional(),
   /** The worker's final answer; present only for `succeeded`. */
   finalMessage: z.string().max(100_000).optional(),
   quota: z

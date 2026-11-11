@@ -12,17 +12,21 @@ import {
 } from "../../src/domain/workflows/workflow-policy.ts";
 import type { StepStatus } from "../../src/domain/runs/step-run.ts";
 import { loadWorkflowTemplate } from "../../src/infrastructure/config/load-workflow-template.ts";
+import { createFileSkillSource } from "../../src/infrastructure/config/file-skill-source.ts";
 import { loadResolutionCatalog } from "../../src/infrastructure/config/load-resolution-catalog.ts";
 import {
   BASE,
   HEAD,
   dispatchInput,
   rig,
+  skillEvidence,
   type Rig,
 } from "../unit/application/use-cases/runs/run-fakes.ts";
 
 const directory = resolve(import.meta.dirname, "../../templates/project/workflows");
-const catalog = loadResolutionCatalog(resolve(directory, "../.omi-squad"));
+const squadDir = resolve(directory, "../.omi-squad");
+const catalog = loadResolutionCatalog(squadDir);
+const skills = createFileSkillSource(squadDir);
 const ids = ["feature", "bugfix", "refactor", "docs"] as const;
 type Lifecycle = (typeof ids)[number];
 
@@ -70,7 +74,7 @@ async function execute(
   });
   const input = dispatchInput();
   const dispatched = await dispatchStep(
-    { ...r.deps, catalog },
+    { ...r.deps, catalog, skills },
     {
       ...input,
       stepRunId: rowId,
@@ -112,6 +116,9 @@ async function execute(
   );
   if (mode === "corrupt")
     r.artifacts.files.set(artifact.path, new TextEncoder().encode("changed after publication"));
+  const skillProof = skillEvidence(dispatched.attempt, (path, text) =>
+    r.artifacts.publish(path, text),
+  );
   return recordStepResult(r.deps, {
     attemptId: dispatched.attempt.id,
     execution: await r.executor.collectResult(dispatched.handle),
@@ -122,11 +129,12 @@ async function execute(
       attemptId: dispatched.attempt.id,
       status: "succeeded",
       summary: "Worker claims success",
-      artifacts: mode === "phantom" ? [] : [artifact],
+      artifacts: mode === "phantom" ? [] : [artifact, ...skillProof.artifacts],
       revision: { headSha: mode === "stale" ? "c".repeat(40) : HEAD, baseSha: BASE },
       checks: checksFor(workflow, step.id)
         .filter((id) => mode !== "missing" || id !== omittedCheck)
         .map((id) => ({ id, evidenceRef: artifact.path })),
+      skillsApplied: skillProof.skillsApplied,
       findings: [],
     },
   });

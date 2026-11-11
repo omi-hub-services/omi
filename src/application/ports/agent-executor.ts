@@ -8,7 +8,12 @@ import type {
 } from "../contracts/agent-execution.js";
 import type { Executor } from "../contracts/model-capability.js";
 
-export type AgentExecutorErrorCode = "INVALID_REQUEST" | "SPAWN_FAILED" | "UNKNOWN_EXECUTION";
+export type AgentExecutorErrorCode =
+  | "INVALID_REQUEST"
+  | "SPAWN_FAILED"
+  | "UNKNOWN_EXECUTION"
+  /** The profile has installed skills; a worker may only see the skills inlined in its prompt. */
+  | "CODEX_HOME_HAS_SKILLS";
 
 /**
  * Operational failures that are not an attempt outcome: the request is invalid, the CLI could
@@ -43,7 +48,7 @@ export interface AgentExecutor {
 
   /**
    * Validates the request and spawns the worker. Resolves once the process exists, not when it
-   * finishes. Rejects with `AgentExecutorError` (`INVALID_REQUEST`, `SPAWN_FAILED`).
+   * finishes. Rejects with `AgentExecutorError` (`INVALID_REQUEST`, `SPAWN_FAILED`, `CODEX_HOME_HAS_SKILLS`).
    */
   start(request: ExecutionRequest): Promise<ExecutionHandle>;
 

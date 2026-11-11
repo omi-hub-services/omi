@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,6 +52,15 @@ interface Run {
   outputPath: string;
   supervised?: SupervisedProcess;
   result?: Promise<ExecutionResult>;
+}
+
+/** Installed skills would reach the worker next to the inlined ones (ADR-0019 update 2026-11-11). */
+function hasInstalledSkills(profileHome: string): boolean {
+  try {
+    return readdirSync(join(profileHome, "skills")).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function isDirectory(path: string): boolean {
@@ -108,6 +117,9 @@ export class CodexExecutor implements AgentExecutor {
     // Expiry/refresh remains entirely the CLI's job; a runtime auth rejection is classified below.
     if ((await inspectCodexAuth(valid.profileHome)) !== "ready")
       throw new AgentExecutorError("INVALID_REQUEST");
+    // Read-only check; the profile is never written. The user removes the skills, not the runtime.
+    if (hasInstalledSkills(valid.profileHome))
+      throw new AgentExecutorError("CODEX_HOME_HAS_SKILLS");
     const handle = executionHandleSchema.safeParse({
       executionId: this.newExecutionId(),
       attemptId: valid.attemptId,

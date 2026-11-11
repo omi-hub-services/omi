@@ -31,6 +31,8 @@ export const stepResultSchema = z
     artifacts: z.array(z.strictObject({ path: relativePathSchema, sha256: sha256Schema })),
     revision: z.strictObject({ headSha: gitShaSchema, baseSha: gitShaSchema }).optional(),
     checks: z.array(z.strictObject({ id: slugSchema, evidenceRef: relativePathSchema })),
+    /** One entry per skill the attempt was given: how the worker applied it, with evidence. */
+    skillsApplied: z.array(z.strictObject({ id: slugSchema, evidenceRef: relativePathSchema })),
     findings: z.array(findingSchema),
     nextAction: slugSchema.optional(),
   })

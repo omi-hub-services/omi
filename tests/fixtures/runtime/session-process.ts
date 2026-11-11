@@ -113,6 +113,15 @@ const executors: RuntimeCompositionOptions["executors"] = (ports) => {
           classification: "report",
           createdAt: new Date().toISOString(),
         });
+        const skillProofs = attempt.skills.map((skill) =>
+          ports.artifacts.write({
+            id: randomUUID(),
+            path: `attempts/${attempt.id}/skill-${skill.id}.md`,
+            bytes: new TextEncoder().encode(`applied ${skill.id}`),
+            classification: "report",
+            createdAt: new Date().toISOString(),
+          }),
+        );
         return {
           ...handle,
           outcome: limit ? "usage-limit" : exit.cancelRequested ? "cancelled" : "succeeded",
@@ -137,9 +146,13 @@ const executors: RuntimeCompositionOptions["executors"] = (ports) => {
                   attemptId: attempt.id,
                   status: quality ? "failed" : "succeeded",
                   summary: "AC-1: met — runtime fixture verified",
-                  artifacts: [report],
+                  artifacts: [report, ...skillProofs],
                   revision: { headSha: head, baseSha: base },
                   checks: [],
+                  skillsApplied: skillProofs.map((proof, index) => ({
+                    id: attempt.skills[index]?.id,
+                    evidenceRef: proof.path,
+                  })),
                   findings: [],
                 }),
               }),

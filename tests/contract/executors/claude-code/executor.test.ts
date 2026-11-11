@@ -1,5 +1,6 @@
 // Contract: ClaudeCodeExecutor against a fake `claude` executable that replays fixtures.
 // No real CLI, no login, no quota.
+import { execFile } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -124,6 +125,21 @@ async function waitForEvent(
 
 const SUCCESS: FakeClaudeScenario = { stdout: fixture("success.stream.jsonl") };
 
+/** Runs the fake CLI directly, outside the executor, with only the given environment. */
+function runFake(
+  executable: string,
+  args: string[],
+  env: Record<string, string>,
+): Promise<{ stdout: string }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(executable, args, { env }, (error, stdout) => {
+      if (error === null) resolve({ stdout });
+      else reject(new Error(error.message));
+    });
+    child.stdin?.end();
+  });
+}
+
 /** The first `count` lines of the success stream: a run that has started but not finished. */
 function firstLines(count: number): string {
   return `${fixture("success.stream.jsonl").split("\n").slice(0, count).join("\n")}\n`;
@@ -218,6 +234,7 @@ describe("invocation", () => {
       "--verbose",
       "--no-session-persistence",
       "--strict-mcp-config",
+      "--disable-slash-commands",
       "--setting-sources",
       "project,local",
       "--model",
@@ -258,6 +275,47 @@ describe("invocation", () => {
   });
 });
 
+describe("worker isolation (OMI-072): skills only through the prompt", () => {
+  it("starts with no native skills, no plugins and no profile auto-memory, as reported by system/init", async () => {
+    const { executor } = harness({ ...SUCCESS, initFromLaunch: true });
+    const result = await executor.collectResult(await executor.start(request()));
+    expect(executionResultSchema.safeParse(result).success).toBe(true);
+    expect(result.workerEnvironment).toEqual({ skills: [], plugins: [], memoryPaths: [] });
+  });
+
+  it("would report skills, plugins and memory if the launch did not isolate them (control)", async () => {
+    // Same fake CLI, launched the way an unisolated worker would be: the init check can fail.
+    const recordPath = join(root, "control-record.jsonl");
+    const executable = writeFakeClaude(
+      root,
+      "claude-control",
+      { ...SUCCESS, initFromLaunch: true },
+      recordPath,
+    );
+    const { stdout } = await runFake(
+      executable,
+      ["-p", "--setting-sources", "user,project,local"],
+      {
+        PATH: process.env["PATH"] ?? "",
+        CLAUDE_CONFIG_DIR: profileA,
+      },
+    );
+    const init = stdout
+      .split("\n")
+      .filter((line) => line.includes('"subtype":"init"'))
+      .map((line) => JSON.parse(line) as Record<string, unknown>)[0];
+    expect(init?.["skills"]).not.toEqual([]);
+    expect(init?.["plugins"]).not.toEqual([]);
+    expect(init?.["memory_paths"]).not.toEqual({});
+  });
+
+  it("leaves the workerEnvironment out when the CLI did not report skills, plugins or memory", async () => {
+    const { executor } = harness(SUCCESS);
+    const result = await executor.collectResult(await executor.start(request()));
+    expect(result).not.toHaveProperty("workerEnvironment");
+  });
+});
+
 describe("profile isolation (no global auth swapping)", () => {
   it("gives the process only an allowlisted environment with its own CLAUDE_CONFIG_DIR", async () => {
     const { executor, invocations } = harness(SUCCESS);
@@ -267,7 +325,9 @@ describe("profile isolation (no global auth swapping)", () => {
     const [run] = invocations();
     expect(run?.claudeConfigDir).toBe(profileB);
     expect(run?.disableAutoUpdater).toBe("1");
+    expect(run?.disableAutoMemory).toBe("1");
     expect(run?.envKeys).toEqual([
+      "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
       "CLAUDE_CONFIG_DIR",
       "DISABLE_AUTOUPDATER",
       "HOME",
@@ -280,7 +340,11 @@ describe("profile isolation (no global auth swapping)", () => {
       expect(run?.envKeys).not.toContain(name);
     }
     expect(run?.envKeys.some((key) => key.startsWith("ANTHROPIC_"))).toBe(false);
-    expect(run?.envKeys.some((key) => key.startsWith("CLAUDE_CODE_"))).toBe(false);
+    // The parent session's CLAUDE_CODE_* variables stay out; the one the adapter sets is the
+    // auto-memory switch.
+    expect(run?.envKeys.filter((key) => key.startsWith("CLAUDE_CODE_"))).toEqual([
+      "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
+    ]);
     expect(run?.envKeys).not.toContain("CLAUDECODE");
     expect(run?.envKeys).not.toContain("GITHUB_TOKEN");
     // Nothing global was touched: neither this process's environment nor the parent's.

@@ -62,7 +62,11 @@ export type StepFailureReason =
   | "ARTIFACT_INVALID"
   | "ARTIFACT_HASH_MISMATCH"
   | "REVISION_MISSING"
-  | "REQUIRED_CHECK_MISSING";
+  | "REQUIRED_CHECK_MISSING"
+  /** The attempt was given a skill the result does not report as applied. */
+  | "SKILL_EVIDENCE_MISSING"
+  /** The result reports a skill the attempt was not given. */
+  | "SKILL_NOT_ASSIGNED";
 
 export type RecordStepResult =
   | {
@@ -237,6 +241,7 @@ function verify(
   const paths = [
     ...report.artifacts.map((artifact) => artifact.path),
     ...report.checks.map((check) => check.evidenceRef),
+    ...report.skillsApplied.map((skill) => skill.evidenceRef),
   ];
   if (
     !paths.every((path) => artifactPathSchema.safeParse(path).success && path.startsWith(prefix))
@@ -245,13 +250,13 @@ function verify(
   }
   try {
     const manifest = deps.artifacts.manifest(report.artifacts);
-    // Check names alone are claims. Every evidence path must have verified, nonempty bytes.
+    // Check and skill names alone are claims. Every evidence path must have verified, nonempty
+    // bytes.
+    const hasEvidence = (evidenceRef: string) =>
+      manifest.artifacts.some((artifact) => artifact.path === evidenceRef && artifact.size > 0);
     if (
-      !report.checks.every((check) =>
-        manifest.artifacts.some(
-          (artifact) => artifact.path === check.evidenceRef && artifact.size > 0,
-        ),
-      )
+      !report.checks.every((check) => hasEvidence(check.evidenceRef)) ||
+      !report.skillsApplied.every((skill) => hasEvidence(skill.evidenceRef))
     )
       return { failure: "ARTIFACT_INVALID", report };
   } catch (error) {
@@ -273,6 +278,14 @@ function verify(
   const reported = new Set(report.checks.map((check) => check.id));
   if (!attempt.requiredChecks.every((id) => reported.has(id))) {
     return { failure: "REQUIRED_CHECK_MISSING", report };
+  }
+
+  // The worker saw exactly the manifest's skills (inlined at dispatch); it must account for each.
+  const given = new Set(attempt.skills.map((skill) => skill.id));
+  const applied = new Set(report.skillsApplied.map((skill) => skill.id));
+  if (![...applied].every((id) => given.has(id))) return { failure: "SKILL_NOT_ASSIGNED", report };
+  if (![...given].every((id) => applied.has(id))) {
+    return { failure: "SKILL_EVIDENCE_MISSING", report };
   }
   return { accepted: true, report };
 }

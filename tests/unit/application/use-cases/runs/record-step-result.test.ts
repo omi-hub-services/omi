@@ -15,6 +15,7 @@ function goodResult(r: Rig, attemptId: string, overrides: Record<string, unknown
   const artifact = r.artifacts.publish(`${root}/reports/implementation.md`, "done");
   const evidence = `${root}/reports/unit-tests.txt`;
   const evidenceArtifact = r.artifacts.publish(evidence, "ok");
+  const skillEvidence = r.artifacts.publish(`${root}/reports/skill-tdd.md`, "wrote the test first");
   return {
     schemaVersion: 1,
     runId: "run-1",
@@ -22,9 +23,10 @@ function goodResult(r: Rig, attemptId: string, overrides: Record<string, unknown
     attemptId,
     status: "succeeded",
     summary: "Implemented.",
-    artifacts: [artifact, evidenceArtifact],
+    artifacts: [artifact, evidenceArtifact, skillEvidence],
     revision: { headSha: HEAD, baseSha: BASE },
     checks: [{ id: "unit-tests", evidenceRef: evidence }],
+    skillsApplied: [{ id: "tdd", evidenceRef: skillEvidence.path }],
     findings: [],
     ...overrides,
   };
@@ -181,6 +183,50 @@ describe("recordStepResult", () => {
     it("rejects a result missing a check the step gate requires", async () => {
       const result = await failureOf((r, id) => goodResult(r, id, { checks: [] }));
       expect(result).toMatchObject({ failure: "REQUIRED_CHECK_MISSING" });
+    });
+
+    it("rejects a result that reports none of the skills the attempt was given", async () => {
+      const result = await failureOf((r, id) => goodResult(r, id, { skillsApplied: [] }));
+      expect(result).toMatchObject({ failure: "SKILL_EVIDENCE_MISSING" });
+    });
+
+    it("rejects a skill whose evidence is not a verified, non-empty artifact", async () => {
+      const root = (id: string) => `attempts/${id}`;
+      expect(
+        await failureOf((r, id) =>
+          goodResult(r, id, {
+            skillsApplied: [{ id: "tdd", evidenceRef: `${root(id)}/reports/ghost.md` }],
+          }),
+        ),
+      ).toMatchObject({ failure: "ARTIFACT_INVALID" });
+      expect(
+        await failureOf((r, id) => {
+          const empty = r.artifacts.publish(`${root(id)}/reports/skill-tdd-empty.md`, "");
+          const good = goodResult(r, id, {
+            skillsApplied: [{ id: "tdd", evidenceRef: empty.path }],
+          });
+          return { ...good, artifacts: [...good.artifacts, empty] };
+        }),
+      ).toMatchObject({ failure: "ARTIFACT_INVALID" });
+      expect(
+        await failureOf((r, id) =>
+          goodResult(r, id, { skillsApplied: [{ id: "tdd", evidenceRef: "attempts/other/x.md" }] }),
+        ),
+      ).toMatchObject({ failure: "PATH_OUTSIDE_ROOT" });
+    });
+
+    it("rejects a skill the attempt was not given", async () => {
+      const result = await failureOf((r, id) => {
+        const good = goodResult(r, id);
+        return {
+          ...good,
+          skillsApplied: [
+            ...good.skillsApplied,
+            { id: "debugging", evidenceRef: good.checks[0]?.evidenceRef },
+          ],
+        };
+      });
+      expect(result).toMatchObject({ failure: "SKILL_NOT_ASSIGNED" });
     });
 
     it("accepts a read-only attempt without a revision", async () => {

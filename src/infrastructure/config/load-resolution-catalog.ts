@@ -18,7 +18,12 @@ export class CatalogLoadError extends Error {
 
 const sha256 = (data: Buffer | string): string => createHash("sha256").update(data).digest("hex");
 
-const skillsLockSchema = z.object({
+/** Skill hash rule of ADR-0019: SHA-256 of `<path> <file sha256>\n` lines in the listed order. */
+export function aggregateSkillHash(files: readonly { path: string; sha256: string }[]): string {
+  return sha256(files.map((file) => `${file.path} ${file.sha256}\n`).join(""));
+}
+
+export const skillsLockSchema = z.object({
   skills: z.array(
     z.object({
       id: slugSchema,
@@ -73,7 +78,6 @@ function loadRules(squadDir: string): CatalogRule[] {
   });
 }
 
-/** Skill hash rule of ADR-0019: SHA-256 of `<path> <file sha256>\n` lines in the listed order. */
 function loadSkills(squadDir: string): CatalogEntry[] {
   let lock: z.infer<typeof skillsLockSchema>;
   try {
@@ -83,15 +87,16 @@ function loadSkills(squadDir: string): CatalogEntry[] {
     return fail("invalid provenance/skills.lock.json", error);
   }
   return lock.skills.map((skill) => {
-    let aggregate = "";
-    for (const file of skill.files) {
-      const actual = sha256(readFileSync(join(squadDir, file.path)));
-      if (actual !== file.sha256) {
-        throw new CatalogLoadError(`skill "${skill.id}" file ${file.path} differs from the lock`);
+    const actualFiles = skill.files.map((file) => ({
+      path: file.path,
+      sha256: sha256(readFileSync(join(squadDir, file.path))),
+    }));
+    for (const [index, actual] of actualFiles.entries()) {
+      if (actual.sha256 !== skill.files[index]?.sha256) {
+        throw new CatalogLoadError(`skill "${skill.id}" file ${actual.path} differs from the lock`);
       }
-      aggregate += `${file.path} ${actual}\n`;
     }
-    if (sha256(aggregate) !== skill.sha256) {
+    if (aggregateSkillHash(actualFiles) !== skill.sha256) {
       throw new CatalogLoadError(`skill "${skill.id}" hash differs from the lock`);
     }
     return { id: skill.id, version: skill.version, sha256: skill.sha256 };

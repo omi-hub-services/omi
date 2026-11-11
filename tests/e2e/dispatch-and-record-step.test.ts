@@ -6,6 +6,7 @@ import {
   dispatchInput,
   HEAD,
   rig,
+  skillEvidence,
   type Rig,
 } from "../unit/application/use-cases/runs/run-fakes.ts";
 
@@ -18,6 +19,9 @@ function runWorker(r: Rig, attemptId: string, mode: "good" | "silent") {
   const artifact = r.artifacts.publish(`${root}/reports/implementation.md`, `work of ${attemptId}`);
   const evidence = `${root}/reports/unit-tests.txt`;
   const evidenceArtifact = r.artifacts.publish(evidence, "all green");
+  const attempt = r.attempts.get(attemptId);
+  if (attempt === undefined) throw new Error("unknown attempt");
+  const skills = skillEvidence(attempt, (path, text) => r.artifacts.publish(path, text));
   return {
     schemaVersion: 1,
     runId: "run-1",
@@ -25,9 +29,10 @@ function runWorker(r: Rig, attemptId: string, mode: "good" | "silent") {
     attemptId,
     status: "succeeded",
     summary: "Implemented.",
-    artifacts: [artifact, evidenceArtifact],
+    artifacts: [artifact, evidenceArtifact, ...skills.artifacts],
     revision: { headSha: HEAD, baseSha: BASE },
     checks: [{ id: "unit-tests", evidenceRef: evidence }],
+    skillsApplied: skills.skillsApplied,
     findings: [],
   };
 }

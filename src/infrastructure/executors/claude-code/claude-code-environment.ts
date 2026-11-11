@@ -44,5 +44,7 @@ export function buildClaudeCodeEnvironment(
   }
   env["CLAUDE_CONFIG_DIR"] = profileHome;
   env["DISABLE_AUTOUPDATER"] = "1";
+  // The profile's auto-memory is personal state: a worker must not read or write it (OMI-072).
+  env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1";
   return env;
 }

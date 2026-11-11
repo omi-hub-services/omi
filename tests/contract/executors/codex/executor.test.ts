@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -102,6 +110,27 @@ async function started(executor: AgentExecutor, handle: ExecutionHandle): Promis
   for await (const event of executor.events(handle)) if (event.kind === "started") return;
   throw new Error("worker ended before starting");
 }
+
+describe("worker CODEX_HOME (OMI-072): no installed skills, profile used as is", () => {
+  it("runs in the profile's own CODEX_HOME and leaves it untouched when it has no skills", async () => {
+    mkdirSync(join(profile, "skills")); // an empty skills dir is fine
+    const { executor, invocations } = harness();
+    await executor.collectResult(await executor.start(request()));
+    expect(invocations()[0]?.codexHome).toBe(profile);
+    expect(readdirSync(profile).sort()).toEqual(["auth.json", "skills"]);
+  });
+
+  it("refuses with CODEX_HOME_HAS_SKILLS before spawning when the skills dir is not empty", async () => {
+    mkdirSync(join(profile, "skills", "installed-skill"), { recursive: true });
+    writeFileSync(join(profile, "skills", "installed-skill", "SKILL.md"), "# installed");
+    const { executor, invocations } = harness();
+    await expect(executor.start(request())).rejects.toMatchObject({
+      code: "CODEX_HOME_HAS_SKILLS",
+    });
+    expect(invocations()).toEqual([]);
+    expect(existsSync(join(profile, "skills", "installed-skill", "SKILL.md"))).toBe(true);
+  });
+});
 
 describe("Codex through the neutral port", () => {
   it("streams neutral ordered events and returns the final output file, with replay and idempotent result", async () => {
