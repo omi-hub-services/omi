@@ -10,8 +10,15 @@ import {
   type WslTarget,
 } from "./coordinator-settings.ts";
 import { createProcessRunner, type Runner } from "./process-runner.ts";
-import { localTime, modelLeftText, readQuota, windowLeft, type QuotaReport } from "./quota.ts";
-import { readWorkers, type Workers } from "./wsl-workers.ts";
+import { localTime, modelLeftText, windowLeft, type QuotaReport } from "./quota.ts";
+import {
+  clean,
+  createWatchPoller,
+  STALE_AFTER_SECONDS,
+  windowsLow,
+  workerTone,
+} from "./watch-core.ts";
+import type { Workers } from "./wsl-workers.ts";
 
 export const ANSI = {
   clear: "\x1b[2J\x1b[H",
@@ -24,12 +31,6 @@ export const ANSI = {
   dim: "\x1b[2m",
 } as const;
 
-// Strip terminal controls from external text before adding our own ANSI codes.
-const clean = (s: string) =>
-  s
-    .replace(/\p{Cc}/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 const paint = (s: string, colour: string) => (colour ? `${colour}${s}${ANSI.reset}` : s);
 const value = (s: string | null | undefined) => clean(s ?? "-");
 
@@ -65,7 +66,8 @@ export function renderWatch(screen: WatchScreen): string {
   else {
     if (workers.processes.length === 0) out.push("  (none)");
     for (const p of workers.processes) {
-      const colour = p.log?.isError || p.log?.limited ? ANSI.red : p.log?.finished ? ANSI.grey : "";
+      const tone = workerTone(p.log);
+      const colour = tone === "error" ? ANSI.red : tone === "done" ? ANSI.grey : "";
       out.push(
         paint(
           fit(
@@ -97,9 +99,7 @@ export function renderWatch(screen: WatchScreen): string {
     const left7 = windowLeft(r.sevenDay, screen.now);
     const percent = (n: number | null) =>
       n === null ? "?" : `${String(Math.round(n * 10) / 10)}%`;
-    const low =
-      (left5 !== null && left5 < screen.settings.minFiveHourLeftPercent) ||
-      (left7 !== null && left7 < screen.settings.minSevenDayLeftPercent);
+    const low = windowsLow(left5, left7, screen.settings);
     const ageSeconds = Math.max(0, screen.now - r.observedAt);
     const scoped = modelLeftText(r, screen.now).map(clean);
     const models = scoped.length > 0 ? `  ${scoped.join(" ")}` : "";
@@ -115,7 +115,7 @@ export function renderWatch(screen: WatchScreen): string {
         fit(
           `  ${profile.tool} ${clean(profile.profile)}  ${percent(left5)} / ${percent(left7)}${models}  reset ${resetText}  ${age}`,
         ),
-        `${low ? ANSI.yellow : ""}${ageSeconds > 1800 ? ANSI.dim : ""}`,
+        `${low ? ANSI.yellow : ""}${ageSeconds > STALE_AFTER_SECONDS ? ANSI.dim : ""}`,
       ),
     );
   }
@@ -161,28 +161,20 @@ export interface WatchOptions {
   readonly signal?: AbortSignal;
 }
 
-/** Independent, non-overlapping polls keep quota latency out of the worker refresh path. */
+/** Polling lives in watch-core.ts; this wires it to a terminal. */
 export function runWatch(options: WatchOptions): Promise<void> {
   return new Promise((resolve) => {
     const { terminal, target, profiles, settings } = options;
-    const controller = new AbortController();
-    const run: Runner = (command) => options.run({ ...command, signal: controller.signal });
     let stopped = false;
-    let workers: Workers | null = null;
-    let quota: QuotaReport | null = null;
     let confirming = false;
-    let probing = false;
-    let workerBusy = false;
-    let quotaBusy = false;
-    let probeQueued = false;
     const draw = () => {
       if (!stopped)
         terminal.write(
           renderWatch({
-            workers,
-            quota,
+            workers: poller.workers,
+            quota: poller.quota,
             confirming,
-            probing,
+            probing: poller.probing,
             now: Date.now() / 1000,
             settings,
             profiles,
@@ -190,45 +182,20 @@ export function runWatch(options: WatchOptions): Promise<void> {
           }),
         );
     };
-    const refreshWorkers = async () => {
-      if (workerBusy || stopped) return;
-      workerBusy = true;
-      workers = await readWorkers(run, target);
-      workerBusy = false;
-      draw();
-    };
-    const refreshQuota = async (probe = false): Promise<void> => {
-      if (stopped) return;
-      if (quotaBusy) {
-        probeQueued ||= probe;
-        return;
-      }
-      quotaBusy = true;
-      probing = probe;
-      draw();
-      quota = await readQuota(run, target, profiles, settings, probe);
-      quotaBusy = false;
-      probing = false;
-      draw();
-      if (probeQueued) {
-        probeQueued = false;
-        await refreshQuota(true);
-      }
-    };
-    const workerTimer = setInterval(() => {
-      void refreshWorkers();
-    }, options.intervalMs);
-    const quotaTimer = setInterval(() => {
-      void refreshQuota();
-    }, 60_000);
+    const poller = createWatchPoller({
+      run: options.run,
+      target,
+      profiles,
+      settings,
+      workerIntervalMs: options.intervalMs,
+      onChange: draw,
+    });
     const ageTimer = setInterval(draw, 1000);
     const stop = () => {
       if (stopped) return;
       stopped = true;
-      clearInterval(workerTimer);
-      clearInterval(quotaTimer);
       clearInterval(ageTimer);
-      controller.abort();
+      poller.stop();
       removeKey();
       options.signal?.removeEventListener("abort", stop);
       terminal.setRawMode(false);
@@ -242,11 +209,8 @@ export function runWatch(options: WatchOptions): Promise<void> {
       }
       if (confirming) {
         confirming = false;
-        if (key.toLowerCase() === "y") {
-          probeQueued = false;
-          void refreshQuota(true);
-        }
-      } else if (key === "p" && !probing && !probeQueued) confirming = true;
+        if (key.toLowerCase() === "y") poller.probe();
+      } else if (key === "p" && !poller.probing && !poller.probeQueued) confirming = true;
       draw();
     });
     options.signal?.addEventListener("abort", stop, { once: true });
@@ -257,8 +221,7 @@ export function runWatch(options: WatchOptions): Promise<void> {
       stop();
       return;
     }
-    void refreshWorkers();
-    void refreshQuota();
+    poller.start();
   });
 }
 
