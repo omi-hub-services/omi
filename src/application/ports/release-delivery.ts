@@ -4,6 +4,8 @@ import type { MergedPull } from "../../domain/delivery/release-policy.js";
 export interface ReleaseReader {
   /** Merge time of the latest merged `develop` → `main` PR; undefined when none exists. */
   lastReleaseMergedAt(repository: string): Promise<string | undefined>;
+  /** Every merged `develop` → `main` release PR. */
+  mergedReleasePulls(repository: string): Promise<MergedPull[]>;
   /** Every PR merged into `develop`. */
   mergedDevelopPulls(repository: string): Promise<MergedPull[]>;
 }

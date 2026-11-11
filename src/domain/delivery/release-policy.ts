@@ -46,10 +46,13 @@ const ISSUE_LINE = /^Issue: #(\d+)\s*$/m;
 export function releaseTasks(
   pulls: readonly MergedPull[],
   lastReleaseMergedAt: string | undefined,
+  /** Inclusive upper bound: the merge time of the release PR that is being published. */
+  releaseMergedAt?: string,
 ): ReleaseTask[] {
   const since = lastReleaseMergedAt === undefined ? -Infinity : Date.parse(lastReleaseMergedAt);
+  const until = releaseMergedAt === undefined ? Infinity : Date.parse(releaseMergedAt);
   return pulls
-    .filter((pull) => Date.parse(pull.mergedAt) > since)
+    .filter((pull) => Date.parse(pull.mergedAt) > since && Date.parse(pull.mergedAt) <= until)
     .sort((a, b) => Date.parse(a.mergedAt) - Date.parse(b.mergedAt) || a.number - b.number)
     .map((pull) => {
       const key = TASK_BRANCH.exec(pull.head)?.[1];
@@ -160,5 +163,62 @@ export function evaluateReleaseMerge(input: ReleaseMergeInputs): Decision<Releas
   refusals.push(...nativeApprovalRefusals(native, input.currentHeadSha));
   refusals.push(...requiredCheckRefusals(input.requiredChecks, input.checks, input.currentHeadSha));
   refusals.push(...mergeableRefusals(input.mergeableState));
+  return decide(refusals);
+}
+
+export function releaseTagKey(repository: string, release: string): string {
+  return `create-release-tag:${repository}:${release}`;
+}
+
+export function releaseArtifactKey(repository: string, release: string): string {
+  return `create-github-release:${repository}:${release}`;
+}
+
+/** Release notes = changelog of the release: the exact commit on main and the tasks it shipped. */
+export function releaseNotes(
+  release: string,
+  releasePullNumber: number,
+  commitSha: string,
+  tasks: readonly ReleaseTask[],
+): string {
+  return [
+    `Release: ${release}`,
+    `Release PR: #${String(releasePullNumber)}`,
+    `Commit: ${commitSha}`,
+    "",
+    "## Tasks in this release",
+    ...taskLines(tasks),
+  ].join("\n");
+}
+
+export interface ReleaseArtifactInputs {
+  readonly headRef: string;
+  readonly baseRef: string;
+  readonly state: "open" | "closed";
+  readonly merged: boolean;
+  readonly mergeCommitSha: string | null;
+  /** Whether the merge commit is reachable from the current head of `main`. */
+  readonly onMain: boolean;
+}
+
+export type ReleaseArtifactRefusal =
+  | "WRONG_RELEASE_BRANCH_FLOW"
+  | "RELEASE_PR_NOT_MERGED"
+  | "MERGE_COMMIT_MISSING"
+  | "MERGE_COMMIT_NOT_ON_MAIN";
+
+/**
+ * Tag, notes and GitHub Release exist only after the release PR is merged into `main`, and always
+ * name that merge commit. An open or closed-unmerged PR never qualifies.
+ */
+export function evaluateReleaseArtifacts(
+  input: ReleaseArtifactInputs,
+): Decision<ReleaseArtifactRefusal> {
+  const refusals: ReleaseArtifactRefusal[] = [];
+  if (!isReleaseBranchFlow(input.headRef, input.baseRef))
+    refusals.push("WRONG_RELEASE_BRANCH_FLOW");
+  if (!input.merged || input.state !== "closed") refusals.push("RELEASE_PR_NOT_MERGED");
+  else if (input.mergeCommitSha === null) refusals.push("MERGE_COMMIT_MISSING");
+  else if (!input.onMain) refusals.push("MERGE_COMMIT_NOT_ON_MAIN");
   return decide(refusals);
 }
