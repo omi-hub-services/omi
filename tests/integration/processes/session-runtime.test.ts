@@ -206,4 +206,57 @@ describe("project session runtime", () => {
     expect((await worker.exit).cancelRequested).toBe(true);
     expect(result.workers[0]?.pid).toBe(worker.pid);
   });
+
+  it("stops owned workers before draining a pending resource wake-up", async () => {
+    const channel = new PassThrough();
+    let release: () => void = () => undefined;
+    const probe = new Promise<number>((resolve) => {
+      release = () => {
+        resolve(0);
+      };
+    });
+    let tick: () => void = () => undefined;
+    const runtime = await startSessionRuntime({
+      session: claim("resource-stop"),
+      owner: { channel },
+      startAccepting: () => Promise.resolve(),
+      stopAccepting: () => Promise.resolve(),
+      resourceWakeup: () => ({
+        timing: { interval_ms: 1, max_backoff_ms: 10 },
+        tick: () => probe,
+        timer: {
+          schedule: (callback) => {
+            tick = callback;
+            return () => undefined;
+          },
+        },
+      }),
+    });
+    tick();
+    let ready = false;
+    const worker = await runtime.startWorker({
+      ...workerOptions(),
+      onStdoutLine: () => {
+        ready = true;
+      },
+    });
+    owned.push(worker);
+    await vi.waitFor(() => {
+      expect(ready).toBe(true);
+    });
+    channel.end();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const exited = await Promise.race([
+      worker.exit.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => {
+          resolve(false);
+        }, 1000);
+      }),
+    ]);
+    clearTimeout(timeout);
+    release();
+    await runtime.result;
+    expect(exited).toBe(true);
+  });
 });

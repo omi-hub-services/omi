@@ -6,6 +6,16 @@ import { schemaVersionV1 } from "./schema-version.js";
 const githubNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/);
 const branchNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/);
 
+const resourceWaitSchema = z
+  .strictObject({
+    // One second notices freed slots promptly; the cap limits repeated unavailable probes.
+    interval_ms: z.number().int().min(1).max(2147483647).default(1000),
+    max_backoff_ms: z.number().int().min(1).max(2147483647).default(60000),
+  })
+  .refine((settings) => settings.max_backoff_ms >= settings.interval_ms, {
+    message: "max_backoff_ms must be at least interval_ms",
+  });
+
 /** Opaque GitHub IDs: modern URL-safe IDs, legacy padded base64, and short option IDs. */
 export const githubIdSchema = z.string().regex(/^[A-Za-z0-9_+/=-]{1,256}$/);
 export const projectFieldMappingSchema = z.record(
@@ -41,6 +51,7 @@ export const projectConfigSchema = z
       max_rework_cycles: z.number().int().min(0).max(10),
     }),
     effort_policy: effortPolicySchema,
+    resource_wait: resourceWaitSchema.prefault({}),
     workspace: z.strictObject({ worktree_root: absolutePathSchema }).optional(),
     policies: z.strictObject({
       /** Gates that always need a human; a runtime field must not remove them. */
