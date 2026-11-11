@@ -7,6 +7,7 @@ import {
   REPO_SLUG,
   type WslTarget,
 } from "./coordinator-settings.ts";
+import { wrongHeadCarry, type CarryJudgement } from "./carried-pass.ts";
 import { issueReadinessReasons, type IssueReadiness } from "./issue-readiness.ts";
 import { parseAcLines, tickAcceptanceCriteria } from "./acceptance-criteria.ts";
 import {
@@ -339,6 +340,8 @@ export function planMerge(
   pr: PullForMerge,
   expectedHead: string,
   required: readonly string[],
+  /** Judgement of the carry chain of the head's PASS (carry-git.ts); needed for a carried PASS. */
+  carry?: CarryJudgement,
 ): Plan {
   assertSha(expectedHead);
   const n = `PR #${String(pr.number)}`;
@@ -372,6 +375,10 @@ export function planMerge(
     return refuse(
       `${n} needs an agent review PASS on head ${shortSha(pr.headRefOid)} (${reviewSeen(review, pr.comments)})`,
     );
+  }
+  // A carried PASS counts only while git shows the head is a clean sync (never the comment text).
+  if (review.carriedFrom !== null && carry?.ok !== true) {
+    return refuse(`${n} ${wrongHeadCarry(review, carry)}`);
   }
   if (!MERGEABLE_STATES.has(pr.mergeStateStatus)) {
     const hint = pr.mergeStateStatus === "BEHIND" ? `; update it from ${BASE_BRANCH} first` : "";
@@ -423,7 +430,12 @@ export interface ReferencingPull {
  * merged head of the most recently merged (by `mergedAt`) PR into develop with `Issue: #N`.
  * Refuses on a missing PASS, a missing line or a `not met`; done when every box is ticked.
  */
-export function planTickCriteria(issue: IssueForClose, pulls: readonly ReferencingPull[]): Plan {
+export function planTickCriteria(
+  issue: IssueForClose,
+  pulls: readonly ReferencingPull[],
+  /** Carry-chain judgement per PR number, for PRs whose merged-head PASS is a carried one. */
+  carries: ReadonlyMap<number, CarryJudgement> = new Map(),
+): Plan {
   const n = String(issue.number);
   // GitHub's ISO timestamps share one format (UTC, `Z`), so they sort as strings.
   const pr = pulls
@@ -437,6 +449,9 @@ export function planTickCriteria(issue: IssueForClose, pulls: readonly Referenci
   if (review?.verdict !== "PASS" || !pr.headRefOid.startsWith(review.head)) {
     const want = `${p} needs an agent review PASS on its merged head ${shortSha(pr.headRefOid)}`;
     return refuse(`${want} (${reviewSeen(review, pr.comments)})`);
+  }
+  if (review.carriedFrom !== null && carries.get(pr.number)?.ok !== true) {
+    return refuse(`${p} ${wrongHeadCarry(review, carries.get(pr.number))}`);
   }
   const tick = tickAcceptanceCriteria(issue.body, parseAcLines(review.body));
   if (tick.kind === "refuse") return refuse(`#${n} AC: ${tick.reason} (review on ${p})`);
@@ -470,6 +485,7 @@ export function planClose(
   field: StatusField,
   item: IssueItem | null,
   pulls: readonly ReferencingPull[],
+  carries: ReadonlyMap<number, CarryJudgement> = new Map(),
 ): Plan {
   if (!comment.trim()) return refuse("closing comment is empty");
   const statusPlan = planSetStatus(issue.number, "Done", field, item);
@@ -479,7 +495,7 @@ export function planClose(
   if (commented && issue.state === "CLOSED" && statusPlan.kind === "done") {
     return done(`#${n}: evidence comment exists; already closed; Status already Done`);
   }
-  const tick = planTickCriteria(issue, pulls);
+  const tick = planTickCriteria(issue, pulls, carries);
   if (tick.kind === "refuse") return tick;
   const steps: Step[] = tick.kind === "run" ? [...tick.steps] : [];
   const notes: string[] = tick.note ? [tick.note] : [];

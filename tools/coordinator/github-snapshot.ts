@@ -262,6 +262,8 @@ export interface ReviewState {
     readonly verdict: string;
     readonly head: string;
     readonly current: boolean;
+    /** The review was carried over a clean sync with develop (OMI-069); see carried-pass.ts. */
+    readonly carriedFrom: string | null;
   } | null;
   /** Logins (deduplicated) of `VERDICT` comments ignored because another account posted them. */
   readonly ignoredVerdictAuthors: readonly string[];
@@ -271,9 +273,23 @@ export interface AgentReview {
   readonly verdict: string;
   readonly head: string;
   readonly body: string;
+  /** `CARRIED_FROM` on the VERDICT line: the SHA this PASS was carried from, else null. */
+  readonly carriedFrom: string | null;
 }
 
 const GHOST = "(deleted account)";
+const CARRIED_FROM = /VERDICT:[^\n]*CARRIED_FROM:\**\s*`?([0-9a-f]{7,40})/;
+
+function parseReview(body: string): AgentReview | null {
+  const m = VERDICT.exec(body);
+  if (!m?.[1] || !m[2]) return null;
+  return {
+    verdict: m[1],
+    head: m[2],
+    body,
+    carriedFrom: CARRIED_FROM.exec(body)?.[1] ?? null,
+  };
+}
 
 /**
  * Newest comment by the Coordinator account carrying `VERDICT: … REVIEWED_HEAD: <sha>`;
@@ -285,10 +301,32 @@ export function latestAgentReview(
 ): AgentReview | null {
   for (const c of [...comments].reverse()) {
     if (c.author !== coordinator) continue;
-    const m = VERDICT.exec(c.body);
-    if (m?.[1] && m[2]) return { verdict: m[1], head: m[2], body: c.body };
+    const review = parseReview(c.body);
+    if (review) return review;
   }
   return null;
+}
+
+/** Newest Coordinator review whose `REVIEWED_HEAD` is the commit `sha` (full or abbreviated). */
+export function agentReviewOn(
+  comments: readonly AuthoredComment[],
+  sha: string,
+  coordinator: string = COORDINATOR_LOGIN,
+): AgentReview | null {
+  const own = comments.filter((c) => c.author === coordinator);
+  for (const c of own.reverse()) {
+    const review = parseReview(c.body);
+    if (review && sha.startsWith(review.head)) return review;
+  }
+  return null;
+}
+
+/** status.ts wording of the newest agent review. */
+export function formatAgentReview(agent: ReviewState["agent"]): string {
+  if (!agent) return "no agent review";
+  if (!agent.current) return `agent ${agent.verdict} @${agent.head.slice(0, 7)} (stale)`;
+  const carried = agent.carriedFrom ? ` (carried from ${agent.carriedFrom.slice(0, 7)})` : "";
+  return `agent ${agent.verdict} @head${carried}`;
 }
 
 /** Authors other than the Coordinator whose comments look like an agent review. */
@@ -315,6 +353,7 @@ export function classifyReview(
     verdict: r.verdict,
     head: r.head,
     current: pull.headRefOid.startsWith(r.head),
+    carriedFrom: r.carriedFrom,
   };
   return {
     native: pull.reviewDecision,
