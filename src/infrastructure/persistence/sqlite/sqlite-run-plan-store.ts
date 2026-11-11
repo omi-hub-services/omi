@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { RunPlanStore } from "../../../application/ports/run-plan-store.js";
+import type { LeaseFence } from "../../../application/ports/state-unit-of-work.js";
 import type { StateDatabase } from "./sqlite-connection.js";
 import { runInTransaction } from "./sqlite-transaction.js";
 
@@ -12,7 +13,10 @@ const taskRow = z.strictObject({
 const runTaskRow = taskRow.extend({ templateHash: z.string() });
 
 /** Run rows over `workflow_runs`, `step_runs`, `task_snapshots` and `projects`. */
-export function createSqliteRunPlanStore(db: StateDatabase): RunPlanStore {
+export function createSqliteRunPlanStore(
+  db: StateDatabase,
+  options?: { readonly fence: LeaseFence; readonly now: () => number },
+): RunPlanStore {
   const task = db.prepare(
     `SELECT t.id AS taskId, t.project_id AS projectId, p.repo_identity AS repository,
             t.issue_number AS issueNumber
@@ -51,6 +55,20 @@ export function createSqliteRunPlanStore(db: StateDatabase): RunPlanStore {
     },
     createRun(plan) {
       return runInTransaction(db, () => {
+        if (
+          options !== undefined &&
+          db
+            .prepare(
+              "SELECT 1 FROM leases WHERE resource_key=? AND owner=? AND generation=? AND expires_at>?",
+            )
+            .get(
+              options.fence.resourceKey,
+              options.fence.owner,
+              options.fence.generation,
+              new Date(options.now()).toISOString(),
+            ) === undefined
+        )
+          return { ok: false as const, reason: "PROJECT_LOCK_LOST" as const };
         if (active.get(plan.taskId) !== undefined) {
           return { ok: false as const, reason: "ACTIVE_RUN_EXISTS" as const };
         }

@@ -11,7 +11,12 @@ import type { ArtifactReference } from "../../contracts/artifact.js";
 import { contextPacketSchema } from "../../contracts/context.js";
 import type { ContextPacket } from "../../contracts/context.js";
 import { absolutePathSchema, identifierSchema, slugSchema } from "../../contracts/identifiers.js";
-import { effortRank, effortSchema, modelNameSchema } from "../../contracts/model-capability.js";
+import {
+  effortRank,
+  effortSchema,
+  modelNameSchema,
+  executorSchema,
+} from "../../contracts/model-capability.js";
 import type { ResolutionCatalog } from "../../contracts/resolution-catalog.js";
 import type { AgentExecutor } from "../../ports/agent-executor.js";
 import { AgentExecutorError } from "../../ports/agent-executor.js";
@@ -32,6 +37,7 @@ export function attemptArtifactRoot(attemptId: string): string {
 
 const dispatchStepSchema = z.strictObject({
   models: modelsConfigSchema,
+  selectedExecutor: executorSchema.optional(),
   task: taskComplexitySchema,
   effortPolicy: effortPolicySchema,
   stepRunId: identifierSchema,
@@ -151,6 +157,8 @@ export async function dispatchStep(
   const parsed = dispatchStepSchema.safeParse(input);
   if (!parsed.success) return { ok: false, reason: "INVALID_INPUT" };
   const command = parsed.data;
+  if (command.selectedExecutor !== undefined && command.selectedExecutor !== deps.executor.executor)
+    return { ok: false, reason: "NO_ELIGIBLE_EXECUTOR" };
 
   const step = deps.steps.get(command.stepRunId);
   if (step === undefined) return { ok: false, reason: "STEP_NOT_FOUND" };
@@ -253,7 +261,8 @@ export async function dispatchStep(
 
     const attemptId = command.reservedAttemptId ?? deps.nextId();
     const previous = deps.attempts.latestForStep(step.id);
-    const attemptNumber = (previous?.attemptNumber ?? 0) + 1;
+    const attemptNumber =
+      deps.attempts.reservedNumber?.(attemptId) ?? (previous?.attemptNumber ?? 0) + 1;
 
     const { inputArtifacts, ...taskContext } = command.context;
     let packet: ContextPacket;

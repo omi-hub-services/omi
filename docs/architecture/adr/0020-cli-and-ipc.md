@@ -117,3 +117,10 @@ proves an interfaces file can reach neither the SQLite adapter nor the SQL drive
   catalog (`schemas/`); that is a follow-up once more commands exist.
 - Only same-user access control is provided; there is no authentication of the peer beyond
   filesystem permissions.
+
+## Decision update 2026-11-11
+
+PO-approved decisions for OMI-070 (#142):
+
+`COMMAND_REFUSED` is an additive error code; protocol version 1 is retained without a bump.
+Setting `closed_at` when a run succeeds or is cancelled is accepted.

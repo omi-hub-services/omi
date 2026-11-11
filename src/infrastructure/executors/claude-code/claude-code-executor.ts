@@ -31,6 +31,7 @@ import { SUPPORTED_CLAUDE_CODE_RANGE } from "./claude-code-version.js";
 
 export interface ClaudeCodeExecutorOptions {
   /** CLI to run; resolved through the child's `PATH`. Tests point it at a fake. */
+  startProcess?: typeof startSupervisedProcess;
   executable?: string;
   /** Source of the allowlisted variables (`PATH`, proxies, …). Defaults to `process.env`. */
   parentEnv?: NodeJS.ProcessEnv;
@@ -74,6 +75,7 @@ function isDirectory(path: string): boolean {
 export class ClaudeCodeExecutor implements AgentExecutor {
   readonly executor = "claude-code" as const;
 
+  private readonly startProcess: typeof startSupervisedProcess;
   private readonly executable: string;
   private readonly parentEnv: NodeJS.ProcessEnv;
   private readonly settingSources: readonly SettingSource[] | undefined;
@@ -83,6 +85,7 @@ export class ClaudeCodeExecutor implements AgentExecutor {
   private readonly runs = new Map<string, Run>();
 
   constructor(options: ClaudeCodeExecutorOptions = {}) {
+    this.startProcess = options.startProcess ?? startSupervisedProcess;
     this.executable = options.executable ?? "claude";
     this.parentEnv = options.parentEnv ?? process.env;
     this.settingSources = options.settingSources;
@@ -134,7 +137,7 @@ export class ClaudeCodeExecutor implements AgentExecutor {
 
     let supervised: SupervisedProcess | undefined;
     try {
-      supervised = await startSupervisedProcess({
+      supervised = await this.startProcess({
         executable: this.executable,
         args: buildClaudeInvocationArgs(valid, {
           ...(this.settingSources === undefined ? {} : { settingSources: this.settingSources }),

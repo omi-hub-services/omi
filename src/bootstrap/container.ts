@@ -1,3 +1,41 @@
+import { createRunMergeEvidenceReader } from "../application/services/build-run-merge-evidence.js";
+import { existsSync, mkdirSync } from "node:fs";
+import { loadRuntimeConfig } from "../infrastructure/config/load-runtime-config.js";
+import { createDispatchPlanner } from "../application/services/plan-step-dispatch.js";
+import { createDispatchTaskReader } from "../application/services/resolve-dispatch-task.js";
+import { snapshotRunContext } from "../application/services/snapshot-run-context.js";
+import type { CompletionRouting } from "../application/services/complete-run-attempt.js";
+import { writeCheckpoint } from "../application/use-cases/runs/write-checkpoint.js";
+import type { FailoverStepDependencies } from "../application/use-cases/profiles/failover-step.js";
+import {
+  dispatchPlannedRunStep,
+  type DispatchRunStepDependencies,
+} from "../application/use-cases/runs/dispatch-run-step.js";
+import type { AgentExecutor } from "../application/ports/agent-executor.js";
+import type { ArtifactStore } from "../application/ports/artifact-store.js";
+import { createSqliteAttemptStore } from "../infrastructure/persistence/sqlite/sqlite-attempt-store.js";
+import { createSqliteDispatchTaskSource } from "../infrastructure/persistence/sqlite/sqlite-dispatch-task-source.js";
+import { createSqliteRunDeliveryStore } from "../infrastructure/persistence/sqlite/sqlite-run-delivery-store.js";
+import { createSqliteRunPlanStore } from "../infrastructure/persistence/sqlite/sqlite-run-plan-store.js";
+import {
+  createSqliteRecoveryRunReader,
+  createSqliteStepRunReader,
+} from "../infrastructure/persistence/sqlite/sqlite-recovery-run-reader.js";
+import { createSqliteLeaseStore } from "../infrastructure/persistence/sqlite/sqlite-lease-store.js";
+import { createSqliteOutboxStore } from "../infrastructure/persistence/sqlite/sqlite-outbox-store.js";
+import { createSqlitePrMappingStore } from "../infrastructure/persistence/sqlite/sqlite-pr-mapping-store.js";
+import { createLocalArtifactStore } from "../infrastructure/artifacts/local-artifact-store.js";
+import { createLocalCheckpointStore } from "../infrastructure/artifacts/local-checkpoint-store.js";
+import { sha256ContentHasher } from "../infrastructure/artifacts/sha256-content-hasher.js";
+import { createCliGitWorkspace } from "../infrastructure/git/cli-git-workspace.js";
+import { createGithubRestClient } from "../infrastructure/github/github-rest-client.js";
+import { createGhApiTransport } from "../infrastructure/github/gh-api-transport.js";
+import type { GithubTransport } from "../infrastructure/github/github-transport.js";
+import { createGithubRemote } from "../infrastructure/github/github-remote.js";
+import { createGithubMergeDelivery } from "../infrastructure/github/github-merge-delivery.js";
+import { ClaudeCodeExecutor } from "../infrastructure/executors/claude-code/claude-code-executor.js";
+import { CodexExecutor } from "../infrastructure/executors/codex/codex-executor.js";
+import type { startSupervisedProcess } from "../infrastructure/processes/supervised-process.js";
 import { installProjectTool } from "../application/use-cases/project/install-project-tool.js";
 import { inspectInstallation } from "../application/use-cases/project/inspect-installation.js";
 import { createProjectInstallation } from "../infrastructure/config/install-project-package.js";
@@ -56,9 +94,15 @@ import { createIpcServer } from "../interfaces/ipc/ipc-server.js";
 import type { IpcServer } from "../interfaces/ipc/ipc-server.js";
 
 /** Both stores share one migrated connection for atomic profile/account capacity reservations. */
-export function createProfileStores(database: StateDatabase) {
+export function createProfileStores(
+  database: StateDatabase,
+  options?: {
+    readonly fence: import("../application/ports/state-unit-of-work.js").LeaseFence;
+    readonly now: () => number;
+  },
+) {
   const registry = createSqliteProfileRegistry(database);
-  return { registry, selections: createSqliteExecutorSelectionStore(database, registry) };
+  return { registry, selections: createSqliteExecutorSelectionStore(database, registry, options) };
 }
 
 /** Bind the quality controller to the current runtime owner and checkpoint boundary.
@@ -200,6 +244,8 @@ export interface RunCommandWiring {
   /** Ports of the worker that runs steps: executor, workspaces, attempts, artifacts, state. */
   readonly dispatch: DispatchStepDependencies;
   readonly planner: DispatchPlanner;
+  readonly completion?: CompletionRouting;
+  readonly executors?: Readonly<Record<"claude-code" | "codex", AgentExecutor>>;
   /** Receives each attempt's completion promise so the runtime can drain it on shutdown. */
   readonly track: (completion: Promise<void>) => void;
   readonly recovery: ReturnType<typeof createRunRecoveryUseCases>;
@@ -215,7 +261,16 @@ export interface RunCommandWiring {
  */
 export function createRunCommandUseCases(wiring: RunCommandWiring): RunCommandUseCases {
   const { session, runs, plans, workflows, dispatch } = wiring;
-  const dispatchDeps = { ...dispatch, runs, plans, workflows, session, planner: wiring.planner };
+  const dispatchDeps = {
+    ...dispatch,
+    ...wiring.completion,
+    ...(wiring.executors === undefined ? {} : { executors: wiring.executors }),
+    runs,
+    plans,
+    workflows,
+    session,
+    planner: wiring.planner,
+  };
   return {
     planRun: (input) =>
       planRun(
@@ -268,6 +323,7 @@ export function createRunRecoveryUseCases(
   options: ResumeRunDependencies & {
     readonly hasher: WriteCheckpointDependencies["hasher"];
     readonly snapshot: PauseRunDependencies["snapshot"];
+    readonly prepareSnapshot?: NonNullable<PauseRunDependencies["prepareSnapshot"]>;
     readonly credentialPolicy?: NonNullable<WriteCheckpointDependencies["credentialPolicy"]>;
   },
 ) {
@@ -296,6 +352,289 @@ export function createRunProcessRecovery(options: {
       const attempt = options.attempts.get(attemptId);
       if (attempt === undefined) throw new Error("ATTEMPT_NOT_FOUND");
       processes.track(attempt, worker);
+    },
+  };
+}
+
+export interface RuntimeCompositionOptions {
+  readonly transport?: GithubTransport;
+  /** Reversible test boundary: no fake mode or executable override is read from Issue text. */
+  readonly executors?: (ports: {
+    readonly attempts: AttemptStore;
+    readonly artifacts: ArtifactStore;
+    readonly onWorkerStarted: (attemptId: string, worker: SupervisedProcess) => void;
+    readonly startProcess: typeof startSupervisedProcess;
+  }) => Readonly<Record<"claude-code" | "codex", AgentExecutor>>;
+}
+
+/** Production composition, called after migration under the runtime's project-owner lease. */
+export async function createProjectRunCommandUseCases(
+  options: RuntimeCompositionOptions & {
+    readonly projectDir: string;
+    readonly database: StateDatabase;
+    readonly session: ProjectSession;
+    readonly startProcess: typeof startSupervisedProcess;
+  },
+) {
+  const { database, session, projectDir } = options;
+  const runs = createSqliteRecoveryRunReader(database);
+  // An uninitialised project can still expose status and typed refusals for every run command.
+  if (!existsSync(join(projectDir, ".omi-squad", "config", "project.yaml"))) {
+    const refuse = () => ({ ok: false as const, reason: "PROJECT_NOT_CONFIGURED" });
+    return {
+      runs,
+      commands: {
+        planRun: refuse,
+        dispatchRunStep: refuse,
+        waitForRun: refuse,
+        inspectRun: refuse,
+        pauseRun: refuse,
+        resumeRun: refuse,
+        deliverRun: refuse,
+        handoffCoordinator: refuse,
+      },
+      drain: () => Promise.resolve(),
+    };
+  }
+  const config = await loadRuntimeConfig(join(projectDir, ".omi-squad"));
+  const now = Date.now;
+  const nextId = randomUUID;
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+  const state = createSqliteStateUnitOfWork(database, session.lease);
+  const plans = createSqliteRunPlanStore(database, { fence: session.lease, now });
+  const attempts = createSqliteAttemptStore(database, { fence: session.lease, now });
+  const profiles = createProfileStores(database, { fence: session.lease, now });
+  const root = join(projectDir, ".omi-squad", "local", "runs");
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const artifacts = createLocalArtifactStore(root, database);
+  const checkpoints = createLocalCheckpointStore(root, database);
+  const workspaces = createCliGitWorkspace(
+    {
+      mainWorktreePath: projectDir,
+      directoryNaming: "plan-key",
+      ...(config.project.workspace === undefined
+        ? {}
+        : { worktreesRoot: config.project.workspace.worktree_root }),
+    },
+    createSqliteLeaseStore(database),
+  );
+  const processRecovery = createRunProcessRecovery({ database, session, attempts, now });
+  const executorPorts = {
+    attempts,
+    artifacts,
+    onWorkerStarted: processRecovery.onWorkerStarted,
+    startProcess: options.startProcess,
+  };
+  const executors = options.executors?.(executorPorts) ?? {
+    "claude-code": new ClaudeCodeExecutor(executorPorts),
+    codex: new CodexExecutor(executorPorts),
+  };
+  const client = createGithubRestClient({
+    transport: options.transport ?? createGhApiTransport(),
+    now,
+    random: Math.random,
+    sleep,
+  });
+  const taskReader = createDispatchTaskReader(
+    createSqliteDispatchTaskSource(database, client),
+    now,
+  );
+  const planner = createDispatchPlanner({
+    config: config.project,
+    models: config.models,
+    plans,
+    workflows: config.workflows,
+    profiles: profiles.registry,
+    selections: profiles.selections,
+    task: (taskId) => taskReader.read(taskId),
+    nextAttemptNumber: (stepRunId) => attempts.nextNumberForStep(stepRunId),
+    cancelReservation: (attemptId) => {
+      attempts.setStatus(attemptId, "cancelled");
+    },
+    now,
+    nextId,
+  });
+  const rework = createSqliteReworkRunReader(database);
+  const configHash = sha256ContentHasher.sha256(
+    JSON.stringify({ project: config.project, models: config.models, catalog: config.catalog }),
+  );
+  const snapshotDeps = {
+    runs,
+    rework,
+    plans,
+    attempts,
+    artifacts,
+    task: taskReader.current,
+    configHash,
+    workspaces,
+    now,
+    nextId,
+  };
+  const snapshot = (runId: string) => snapshotRunContext(snapshotDeps, runId);
+  const checkpointDeps = {
+    checkpoints,
+    attempts,
+    artifacts,
+    workspaces,
+    hasher: sha256ContentHasher,
+    now,
+    nextId,
+  };
+  const dispatch: DispatchStepDependencies = {
+    catalog: config.catalog,
+    steps: createSqliteStepRunReader(database),
+    attempts,
+    artifacts,
+    workspaces,
+    executor: executors["claude-code"],
+    unitOfWork: state,
+    leaseTtlMs: config.project.limits.step_timeout_seconds * 1000 + 60_000,
+    now,
+    nextId,
+    checkpoint: (event) => {
+      const saved = writeCheckpoint(checkpointDeps, {
+        ...snapshotRunContext(snapshotDeps, event.runId, event),
+        runId: event.runId,
+        kind: event.kind,
+        outputs: event.outputs,
+        ...(event.attemptId === undefined ? {} : { attemptId: event.attemptId }),
+      });
+      return saved.ok ? { ok: true } : { ok: false, reason: saved.reason };
+    },
+  };
+  const github = {
+    outbox: createSqliteOutboxStore(database),
+    artifacts,
+    github: createGithubRemote(client),
+    now,
+    newEventId: nextId,
+    reconcileGraceMs: 120_000,
+  };
+  const completions = new Set<Promise<void>>();
+  const track = (completion: Promise<void>) => {
+    completions.add(completion);
+    void completion.finally(() => completions.delete(completion));
+  };
+  const dependencies = (): DispatchRunStepDependencies => bound;
+  const recoveryDeps: ResumeRunDependencies = {
+    session,
+    runs,
+    attempts,
+    processes: processRecovery.processes,
+    checkpoints,
+    artifacts,
+    workspaces,
+    github,
+    now,
+    nextId,
+    validateGates: async (checkpoint) => {
+      const plan = plans.forRun(checkpoint.runId);
+      if (
+        plan === undefined ||
+        plan.templateHash !== checkpoint.hashes.template ||
+        checkpoint.hashes.config !== configHash
+      )
+        return { ok: false, reason: "CONFIG_OR_TEMPLATE_CHANGED" };
+      const current = await taskReader.read(plan.taskId);
+      return current.context.businessBaselineHash === checkpoint.businessBaselineHash
+        ? { ok: true }
+        : { ok: false, reason: "BUSINESS_BASELINE_CHANGED" };
+    },
+    dispatch: async (_checkpoint, step) =>
+      dispatchRunStep(dependencies(), { runId: step.runId, stepId: step.stepId }),
+  };
+  const failover: FailoverStepDependencies = {
+    ...recoveryDeps,
+    profiles: profiles.registry,
+    selections: profiles.selections,
+    retryBudget: { maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 60_000 },
+    jitter: Math.random,
+    dispatch: async ({ step, selection }) => {
+      const plan = plans.forRun(step.runId);
+      if (plan === undefined) return { ok: false, reason: "TASK_NOT_FOUND" };
+      const request = await planner.planReserved(
+        { runId: step.runId, stepRunId: step.id, stepId: step.stepId, taskId: plan.taskId },
+        selection,
+      );
+      return dispatchPlannedRunStep(dependencies(), request, step.id, step.runId);
+    },
+  };
+  const completion: CompletionRouting = {
+    failoversMade: (stepRunId) => attempts.failoversForStep(stepRunId),
+    failover,
+    selections: profiles.selections,
+    rework: {
+      runs: rework,
+      session,
+      nextId,
+      checkpoint: (runId, quality) => {
+        const saved = writeCheckpoint(checkpointDeps, {
+          ...snapshot(runId),
+          runId,
+          kind: "before-side-effect",
+          counters: { failedCycles: quality.failedCycles },
+        });
+        return saved.ok ? { ok: true, checkpointId: saved.checkpoint.id } : { ok: false };
+      },
+    },
+  };
+  const bound: DispatchRunStepDependencies = {
+    ...dispatch,
+    ...completion,
+    executors,
+    runs,
+    plans,
+    workflows: config.workflows,
+    session,
+    planner,
+    track,
+  };
+  const recovery = createRunRecoveryUseCases({
+    ...recoveryDeps,
+    hasher: sha256ContentHasher,
+    snapshot,
+    prepareSnapshot: async (runId) => {
+      const plan = plans.forRun(runId);
+      if (plan === undefined) throw new Error("TASK_NOT_FOUND");
+      await taskReader.read(plan.taskId);
+    },
+  });
+  const delivery = createSqliteRunDeliveryStore(database, attempts, session);
+  const merge: MergeTaskPrDeps = {
+    ...github,
+    tasks: delivery.tasks,
+    evidence: createRunMergeEvidenceReader(delivery.source, artifacts),
+    unitOfWork: state,
+    newId: nextId,
+    batchSize: 10,
+    jitter: Math.random,
+    retryBudget: { maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 60_000 },
+    mappings: createSqlitePrMappingStore(database),
+    leases: createSqliteLeaseStore(database),
+    reader: createGithubMergeDelivery(client),
+    mergeLockOwner: session.lease.owner,
+    mergeLockTtlMs: 60_000,
+  };
+  const commands = createRunCommandUseCases({
+    session,
+    runs,
+    plans,
+    workflows: config.workflows,
+    dispatch,
+    planner,
+    executors,
+    completion,
+    track,
+    recovery,
+    merge,
+    sleep,
+    pollMs: 100,
+  });
+  return {
+    runs,
+    commands,
+    drain: async () => {
+      while (completions.size > 0) await Promise.allSettled([...completions]);
     },
   };
 }

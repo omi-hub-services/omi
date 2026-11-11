@@ -58,6 +58,8 @@ export interface AttemptRecord {
 /** Runtime-owned attempt rows. Implemented over SQLite `agent_attempts` by infrastructure. */
 export interface AttemptStore {
   create(record: AttemptRecord): void;
+  /** Selection reservations have no complete dispatch record yet. */
+  reservedNumber?(attemptId: string): number | undefined;
   get(attemptId: string): AttemptRecord | undefined;
   /** The attempt with the highest `attemptNumber` of the step run. */
   latestForStep(stepRunId: string): AttemptRecord | undefined;

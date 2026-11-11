@@ -10,6 +10,7 @@ import {
 import type { ExecutorSelectionStore } from "../../application/ports/executor-selection-store.js";
 import type { ProfileRegistry } from "../../application/ports/profile-registry.js";
 import type { AttemptSettings } from "../../domain/runs/agent-attempt.js";
+import type { LeaseFence } from "../../application/ports/state-unit-of-work.js";
 import type { StateDatabase } from "../persistence/sqlite/sqlite-connection.js";
 import { runInTransaction } from "../persistence/sqlite/sqlite-transaction.js";
 
@@ -27,7 +28,24 @@ const settingsSchema = z.strictObject({
 export function createSqliteExecutorSelectionStore(
   db: StateDatabase,
   registry: ProfileRegistry,
+  options?: { readonly fence: LeaseFence; readonly now: () => number },
 ): ExecutorSelectionStore {
+  const assertFence = () => {
+    if (
+      options !== undefined &&
+      db
+        .prepare(
+          "SELECT 1 FROM leases WHERE resource_key=? AND owner=? AND generation=? AND expires_at>?",
+        )
+        .get(
+          options.fence.resourceKey,
+          options.fence.owner,
+          options.fence.generation,
+          new Date(options.now()).toISOString(),
+        ) === undefined
+    )
+      throw new Error("PROJECT_LOCK_LOST");
+  };
   const settings = (attemptId: string): AttemptSettings | undefined => {
     identifierSchema.parse(attemptId);
     const row = db
@@ -72,6 +90,7 @@ export function createSqliteExecutorSelectionStore(
       z.number().int().positive().parse(attempt.number);
       const at = new Date(z.number().int().nonnegative().parse(attempt.at)).toISOString();
       return runInTransaction(db, () => {
+        assertFence();
         if (db.prepare("SELECT 1 FROM agent_attempts WHERE id=?").get(attempt.id) !== undefined) {
           throw new Error("Attempt already exists");
         }
@@ -99,6 +118,7 @@ export function createSqliteExecutorSelectionStore(
     recordResult(attemptId, input) {
       const result = executionResultSchema.parse(input);
       runInTransaction(db, () => {
+        assertFence();
         const previous = settings(attemptId);
         if (
           previous === undefined ||

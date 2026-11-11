@@ -63,3 +63,11 @@
   `evaluateMerge` (`kind: "release"`) are the base they build on.
 - Reason codes are a stable vocabulary: adding one is additive, renaming one is a breaking change
   for callers and for stored audit events.
+
+## Decision update 2026-11-11
+
+PO-approved decisions for OMI-070 (#142):
+
+`waiting_resource` never automatically transitions to `blocked`. The PO may cancel the
+waiting work. A run remains `running` while a step waits for resources. A wake-up loop belongs
+to a separate follow-up Issue, outside OMI-070.

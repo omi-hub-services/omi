@@ -1,4 +1,5 @@
 import type {
+  LeaseFence,
   StateChange,
   StateCommitResult,
   StateUnitOfWork,
@@ -18,7 +19,10 @@ const TABLE_BY_KIND = {
  * so a rejected change leaves nothing behind; a failing insert throws and rolls back the state
  * update as well.
  */
-export function createSqliteStateUnitOfWork(db: StateDatabase): StateUnitOfWork {
+export function createSqliteStateUnitOfWork(
+  db: StateDatabase,
+  projectFence?: LeaseFence,
+): StateUnitOfWork {
   const selectLease = db.prepare(
     "SELECT owner, generation, expires_at FROM leases WHERE resource_key = ?",
   );
@@ -52,7 +56,8 @@ export function createSqliteStateUnitOfWork(db: StateDatabase): StateUnitOfWork 
       assertIsoUtc(change.at, "at");
       const { target, fence, event, outbox } = change;
       return runInTransaction(db, (): StateCommitResult => {
-        if (fence !== undefined) {
+        for (const fence of [projectFence, change.fence]) {
+          if (fence === undefined) continue;
           const lease = selectLease.get(fence.resourceKey) as
             { owner: string; generation: number; expires_at: string } | undefined;
           if (
