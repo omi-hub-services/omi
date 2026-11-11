@@ -160,6 +160,26 @@ Attention line for each open non-Epic Issue failing readiness, including legacy 
 already In Progress or Done; it reports them without throwing or repairing them. Closed
 Issues, Epics, PRs and drafts are excluded from readiness warnings.
 
+## Promoting Backlog tasks (OMI-060)
+
+`node tools/coordinator/flow.ts promote [N] [--dry-run]` moves a Backlog Issue to Ready so
+`/omi-next` does not stop on a task nobody moved by hand. `promote.ts` holds the pure rules;
+`flow.ts` does the I/O through the injectable runner.
+
+- `promote N` reads the Issue (Status, native blocked-by, readiness fields) and prints
+  `done:` when it is already Ready. It prints `refused:` with every reason, and writes nothing,
+  when the Issue is an Epic, is not in Backlog, has an open blocker (or more blockers than
+  were read), or fails the readiness gate. Otherwise it runs `set-status N Ready`.
+- `promote` without `N` picks the first Backlog Issue by the `status.ts` order (Priority,
+  milestone, Issue number; Epics skipped) whose blockers are all closed and that passes the
+  readiness gate, then handles it exactly like `promote N`. With no candidate it says so,
+  exits 0 and writes nothing.
+- The only write is the existing `set-status` plan, so its readiness gate still applies.
+  `--dry-run` prints the `gh project item-edit` it would run and performs none.
+- `status.ts` shows the same candidates under "Backlog, all blockers closed" (`backlog` in
+  `--json`), produced by the same `promotableBacklog` function. It does not change Priority,
+  move a task back to Backlog, or repair Issues that fail the gate (those stay Attention lines).
+
 ## Boundaries
 
 - This is not product code. `src/` must never import `tools/` (already enforced by

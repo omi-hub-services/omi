@@ -42,8 +42,9 @@ import {
   type StatusField,
 } from "./flow-plans.ts";
 import { localGit, probeBranch, wslGit, type ProbeOptions } from "./git-probe.ts";
-import { graphql, readRequiredChecks } from "./github-reads.ts";
-import { parsePull, PULL_FIELDS } from "./github-snapshot.ts";
+import { graphql, readProject, readRequiredChecks } from "./github-reads.ts";
+import { parsePull, PULL_FIELDS, type Blocker } from "./github-snapshot.ts";
+import { judgePromotion, promotableBacklog } from "./promote.ts";
 import {
   asArray,
   asBoolean,
@@ -63,6 +64,7 @@ import { formatPick, pickProfile, readQuota, WORKER_KINDS, type WorkerKind } fro
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   new-issue --file <spec.md>                 validated Issue with Project fields and Backlog
   set-status <issue> <status>
+  promote [<issue>]                           Backlog -> Ready if blockers closed and ready (no N: first by priority)
   start-branch <issue> <slug>                 WSL: task/omi-NNN-<slug> from origin/${BASE_BRANCH}
   push <branch>                               WSL: git push -u origin <branch>
   check <branch> --head <sha>                 WSL: npm run check on exactly <sha>
@@ -86,6 +88,7 @@ query($owner: String!, $repo: String!, $number: Int!, $project: Int!) {
   organization(login: $owner) { projectV2(number: $project) { id
     field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } } }
   repository(owner: $owner, name: $repo) { issue(number: $number) { state body
+    blockedBy(first: 20) { totalCount nodes { number state } }
     labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
     comments(last: 100) { nodes { body } }
     timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 30) { nodes {
@@ -111,6 +114,8 @@ interface IssueContext {
   readonly planKey: string | null;
   readonly state: string;
   readonly body: string;
+  readonly blockers: readonly Blocker[];
+  readonly blockersTruncated: boolean;
   readonly comments: readonly string[];
   readonly pulls: readonly ReferencingPull[];
 }
@@ -158,6 +163,14 @@ async function readIssue(ctx: Context, number: number): Promise<IssueContext> {
   if (asBoolean(asObject(labels.pageInfo, "labels.pageInfo").hasNextPage, "labels.hasNextPage")) {
     throw new Error("Issue labels truncated; cannot determine complexity override");
   }
+  const blockedBy = optObject(issue.blockedBy, "issue.blockedBy");
+  const blockers = (blockedBy ? asArray(blockedBy.nodes, "blockedBy.nodes") : []).map((raw) => {
+    const b = asObject(raw, "blocker");
+    return {
+      number: asNumber(b.number, "blocker.number"),
+      state: asString(b.state, "blocker.state"),
+    };
+  });
   const select = (name: string) => optString(optObject(item?.[name], name)?.name, `${name}.name`);
   return {
     readiness: {
@@ -196,6 +209,10 @@ async function readIssue(ctx: Context, number: number): Promise<IssueContext> {
     planKey: item ? optString(optObject(item.planKey, "planKey")?.text, "planKey.text") : null,
     state: asString(issue.state, "issue.state"),
     body: asString(issue.body, "issue.body"),
+    blockers,
+    blockersTruncated: blockedBy
+      ? asNumber(blockedBy.totalCount, "blockedBy.totalCount") > blockers.length
+      : false,
     comments: commentBodies(issue, "issue"),
     pulls: referencingPulls(issue),
   };
@@ -299,6 +316,42 @@ async function execute(ctx: Context, label: string, plan: Plan, dryRun: boolean)
   }
   if (!dryRun) console.log(`${label}: ok`);
   return true;
+}
+
+/**
+ * Backlog -> Ready. With no Issue number, the first promotable Backlog Issue in status.ts order.
+ * The write is the ordinary set-status plan, so the readiness gate applies there too.
+ */
+export async function promoteCommand(
+  ctx: Context,
+  raw: string | undefined,
+  dryRun: boolean,
+): Promise<number> {
+  let n: number;
+  if (raw === undefined) {
+    const [first] = promotableBacklog((await readProject(ctx.run)).items);
+    if (first?.item.number == null) {
+      console.log(
+        "promote: no Backlog Issue with all blockers closed that passes the readiness gate",
+      );
+      return 0;
+    }
+    n = first.item.number;
+  } else n = issueNumber(raw);
+  const issue = await readIssue(ctx, n);
+  const verdict = judgePromotion(n, {
+    ...issue.readiness,
+    status: issue.item?.status ?? null,
+    blockers: issue.blockers,
+    blockersTruncated: issue.blockersTruncated,
+  });
+  const plan: Plan =
+    verdict.kind === "refuse"
+      ? { kind: "refuse", reason: verdict.reason }
+      : verdict.kind === "done"
+        ? { kind: "done", note: verdict.note }
+        : planSetStatus(n, "Ready", issue.field, issue.item, issue.readiness);
+  return (await execute(ctx, `promote ${String(n)}`, plan, dryRun)) ? 0 : 1;
 }
 
 function issueNumber(raw: string | undefined): number {
@@ -414,6 +467,8 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         planSetStatus(n, required(b, "status argument"), issue.field, issue.item, issue.readiness),
       );
     }
+    case "promote":
+      return promoteCommand(ctx, a, dry);
     case "start-branch": {
       const n = issueNumber(a);
       const issue = await readIssue(ctx, n);
