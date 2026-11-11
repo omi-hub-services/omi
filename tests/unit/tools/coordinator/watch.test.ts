@@ -4,7 +4,11 @@ import {
   type WorkerProfile,
 } from "../../../../tools/coordinator/coordinator-settings.ts";
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
-import type { QuotaReading, QuotaReport } from "../../../../tools/coordinator/quota.ts";
+import {
+  localTime,
+  type QuotaReading,
+  type QuotaReport,
+} from "../../../../tools/coordinator/quota.ts";
 import {
   ANSI,
   renderWatch,
@@ -88,9 +92,11 @@ describe("watch rendering", () => {
     expect(rendered.split(ANSI.red)).toHaveLength(3);
   });
 
-  it("shows quota for every configured profile, thresholds, UTC reset and aging", () => {
+  it("shows quota for every configured profile, thresholds, local reset and aging", () => {
     const output = renderWatch({ ...screen, quota: quotaWith(reading) });
-    expect(output).toContain(`${ANSI.yellow}  claude test  5% / 80%  reset 04:00  live`);
+    expect(output).toContain(
+      `${ANSI.yellow}  claude test  5% / 80%  reset ${localTime(14400).slice(11, 16)}  live`,
+    );
     expect(output).toContain("codex other  ? / ?");
     expect(renderWatch({ ...screen, now: 11801, quota: quotaWith(reading) })).toContain(
       `${ANSI.yellow}${ANSI.dim}`,
@@ -114,6 +120,46 @@ describe("watch rendering", () => {
         }),
       }),
     ).toContain(ANSI.yellow);
+  });
+
+  it.each([9999, 10000])(
+    "restores both windows to 100%% without yellow at/past reset %s",
+    (resetsAt) => {
+      const output = renderWatch({
+        ...screen,
+        quota: quotaWith({
+          ...reading,
+          fiveHour: { usedPercent: 96, resetsAt },
+          sevenDay: { usedPercent: 99, resetsAt },
+        }),
+      });
+      expect(output).toContain("claude test  100% / 100%");
+      expect(output).not.toContain(ANSI.yellow);
+    },
+  );
+
+  it("keeps a pending low window yellow when only the other window has reset", () => {
+    const output = renderWatch({
+      ...screen,
+      quota: quotaWith({
+        ...reading,
+        fiveHour: { usedPercent: 96, resetsAt: screen.now - 1 },
+        sevenDay: { usedPercent: 99, resetsAt: screen.now + 1 },
+      }),
+    });
+    expect(output).toContain(`${ANSI.yellow}  claude test  100% / 1%`);
+  });
+
+  it("shows the reset in local HH:MM independently of the machine's time zone", () => {
+    // Construct a local wall-clock time rather than assuming a UTC offset.
+    const resetsAt = new Date(2026, 10, 11, 11, 30).getTime() / 1000;
+    const output = renderWatch({
+      ...screen,
+      now: resetsAt - 60,
+      quota: quotaWith({ ...reading, fiveHour: { usedPercent: 50, resetsAt } }),
+    });
+    expect(output).toContain("reset 11:30");
+    expect(output).not.toContain("(UTC)");
   });
 
   it("renders WSL errors, confirmations and sanitizes external text", () => {

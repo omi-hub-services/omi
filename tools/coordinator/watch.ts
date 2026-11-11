@@ -10,7 +10,7 @@ import {
   type WslTarget,
 } from "./coordinator-settings.ts";
 import { createProcessRunner, type Runner } from "./process-runner.ts";
-import { readQuota, type QuotaReport } from "./quota.ts";
+import { localTime, readQuota, windowLeft, type QuotaReport } from "./quota.ts";
 import { readWorkers, type Workers } from "./wsl-workers.ts";
 
 export const ANSI = {
@@ -76,7 +76,7 @@ export function renderWatch(screen: WatchScreen): string {
       );
     }
   }
-  out.push("", fit("Quota — left 5h / 7d · reset 5h (UTC) · age"));
+  out.push("", fit("Quota — left 5h / 7d · reset 5h · age"));
   const quota = screen.quota;
   if (quota && !quota.available)
     out.push(paint(fit(`  WSL unavailable: ${clean(quota.reason)} (retrying)`), ANSI.red));
@@ -93,8 +93,8 @@ export function renderWatch(screen: WatchScreen): string {
       );
       continue;
     }
-    const left5 = r.fiveHour ? 100 - r.fiveHour.usedPercent : null;
-    const left7 = r.sevenDay ? 100 - r.sevenDay.usedPercent : null;
+    const left5 = windowLeft(r.fiveHour, screen.now);
+    const left7 = windowLeft(r.sevenDay, screen.now);
     const percent = (n: number | null) =>
       n === null ? "?" : `${String(Math.round(n * 10) / 10)}%`;
     const low =
@@ -106,7 +106,7 @@ export function renderWatch(screen: WatchScreen): string {
     const resetDate = reset === null || reset === undefined ? null : new Date(reset * 1000);
     const resetText =
       resetDate && Number.isFinite(resetDate.getTime())
-        ? resetDate.toISOString().slice(11, 16)
+        ? localTime(resetDate.getTime() / 1000).slice(11, 16)
         : "?";
     out.push(
       paint(
