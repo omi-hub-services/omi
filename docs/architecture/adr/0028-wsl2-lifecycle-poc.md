@@ -1,8 +1,8 @@
 # ADR-0028 — PoC: the runtime stops its worker group when the Coordinator side is gone
 
-- Status: Accepted for the **runtime half** (live-run on WSL2, 2026-11-11). The **Windows half is
-  not proven** and the Issue must not be closed on this evidence alone (see "Product blocker
-  check").
+- Status: Accepted. The runtime half was live-run on WSL2 and the abrupt-exit path through a real
+  `wsl.exe` was run on a Windows host, both on 2026-11-11. The graceful `stop` path, the hung
+  launcher and `wsl --shutdown` were not run on Windows (see "Limits not proven").
 - Date: 2026-11-11
 - Issue: #6 (OMI-005), epic #1, milestone M0 — Feasibility
 - Context: ADR-0012 (Coordinator on Windows, runtime and workers in WSL2), ADR-0013 and ADR-0021
@@ -113,7 +113,7 @@ integration cases for this feature fail, so the tests do depend on the behaviour
 
 | AC                                                       | Status                             | Evidence                                                                                              |
 | -------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 1. Supervisor notices Coordinator exit, stops the group  | Evidenced on Linux/WSL2; Windows half **not proven** | `owner-liveness.ts`, `owned-worker-run.ts`; live scenarios 1–5; integration tests                    |
+| 1. Supervisor notices Coordinator exit, stops the group  | Evidenced on WSL2, and for abrupt exit through a real `wsl.exe` on Windows | `owner-liveness.ts`, `owned-worker-run.ts`; live scenarios 1–5; integration tests; Windows-host run below |
 | 2. Graceful and abrupt stop tested                       | Evidenced (plus hung and runtime-signal) | live "graceful" and "abrupt" scenarios; integration channel `end`/`destroy`/`stop`                    |
 | 3. Uncommitted files kept                                | Evidenced                          | `git status --porcelain` and exact contents asserted in every live scenario; integration test         |
 | 4. No process outside the framework is killed            | Evidenced for a same-user unrelated process in its own group | live test asserts it still runs after every scenario; integration test too; `OwnedProcesses` guard |
@@ -127,27 +127,46 @@ blocker rather than close the Issue by hand if it cannot be shown reliably.
 - **Proven here:** everything on the WSL2 side of the pipe. Given a pipe whose holder dies, exits
   gracefully or freezes, the runtime detects it and stops exactly its worker group in about 10 ms
   (EOF/stop) or one heartbeat timeout (hang).
-- **Not proven here:** that a real `wsl.exe` forwards a Windows-side pipe closing as EOF on the
-  runtime's stdin when the Windows launcher is killed. `wsl.exe` is not on the PATH of this worker
-  environment (`which wsl.exe` exits 1), and the stand-in launcher is a Linux process, not
-  `wsl.exe`. This is **a gap in the evidence, not a negative result**.
-- **Consequence:** the heartbeat is not optional. Even if `wsl.exe` keeps the pipe open after its
-  parent died (for example because another Windows process inherited the handle), the missing
-  heartbeat is detected; a Windows launcher that is killed stops sending it.
+- **Not proven in the worker environment:** `wsl.exe` is not on the PATH of the worker
+  environment (`which wsl.exe` exits 1) and the stand-in launcher is a Linux process. The
+  cross-boundary check was therefore run by the Coordinator on a Windows host; see "Windows-host
+  evidence" below.
+- **Consequence:** the heartbeat stays in the design as the path for a launcher that is frozen
+  while the pipe is open (proven on Linux only). On the Windows host, an abrupt launcher kill was
+  detected by pipe EOF, not by the heartbeat timeout.
 
-To close the gap, run on the Windows host (OMI-016/OMI-030 owner, or the PO): a small Windows
-launcher that starts `wsl.exe -d <distro> --exec <node> <runtime-entry>` with piped stdio, sends a
-heartbeat line every 100–250 ms and `stop` on graceful exit; then kill that launcher from Task
-Manager / `taskkill /F` and check that the worker group in WSL2 stops. If the pipe EOF does not
-arrive, the heartbeat path must carry the abrupt case alone and its timeout becomes the abrupt-exit
-latency; if neither arrives, it is the product blocker the Issue describes.
+## Windows-host evidence (2026-11-11)
+
+Run by the Coordinator on its Windows 11 host, Node v24.22.2 on Windows. Not part of the
+automated suite; the figures come from the Coordinator's report.
+
+- **Launcher:** `tests/live/wsl-lifecycle/launcher.ts`, run by Windows `node` with a 200 ms
+  heartbeat. It spawned the real `wsl.exe -d Ubuntu-24.04 --exec bash /tmp/omi005-win/run.sh`,
+  which exec'd `runtime-entry.ts`. Config: polite worker, `heartbeatTimeoutMs` 3000, `graceMs` 2000.
+- **Ready** came back over the `wsl.exe` pipe:
+  `ready {"runtimePid":17561,"workerPid":17568,"toolPid":17575}`.
+- **Abrupt case:** `taskkill /F /PID <launcher>` without `/T`, so the `wsl.exe` child was not
+  killed by Windows directly.
+  - Within 1.5 s, `runtime-report.json` showed
+    `{"ownerGone":{"reason":"channel-closed"},"exitCode":0,"signal":null,"cancelRequested":true,"escalated":false,"leftoverProcessesKilled":false}`.
+  - `ps -p` for the runtime, worker and tool pids returned nothing.
+- **Conclusion:** through the real `wsl.exe`, pipe EOF does reach the runtime when the Windows
+  launcher is killed abruptly. Detection was by EOF, not by the heartbeat timeout.
+- **Files kept:** `git status --porcelain` showed ` M tracked.txt` and `?? worker-output.txt`, with
+  the content intact.
+- **Unrelated processes:** the other agents' processes and their `wsl.exe` sessions running on the
+  machine at the same time were unaffected.
+- **Not run on the Windows host:** the graceful `stop` path (Windows has no SIGTERM to a node
+  process; OMI-016 owns the real launcher), the hung-launcher heartbeat path, `wsl --shutdown`,
+  and sleep or hibernate. These remain under "Limits not proven".
 
 ## Limits not proven
 
-- **Real `wsl.exe` and a real Windows launcher** (above). Also not measured: `wsl.exe` start-up
-  and per-line latency, behaviour when the distro is shut down (`wsl --shutdown`, which stops
-  everything and is a recovery case, architecture.md §5), Windows sleep/hibernate, which stops
-  heartbeats on both sides at once and may look like a lost heartbeat on resume.
+- **On the Windows host, not run:** the graceful `stop` path through `wsl.exe` (Windows has no
+  SIGTERM to a node process; OMI-016 owns the real launcher), the hung-launcher heartbeat path,
+  `wsl --shutdown` (stops everything; a recovery case, architecture.md §5), and Windows
+  sleep/hibernate, which stops heartbeats on both sides at once and may look like a lost heartbeat
+  on resume. Also not measured: `wsl.exe` start-up and per-line latency.
 - **The runtime itself dying uncatchably** (SIGKILL, OOM, crash). Nothing is left to stop the
   worker group, and Node has no parent-death signal; the group is orphaned. This was not run. The
   design answer is recovery on the next start (architecture.md §5: session/process carry start time
@@ -182,9 +201,9 @@ latency; if neither arrives, it is the product blocker the Issue describes.
 
 ## Open decisions
 
-1. **Close Issue #6?** The runtime half is evidenced; the Windows half needs one run on a Windows
-   host (procedure above). PO/Coordinator decides whether to accept it as a follow-up inside
-   OMI-016 or to hold the Issue open.
+1. **Close Issue #6?** The runtime half and the abrupt Windows-launcher exit through a real
+   `wsl.exe` are evidenced; the graceful and hung paths on Windows are not. PO/Coordinator decides
+   whether those belong to OMI-016.
 2. **Heartbeat period and timeout** for production (a trade-off between false positives after a
    Windows sleep or a busy host and abrupt-exit latency when EOF does not arrive).
 3. **Grace period** between SIGINT and SIGKILL for real CLI workers (ADR-0023 default 15 s) when the
