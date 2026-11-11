@@ -5,6 +5,7 @@ import {
   projectFieldMappingSchema,
 } from "./project-config.js";
 import { slugSchema } from "./identifiers.js";
+import { onboardingVariantSchema } from "./project-onboarding.js";
 
 export const projectLocatorSchema = projectConfigSchema.shape.project.pick({
   owner: true,
@@ -53,6 +54,8 @@ export const initializeProjectSchema = z.strictObject({
       /** Reuse the same key to resume; a different payload for the key is refused. */
       operationKey: slugSchema,
     }),
+    /** Local repository onboarding: detects the codebase and writes config, workflow and plan. */
+    z.strictObject({ kind: z.literal("codebase"), variant: onboardingVariantSchema }),
   ]),
 });
 export type InitializeProjectInput = z.input<typeof initializeProjectSchema>;

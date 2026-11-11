@@ -1,0 +1,49 @@
+schema_version: 1
+id: onboarding-empty-repo
+version: 1
+selection:
+  task_types: [onboarding]
+quality_policy: task-default
+steps:
+  - id: define-scope
+    role: analyst
+    needs: []
+    skills: [requirements-analysis]
+    rules: [project-baseline]
+    capability_profile: analysis
+    output_contract: analysis-result-v1
+  - id: design-baseline
+    role: architect
+    needs: [define-scope]
+    skills: [requirements-analysis, minimal-change]
+    rules: [project-baseline, architecture-boundaries]
+    capability_profile: analysis
+    output_contract: analysis-result-v1
+  - id: scaffold
+    role: developer
+    needs: [design-baseline]
+    skills: [test-driven-development, minimal-change]
+    rules: [project-baseline, architecture-boundaries]
+    capability_profile: coding
+    output_contract: implementation-result-v1
+  - id: verify
+    role: qa
+    needs: [scaffold]
+    skills: [verification-before-completion]
+    rules: [project-baseline, evidence-and-tests]
+    capability_profile: testing
+    output_contract: verification-result-v1
+  - id: review
+    role: reviewer
+    needs: [verify]
+    skills: [independent-review]
+    rules: [project-baseline]
+    capability_profile: review
+    output_contract: review-result-v1
+gates:
+  - id: baseline-approved
+    before: scaffold
+    policy: approved-business-baseline
+  - id: ready-to-merge
+    after: review
+    policy: develop-merge
