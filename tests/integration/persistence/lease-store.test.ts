@@ -66,6 +66,43 @@ describe("worktree lease", () => {
     expect(b).toMatchObject({ ok: true, lease: { owner: "B", generation: 2 } });
   });
 
+  it("keeps a writer reserved after timeout until explicit release confirms it stopped", () => {
+    const leases = createSqliteLeaseStore(db);
+    const writer = leases.acquire({
+      resourceKey: KEY,
+      owner: "writer",
+      now: T0,
+      expiresAt: T1,
+      reclaimExpired: false,
+    });
+    expect(writer.ok).toBe(true);
+    expect(
+      leases.acquire({
+        resourceKey: KEY,
+        owner: "nested",
+        now: T2,
+        expiresAt: T3,
+        reclaimExpired: false,
+      }),
+    ).toMatchObject({ ok: false, reason: "HELD", heldBy: "writer" });
+    expect(leases.release({ resourceKey: KEY, owner: "writer", generation: 1, now: T2 })).toEqual({
+      ok: true,
+    });
+    expect(
+      leases.acquire({
+        resourceKey: KEY,
+        owner: "replacement",
+        now: T2,
+        expiresAt: T3,
+        reclaimExpired: false,
+      }),
+    ).toMatchObject({ ok: true, lease: { generation: 2 } });
+    expect(leases.release({ resourceKey: KEY, owner: "writer", generation: 1, now: T2 })).toEqual({
+      ok: false,
+      reason: "STALE_LEASE",
+    });
+  });
+
   it("renews with the current generation and rejects a stale one", () => {
     const leases = createSqliteLeaseStore(db);
     leases.acquire({ resourceKey: KEY, owner: "A", now: T0, expiresAt: T1 });
