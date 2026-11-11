@@ -20,6 +20,11 @@ const branchSchema = z
   .max(255)
   .regex(/^[A-Za-z0-9._/-]+$/, "must be a plain branch name");
 
+const tagSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, "must be a plain tag name")
+  .refine((tag) => !tag.includes("..") && !/[.]$|[.]lock$/.test(tag), "invalid git ref name");
+
 export const githubOperationSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("project.copy"),
@@ -81,6 +86,28 @@ export const githubOperationSchema = z.discriminatedUnion("type", [
     type: z.literal("issue.close"),
     repo: repoSchema,
     issueNumber: positiveInt,
+  }),
+  /**
+   * Lightweight tag at an exact commit. No body, so no marker: the read-back is the tag ref
+   * itself, which must point at `sha`; a tag on another commit is a conflict, never reused.
+   */
+  z.strictObject({
+    type: z.literal("git_tag.create"),
+    repo: repoSchema,
+    tag: tagSchema,
+    sha: gitShaSchema,
+  }),
+  /**
+   * GitHub Release for an existing tag at `sha`. The body carries the operation marker, and the
+   * read-back is the release of that tag name, so a retry never creates a second release.
+   */
+  z.strictObject({
+    type: z.literal("release.create"),
+    repo: repoSchema,
+    tag: tagSchema,
+    sha: gitShaSchema,
+    title: titleSchema,
+    body: bodySchema,
   }),
 ]);
 export type GithubOperation = z.infer<typeof githubOperationSchema>;
