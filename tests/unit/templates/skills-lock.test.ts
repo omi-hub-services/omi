@@ -42,6 +42,9 @@ interface Lock {
 
 const sha = (data: Buffer | string) => createHash("sha256").update(data).digest("hex");
 
+/** Content with CRLF normalised to LF, as `schemas:check` does, so autocrlf checkouts still match. */
+const readNormalised = (path: string) => readFileSync(path, "utf8").replaceAll("\r\n", "\n");
+
 function listFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
     entry.isDirectory() ? listFiles(join(dir, entry.name)) : [join(dir, entry.name)],
@@ -61,7 +64,7 @@ function findLockViolations(root: string): string[] {
   const out: string[] = [];
   const lock = JSON.parse(readFileSync(join(root, "provenance/skills.lock.json"), "utf8")) as Lock;
 
-  const notice = readFileSync(join(root, NOTICE), "utf8");
+  const notice = readNormalised(join(root, NOTICE));
   if (lock.noticeFile.path !== NOTICE || sha(notice) !== lock.noticeFile.sha256) {
     out.push(`${NOTICE}: sha256 does not match noticeFile`);
   }
@@ -103,7 +106,7 @@ function findLockViolations(root: string): string[] {
       }
       let actual: string;
       try {
-        actual = sha(readFileSync(join(root, file.path)));
+        actual = sha(readNormalised(join(root, file.path)));
       } catch {
         out.push(`${file.path}: listed in the lock but missing`);
         continue;
@@ -176,6 +179,15 @@ describe("skills.lock.json", () => {
     expect(findLockViolations(dir)).toContain(
       "skills/independent-review/SKILL.md: listed in the lock but missing",
     );
+  });
+
+  it("hashes CRLF content the same as LF", () => {
+    const dir = copyOfSquadDir();
+    for (const file of [NOTICE, "skills/minimal-change/SKILL.md"]) {
+      const path = join(dir, file);
+      writeFileSync(path, readNormalised(path).replaceAll("\n", "\r\n"));
+    }
+    expect(findLockViolations(dir)).toEqual([]);
   });
 
   it("flags an edited NOTICE", () => {

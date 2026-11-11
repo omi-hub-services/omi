@@ -61,5 +61,12 @@ drive prefix such as `C:/`.
   Breaking a field means a new schema version, not an edit of v1.
 - `project.yaml` v1 holds only what architecture.md §4 names (repo, Project, branches, limits,
   policies); later Issues extend it additively or version it.
-- The effort list is an assumption taken from the Claude Code CLI; Codex effort names may differ
-  and would need a per-executor list when a Codex adapter exists (OMI-014).
+- PO decisions (2026-11-10, OMI-055):
+  - `low|medium|high|xhigh|max` is the shared effort scale. Each executor adapter maps it to its
+    CLI's levels (Codex in OMI-014); `supported_efforts` in `models.yaml` declares the levels
+    each model has.
+  - The v1 command set is the six commands above. Approval and delivery add their own commands
+    additively in their Issues.
+  - The `project.yaml` v1 fields are a baseline; OMI-019 will revise them.
+  - The `register-ts-imports.ts` hook stays.
+  - `schemas/**` is not run through Prettier.

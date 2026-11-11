@@ -53,7 +53,7 @@ directory (`ui-styling` in UI UX Pro Max) carries Apache-2.0.
 ## Consequences
 
 - Changing a skill means changing the file, bumping its `version` and refreshing the hashes in the
-  lock in the same PR; the test enforces the pairing.
+  lock in the same PR; the test only checks the hash, so bumping `version` is a review item.
 - Updating to a newer upstream commit is a new curation round: re-review the diff, then update the
   commit, the original sha256 values and the skills.
 - Skills are guidance for agents, not gates. Gates stay in the runtime (architecture.md §6.1).
