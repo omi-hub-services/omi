@@ -1,4 +1,5 @@
 import type { ApprovalRequest } from "../../domain/approvals/approval.js";
+import type { ReworkState } from "../../domain/runs/rework-policy.js";
 import type { RunStatus } from "../../domain/runs/workflow-run.js";
 import type { StepStatus } from "../../domain/runs/step-run.js";
 
@@ -18,6 +19,8 @@ export type StateTarget =
       readonly id: string;
       readonly expectedVersion: number;
       readonly toStatus: RunStatus;
+      /** Quality state and run status share the same CAS and audit transaction. */
+      readonly rework?: ReworkState;
     }
   | {
       readonly kind: "step_run";

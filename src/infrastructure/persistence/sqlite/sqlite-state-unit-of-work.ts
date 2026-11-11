@@ -127,6 +127,20 @@ export function createSqliteStateUnitOfWork(db: StateDatabase): StateUnitOfWork 
           }
 
           newVersion = target.expectedVersion + 1;
+          if (target.kind === "workflow_run" && target.rework !== undefined) {
+            const state = target.rework;
+            db.prepare(
+              `UPDATE workflow_runs SET quality_phase=?, failure_count=?,
+               architect_intervention_id=?, counted_cycle_ids=?, reopen_decision_ids=? WHERE id=?`,
+            ).run(
+              state.phase,
+              state.failedCycles,
+              state.architectInterventionId ?? null,
+              JSON.stringify(state.countedCycleIds),
+              JSON.stringify(state.reopenDecisionIds),
+              target.id,
+            );
+          }
         }
 
         const appended = insertEvent.run(

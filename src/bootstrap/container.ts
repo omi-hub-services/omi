@@ -1,5 +1,10 @@
 import type { AttemptStore } from "../application/ports/attempt-store.js";
 import type { ProjectSession } from "../application/ports/lease-store.js";
+import {
+  recordReworkEvent,
+  type RecordReworkEventDependencies,
+} from "../application/use-cases/runs/record-rework-event.js";
+import { createSqliteReworkRunReader } from "../infrastructure/persistence/sqlite/sqlite-rework-run-reader.js";
 import type { SupervisedProcess } from "../infrastructure/processes/supervised-process.js";
 import { createWorkerRecovery } from "../infrastructure/processes/worker-recovery.js";
 import { createSqliteWorkerProcessStore } from "../infrastructure/persistence/sqlite/sqlite-worker-process-store.js";
@@ -34,6 +39,16 @@ import type { IpcServer } from "../interfaces/ipc/ipc-server.js";
 export function createProfileStores(database: StateDatabase) {
   const registry = createSqliteProfileRegistry(database);
   return { registry, selections: createSqliteExecutorSelectionStore(database, registry) };
+}
+
+/** Bind the quality controller to the current runtime owner and checkpoint boundary.
+ * The workflow consumes architect_required by dispatching its Architect role through dispatchStep.
+ */
+export function createReworkUseCase(
+  options: Omit<RecordReworkEventDependencies, "runs"> & { readonly database: StateDatabase },
+) {
+  const dependencies = { ...options, runs: createSqliteReworkRunReader(options.database) };
+  return (input: unknown) => recordReworkEvent(dependencies, input);
 }
 
 /** Where the runtime listens for a project (architecture.md §4: `.omi-squad/local/ipc/`). */
