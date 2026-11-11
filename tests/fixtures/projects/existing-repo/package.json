@@ -1,0 +1,14 @@
+{
+  "name": "fixture-existing-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "5.0.0",
+    "vitest": "1.0.0"
+  }
+}

@@ -60,6 +60,20 @@ The transport's POST GraphQL query path is explicitly read-only, so transport fa
 rate limits reuse the REST client's bounded read retries. Mutations retain conservative write
 semantics; GraphQL mutation errors, partial data or missing identities become unknown outcomes.
 
+## Codebase onboarding (OMI-033)
+
+`initializeProject` gains `source.kind: codebase` with `variant: new | existing`; no parallel use
+case. It detects the stack from root marker files only (`detectCodebase`: language, package
+manager, test/build/lint commands; evidence-based, `unknown` when nothing matches, nothing is
+executed) and targets four files: `project.yaml` (existing config store), the variant's workflow
+from `templates/project/workflows/`, `.omi-squad/config/codebase.yaml` and
+`.omi-squad/config/onboarding-plan.md`. Preview is the default and writes nothing; every target
+is reported as `would-create`, `created` or `kept`. An existing target (including a symlink or a
+file that appears after the preview) is kept and never replaced; a symlinked parent directory is
+refused. Workflow templates are parsed and validated against the workflow contract before use.
+Commands taken from repository text are dropped if they look like credentials. No dependency,
+module directory or CLI command is added.
+
 ## Scope and validation
 
 No dependency, module directory, migration, guard exception or native tool configuration is added.
