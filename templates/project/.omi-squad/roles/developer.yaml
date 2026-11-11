@@ -1,0 +1,8 @@
+schema_version: 1
+id: developer
+version: 1
+title: Developer
+description: Implements the smallest complete change with tests and verification evidence.
+skills:
+  [test-driven-development, systematic-debugging, minimal-change, verification-before-completion]
+rules: [architecture-boundaries, evidence-and-tests]
