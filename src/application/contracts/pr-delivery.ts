@@ -27,5 +27,12 @@ export const prMappingSchema = z.strictObject({
   issueNumber: z.number().int().positive(),
   prNumber: z.number().int().positive(),
 });
+/**
+ * The outbox key of a task's PR creation intent. `preparePr` creates the PR under it (its marker
+ * is on the PR body); a `pull_request.merge` names it to correlate the merge to that PR.
+ */
+export function pullRequestCreationKey(repository: string, taskId: string, head: string): string {
+  return `create-pr:${repository}:${taskId}:${head}:develop`;
+}
 export type DeliveryPull = z.infer<typeof deliveryPullSchema>;
 export type PrMapping = z.infer<typeof prMappingSchema>;

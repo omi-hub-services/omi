@@ -1,3 +1,4 @@
+import type { SendOutcome } from "../../application/ports/github-remote.js";
 import { backoffDelayMs } from "../../domain/runs/retry-policy.js";
 import type { RetryBudget } from "../../domain/runs/retry-policy.js";
 import { TransportError } from "./github-transport.js";
@@ -223,6 +224,36 @@ export function createGithubRestClient(deps: RestClientDeps): GithubRestClient {
     },
     readPages,
   };
+}
+
+/**
+ * Maps the answer to a write onto what the outbox needs. `identity` names the effect from the
+ * success body; a success without a readable identity is `outcome_unknown`, so the marker or
+ * state read-back records it instead of a blind retry.
+ */
+export function writeOutcome(
+  result: RestResult,
+  identity: (json: unknown) => string | undefined,
+): SendOutcome {
+  switch (result.kind) {
+    case "ok": {
+      const remoteIdentity = identity(result.json);
+      return remoteIdentity === undefined
+        ? { kind: "outcome_unknown", code: "INVALID_RESPONSE" }
+        : { kind: "succeeded", remoteIdentity };
+    }
+    case "rejected":
+      return result.retryable
+        ? {
+            kind: "rejected_retryable",
+            code: result.code,
+            ...(result.retryAfterMs === undefined ? {} : { retryAfterMs: result.retryAfterMs }),
+          }
+        : { kind: "rejected_final", code: result.code };
+    case "unknown":
+    case "unavailable":
+      return { kind: "outcome_unknown", code: result.code };
+  }
 }
 
 const INVALID_JSON = Symbol("invalid-json");

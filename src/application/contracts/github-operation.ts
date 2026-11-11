@@ -49,6 +49,12 @@ export const githubOperationSchema = z.discriminatedUnion("type", [
     title: titleSchema,
     body: bodySchema,
   }),
+  /**
+   * Merges a task PR with a merge commit (the adapter never asks for squash or rebase, so the
+   * reviewed head stays in history), guarded by the expected head: GitHub refuses with 409 when
+   * the PR head moved. A merge has no body to tag, so its read-back is the PR's own merged state,
+   * correlated through the creation intent's marker on the PR body.
+   */
   z.strictObject({
     type: z.literal("pull_request.merge"),
     repo: repoSchema,
@@ -58,6 +64,23 @@ export const githubOperationSchema = z.discriminatedUnion("type", [
     expectedHeadSha: gitShaSchema,
     /** Correlates to the existing PR creation intent; never an approval. */
     prOperationKey: z.string().refine(isValidOperationKey),
+  }),
+  /**
+   * Replaces an Issue body that is still exactly `fromBody`. No marker is written, because only
+   * the Acceptance criteria section may change; the read-back compares the body itself.
+   */
+  z.strictObject({
+    type: z.literal("issue.update_body"),
+    repo: repoSchema,
+    issueNumber: positiveInt,
+    fromBody: bodySchema,
+    body: bodySchema,
+  }),
+  /** Closes an Issue as completed; the read-back is the Issue's state. */
+  z.strictObject({
+    type: z.literal("issue.close"),
+    repo: repoSchema,
+    issueNumber: positiveInt,
   }),
 ]);
 export type GithubOperation = z.infer<typeof githubOperationSchema>;
