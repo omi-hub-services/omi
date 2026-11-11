@@ -147,6 +147,25 @@ export class FakeGithub implements GithubTransport {
     const url = new URL(request.path, "https://api.github.com/");
     const route = url.pathname;
 
+    const detail = /^\/repos\/([^/]+\/[^/]+)\/(issues|pulls)\/(\d+)$/.exec(route);
+    if (request.method === "GET" && detail?.[1] !== undefined && detail[3] !== undefined) {
+      const [repo, number] = [detail[1], Number(detail[3])];
+      const item = (detail[2] === "pulls" ? this.pulls : this.issues).find(
+        (candidate) => candidate.repo === repo && candidate.number === number,
+      );
+      if (item === undefined) return this.json(404, {});
+      return this.json(
+        200,
+        "head" in item
+          ? this.pullWire(item as FakePull)
+          : {
+              number: item.number,
+              body: item.body,
+              html_url: `https://github.com/${repo}/issues/${String(number)}`,
+            },
+      );
+    }
+
     const comments = /^\/repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/comments$/.exec(route);
     if (comments?.[1] !== undefined && comments[2] !== undefined) {
       const [repo, issueNumber] = [comments[1], Number(comments[2])];
@@ -218,11 +237,23 @@ export class FakeGithub implements GithubTransport {
           .filter((p) => p.repo === repo)
           .filter((p) => head === null || `${repo.split("/")[0] ?? ""}:${p.head}` === head)
           .filter((p) => base === null || p.base === base)
-          .map((p) => ({ number: p.number, title: p.title, body: p.body })),
+          .map((p) => this.pullWire(p)),
       );
     }
 
     return this.json(404, { message: "Not Found" });
+  }
+
+  private pullWire(p: FakePull): unknown {
+    return {
+      number: p.number,
+      title: p.title,
+      body: p.body,
+      state: "open",
+      html_url: `https://github.com/${p.repo}/pull/${String(p.number)}`,
+      head: { ref: p.head, repo: { full_name: p.repo } },
+      base: { ref: p.base, repo: { full_name: p.repo } },
+    };
   }
 
   private page(url: URL, items: readonly unknown[]): HttpResponse {
