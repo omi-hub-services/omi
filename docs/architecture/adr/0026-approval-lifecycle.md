@@ -28,12 +28,22 @@ and expires them after two minutes. The actor is the local OS account. The IPC c
 handlers. Headless runtimes must use the GitHub pathway rather than treating JSON as a terminal.
 
 The GitHub pathway reads an Issue comment by numeric ID through `gh api`, pinned to the
-configured repository. It accepts a human `User` actor in the configured allowlist and a strict
+configured repository. It accepts a human `User` actor in the configured allowlist (GitHub logins
+are compared case-insensitively, while retaining the observed login in audit) and a strict
 JSON body with `schemaVersion: 1`, `approvalId`, `subjectHash`, `version`, `decision`, and optional
 `reason`. The actual comment author's login is authoritative; actor fields in the body are
-rejected. Rejections require a reason matching the command. Bot, prose, malformed, unavailable,
+rejected. The adapter validates both `created_at` and `updated_at` and requires exact equality.
+An edited comment is refused with typed reason `GITHUB_COMMENT_EDITED`: GitHub retains the original
+author's login when another repository writer edits the body, so that login cannot authenticate
+an edited decision. Missing/malformed timestamps fail authentication. The PO must post a fresh,
+unedited comment rather than editing an existing comment into approval JSON.
+Rejections require a reason matching the command. Bot, prose, malformed, unavailable,
 wrong-version, wrong-hash and unallowlisted evidence fails closed. Conversation bridges are not
 accepted by these use cases; the older domain representation remains available for later work.
+
+A current approved request and all other terminal states refuse a new decision before prompting
+or reading GitHub. An existing approval may still expire or become stale from authoritative
+subject/time changes; those transitions do not require consulting a decision source.
 
 After asynchronous verification, the use case reads the subject again, then commits state and
 audit synchronously with compare-and-swap. Expired/changed subjects become expired/invalidated
@@ -41,6 +51,10 @@ and return a refusal. `checkExecutionApprovals` reads durable requests and curre
 requirements supplied by the trusted plan immediately before execution. It requires all supplied
 business/cost gates and rejects missing, rejected, expired or stale evidence. The future dispatch
 use case must call this service; dispatch is still NOT_IMPLEMENTED in the current IPC skeleton.
+
+`APPROVAL_REFUSED` is an additive error code under IPC protocol v1; CLI and runtime ship together.
+Existing codes and their meanings are unchanged. It maps to exit code 4 (`REQUEST_REJECTED`), and
+the message includes the specific typed use-case reason, including `GITHUB_COMMENT_EDITED`.
 
 ## Persistence and compatibility
 

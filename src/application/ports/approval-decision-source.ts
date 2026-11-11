@@ -11,14 +11,20 @@ export interface VerifiedApprovalDecision {
   readonly evidenceRef: string;
 }
 
+export interface ApprovalDecisionSourceRefusal {
+  readonly refused: true;
+  readonly reason: "GITHUB_COMMENT_EDITED";
+}
+
 /**
  * Trusted I/O boundary, never implemented by parsing worker JSON. CLI must obtain a fresh
  * interactive confirmation; GitHub must read back the real actor and exact decision/revision.
- * Returning undefined refuses authentication. Caller-supplied actor/source flags are not input.
+ * Returning undefined refuses authentication; typed refusals preserve specific evidence failures.
+ * Caller-supplied actor/source flags are not input.
  */
 export interface ApprovalDecisionSource {
   verify(
     request: ApprovalRequest,
     input: RecordApprovalInput,
-  ): Promise<VerifiedApprovalDecision | undefined>;
+  ): Promise<VerifiedApprovalDecision | ApprovalDecisionSourceRefusal | undefined>;
 }

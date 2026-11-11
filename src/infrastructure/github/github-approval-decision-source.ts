@@ -8,6 +8,8 @@ const execFileAsync = promisify(execFile);
 const commentSchema = z.object({
   user: z.object({ login: z.string().min(1), type: z.literal("User") }),
   body: z.string().max(16384),
+  created_at: z.iso.datetime(),
+  updated_at: z.iso.datetime(),
 });
 const decisionSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -46,6 +48,10 @@ export function createGitHubApprovalDecisionSource(options: {
           await readComment(`repos/${options.repository}/issues/comments/${input.evidenceRef}`),
         );
         if (!comment.success) return undefined;
+        // Edits retain the original author even when another repository writer changes the body.
+        if (comment.data.updated_at !== comment.data.created_at) {
+          return { refused: true, reason: "GITHUB_COMMENT_EDITED" };
+        }
         const body: unknown = JSON.parse(comment.data.body);
         const decision = decisionSchema.safeParse(body);
         if (!decision.success || decision.data.reason !== input.reason) return undefined;

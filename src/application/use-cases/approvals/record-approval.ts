@@ -1,8 +1,19 @@
 import { transitionApproval } from "../../../domain/approvals/approval.js";
 import type { ApprovalRequest, ApprovalRefusal } from "../../../domain/approvals/approval.js";
-import { isApprovalSubjectCurrent } from "../../../domain/approvals/approval-policy.js";
-import { approvalSubjectSchema, recordApprovalSchema } from "../../contracts/approval.js";
-import type { ApprovalDecisionSource } from "../../ports/approval-decision-source.js";
+import {
+  isApprovalSubjectCurrent,
+  isApprovalActorAllowed,
+} from "../../../domain/approvals/approval-policy.js";
+import {
+  approvalSubjectSchema,
+  recordApprovalSchema,
+  type RecordApprovalInput,
+} from "../../contracts/approval.js";
+import type {
+  ApprovalDecisionSource,
+  ApprovalDecisionSourceRefusal,
+  VerifiedApprovalDecision,
+} from "../../ports/approval-decision-source.js";
 import type { ApprovalStore, ApprovalSubjectReader } from "../../ports/approval-store.js";
 import type { StateCommitResult, StateUnitOfWork } from "../../ports/state-unit-of-work.js";
 
@@ -21,6 +32,7 @@ export type RecordApprovalResult =
       readonly ok: false;
       readonly reason:
         | ApprovalRefusal
+        | ApprovalDecisionSourceRefusal["reason"]
         | "INVALID_INPUT"
         | "NOT_FOUND"
         | "STALE_VERSION"
@@ -41,10 +53,16 @@ export async function recordApproval(
   const request = deps.store.get(command.approvalId);
   if (request === undefined) return { ok: false, reason: "NOT_FOUND" };
   if (request.version !== command.expectedVersion) return { ok: false, reason: "STALE_VERSION" };
-  if (request.status !== "pending" && request.status !== "approved")
+  if (request.status !== "pending") {
+    // An existing approval can only expire/become stale; it never needs another human decision.
+    if (request.status === "approved") return commitDecision(deps, request, command);
     return { ok: false, reason: "TRANSITION_NOT_ALLOWED" };
+  }
   // Only the trusted adapter can attest actor/source and the specific decision it witnessed.
   const verified = await deps.source.verify(request, command);
+  if (verified !== undefined && "refused" in verified) {
+    return { ok: false, reason: verified.reason };
+  }
   const expectedSource = command.pathway === "cli" ? "po-cli" : "github-actor";
   if (
     verified === undefined ||
@@ -57,9 +75,21 @@ export async function recordApproval(
     verified.decision !== command.decision
   )
     return { ok: false, reason: "SOURCE_NOT_AUTHENTICATED" };
-  if (verified.source === "github-actor" && !deps.allowedGitHubActors.includes(verified.actor)) {
+  if (
+    verified.source === "github-actor" &&
+    !isApprovalActorAllowed(verified.actor, verified.source, deps.allowedGitHubActors)
+  ) {
     return { ok: false, reason: "ACTOR_NOT_ALLOWED" };
   }
+  return commitDecision(deps, request, command, verified);
+}
+
+function commitDecision(
+  deps: RecordApprovalDependencies,
+  request: ApprovalRequest,
+  command: RecordApprovalInput,
+  verified?: VerifiedApprovalDecision,
+): RecordApprovalResult {
   // Read after the asynchronous verification so a push during confirmation cannot be approved.
   const current = approvalSubjectSchema.safeParse(
     deps.subjects.read(request.subjectId, request.subject.kind),
@@ -67,6 +97,9 @@ export async function recordApproval(
   const now = deps.now();
   const stale = !current.success || !isApprovalSubjectCurrent(request.subject, current.data);
   const expired = request.expiresAt !== undefined && now >= request.expiresAt;
+  if (!stale && !expired && verified === undefined) {
+    return { ok: false, reason: "TRANSITION_NOT_ALLOWED" };
+  }
   const event = stale
     ? { type: "invalidate" as const, subjectChanged: true }
     : expired
@@ -80,7 +113,7 @@ export async function recordApproval(
     ...request,
     status: transition.to,
     version: request.version + 1,
-    ...(stale || expired
+    ...(stale || expired || verified === undefined
       ? {}
       : {
           decision: {

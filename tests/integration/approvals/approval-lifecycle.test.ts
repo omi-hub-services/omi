@@ -130,9 +130,13 @@ function githubComment(
   overrides: Record<string, unknown> = {},
   actor = "po",
   type = "User",
+  metadata: { created_at?: unknown; updated_at?: unknown } = {},
 ): void {
   comment = {
     user: { login: actor, type },
+    created_at: "2026-11-11T01:00:00Z",
+    updated_at: "2026-11-11T01:00:00Z",
+    ...metadata,
     body: JSON.stringify({
       schemaVersion: 1,
       approvalId: request.id,
@@ -247,6 +251,62 @@ describe("versioned approval lifecycle with SQLite", () => {
       expect(next.subjectHash).toBe(H2);
       expect(next.id).not.toBe(request.id);
       expect(await recordApproval(deps, decision(next))).toMatchObject({ ok: true });
+    },
+  );
+
+  it.each(["approved", "rejected", "expired", "invalidated"] as const)(
+    "refuses new decisions on %s requests without prompting or reading GitHub",
+    async (status) => {
+      const request = requested("business", now + 1);
+      const initial = await recordApproval(
+        deps,
+        decision(
+          request,
+          status === "rejected" ? { decision: "rejected", reason: "declined" } : {},
+        ),
+      );
+      if (!initial.ok) throw new Error(initial.reason);
+      let current = initial.request;
+      if (status === "expired" || status === "invalidated") {
+        if (status === "expired") now += 1;
+        else subjects.set("business", { kind: "business", baselineHash: H2, scopeIds: ["task"] });
+        await recordApproval(deps, decision(current));
+        const stored = deps.store.get(request.id);
+        if (stored === undefined) throw new Error("missing request");
+        current = stored;
+      }
+      expect(current.status).toBe(status);
+      const verify = vi.spyOn(deps.source, "verify");
+      const before = counts();
+      for (const pathway of ["cli", "github"] as const) {
+        expect(
+          await recordApproval(deps, decision(current, { pathway, evidenceRef: "42" })),
+        ).toEqual({ ok: false, reason: "TRANSITION_NOT_ALLOWED" });
+      }
+      expect(verify).not.toHaveBeenCalled();
+      expect(readComment).not.toHaveBeenCalled();
+      expect(counts()).toEqual(before);
+      expect(deps.store.get(request.id)).toEqual(current);
+    },
+  );
+
+  it.each(["stale", "expired"] as const)(
+    "invalidates an existing %s approval without consulting the decision source",
+    async (condition) => {
+      const request = requested("business", now + 1);
+      const initial = await recordApproval(deps, decision(request));
+      if (!initial.ok) throw new Error(initial.reason);
+      const verify = vi.spyOn(deps.source, "verify");
+      if (condition === "expired") now += 1;
+      else subjects.set("business", { kind: "business", baselineHash: H2, scopeIds: ["task"] });
+      expect(await recordApproval(deps, decision(initial.request))).toEqual({
+        ok: false,
+        reason: condition === "expired" ? "EXPIRED" : "STALE_REVISION",
+      });
+      expect(deps.store.get(request.id)?.status).toBe(
+        condition === "expired" ? "expired" : "invalidated",
+      );
+      expect(verify).not.toHaveBeenCalled();
     },
   );
 
@@ -549,7 +609,7 @@ describe("CLI and allowlisted GitHub pathways", () => {
     expect(await pending).toMatchObject({ ok: true, result: { status: "approved" } });
   });
 
-  it("reads the real GitHub actor from the configured repository and stores a bound decision", async () => {
+  it("accepts an unedited GitHub comment and stores its real actor and bound decision", async () => {
     const request = requested();
     githubComment(request);
     expect(
@@ -565,6 +625,92 @@ describe("CLI and allowlisted GitHub pathways", () => {
       },
     });
     expect(readComment).toHaveBeenCalledWith("repos/acme/app/issues/comments/42");
+  });
+
+  it.each(["approved", "rejected"] as const)(
+    "refuses an edited PO comment claiming a %s decision without state or audit changes",
+    async (choice) => {
+      const request = requested();
+      const reason = choice === "rejected" ? "declined" : undefined;
+      githubComment(
+        request,
+        { decision: choice, ...(reason === undefined ? {} : { reason }) },
+        "po",
+        "User",
+        { updated_at: "2026-11-11T01:00:01Z" },
+      );
+      const before = counts();
+      expect(
+        await recordApproval(
+          deps,
+          decision(request, {
+            pathway: "github",
+            evidenceRef: "42",
+            decision: choice,
+            ...(reason === undefined ? {} : { reason }),
+          }),
+        ),
+      ).toEqual({ ok: false, reason: "GITHUB_COMMENT_EDITED" });
+      expect(deps.store.get(request.id)).toEqual(request);
+      expect(counts()).toEqual(before);
+    },
+  );
+
+  it.each([
+    { created_at: undefined },
+    { updated_at: undefined },
+    { created_at: "not-a-time" },
+    { updated_at: null },
+  ])("refuses missing or malformed GitHub edit timestamps %j", async (metadata) => {
+    const request = requested();
+    githubComment(request, {}, "po", "User", metadata);
+    const before = counts();
+    expect(
+      await recordApproval(deps, decision(request, { pathway: "github", evidenceRef: "42" })),
+    ).toEqual({ ok: false, reason: "SOURCE_NOT_AUTHENTICATED" });
+    expect(counts()).toEqual(before);
+  });
+
+  it("reports edited-comment evidence as APPROVAL_REFUSED over IPC", async () => {
+    const request = requested();
+    githubComment(request, {}, "po", "User", { updated_at: "2026-11-11T01:00:01Z" });
+    const socketPath = join(dir, "ipc", "runtime.sock");
+    server = createRuntimeIpcServer({
+      socketPath,
+      identity: { runtimeVersion: "1", startedAt: new Date(now).toISOString() },
+      approvals: { recordApproval: (input) => recordApproval(deps, input) },
+    });
+    await server.start();
+    expect(
+      await sendCommand({
+        socketPath,
+        timeoutMs: 1000,
+        command: {
+          ...decision(request, { pathway: "github", evidenceRef: "42" }),
+          command: "approval.decide",
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      error: { code: "APPROVAL_REFUSED", message: "Approval refused: GITHUB_COMMENT_EDITED" },
+    });
+    expect(deps.store.get(request.id)).toEqual(request);
+  });
+
+  it("matches GitHub allowlists without case sensitivity and retains the observed login", async () => {
+    const request = requested();
+    deps = { ...deps, allowedGitHubActors: ["Po"] };
+    githubComment(request, {}, "pO");
+    expect(
+      await recordApproval(deps, decision(request, { pathway: "github", evidenceRef: "42" })),
+    ).toMatchObject({ ok: true, request: { decision: { actor: "pO", source: "github-actor" } } });
+    expect(
+      checkExecutionApprovals(
+        deps,
+        [{ approvalId: request.id, subjectId: request.subjectId, kind: "business" }],
+        ["PO"],
+      ),
+    ).toEqual({ allowed: true });
   });
 
   it("allows an allowlisted GitHub rejection and preserves its reason", async () => {
