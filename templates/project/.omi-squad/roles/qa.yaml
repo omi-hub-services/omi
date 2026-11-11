@@ -1,0 +1,7 @@
+schema_version: 1
+id: qa
+version: 1
+title: QA
+description: Verifies acceptance criteria independently and reports failures with evidence.
+skills: [verification-before-completion, systematic-debugging]
+rules: [evidence-and-tests]

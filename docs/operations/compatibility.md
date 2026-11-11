@@ -65,6 +65,14 @@ check passed. Require these checks again when re-checking support. This command 
 alone. `npm run test:live -- <file>` also selects the Claude suite and requires its profile variable. Without `OMI_LIVE_CODEX_HOME`, the Codex suite skips;
 with an invalid or empty value it fails. Live tests remain outside `npm run check` and CI.
 
+The production Codex adapter targets **`>=0.167.0 <0.167.1`**, with the same subscription
+file-store namespace and controlled settings as ADR-0021, plus explicit model/effort. Offline
+contract tests exercise the neutral port with synthetic fixtures and a fake executable; they
+do not extend the live evidence above. No real CLI/model calls were made for OMI-014.
+Effective model/effort fields and quota-event wrappers remain hypothetical; missing effective
+settings and reset times are left absent. See the [ADR-0023 OMI-014 amendment](../architecture/adr/0023-agent-executor-port-and-claude-adapter.md#omi-014-amendment-production-codex-adapter-2026-11-11-issue-17)
+for the effort mapping, probe gate and remaining live-validation decisions.
+
 ## Coordinator environment (Windows)
 
 | Component | Version | Status   | Checked | Evidence                       |
