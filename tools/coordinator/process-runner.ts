@@ -12,6 +12,8 @@ export interface Command {
   /** Written to stdin (e.g. GraphQL request JSON, a comment body). */
   readonly input?: string;
   readonly timeoutMs?: number;
+  /** Cancels in-flight watch reads when the terminal closes. */
+  readonly signal?: AbortSignal;
 }
 
 export interface RunResult {
@@ -31,6 +33,7 @@ export function createProcessRunner(): Runner {
         shell: false,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
+        signal: command.signal,
         timeout: command.timeoutMs ?? 120_000,
       });
       let stdout = "";

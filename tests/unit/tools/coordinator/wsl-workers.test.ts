@@ -3,6 +3,9 @@ import type { WslTarget } from "../../../../tools/coordinator/coordinator-settin
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
 import {
   parseProcesses,
+  parseWorkerArgs,
+  parseWorkerTail,
+  workerLogIdentity,
   parseWorkerProbe,
   readWorkers,
 } from "../../../../tools/coordinator/wsl-workers.ts";
@@ -26,9 +29,11 @@ describe("parseProcesses", () => {
     ]);
   });
 
-  it("keeps only tool, pid, mode and elapsed time, never the worker's argv", () => {
+  it("keeps display metadata, never the worker's argv", () => {
     const procs = parseProcesses("7 65 claude -p --allowedTools Bash(gh pr view *) secret-prompt");
-    expect(procs).toEqual([{ pid: 7, tool: "claude", headless: true, elapsedSeconds: 65 }]);
+    expect(procs).toEqual([
+      { pid: 7, tool: "claude", headless: true, elapsedSeconds: 65, model: null, effort: null },
+    ]);
     expect(JSON.stringify(procs)).not.toMatch(/allowedTools|secret-prompt/);
   });
 });
@@ -81,5 +86,122 @@ describe("readWorkers", () => {
     expect(w.available).toBe(false);
     expect(w.available ? "" : w.reason).toContain("ENOENT");
     expect(seen.map((c) => [c.file, c.args.length])).toEqual([["wsl.exe", 8]]);
+  });
+});
+
+describe("worker display metadata", () => {
+  it("parses Claude and Codex model/effort flags without retaining the prompt", () => {
+    expect(parseWorkerArgs("claude -p --model opus-5-5 --effort high", "claude")).toEqual({
+      model: "opus-5-5",
+      effort: "high",
+    });
+    expect(
+      parseWorkerArgs('codex exec -m gpt-6.1-sol -c model_reasoning_effort="high" --json', "codex"),
+    ).toEqual({ model: "gpt-6.1-sol", effort: "high" });
+    expect(
+      parseWorkerArgs("codex -m gpt-6.1-sol -c 'model_reasoning_effort=medium'", "codex"),
+    ).toEqual({ model: "gpt-6.1-sol", effort: "medium" });
+    expect(
+      parseWorkerArgs("claude --model=sonnet --effort=low -- --model secret", "claude"),
+    ).toEqual({ model: "sonnet", effort: "low" });
+    expect(parseWorkerArgs("codex -m", "codex")).toEqual({ model: null, effort: null });
+  });
+
+  it("derives task/profile from both dispatch filename forms, not the most recent log", () => {
+    expect(
+      workerLogIdentity("/runs/omi-064-codex-ggtintran-20261111-135052.jsonl", "codex"),
+    ).toEqual({ task: "OMI-064", profile: "ggtintran" });
+    expect(workerLogIdentity("/runs/omi-004-team-profile-20261111-135052.jsonl", "claude")).toEqual(
+      { task: "OMI-004", profile: "team-profile" },
+    );
+    expect(workerLogIdentity("/dev/pts/0", "claude")).toEqual({ task: null, profile: null });
+  });
+});
+
+const jsonl = (...events: readonly unknown[]) => events.map((e) => JSON.stringify(e)).join("\n");
+
+describe("worker log tail", () => {
+  it("reads Claude assistant tools/text and authoritative result count", () => {
+    const tool = {
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", name: "Bash", input: { command: "npm run check" } }],
+      },
+    };
+    expect(parseWorkerTail(jsonl(tool))).toMatchObject({
+      numTurns: 1,
+      lastAction: "Bash npm run check",
+      finished: false,
+    });
+    const tail = jsonl(
+      tool,
+      { type: "assistant", message: { content: [{ type: "text", text: "All checks\npassed" }] } },
+      { type: "result", num_turns: 37, is_error: false },
+    );
+    expect(parseWorkerTail(tail)).toEqual({
+      numTurns: 37,
+      lastAction: "All checks passed",
+      finished: true,
+      isError: false,
+      limited: false,
+    });
+  });
+
+  it("supports the real Codex exec event shape, including in-progress commands", () => {
+    const tail = jsonl(
+      { type: "thread.started", thread_id: "not-retained" },
+      { type: "turn.started" },
+      { type: "item.completed", item: { id: "1", type: "agent_message", text: "Checking" } },
+      {
+        type: "item.started",
+        item: {
+          id: "2",
+          type: "command_execution",
+          command: "npm run check",
+          aggregated_output: "not-retained",
+          status: "in_progress",
+        },
+      },
+    );
+    expect(parseWorkerTail(tail)).toEqual({
+      numTurns: 1,
+      lastAction: "command npm run check",
+      finished: false,
+      isError: false,
+      limited: false,
+    });
+    expect(
+      parseWorkerTail(
+        tail +
+          "\n" +
+          jsonl(
+            { type: "item.completed", item: { type: "agent_message", text: "Done" } },
+            { type: "turn.completed", usage: {} },
+          ),
+      ),
+    ).toMatchObject({ lastAction: "Done", finished: true });
+  });
+
+  it("handles partial/malformed lines, errors, rate limits and terminal controls", () => {
+    const tail =
+      "broken\n" +
+      jsonl(
+        { type: "turn.started" },
+        { type: "turn.failed", error: { message: "Usage limit reached\u001b[2J" } },
+      ) +
+      '\n{"type":';
+    expect(parseWorkerTail(tail)).toMatchObject({
+      numTurns: 1,
+      finished: true,
+      isError: true,
+      limited: true,
+    });
+    expect(parseWorkerTail(tail).lastAction).not.toContain("\u001b");
+    expect(
+      parseWorkerTail(jsonl({ type: "rate_limit_event", rate_limit_info: { status: "rejected" } })),
+    ).toMatchObject({ limited: true });
+    expect(parseWorkerTail(jsonl({ type: "result", is_error: true, num_turns: -5 }))).toMatchObject(
+      { isError: true, numTurns: 0 },
+    );
   });
 });

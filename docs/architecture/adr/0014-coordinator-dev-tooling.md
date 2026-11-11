@@ -180,6 +180,19 @@ Issues, Epics, PRs and drafts are excluded from readiness warnings.
   `--json`), produced by the same `promotableBacklog` function. It does not change Priority,
   move a task back to Backlog, or repair Issues that fail the gate (those stay Attention lines).
 
+## Terminal watch (OMI-064)
+
+Run `node tools/coordinator/watch.ts [--interval <seconds>]` in a terminal pane (default 5
+seconds). Workers refresh at that interval; quota is read every 60 seconds without paid
+probes. Each worker uses its stdout log from `/proc/<pid>/fd/1` for task/profile, turn count
+and the last action. Claude counts assistant messages (the result's `num_turns` is authoritative);
+Codex counts `turn.started` events. Logs are streamed to count the whole run while retaining
+only the last action, so counts do not reset at a tail window. `p` asks `y/N` before spending
+one Haiku call per Claude profile; `q`, Ctrl-C or SIGTERM restores the cursor and terminal.
+Finished workers are grey, errors/rate limits red, quota below pick-profile thresholds yellow,
+and readings older than 30 minutes dim. Missing WSL is shown and retried on the next poll.
+This extends the existing worker reader and runner; it adds no dependency or product module.
+
 ## Worker log retention (OMI-056)
 
 Worker stream-json logs in WSL `~/omi-runs` grew without bound. `flow.ts cleanup <branch>` now
