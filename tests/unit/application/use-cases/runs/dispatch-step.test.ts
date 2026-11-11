@@ -13,6 +13,16 @@ function dispatched(result: DispatchStepResult) {
 }
 
 describe("dispatchStep", () => {
+  it("completes an attempt id reserved by executor selection instead of allocating another", async () => {
+    const r = rig();
+    const result = dispatched(
+      await dispatchStep(r.deps, dispatchInput({ reservedAttemptId: "reserved-1" })),
+    );
+    expect(result.attempt.id).toBe("reserved-1");
+    expect(r.attempts.get("reserved-1")?.status).toBe("running");
+    expect(r.executor.started[0]?.attemptId).toBe("reserved-1");
+  });
+
   it("allocates attempt, context packet and worktree, then hands them to the executor", async () => {
     const r = rig();
     const result = dispatched(await dispatchStep(r.deps, dispatchInput()));
