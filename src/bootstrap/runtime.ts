@@ -1,3 +1,4 @@
+import { backupState } from "../infrastructure/persistence/sqlite/backup-state.js";
 import { wslPathSchema } from "../application/contracts/session-launch.js";
 // WSL executable and composition root. Never start it inside the framework source repository.
 import { randomUUID } from "node:crypto";
@@ -9,6 +10,7 @@ import { openStateDatabase } from "../infrastructure/persistence/sqlite/sqlite-c
 import {
   applyMigrations,
   loadMigrations,
+  readHistory,
 } from "../infrastructure/persistence/sqlite/migration-runner.js";
 import { createSqliteLeaseStore } from "../infrastructure/persistence/sqlite/sqlite-lease-store.js";
 import { createSqliteStateUnitOfWork } from "../infrastructure/persistence/sqlite/sqlite-state-unit-of-work.js";
@@ -34,11 +36,16 @@ export async function runSessionRuntime(projectDir: string): Promise<void> {
   try {
     const migrations = loadMigrations(resolve(import.meta.dirname, "../../migrations"));
     // A fresh DB needs the leases table. Existing owners are checked before any upgrade.
-    if (database.prepare("SELECT 1 FROM sqlite_schema WHERE name='leases'").get() === undefined)
+    if (database.prepare("SELECT 1 FROM sqlite_schema WHERE name='leases'").get() === undefined) {
+      await backupState(
+        database,
+        join(projectDir, ".omi-squad", "local", "backups", `migration-${randomUUID()}`),
+      );
       applyMigrations(
         database,
         migrations.filter((migration) => migration.version === 1),
       );
+    }
     const session = claimProjectSession({
       leases: createSqliteLeaseStore(database),
       state: createSqliteStateUnitOfWork(database),
@@ -60,6 +67,11 @@ export async function runSessionRuntime(projectDir: string): Promise<void> {
         signals: ["SIGINT", "SIGTERM", "SIGHUP"],
       },
       startAccepting: async () => {
+        if (readHistory(database).length < migrations.length)
+          await backupState(
+            database,
+            join(projectDir, ".omi-squad", "local", "backups", `migration-${randomUUID()}`),
+          );
         applyMigrations(database, migrations);
         await server.start();
       },
