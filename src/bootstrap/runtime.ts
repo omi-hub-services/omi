@@ -15,6 +15,7 @@ import {
 import { createSqliteLeaseStore } from "../infrastructure/persistence/sqlite/sqlite-lease-store.js";
 import { createSqliteStateUnitOfWork } from "../infrastructure/persistence/sqlite/sqlite-state-unit-of-work.js";
 import { startSessionRuntime } from "../infrastructure/processes/session-runtime.js";
+import type { ResourceWakeupTimer } from "../infrastructure/processes/resource-wakeup-loop.js";
 import {
   SESSION_HEARTBEAT_TIMEOUT_MS,
   SESSION_LEASE_MS,
@@ -30,7 +31,7 @@ import {
 
 export async function runSessionRuntime(
   projectDir: string,
-  options: RuntimeCompositionOptions = {},
+  options: RuntimeCompositionOptions & { readonly timer?: ResourceWakeupTimer } = {},
 ): Promise<void> {
   wslPathSchema.parse(projectDir);
   if (resolve(projectDir) === resolve(import.meta.dirname, "../.."))
@@ -55,7 +56,7 @@ export async function runSessionRuntime(
       leases: createSqliteLeaseStore(database),
       state: createSqliteStateUnitOfWork(database),
       owner: randomUUID(),
-      now: Date.now,
+      now: options.now ?? Date.now,
       nextId: randomUUID,
       leaseMs: SESSION_LEASE_MS,
     });
@@ -63,6 +64,12 @@ export async function runSessionRuntime(
     let composition: Awaited<ReturnType<typeof createProjectRunCommandUseCases>> | undefined;
     const runtime = await startSessionRuntime({
       session,
+      resourceWakeup: (canDispatch) => {
+        const wakeup = composition?.resourceWakeup?.(canDispatch);
+        return wakeup === undefined
+          ? undefined
+          : { ...wakeup, ...(options.timer === undefined ? {} : { timer: options.timer }) };
+      },
       owner: {
         channel: process.stdin,
         heartbeatTimeoutMs: SESSION_HEARTBEAT_TIMEOUT_MS,

@@ -82,6 +82,13 @@ Mỗi contract có schema version. Parse input trước khi xử lý; reject fie
 
 Precedence đề xuất: baseline template → project config → local machine config → override phiên được cho phép. Mandatory approvals và requirement đã duyệt không bị override bằng một field runtime tùy ý. In ra resolved config không chứa secret, cùng hash lưu trong run.
 
+Project config v1 accepts optional `resource_wait.interval_ms` (default 1000) and
+`resource_wait.max_backoff_ms` (default 60000, at least the interval). The session runtime
+rechecks resource-waiting steps with the existing profile availability policy and selector;
+expired cooldowns need a fresh `probeProfile` observation before selection. Idle or failed passes
+use capped exponential backoff, and a successful dispatch returns to the configured interval.
+Waiting never automatically becomes blocked. The loop stops and drains with its session owner.
+
 Zod có static inference và chuyển JSON Schema; YAML parser chỉ chuyển định dạng, không validate nghiệp vụ. [Zod](https://zod.dev/), [YAML](https://eemeli.org/yaml/).
 
 ## 6. SQLite và artifact persistence

@@ -1,8 +1,8 @@
 // Synthetic fixtures. Display names intentionally differ from framework logical keys.
-import type { ProjectConfig } from "../../../src/application/contracts/project-config.ts";
+import { projectConfigSchema } from "../../../src/application/contracts/project-config.ts";
 import type { InspectedProject } from "../../../src/application/contracts/project-initialization.ts";
 
-export const baseline: ProjectConfig = {
+export const baseline = projectConfigSchema.parse({
   schema_version: 1,
   repository: { owner: "acme", name: "app" },
   project: { owner: "acme", number: 4 },
@@ -10,7 +10,7 @@ export const baseline: ProjectConfig = {
   limits: { max_parallel_workers: 2, step_timeout_seconds: 600, max_rework_cycles: 2 },
   effort_policy: { low: "low", medium: "medium", high: "high" },
   policies: { mandatory_approvals: ["release", "deploy"] },
-};
+});
 export const project: InspectedProject = {
   id: "PVT_sample",
   number: 4,

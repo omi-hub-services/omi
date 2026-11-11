@@ -56,6 +56,7 @@ import { inspectRun } from "../application/use-cases/runs/inspect-run.js";
 import { requestRunPause } from "../application/use-cases/runs/request-run-pause.js";
 import { planRun } from "../application/use-cases/runs/plan-run.js";
 import { waitForRun } from "../application/use-cases/runs/wait-for-run.js";
+import { wakeWaitingRunSteps } from "../application/use-cases/runs/wake-waiting-run-steps.js";
 import type { ProjectSession } from "../application/ports/lease-store.js";
 import {
   recordReworkEvent,
@@ -358,6 +359,7 @@ export function createRunProcessRecovery(options: {
 
 export interface RuntimeCompositionOptions {
   readonly transport?: GithubTransport;
+  readonly now?: () => number;
   /** Reversible test boundary: no fake mode or executable override is read from Issue text. */
   readonly executors?: (ports: {
     readonly attempts: AttemptStore;
@@ -394,10 +396,11 @@ export async function createProjectRunCommandUseCases(
         handoffCoordinator: refuse,
       },
       drain: () => Promise.resolve(),
+      resourceWakeup: undefined,
     };
   }
   const config = await loadRuntimeConfig(join(projectDir, ".omi-squad"));
-  const now = Date.now;
+  const now = options.now ?? Date.now;
   const nextId = randomUUID;
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   const state = createSqliteStateUnitOfWork(database, session.lease);
@@ -633,6 +636,11 @@ export async function createProjectRunCommandUseCases(
   return {
     runs,
     commands,
+    resourceWakeup: (canDispatch: () => boolean) => ({
+      timing: config.project.resource_wait,
+      tick: () =>
+        wakeWaitingRunSteps({ ...bound, runs, session, profiles: profiles.registry, canDispatch }),
+    }),
     drain: async () => {
       while (completions.size > 0) await Promise.allSettled([...completions]);
     },

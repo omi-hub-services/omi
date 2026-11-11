@@ -9,6 +9,7 @@ export async function probeProfile(
   executor: Pick<AgentExecutor, "executor" | "probe">,
   profileId: string,
   now: () => number,
+  canSave: () => boolean = () => true,
 ) {
   identifierSchema.parse(profileId);
   const profile = registry.list().find((entry) => entry.metadata.profileId === profileId);
@@ -24,6 +25,7 @@ export async function probeProfile(
     await executor.probe({ profileHome: metadata.credentialRef }),
   );
   if (result.executor !== metadata.tool) throw new Error("Probe executor mismatch");
+  if (!canSave()) return { outcome: "stale" } as const;
   const at = now();
   const refreshed = { ...metadata };
   delete refreshed.cooldownUntil;
