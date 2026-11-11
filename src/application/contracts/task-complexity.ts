@@ -24,3 +24,5 @@ export const taskComplexitySchema = z
     complexity: complexitySchema.optional(),
   })
   .default({ workflow: null, workType: null, area: null, priority: null, acCount: 0, labels: [] });
+
+export type TaskComplexity = z.infer<typeof taskComplexitySchema>;

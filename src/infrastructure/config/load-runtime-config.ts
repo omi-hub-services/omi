@@ -1,0 +1,29 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { parseDocument } from "yaml";
+import { modelsConfigSchema } from "../../application/contracts/model-capability.js";
+import { createProjectConfigStore } from "./project-config-store.js";
+import { loadWorkflowCatalog } from "./load-workflow-catalog.js";
+import { loadResolutionCatalog } from "./load-resolution-catalog.js";
+
+export async function loadRuntimeConfig(squadDir: string) {
+  const project = await (await createProjectConfigStore(join(squadDir, "config"))).read();
+  if (project === undefined) throw new Error("PROJECT_NOT_CONFIGURED");
+  const document = parseDocument(readFileSync(join(squadDir, "config", "models.yaml"), "utf8"), {
+    uniqueKeys: true,
+    customTags: [],
+    schema: "core",
+  });
+  if (document.errors.length > 0 || document.warnings.length > 0)
+    throw new Error("INVALID_MODELS_CONFIG");
+  const models = modelsConfigSchema.parse(document.toJS({ maxAliasCount: 0 }));
+  const ids = readdirSync(join(squadDir, "workflows"), { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".yaml"))
+    .map((entry) => entry.name.slice(0, -5));
+  return {
+    project,
+    models,
+    workflows: await loadWorkflowCatalog(join(squadDir, "workflows"), ids),
+    catalog: loadResolutionCatalog(squadDir),
+  };
+}

@@ -17,6 +17,7 @@ export interface PauseRunDependencies extends WriteCheckpointDependencies {
   readonly runs: RecoveryRunReader;
   readonly processes: WorkerRecovery;
   /** Trusted workflow state. The use case fixes runId and kind after stopping writers. */
+  readonly prepareSnapshot?: (runId: string) => Promise<void>;
   readonly snapshot: (runId: string) => Omit<WriteCheckpointInput, "runId" | "kind">;
 }
 export type PauseRunResult =
@@ -53,7 +54,16 @@ export async function pauseRun(
   const steps = deps.runs.listSteps(run.id);
   const stopped = await quiesceRunWorkers(deps, steps, true);
   if (!stopped.ok) return stopped;
-  const saved = writeCheckpoint(deps, { ...deps.snapshot(run.id), runId: run.id, kind: "pause" });
+  let saved: ReturnType<typeof writeCheckpoint>;
+  try {
+    if (deps.prepareSnapshot !== undefined) {
+      await deps.prepareSnapshot(run.id);
+      if (!deps.session.renew()) return { ok: false, reason: "PROJECT_LOCK_LOST" };
+    }
+    saved = writeCheckpoint(deps, { ...deps.snapshot(run.id), runId: run.id, kind: "pause" });
+  } catch {
+    return { ok: false, reason: "CHECKPOINT_FAILED" };
+  }
   if (!saved.ok) return { ok: false, reason: "CHECKPOINT_FAILED", detail: saved.reason };
   for (const step of steps) {
     const paused = transitionStep(step.status, { type: "pause", writerStopped: true });

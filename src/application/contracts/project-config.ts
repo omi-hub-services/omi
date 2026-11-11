@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { slugSchema } from "./identifiers.js";
+import { absolutePathSchema, slugSchema } from "./identifiers.js";
 import { effortPolicySchema } from "./task-complexity.js";
 import { schemaVersionV1 } from "./schema-version.js";
 
@@ -41,6 +41,7 @@ export const projectConfigSchema = z
       max_rework_cycles: z.number().int().min(0).max(10),
     }),
     effort_policy: effortPolicySchema,
+    workspace: z.strictObject({ worktree_root: absolutePathSchema }).optional(),
     policies: z.strictObject({
       /** Gates that always need a human; a runtime field must not remove them. */
       mandatory_approvals: z.array(slugSchema),

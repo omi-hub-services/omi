@@ -21,12 +21,17 @@ import {
 } from "../infrastructure/processes/session-timing.js";
 import {
   createProfileStores,
+  createProjectRunCommandUseCases,
+  type RuntimeCompositionOptions,
   createRuntimeIpcServer,
   defaultSocketPath,
   readPackageVersion,
 } from "./container.js";
 
-export async function runSessionRuntime(projectDir: string): Promise<void> {
+export async function runSessionRuntime(
+  projectDir: string,
+  options: RuntimeCompositionOptions = {},
+): Promise<void> {
   wslPathSchema.parse(projectDir);
   if (resolve(projectDir) === resolve(import.meta.dirname, "../.."))
     throw new Error("cannot run inside framework source");
@@ -54,11 +59,8 @@ export async function runSessionRuntime(projectDir: string): Promise<void> {
       nextId: randomUUID,
       leaseMs: SESSION_LEASE_MS,
     });
-    const server = createRuntimeIpcServer({
-      socketPath: defaultSocketPath(projectDir),
-      selections: createProfileStores(database).selections,
-      identity: { runtimeVersion: readPackageVersion(), startedAt: session.lease.acquiredAt },
-    });
+    let server: ReturnType<typeof createRuntimeIpcServer> | undefined;
+    let composition: Awaited<ReturnType<typeof createProjectRunCommandUseCases>> | undefined;
     const runtime = await startSessionRuntime({
       session,
       owner: {
@@ -73,9 +75,29 @@ export async function runSessionRuntime(projectDir: string): Promise<void> {
             join(projectDir, ".omi-squad", "local", "backups", `migration-${randomUUID()}`),
           );
         applyMigrations(database, migrations);
+        composition = await createProjectRunCommandUseCases({
+          ...options,
+          projectDir,
+          database,
+          session,
+          // The callback runs only after startup has returned and the session accepts work.
+          startProcess: (worker) => runtime.startWorker(worker),
+        });
+        server = createRuntimeIpcServer({
+          socketPath: defaultSocketPath(projectDir),
+          selections: createProfileStores(database).selections,
+          identity: { runtimeVersion: readPackageVersion(), startedAt: session.lease.acquiredAt },
+          runs: composition.commands,
+          activeRuns: composition.runs,
+        });
         await server.start();
       },
-      stopAccepting: () => server.stop(),
+      stopAccepting: async () => {
+        await server?.stop();
+      },
+      afterWorkersStopped: async () => {
+        await composition?.drain();
+      },
     });
     if (runtime.accepting) process.stdout.write("ready\n");
     await runtime.result;

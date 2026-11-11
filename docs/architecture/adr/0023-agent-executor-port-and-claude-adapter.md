@@ -312,3 +312,16 @@ and login error text through the adapter, and concurrent Codex token refresh (se
    the first live re-run.
 5. Add and run an opt-in live test that goes through `ClaudeCodeExecutor` (the existing live test
    uses the PoC support code, not the adapter) on a real profile before relying on the adapter.
+
+## Decision update 2026-11-11
+
+PO-approved OMI-070 (#142) dispatch sources: `allowedScope.paths` comes only from usable
+repository-relative paths in the Issue's `## Implementation map` section, parsed without I/O.
+An empty/unusable section refuses dispatch with `IMPLEMENTATION_MAP_EMPTY`.
+`businessBaselineHash` is the subject hash of an active approved business approval covering the
+task (OMI-029, `approved-business-baseline`); absence refuses with
+`BUSINESS_APPROVAL_REQUIRED`. Issue text does not grant an approval.
+The task's Plan Key determines `<worktreeRoot>/omi-NNN`. The existing Git workspace root
+option is supplied through project configuration (`workspace.worktree_root`); when omitted,
+the adapter retains its existing sibling-directory default. No user home path is hard-coded.
+Runtime selects Plan Key directory naming; existing adapter callers retain task-slug naming.

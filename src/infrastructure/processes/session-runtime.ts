@@ -13,6 +13,7 @@ export async function startSessionRuntime(options: {
   owner: OwnerLivenessOptions;
   startAccepting(): Promise<void>;
   stopAccepting(): Promise<void>;
+  afterWorkersStopped?(): Promise<void>;
   renewPeriodMs?: number;
 }) {
   const watch = watchOwnerLiveness(options.owner);
@@ -97,6 +98,7 @@ export async function startSessionRuntime(options: {
       }),
     );
     try {
+      await options.afterWorkersStopped?.();
       options.session.record("session.interrupted", { reason: reason.reason, workers: exits });
       options.session.release();
     } finally {

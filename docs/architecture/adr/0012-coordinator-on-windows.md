@@ -74,3 +74,11 @@ wants that session to be the Coordinator, while the agents that do the work run 
 - Until the runtime exists (bootstrap), the PO's Windows session coordinates by hand: it prepares
   task prompts, runs independent reviews, merges and updates the Project, while task work runs in
   a Claude Code/Codex session inside WSL2.
+
+## Decision update 2026-11-11
+
+PO-approved decisions for OMI-070 (#142):
+
+`session new` and `coordinator switch` have handoff-only semantics: checkpoint and pause
+active work, then return the handoff. Relaunching the Coordinator and changing its login remain
+manual actions.

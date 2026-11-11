@@ -193,6 +193,21 @@
       ],
       "additionalProperties": false
     },
+    "workspace": {
+      "type": "object",
+      "properties": {
+        "worktree_root": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^\\/(?![\\s\\S]*(?:^|\\/)\\.\\.(?:\\/|$))[^\\\\\\r\\n\\u2028\\u2029]*$"
+        }
+      },
+      "required": [
+        "worktree_root"
+      ],
+      "additionalProperties": false
+    },
     "policies": {
       "type": "object",
       "properties": {

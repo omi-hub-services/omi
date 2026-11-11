@@ -29,7 +29,8 @@ export interface RunPlan {
 }
 
 export type CreateRunResult =
-  { readonly ok: true } | { readonly ok: false; readonly reason: "ACTIVE_RUN_EXISTS" };
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: "ACTIVE_RUN_EXISTS" | "PROJECT_LOCK_LOST" };
 
 /**
  * Runtime-owned run rows. `createRun` inserts the run (already running), its steps and one audit

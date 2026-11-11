@@ -1,19 +1,24 @@
 import { z } from "zod";
 import { identifierSchema, slugSchema } from "../../contracts/identifiers.js";
-import type { ExecutionHandle } from "../../contracts/agent-execution.js";
+import { executorSchema } from "../../contracts/model-capability.js";
+import type { AgentExecutor } from "../../ports/agent-executor.js";
+import { completeRunAttempt, type CompletionRouting } from "../../services/complete-run-attempt.js";
+import {
+  DispatchPlanningError,
+  type DispatchPlanningRefusal,
+} from "../../services/resolve-dispatch-task.js";
 import type { DispatchPlanner } from "../../ports/dispatch-planner.js";
 import type { RecoveryRunReader } from "../../ports/run-recovery.js";
-import { advanceRun } from "./advance-run.js";
 import type { AdvanceRunDependencies } from "./advance-run.js";
 import { dispatchStep } from "./dispatch-step.js";
 import type { DispatchRefusal, DispatchStepDependencies } from "./dispatch-step.js";
-import { recordStepResult } from "./record-step-result.js";
 
 const dispatchRunStepSchema = z.strictObject({ runId: identifierSchema, stepId: slugSchema });
 
 export interface DispatchRunStepDependencies
-  extends DispatchStepDependencies, Omit<AdvanceRunDependencies, "nextId"> {
+  extends DispatchStepDependencies, CompletionRouting, Omit<AdvanceRunDependencies, "nextId"> {
   readonly runs: RecoveryRunReader;
+  readonly executors?: Readonly<Record<"claude-code" | "codex", AgentExecutor>>;
   readonly planner: DispatchPlanner;
   /**
    * Called with the promise that finishes the attempt (collect, verify, record, advance). The
@@ -31,7 +36,12 @@ export type DispatchRunStepResult =
     }
   | {
       readonly ok: false;
-      readonly reason: DispatchRefusal | "RUN_NOT_FOUND" | "RUN_NOT_RUNNING" | "NOT_PLANNABLE";
+      readonly reason:
+        | DispatchRefusal
+        | DispatchPlanningRefusal
+        | "RUN_NOT_FOUND"
+        | "RUN_NOT_RUNNING"
+        | "NOT_PLANNABLE";
       readonly detail?: string;
     };
 
@@ -55,46 +65,48 @@ export async function dispatchRunStep(
     .find((candidate) => candidate.stepId === parsed.data.stepId && candidate.status === "ready");
   if (step === undefined) return { ok: false, reason: "STEP_NOT_READY" };
 
-  const request = await deps.planner.plan({
-    runId: run.id,
-    stepRunId: step.id,
-    stepId: step.stepId,
-    taskId: deps.plans.forRun(run.id)?.taskId ?? "",
-  });
+  let request: Readonly<Record<string, unknown>> | undefined;
+  try {
+    request = await deps.planner.plan({
+      runId: run.id,
+      stepRunId: step.id,
+      stepId: step.stepId,
+      taskId: deps.plans.forRun(run.id)?.taskId ?? "",
+    });
+  } catch (error) {
+    if (error instanceof DispatchPlanningError) return { ok: false, reason: error.reason };
+    throw error;
+  }
   if (request === undefined) return { ok: false, reason: "NOT_PLANNABLE" };
 
-  const dispatched = await dispatchStep(deps, { ...request, stepRunId: step.id });
+  return dispatchPlannedRunStep(deps, request, step.id, run.id);
+}
+
+/** Also used by checkpoint failover, which already owns a selector reservation. */
+export async function dispatchPlannedRunStep(
+  deps: DispatchRunStepDependencies,
+  request: Readonly<Record<string, unknown>>,
+  stepRunId: string,
+  runId: string,
+): Promise<DispatchRunStepResult> {
+  const executor =
+    request["selectedExecutor"] === undefined
+      ? deps.executor
+      : (deps.executors?.[executorSchema.parse(request["selectedExecutor"])] ?? deps.executor);
+  const bound = { ...deps, executor };
+  const dispatched = await dispatchStep(bound, { ...request, stepRunId });
   if (!dispatched.ok) {
+    if (typeof request["reservedAttemptId"] === "string") {
+      const attempt = deps.attempts.get(request["reservedAttemptId"]);
+      if (attempt === undefined || attempt.status === "pending")
+        deps.attempts.setStatus(request["reservedAttemptId"], "cancelled");
+    }
     return {
       ok: false,
       reason: dispatched.reason,
       ...(dispatched.detail === undefined ? {} : { detail: dispatched.detail }),
     };
   }
-  deps.track(finishAttempt(deps, dispatched.attempt.id, dispatched.handle, run.id));
-  return { ok: true, runId: run.id, stepRunId: step.id, attemptId: dispatched.attempt.id };
-}
-
-async function finishAttempt(
-  deps: DispatchRunStepDependencies,
-  attemptId: string,
-  handle: ExecutionHandle,
-  runId: string,
-): Promise<void> {
-  try {
-    const execution = await deps.executor.collectResult(handle);
-    recordStepResult(deps, { attemptId, execution, result: parseFinalMessage(execution) });
-    advanceRun({ ...deps, nextId: deps.nextId }, { runId });
-  } catch {
-    // The attempt stays running; resume/recovery reconciles it. The completion never rejects.
-  }
-}
-
-function parseFinalMessage(execution: { readonly finalMessage?: string | undefined }): unknown {
-  if (execution.finalMessage === undefined) return undefined;
-  try {
-    return JSON.parse(execution.finalMessage) as unknown;
-  } catch {
-    return undefined;
-  }
+  deps.track(completeRunAttempt(bound, dispatched.attempt.id, dispatched.handle, runId, request));
+  return { ok: true, runId, stepRunId, attemptId: dispatched.attempt.id };
 }

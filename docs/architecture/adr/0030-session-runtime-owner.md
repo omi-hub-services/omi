@@ -164,3 +164,10 @@ attempt and writer generation through the existing dispatcher. Partial recovery 
 retried from running state, with compare-and-swap and project fences preserving accepted results.
 The run remains running for the workflow's normal completion/delivery gates; recovery does not
 mark a task Done.
+
+## Decision update 2026-11-11
+
+PO-approved decisions for OMI-070 (#142):
+
+`session new` and `coordinator switch` are handoff-only: checkpoint and pause active runs
+and record the handoff. Neither command automatically relaunches a session or switches a login.

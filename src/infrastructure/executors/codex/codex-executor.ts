@@ -34,6 +34,7 @@ import { probeCodex } from "./codex-probe.js";
 import { CodexStreamState } from "./codex-stream.js";
 
 export interface CodexExecutorOptions {
+  startProcess?: typeof startSupervisedProcess;
   executable?: string;
   parentEnv?: NodeJS.ProcessEnv;
   graceMs?: number;
@@ -64,6 +65,7 @@ function isDirectory(path: string): boolean {
 /** Codex CLI details end at this adapter. Each attempt owns its process and temporary output. */
 export class CodexExecutor implements AgentExecutor {
   readonly executor = "codex" as const;
+  private readonly startProcess: typeof startSupervisedProcess;
   private readonly executable: string;
   private readonly parentEnv: NodeJS.ProcessEnv;
   private readonly graceMs: number;
@@ -72,6 +74,7 @@ export class CodexExecutor implements AgentExecutor {
   private readonly runs = new Map<string, Run>();
 
   constructor(options: CodexExecutorOptions = {}) {
+    this.startProcess = options.startProcess ?? startSupervisedProcess;
     this.executable = options.executable ?? "codex";
     this.parentEnv = options.parentEnv ?? process.env;
     this.graceMs = options.graceMs ?? 15_000;
@@ -127,7 +130,7 @@ export class CodexExecutor implements AgentExecutor {
       outputPath: join(outputDir, "message.txt"),
     };
     try {
-      run.supervised = await startSupervisedProcess({
+      run.supervised = await this.startProcess({
         executable: this.executable,
         args: buildCodexInvocationArgs(valid, run.outputPath),
         cwd: valid.workspace,

@@ -36,7 +36,8 @@ export type PlanRunResult =
         | "WORKFLOW_UNKNOWN"
         | "WORKFLOW_CYCLIC"
         | "TASK_NOT_FOUND"
-        | "ACTIVE_RUN_EXISTS";
+        | "ACTIVE_RUN_EXISTS"
+        | "PROJECT_LOCK_LOST";
     };
 
 /**

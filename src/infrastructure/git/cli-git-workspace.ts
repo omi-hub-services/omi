@@ -45,6 +45,8 @@ export interface GitWorkspaceOptions {
   readonly mainWorktreePath: string;
   /** Defaults to <main-checkout-name>-worktrees, in the main checkout's parent directory. */
   readonly worktreesRoot?: string;
+  /** Runtime convention: one workspace per Plan Key; branch names retain their task slug. */
+  readonly directoryNaming?: "task-slug" | "plan-key";
 }
 
 function validate(schema: z.ZodType, value: unknown): void {
@@ -94,7 +96,7 @@ export function createCliGitWorkspace(
     validate(taskSchema, id);
     checkRoot();
     const name = `${id.taskId}-${id.slug}`;
-    const path = join(root, name);
+    const path = join(root, options.directoryNaming === "plan-key" ? id.taskId : name);
     if (exists(path) && (!fs.lstatSync(path).isDirectory() || fs.realpathSync(path) !== path)) {
       throw new GitWorkspaceError("INVALID_PATH");
     }
