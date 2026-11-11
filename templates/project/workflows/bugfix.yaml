@@ -1,0 +1,54 @@
+schema_version: 1
+id: bugfix
+version: 1
+selection:
+  task_types: [bugfix]
+quality_policy: task-default
+# Reproduce the defect and identify its cause before implementing the fix.
+# regression-test evidence records the regression test failing without the fix and
+# passing on the tested head; a success summary alone is insufficient.
+# Rework uses the shared 2 + Architect + 2 controller, never a DAG back-edge.
+steps:
+  - id: reproduce
+    role: developer
+    needs: []
+    skills: [systematic-debugging, test-driven-development]
+    rules: [project-baseline, approval-gates, evidence-and-tests, architecture-boundaries]
+    capability_profile: coding
+    output_contract: analysis-result-v1
+  - id: implement
+    role: developer
+    needs: [reproduce]
+    skills: [test-driven-development, minimal-change]
+    rules: [project-baseline, approval-gates, evidence-and-tests, architecture-boundaries]
+    capability_profile: coding
+    output_contract: implementation-result-v1
+  - id: verify
+    role: qa
+    needs: [implement]
+    skills: [verification-before-completion]
+    rules: [project-baseline, approval-gates, evidence-and-tests]
+    capability_profile: testing
+    output_contract: verification-result-v1
+  - id: review
+    role: reviewer
+    needs: [verify]
+    skills: [independent-review]
+    rules: [project-baseline, approval-gates, evidence-and-tests]
+    capability_profile: review
+    output_contract: review-result-v1
+gates:
+  # Reuse the approved baseline; scope changes require a fresh PO decision.
+  - id: scope-approved
+    before: implement
+    policy: approved-business-baseline
+  # Evidence policies are required check ids, verified by recordStepResult against
+  # nonempty hashed artifacts; the Coordinator supplies them at dispatch.
+  - id: regression-test
+    after: verify
+    policy: regression-test
+  # Independent review, current head/base checks and confirmed develop merge use
+  # the existing delivery gates (ADR-0034); a worker cannot approve its own work.
+  - id: ready-to-merge
+    after: review
+    policy: develop-merge
