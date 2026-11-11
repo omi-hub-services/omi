@@ -61,15 +61,63 @@ export function createSqliteStateUnitOfWork(db: StateDatabase): StateUnitOfWork 
           if (lease.expires_at <= change.at) return { ok: false, reason: "LEASE_EXPIRED" };
         }
 
-        const updated = cas[target.kind].run(
-          target.toStatus,
-          change.at,
-          target.id,
-          target.expectedVersion,
-        );
-        if (updated.changes === 0) {
-          const found = exists[target.kind].get(target.id) !== undefined;
-          return { ok: false, reason: found ? "STALE_VERSION" : "NOT_FOUND" };
+        let newVersion: number;
+        if (target.kind === "approval_request" || target.kind === "approval_decision") {
+          const request = target.request;
+          const decision = request.decision;
+          const values = [
+            request.runId ?? null,
+            request.subject.kind,
+            request.subjectHash,
+            decision?.actor ?? null,
+            decision?.source ?? null,
+            decision?.decision ?? null,
+            request.subjectHash,
+            decision === undefined ? null : new Date(decision.decidedAt).toISOString(),
+            request.expiresAt === undefined ? null : new Date(request.expiresAt).toISOString(),
+            request.status,
+            request.version,
+            JSON.stringify(request),
+          ];
+          if (target.kind === "approval_request") {
+            if (db.prepare("SELECT 1 FROM approvals WHERE id = ?").get(request.id) !== undefined) {
+              return { ok: false, reason: "ALREADY_EXISTS" };
+            }
+            db.prepare(
+              `INSERT INTO approvals (run_id, kind, subject_hash, actor, channel, decision,
+              revision, decided_at, expires_at, status, version, request_json, id)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ).run(...values, request.id);
+          } else {
+            if (request.version !== target.expectedVersion + 1)
+              throw new Error("approval version must advance once");
+            const updated = db
+              .prepare(
+                `UPDATE approvals SET run_id=?, kind=?, subject_hash=?, actor=?,
+              channel=?, decision=?, revision=?, decided_at=?, expires_at=?, status=?, version=?, request_json=?
+              WHERE id=? AND version=?`,
+              )
+              .run(...values, request.id, target.expectedVersion);
+            if (updated.changes === 0) {
+              const found =
+                db.prepare("SELECT 1 FROM approvals WHERE id=?").get(request.id) !== undefined;
+              return { ok: false, reason: found ? "STALE_VERSION" : "NOT_FOUND" };
+            }
+          }
+          newVersion = request.version;
+        } else {
+          const updated = cas[target.kind].run(
+            target.toStatus,
+            change.at,
+            target.id,
+            target.expectedVersion,
+          );
+          if (updated.changes === 0) {
+            const found = exists[target.kind].get(target.id) !== undefined;
+            return { ok: false, reason: found ? "STALE_VERSION" : "NOT_FOUND" };
+          }
+
+          newVersion = target.expectedVersion + 1;
         }
 
         const appended = insertEvent.run(
@@ -95,7 +143,7 @@ export function createSqliteStateUnitOfWork(db: StateDatabase): StateUnitOfWork 
         }
         return {
           ok: true,
-          newVersion: target.expectedVersion + 1,
+          newVersion,
           eventSequence: Number(appended.lastInsertRowid),
         };
       });

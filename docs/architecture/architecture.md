@@ -383,6 +383,16 @@ Tuy nhiên process cùng Linux user có toàn quyền shell không phải sandbo
 
 CLI approval cần thao tác tương tác trực tiếp của PO hoặc nguồn GitHub actor đã allowlist; không cho worker chỉ ghi `approved=true` trong JSON để tạo approval. PO có thể duyệt trong hội thoại, nhưng bridge phải giữ evidence của thông điệp thật; nội dung mà Coordinator tự diễn giải không đủ cho phê duyệt chi phí/release/deploy. Khi không thể xác thực nguồn, yêu cầu PO xác nhận qua CLI tương tác hoặc GitHub.
 
+Approval lifecycle (ADR-0026) dùng request có `subjectId`, `subjectHash`, scope, `version` và status;
+`invalidated` là trạng thái stale. Cost approval gắn estimate hash và scope; business approval gắn
+baseline hash và scope. `checkExecutionApprovals` đọc request bền vững và subject hiện tại trước
+thực thi theo các requirement của plan tin cậy; thiếu một business/cost gate thì chưa được chạy.
+Decision command không nhận actor/source/authentication flag. CLI `approvals decide <id>
+--expected-version <n> --decision <approved|rejected>` yêu cầu xác nhận trên terminal của runtime;
+headless runtime dùng `--github-comment <numeric-id>` với actor được allowlist. GitHub comment
+phải là quyết định cấu trúc đúng request/hash/version (ADR-0026), không suy diễn từ Issue prose.
+
+
 ## 13. CLI surface đề xuất
 
 Tên executable là `omi-squad` trong package; project shim gọi bằng `.omi-squad/bin/omi`. Trong các ví dụ sau, `omi` là shorthand của shim, không yêu cầu cài global. Cú pháp là thiết kế cần triển khai.
