@@ -69,6 +69,13 @@
               "xhigh",
               "max"
             ]
+          },
+          "required_executor": {
+            "type": "string",
+            "enum": [
+              "claude-code",
+              "codex"
+            ]
           }
         },
         "required": [

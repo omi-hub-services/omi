@@ -6,6 +6,8 @@ import type { ApprovalSubjectReader } from "../application/ports/approval-store.
 import { createGitHubApprovalDecisionSource } from "../infrastructure/github/github-approval-decision-source.js";
 import { createInteractiveApprovalConfirmation } from "../infrastructure/processes/interactive-approval-decision.js";
 import { createSqliteApprovalStore } from "../infrastructure/persistence/sqlite/sqlite-approval-store.js";
+import { createSqliteProfileRegistry } from "../infrastructure/profiles/sqlite-profile-registry.js";
+import { createSqliteExecutorSelectionStore } from "../infrastructure/profiles/sqlite-executor-selection-store.js";
 import { createSqliteStateUnitOfWork } from "../infrastructure/persistence/sqlite/sqlite-state-unit-of-work.js";
 import type { StateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
 import { readFileSync } from "node:fs";
@@ -18,6 +20,12 @@ import { createCommandDispatcher } from "../interfaces/ipc/command-dispatcher.js
 import { sendCommand } from "../interfaces/ipc/ipc-client.js";
 import { createIpcServer } from "../interfaces/ipc/ipc-server.js";
 import type { IpcServer } from "../interfaces/ipc/ipc-server.js";
+
+/** Both stores share one migrated connection for atomic profile/account capacity reservations. */
+export function createProfileStores(database: StateDatabase) {
+  const registry = createSqliteProfileRegistry(database);
+  return { registry, selections: createSqliteExecutorSelectionStore(database, registry) };
+}
 
 /** Where the runtime listens for a project (architecture.md §4: `.omi-squad/local/ipc/`). */
 export function defaultSocketPath(projectDir: string): string {
