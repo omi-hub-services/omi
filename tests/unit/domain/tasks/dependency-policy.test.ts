@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyDependencies,
+  selectTaskBatch,
   isTaskInScope,
   isTaskImportable,
   validateTaskDependencies,
 } from "../../../../src/domain/tasks/dependency-policy.ts";
-import type { TaskNode } from "../../../../src/domain/tasks/dependency-policy.ts";
+import type { TaskNode, SchedulingTask } from "../../../../src/domain/tasks/dependency-policy.ts";
 
 const node = (id: string, status: TaskNode["status"], blockedBy: string[] = []): TaskNode => ({
   id,
@@ -112,6 +113,126 @@ describe("task scope and minimum import eligibility", () => {
       { body: "\n" },
     ]) {
       expect(isTaskImportable({ ...task, ...change })).toBe(false);
+    }
+  });
+});
+
+describe("bounded task selection", () => {
+  const task = (id: string, overrides: Partial<SchedulingTask> = {}): SchedulingTask => ({
+    id,
+    status: "ready",
+    blockedBy: [],
+    priority: "P1",
+    eligible: true,
+    ...overrides,
+  });
+  const capacity = { activeTaskIds: [], activeWorkers: 0, maxTasks: 2, maxWorkers: 4 };
+  const tasks = [task("c"), task("b", { priority: "P0" }), task("a", { priority: "P0" })];
+
+  it("orders priority then identity, independently of input order", () => {
+    expect(selectTaskBatch(tasks, capacity)).toEqual(["a", "b"]);
+    expect(selectTaskBatch([...tasks].reverse(), capacity)).toEqual(["a", "b"]);
+    expect(
+      selectTaskBatch([task("a", { priority: null }), task("z", { priority: "P2" })], capacity),
+    ).toEqual(["z", "a"]);
+  });
+  it("admits only Ready, eligible tasks", () => {
+    expect(
+      selectTaskBatch(
+        [
+          task("outside", { eligible: false, priority: "P0" }),
+          ...(
+            [
+              "pending",
+              "in_progress",
+              "blocked",
+              "blocked_by_dependency",
+              "done",
+              "cancelled",
+            ] as const
+          ).map((status) => task(status, { status })),
+          task("ready"),
+        ],
+        { ...capacity, maxTasks: 10 },
+      ),
+    ).toEqual(["ready"]);
+  });
+  it("counts active tasks outside scope, deduplicates reservations and supports configured task limits", () => {
+    expect(selectTaskBatch(tasks, { ...capacity, activeTaskIds: ["outside", "outside"] })).toEqual([
+      "a",
+    ]);
+    expect(selectTaskBatch(tasks, { ...capacity, activeTaskIds: ["outside", "other"] })).toEqual(
+      [],
+    );
+    expect(selectTaskBatch(tasks, { ...capacity, maxTasks: 3 })).toEqual(["a", "b", "c"]);
+    expect(selectTaskBatch(tasks, { ...capacity, maxTasks: 1 })).toEqual(["a"]);
+    expect(selectTaskBatch(tasks, { ...capacity, activeTaskIds: ["a"] })).toEqual(["b"]);
+  });
+  it("counts all project workers and reservations independently of task capacity", () => {
+    expect(selectTaskBatch(tasks, { ...capacity, activeWorkers: 3 })).toEqual(["a"]);
+    expect(selectTaskBatch(tasks, { ...capacity, activeWorkers: 4 })).toEqual([]);
+    expect(selectTaskBatch(tasks, { ...capacity, activeWorkers: 5 })).toEqual([]);
+    expect(selectTaskBatch(tasks, { ...capacity, maxWorkers: 1 })).toEqual(["a"]);
+    expect(
+      selectTaskBatch(tasks, { ...capacity, maxTasks: 3, maxWorkers: 5, activeWorkers: 2 }),
+    ).toEqual(["a", "b", "c"]);
+  });
+  it("propagates blocked and unfinished dependencies through the DAG without blocking independent work", () => {
+    const chain = [
+      task("root", { status: "blocked", eligible: false }),
+      task("middle", { blockedBy: ["root"] }),
+      task("leaf", { blockedBy: ["middle"] }),
+      task("free"),
+    ];
+    const byId = new Map(chain.map((entry) => [entry.id, entry]));
+    const leaf = chain[2];
+    if (leaf === undefined) throw new Error("missing leaf");
+    expect(classifyDependencies(leaf, byId)).toEqual({ kind: "blocked", blockedOn: ["middle"] });
+    expect(selectTaskBatch(chain, capacity)).toEqual(["free"]);
+    for (const status of [
+      "pending",
+      "ready",
+      "in_progress",
+      "blocked_by_dependency",
+      "cancelled",
+    ] as const) {
+      expect(
+        selectTaskBatch([task("root", { status, eligible: false }), ...chain.slice(1)], capacity),
+      ).toEqual(["free"]);
+    }
+    expect(
+      selectTaskBatch(
+        [
+          task("root", { status: "done", eligible: false }),
+          task("middle", { status: "done", blockedBy: ["root"] }),
+          ...chain.slice(2),
+        ],
+        capacity,
+      ),
+    ).toEqual(["free", "leaf"]);
+  });
+  it("rejects cycles, unknown edges and duplicates before returning any candidates", () => {
+    expect(() =>
+      selectTaskBatch(
+        [task("a", { blockedBy: ["b"] }), task("b", { blockedBy: ["a"] }), task("free")],
+        capacity,
+      ),
+    ).toThrow("DEPENDENCY_CYCLE");
+    expect(() => selectTaskBatch([task("a", { blockedBy: ["missing"] })], capacity)).toThrow(
+      "UNKNOWN_DEPENDENCY",
+    );
+    expect(() => selectTaskBatch([task("a"), task("a")], capacity)).toThrow("DUPLICATE_TASK");
+  });
+  it("refuses invalid capacity instead of silently disabling limits", () => {
+    for (const change of [
+      { maxTasks: 0 },
+      { maxWorkers: -1 },
+      { activeWorkers: -1 },
+      { activeWorkers: 0.5 },
+    ]) {
+      expect(() => selectTaskBatch(tasks, { ...capacity, ...change })).toThrow(
+        "Invalid scheduling capacity",
+      );
     }
   });
 });

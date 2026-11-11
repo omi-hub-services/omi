@@ -124,11 +124,16 @@ describe("GitHub task import read contract", () => {
     expect(imported.items[0]?.iterations).toHaveLength(2);
     expect(imported.snapshots.map((value) => value.issue.id)).toEqual(["I_1", "I_2", "I_3"]);
     expect(imported.snapshots[0]?.issue.blockedBy).toEqual(["I_2", "I_3"]);
-    expect(selectReadyTasks({ imported, states: [] })).toEqual([]);
+    expect(selectReadyTasks({ activeTaskIds: [], activeWorkers: 0, imported, states: [] })).toEqual(
+      [],
+    );
     expect(
       selectReadyTasks({
+        activeTaskIds: [],
+        activeWorkers: 0,
         imported,
         states: [
+          { id: "I_1", status: "ready" },
           { id: "I_2", status: "done" },
           { id: "I_3", status: "done" },
         ],
