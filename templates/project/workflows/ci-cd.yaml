@@ -1,0 +1,47 @@
+schema_version: 1
+id: ci-cd
+version: 1
+selection:
+  task_types: [ci-cd]
+quality_policy: task-default
+# Configure and verify a pipeline; production deployment remains a separate approval workflow.
+steps:
+  - id: configure-pipeline
+    role: developer
+    needs: []
+    skills: [minimal-change, test-driven-development]
+    rules: [project-baseline, approval-gates, architecture-boundaries]
+    capability_profile: coding
+    output_contract: implementation-result-v1
+  - id: verify
+    role: qa
+    needs: [configure-pipeline]
+    skills: [verification-before-completion]
+    rules: [project-baseline, approval-gates, evidence-and-tests]
+    capability_profile: testing
+    output_contract: verification-result-v1
+  - id: review
+    role: reviewer
+    needs: [verify]
+    skills: [independent-review]
+    rules: [project-baseline, approval-gates, evidence-and-tests]
+    capability_profile: review
+    output_contract: review-result-v1
+gates:
+  # Includes new paid runners, services and infrastructure. Unknown cost blocks execution.
+  - id: configure-cost-approved
+    before: configure-pipeline
+    policy: approved-cost
+  - id: verify-cost-approved
+    before: verify
+    policy: approved-cost
+  - id: review-cost-approved
+    before: review
+    policy: approved-cost
+  # Publish actual pipeline output pinned to the tested revision, not a proposed YAML file.
+  - id: pipeline-output
+    after: verify
+    policy: pipeline-output
+  - id: ready-to-merge
+    after: review
+    policy: develop-merge
