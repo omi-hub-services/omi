@@ -241,3 +241,23 @@ reads one listing and applies the result with one bash script, both through the 
   binding is to an account, not to a review run: anything that can post as the Coordinator's
   `gh` login — the Coordinator session itself, or a worker whose WSL `gh` login is that same
   account — could still post a `VERDICT` line. The separate worker token above closes that.
+
+## Linked-worktree cleanup (OMI-062)
+
+`flow.ts cleanup <branch>` reads `git worktree list --porcelain -z` in the configured WSL
+checkout. The first entry identifies the main checkout; a later entry with the task branch
+identifies its linked worktree. Before removing it, cleanup reads tracked and untracked changes
+there, excluding `node_modules`. Changes produce `refused:` with the file list and skip branch
+and log cleanup. The merged-into-`origin/develop` gate still applies.
+
+For a clean linked worktree, commands run from the main checkout: `git worktree remove`,
+`git merge --ff-only origin/develop` only when that checkout is on `develop`, then
+`git branch -d <branch>` (never force-delete on this path). A failed command stops the remaining
+steps and log retention. Cleanup does not switch the main checkout's branch. Its existing
+main-checkout cleanup behaviour is unchanged.
+
+The log-retention step runs from the surviving main checkout after worktree removal. If the
+configured WSL directory has already disappeared, the WSL branch step reports `done:` and log
+retention runs from `/`; it does not attempt to rediscover or modify a remaining branch in an
+unknown repository. An already absent branch also reports `done:`. A dry run only probes and
+prints the planned commands; it does not fetch, remove a worktree, update refs or change logs.

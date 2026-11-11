@@ -19,6 +19,7 @@ function fakeContext(): { ctx: Context; seen: Command[] } {
     const [sub, flag] = args;
     let stdout = "";
     if (isRunsListing(command)) stdout = "@@now\n2000000000\n@@root\n@@archive\n";
+    else if (sub === "worktree") stdout = "worktree /home/u/omi\0branch refs/heads/develop\0\0";
     else if (sub === "remote") stdout = "https://github.com/omi-hub-services/omi.git\n";
     else if (sub === "rev-parse") stdout = flag === "--abbrev-ref" ? `${BRANCH}\n` : "abc\n";
     return Promise.resolve({ code: 0, stdout, stderr: "" });
@@ -33,7 +34,7 @@ const gitArgs = (c: Command) => (c.args.at(-1) ?? "").split(" ").slice(1);
 /** The read-only ~/omi-runs listing that follows the branch cleanup (OMI-056). */
 const isRunsListing = (c: Command) => (c.args.at(-1) ?? "").includes("@@now");
 
-const READ_ONLY_GIT = new Set(["remote", "rev-parse", "status", "merge-base"]);
+const READ_ONLY_GIT = new Set(["remote", "rev-parse", "status", "merge-base", "worktree", "-d"]);
 const text = (c: Command) => [c.file, ...c.args].join(" ");
 
 describe("referencingPulls", () => {
@@ -93,6 +94,7 @@ describe("flow cleanup", () => {
     expect(await cleanup(ctx, BRANCH, true)).toBe(true);
     expect(seen.map(text).join("\n")).not.toMatch(/fetch|switch|merge --ff-only|branch -D/);
     for (const c of seen.filter((x) => !isRunsListing(x))) {
+      if ((c.args.at(-1) ?? "").startsWith("test -d")) continue;
       const args = c.file === "wsl.exe" ? gitArgs(c) : c.args;
       expect(args.includes("&&"), text(c)).toBe(false);
       expect(READ_ONLY_GIT.has(args[0] ?? ""), text(c)).toBe(true);
@@ -108,9 +110,119 @@ describe("flow cleanup", () => {
     const { ctx, seen } = fakeContext();
     expect(await cleanup(ctx, BRANCH, false)).toBe(true);
     const lines = seen.map(text);
-    expect(lines[0]).toMatch(/^wsl\.exe .* bash -lc git fetch --prune --quiet origin$/);
+    expect(lines.find((line) => line.includes("git fetch"))).toMatch(
+      /^wsl\.exe .* bash -lc git fetch --prune --quiet origin$/,
+    );
     expect(lines).toContain("git fetch --prune --quiet origin");
     expect(lines.filter((l) => l.includes("branch -D"))).toHaveLength(2);
+  });
+});
+
+describe("linked-worktree cleanup", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  function worktreeContext(
+    options: {
+      changes?: string;
+      mainBranch?: string;
+      absent?: boolean;
+      branchGone?: boolean;
+      fail?: string;
+    } = {},
+  ) {
+    const seen: Command[] = [];
+    let removed = options.absent ?? false;
+    let branchGone = options.branchGone ?? false;
+    const run: Runner = (command) => {
+      seen.push(command);
+      const payload = command.args.at(-1) ?? "";
+      let stdout = "";
+      let code = 0;
+      if (payload.startsWith("test -d")) code = removed ? 1 : 0;
+      else if (payload.includes("worktree list")) {
+        stdout = `worktree /main repo\0branch refs/heads/${options.mainBranch ?? "develop"}\0\0`;
+        if (!removed && !branchGone)
+          stdout += `worktree /task repo\0branch refs/heads/${BRANCH}\0\0`;
+      } else if (isRunsListing(command)) stdout = "@@now\n2000000000\n@@root\n@@archive\n";
+      else if (payload.includes("worktree remove")) removed = true;
+      else if (payload.includes("branch -d")) branchGone = true;
+      else if (payload.includes("status --porcelain --untracked-files=all"))
+        stdout = options.changes ?? "";
+      else if (payload.includes("rev-parse --verify")) {
+        code = branchGone ? 1 : 0;
+        stdout = "abc\n";
+      } else if (payload.includes("rev-parse")) stdout = `${BRANCH}\n`;
+      if (options.fail && payload.includes(options.fail)) code = 1;
+      return Promise.resolve({ code, stdout, stderr: code ? "failed" : "" });
+    };
+    const ctx: Context = {
+      run,
+      target: { viaWslExe: true, distro: "Ubuntu", repoDir: "/task repo" },
+      hostCwd: "/unused",
+      isWindows: false,
+    };
+    return { ctx, seen };
+  }
+
+  it("removes the linked worktree, fast-forwards main develop, safely deletes, then reads logs", async () => {
+    const { ctx, seen } = worktreeContext();
+    expect(await cleanup(ctx, BRANCH, false)).toBe(true);
+    const write = seen.find((c) => text(c).includes("worktree remove"));
+    expect(write?.args).toContain("/main repo");
+    expect(write?.args.at(-1)).toBe(
+      `git -C '/main repo' worktree remove -- '/task repo' && git -C '/main repo' merge --ff-only origin/develop && git -C '/main repo' branch -d ${BRANCH}`,
+    );
+    expect(seen.at(-1)?.args).toContain("/main repo");
+    expect(isRunsListing(seen.at(-1) ?? { file: "", args: [] })).toBe(true);
+    expect(seen.map(text).join("\n")).not.toMatch(/switch|branch -D/);
+    seen.length = 0;
+    expect(await cleanup(ctx, BRANCH, false)).toBe(true);
+    expect(seen.map(text).join("\n")).not.toMatch(/fetch|worktree remove|branch -d/);
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).toContain("done:");
+  });
+
+  it.each([" M tracked.ts\n", "?? prompt.md\n"])(
+    "refuses changes with the file list: %s",
+    async (changes) => {
+      const { ctx, seen } = worktreeContext({ changes });
+      expect(await cleanup(ctx, BRANCH, false)).toBe(false);
+      expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain(changes.trimEnd());
+      expect(seen.map(text).join("\n")).not.toMatch(/fetch|worktree remove|branch -d|@@now/);
+      expect(seen.map(text).join("\n")).toContain(":(exclude)**/node_modules/**");
+    },
+  );
+
+  it("does not fast-forward a main checkout on another task", async () => {
+    const { ctx, seen } = worktreeContext({ mainBranch: "task/omi-063-other" });
+    expect(await cleanup(ctx, BRANCH, false)).toBe(true);
+    expect(seen.map(text).join("\n")).not.toContain("merge --ff-only");
+    expect(seen.map(text).join("\n")).toContain("branch -d");
+  });
+
+  it("dry-run prints removal and safe deletion but only reads", async () => {
+    const { ctx, seen } = worktreeContext();
+    expect(await cleanup(ctx, BRANCH, true)).toBe(true);
+    expect(seen.map(text).join("\n")).not.toMatch(/fetch|worktree remove|branch -d/);
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).toContain("worktree remove");
+    expect(output).toContain("branch -d");
+  });
+
+  it("an absent branch is done without deleting anything", async () => {
+    const { ctx, seen } = worktreeContext({ branchGone: true });
+    expect(await cleanup(ctx, BRANCH, true)).toBe(true);
+    expect(seen.map(text).join("\n")).not.toMatch(/worktree remove|branch -d/);
+    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).toContain("already gone");
+  });
+
+  it("a failed worktree command skips log retention", async () => {
+    const { ctx, seen } = worktreeContext({ fail: "worktree remove" });
+    expect(await cleanup(ctx, BRANCH, false)).toBe(false);
+    expect(seen.some(isRunsListing)).toBe(false);
   });
 });
 

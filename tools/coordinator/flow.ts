@@ -42,7 +42,7 @@ import {
   type ReferencingPull,
   type StatusField,
 } from "./flow-plans.ts";
-import { localGit, probeBranch, wslGit, type ProbeOptions } from "./git-probe.ts";
+import { localGit, probeBranch, probeCleanupWsl, wslGit, type ProbeOptions } from "./git-probe.ts";
 import { graphql, readProject, readRequiredChecks } from "./github-reads.ts";
 import { parsePull, PULL_FIELDS, type Blocker } from "./github-snapshot.ts";
 import { judgePromotion, promotableBacklog } from "./promote.ts";
@@ -298,14 +298,22 @@ async function probeHost(ctx: Context, branch: string, options: ProbeOptions) {
 export async function cleanup(ctx: Context, branch: string, dryRun: boolean): Promise<boolean> {
   const label = `cleanup ${branch}`;
   const options = { fetch: !dryRun };
-  const wslState = await probeWsl(ctx, branch, options);
-  const wslOk = await execute(ctx, `${label} (wsl)`, planCleanup(branch, "wsl", wslState), dryRun);
+  assertTaskBranch(branch);
+  const wsl = await probeCleanupWsl(ctx.run, ctx.target, branch, options);
+  const cleanupCtx = { ...ctx, target: wsl.target };
+  const wslOk = await execute(
+    cleanupCtx,
+    `${label} (wsl)`,
+    planCleanup(branch, "wsl", wsl.state),
+    dryRun,
+  );
+  if (!wslOk) return false;
   const hostState = await probeHost(ctx, branch, options);
   const hostPlan = planCleanup(branch, "host", hostState);
   const hostOk = await execute(ctx, `${label} (host)`, hostPlan, dryRun);
-  if (!wslOk || !hostOk) return false;
+  if (!hostOk) return false;
   const task = /^task\/omi-(\d+)-/.exec(branch)?.[1];
-  return task === undefined || (await retainRuns(ctx, label, new Set([task]), dryRun));
+  return task === undefined || (await retainRuns(cleanupCtx, label, new Set([task]), dryRun));
 }
 
 /**

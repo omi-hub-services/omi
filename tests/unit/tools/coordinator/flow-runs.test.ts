@@ -64,6 +64,8 @@ function context(statuses: Record<number, string> = {}) {
     let stdout = "";
     if (command.file === "gh") stdout = JSON.stringify({ data: snapshot });
     else if (isListing(command)) stdout = LISTING;
+    else if ((command.args.at(-1) ?? "").includes("worktree list"))
+      stdout = "worktree /home/u/omi\0branch refs/heads/develop\0\0";
     else if (command.args.includes("remote")) stdout = "";
     return Promise.resolve({ code: 0, stdout, stderr: "" });
   };
