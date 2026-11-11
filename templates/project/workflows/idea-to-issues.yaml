@@ -1,0 +1,42 @@
+schema_version: 1
+id: idea-to-issues
+version: 1
+selection:
+  task_types: [idea]
+quality_policy: task-default
+steps:
+  - id: clarify-idea
+    role: analyst
+    needs: []
+    skills: [requirements-analysis]
+    rules: [project-baseline]
+    capability_profile: analysis
+    output_contract: analysis-result-v1
+  - id: define-requirements
+    role: analyst
+    needs: [clarify-idea]
+    skills: [requirements-analysis]
+    rules: [project-baseline]
+    capability_profile: analysis
+    output_contract: analysis-result-v1
+  - id: decompose
+    role: architect
+    needs: [define-requirements]
+    skills: [requirements-analysis, minimal-change]
+    rules: [project-baseline, architecture-boundaries, issue-decomposition]
+    capability_profile: analysis
+    output_contract: analysis-result-v1
+  - id: review
+    role: reviewer
+    needs: [decompose]
+    skills: [independent-review]
+    rules: [project-baseline, issue-decomposition]
+    capability_profile: review
+    output_contract: review-result-v1
+gates:
+  - id: requirements-approved
+    before: decompose
+    policy: approved-business-baseline
+  - id: issues-approved
+    after: review
+    policy: approved-business-baseline
