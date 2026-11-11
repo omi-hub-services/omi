@@ -75,3 +75,45 @@ export function classifyDependencies(
   if (waitingOn.length > 0) return { kind: "waiting", waitingOn };
   return { kind: "satisfied" };
 }
+
+export type TaskScope =
+  | { readonly kind: "milestone"; readonly milestoneId: string }
+  | { readonly kind: "iteration"; readonly fieldId: string; readonly iterationId: string }
+  | { readonly kind: "list"; readonly issueIds: readonly string[] };
+
+export interface TaskScopeFacts {
+  readonly id: string;
+  readonly milestoneId: string | null;
+  readonly iterations: readonly { readonly fieldId: string; readonly iterationId: string }[];
+}
+
+/** IDs only: names, body references and dependency reachability never expand the scope. */
+export function isTaskInScope(task: TaskScopeFacts, scope: TaskScope): boolean {
+  switch (scope.kind) {
+    case "milestone":
+      return task.milestoneId === scope.milestoneId;
+    case "iteration":
+      return task.iterations.some(
+        (value) => value.fieldId === scope.fieldId && value.iterationId === scope.iterationId,
+      );
+    case "list":
+      return scope.issueIds.includes(task.id);
+  }
+}
+
+/** Minimum import eligibility (ADR-0032); semantic readiness and approvals remain separate gates. */
+export function isTaskImportable(task: {
+  readonly kind: string;
+  readonly archived: boolean;
+  readonly state: string;
+  readonly title: string;
+  readonly body: string;
+}): boolean {
+  return (
+    task.kind === "Issue" &&
+    !task.archived &&
+    task.state === "OPEN" &&
+    task.title.trim() !== "" &&
+    task.body.trim() !== ""
+  );
+}

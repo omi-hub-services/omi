@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyDependencies,
+  isTaskInScope,
+  isTaskImportable,
   validateTaskDependencies,
 } from "../../../../src/domain/tasks/dependency-policy.ts";
 import type { TaskNode } from "../../../../src/domain/tasks/dependency-policy.ts";
@@ -75,5 +77,41 @@ describe("classifyDependencies", () => {
   it("leaves a task independent of the stopped one untouched", () => {
     const map = byId([node("a", "blocked"), node("free", "ready")]);
     expect(classifyDependencies(node("free", "ready"), map)).toEqual({ kind: "satisfied" });
+  });
+});
+
+describe("task scope and minimum import eligibility", () => {
+  const facts = {
+    id: "issue",
+    milestoneId: "milestone",
+    iterations: [{ fieldId: "field", iterationId: "iteration" }],
+  };
+  it("matches scope by opaque identity, including the iteration field", () => {
+    expect(isTaskInScope(facts, { kind: "milestone", milestoneId: "milestone" })).toBe(true);
+    expect(isTaskInScope(facts, { kind: "milestone", milestoneId: "other" })).toBe(false);
+    expect(
+      isTaskInScope(facts, { kind: "iteration", fieldId: "field", iterationId: "iteration" }),
+    ).toBe(true);
+    expect(
+      isTaskInScope(facts, { kind: "iteration", fieldId: "other", iterationId: "iteration" }),
+    ).toBe(false);
+    expect(
+      isTaskInScope(facts, { kind: "iteration", fieldId: "field", iterationId: "other" }),
+    ).toBe(false);
+    expect(isTaskInScope(facts, { kind: "list", issueIds: [] })).toBe(false);
+    expect(isTaskInScope(facts, { kind: "list", issueIds: ["issue"] })).toBe(true);
+  });
+  it("requires a real, active, open Issue with nonblank title and body", () => {
+    const task = { kind: "Issue", archived: false, state: "OPEN", title: "Title", body: "Body" };
+    expect(isTaskImportable(task)).toBe(true);
+    for (const change of [
+      { kind: "DraftIssue" },
+      { archived: true },
+      { state: "CLOSED" },
+      { title: " " },
+      { body: "\n" },
+    ]) {
+      expect(isTaskImportable({ ...task, ...change })).toBe(false);
+    }
   });
 });
