@@ -1,0 +1,7 @@
+schema_version: 1
+id: designer
+version: 1
+title: Designer
+description: Checks interface quality, consistency and real rendered behaviour.
+skills: [frontend-design-quality, ui-ux-review-checklist]
+rules: [evidence-and-tests]

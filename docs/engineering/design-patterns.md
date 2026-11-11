@@ -127,6 +127,8 @@ Khi API timeout:
 4. Nếu chắc chắn chưa xảy ra, retry theo backoff.
 5. Nếu không đủ bằng chứng, chờ đối soát hoặc PO; không đoán.
 
+Trạng thái của operation: `pending` → `in_flight` (ghi trước khi gọi) → `succeeded`, hoặc `outcome_unknown` khi timeout/crash. Từ `outcome_unknown` chỉ có hai lối ra, đều qua đọc remote: tìm thấy marker thì `succeeded`, không thấy sau grace period thì quay lại `pending`. Máy trạng thái ở `domain/delivery/outbox-operation.ts`, quyết định ở ADR-0025.
+
 Không dùng thuật ngữ exactly-once như bảo đảm tuyệt đối. Local unique constraint chỉ ngăn duplicate local; API đã nhận request nhưng mất response vẫn cần remote reconciliation.
 
 ## 8. Lease, fencing và concurrency

@@ -4,6 +4,8 @@ import type { StepStatus } from "../../domain/runs/step-run.js";
 
 /** The state row to move, guarded by compare-and-swap on its `version`. */
 export type StateTarget =
+  /** Init may queue a remote intent before a project/run row exists. Requires `outbox`. */
+  | { readonly kind: "outbox_intent" }
   | { readonly kind: "approval_request"; readonly request: ApprovalRequest }
   | {
       readonly kind: "approval_decision";

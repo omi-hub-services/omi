@@ -1,0 +1,7 @@
+schema_version: 1
+id: reviewer
+version: 1
+title: Reviewer
+description: Reviews a fixed revision independently of the author and reports findings.
+skills: [independent-review, receiving-code-review]
+rules: [architecture-boundaries, evidence-and-tests]
