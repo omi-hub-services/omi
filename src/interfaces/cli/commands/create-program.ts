@@ -1,3 +1,5 @@
+import type { SessionLauncher } from "../../../application/ports/session-launcher.js";
+import { registerSessionCommands } from "./session-commands.js";
 import { Command, CommanderError } from "commander";
 import { EXIT_CODES } from "../presenters/exit-codes.js";
 import type { ExitCode } from "../presenters/exit-codes.js";
@@ -12,6 +14,7 @@ export interface CliEnvironment extends CliOutput {
   readonly defaultSocketPath: string;
   readonly timeoutMs: number;
   readonly version: string;
+  readonly launchSession?: SessionLauncher;
 }
 
 /** Builds the Commander program. Every command is registered here and nowhere else. */
@@ -33,6 +36,7 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
       outputError: () => undefined,
     });
   registerStatusCommand(program, context);
+  registerSessionCommands(program, context, environment.launchSession);
   registerApprovalCommands(program, context);
   return program;
 }
