@@ -4,15 +4,8 @@
 // gh calls: one GraphQL query (plus one per extra 100 Project items) and one REST read of the
 // required checks; one wsl.exe call for workers, which degrades to "unavailable" on failure.
 import { parseArgs } from "node:util";
-import {
-  OWNER,
-  PROJECT_NUMBER,
-  QUOTA_SETTINGS,
-  REPO,
-  WORKER_PROFILES,
-  wslTarget,
-} from "./coordinator-settings.ts";
-import { graphql, readRequiredChecks } from "./github-reads.ts";
+import { QUOTA_SETTINGS, WORKER_PROFILES, wslTarget } from "./coordinator-settings.ts";
+import { readProject, readRequiredChecks } from "./github-reads.ts";
 import {
   classifyReview,
   findMismatches,
@@ -20,15 +13,14 @@ import {
   ignoredVerdictWarnings,
   issueReadinessWarnings,
   linkedIssue,
-  parseSnapshotPage,
   partitionReady,
-  SNAPSHOT_QUERY,
   summarizeChecks,
   type OpenPull,
   type ProjectItem,
   type ReadyTask,
 } from "./github-snapshot.ts";
-import { createProcessRunner, type Runner } from "./process-runner.ts";
+import { createProcessRunner } from "./process-runner.ts";
+import { promotableBacklog } from "./promote.ts";
 import { formatQuotaSection, readQuota, type QuotaReport } from "./quota.ts";
 import { readWorkers, type Workers } from "./wsl-workers.ts";
 
@@ -39,29 +31,6 @@ const ACTIVE = new Set([
   "Waiting Resource",
   "Blocked",
 ]);
-
-async function readProject(run: Runner) {
-  const items: ProjectItem[] = [];
-  let pulls: readonly OpenPull[] = [];
-  let title: string;
-  let after: string | null = null;
-  do {
-    const page = parseSnapshotPage(
-      await graphql(run, SNAPSHOT_QUERY, {
-        owner: OWNER,
-        repo: REPO,
-        project: PROJECT_NUMBER,
-        after,
-        withPulls: after === null,
-      }),
-    );
-    title = page.projectTitle;
-    items.push(...page.items);
-    if (page.pulls) pulls = page.pulls;
-    after = page.nextCursor;
-  } while (after !== null);
-  return { title, items, pulls };
-}
 
 const bare = (title: string) => title.replace(/^\[[A-Z]+-\d+\]\s*/, "");
 const ref = (i: ProjectItem) =>
@@ -114,6 +83,13 @@ function renderText(report: ReturnType<typeof buildReport>): string {
     if (!ACTIVE.has(g.status) || g.items.length === 0) continue;
     out.push(`${g.status}:`);
     for (const i of g.items) out.push(`  ${short(ref(i))} ${i.priority ?? ""}`.trimEnd());
+  }
+  out.push("Backlog, all blockers closed (priority order, ready to promote):");
+  if (report.backlog.length === 0) out.push("  (none)");
+  for (const r of report.backlog) {
+    out.push(
+      `  #${String(r.number)} ${r.planKey ?? ""} ${r.priority ?? "-"} ${r.milestone?.split(" ")[0] ?? "-"} ${short(bare(r.title), 60)}`,
+    );
   }
   out.push("Ready, all blockers closed (priority order):");
   if (report.ready.length === 0) out.push("  (none)");
@@ -186,6 +162,7 @@ function buildReport(
     groups: groupByStatus(project.items),
     ready: unblocked.map(readyView),
     readyBlocked: blocked.map(readyView),
+    backlog: promotableBacklog(project.items).map(readyView),
     requiredChecks: required,
     pulls,
     mismatches: [
