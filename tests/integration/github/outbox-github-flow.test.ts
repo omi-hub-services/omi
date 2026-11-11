@@ -237,7 +237,7 @@ describe("outbox → GitHub: one operation marker, one remote effect", () => {
       clock.ms += GRACE_MS;
       await flushOutbox(deps);
 
-      // Issue 7 had no such comment, so the operation was sent and landed on issue 7 exactly once.
+      // Issue 7 had no such comment, so the operation was sent and landed on issue 7 once, with no duplicate.
       expect(github.comments.filter((c) => c.issueNumber === 7)).toHaveLength(1);
       expect(row("comment:run-1:done").state).toBe("succeeded");
     });
@@ -273,7 +273,7 @@ describe("outbox → GitHub: one operation marker, one remote effect", () => {
   });
 
   describe("GitHub offline", () => {
-    it("keeps local state while offline and, once online, a later sync creates each effect exactly once", async () => {
+    it("keeps local state while offline and, once online, a later sync creates each effect without a duplicate", async () => {
       enqueue("comment:run-1:a", COMMENT);
       enqueue("comment:run-1:b", { ...COMMENT, body: "Second" });
       github.offline = true;
