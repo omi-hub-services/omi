@@ -5,6 +5,22 @@ import {
   projectOwnerSchema,
 } from "../../contracts/project-initialization.js";
 import type { InspectedProject } from "../../contracts/project-initialization.js";
+import type {
+  CodebaseDetection,
+  OnboardingFileReport,
+  OnboardingVariant,
+} from "../../contracts/project-onboarding.js";
+import type { CodebaseReader } from "../../ports/codebase-reader.js";
+import type {
+  OnboardingFileStore,
+  OnboardingTemplateSource,
+} from "../../ports/onboarding-file-store.js";
+import { detectCodebase } from "../../services/detect-codebase.js";
+import {
+  ONBOARDING_PATHS,
+  renderCodebaseConfig,
+  renderOnboardingPlan,
+} from "../../services/render-onboarding-files.js";
 import { ProjectInitializationError } from "../../ports/github-project-reader.js";
 import type { GithubProjectReader } from "../../ports/github-project-reader.js";
 import type { ProjectConfigStore } from "../../ports/project-config-store.js";
@@ -19,6 +35,12 @@ export interface InitializeProjectDeps {
   readonly config: ProjectConfigStore;
   /** Required only to apply a template; runtime supplies its durable outbox dependencies. */
   readonly templateQueue?: ProjectTemplateQueueDeps;
+  /** Required only for `source.kind: codebase`; bootstrap pins both to the target repository. */
+  readonly onboarding?: {
+    readonly codebase: CodebaseReader;
+    readonly files: OnboardingFileStore;
+    readonly templates: OnboardingTemplateSource;
+  };
 }
 
 export type InitializeProjectResult =
@@ -42,6 +64,14 @@ export type InitializeProjectResult =
       readonly operationKey: string;
       readonly queue?: { state: string; remoteIdentity: string | null };
       readonly next: "inspect-copy-and-map-ids";
+    }
+  | {
+      readonly kind: "codebase";
+      readonly status: "preview" | "applied";
+      readonly variant: OnboardingVariant;
+      readonly detection: CodebaseDetection;
+      /** One entry per target file; an existing file is `kept`, never replaced. */
+      readonly files: readonly OnboardingFileReport[];
     };
 
 /** Preview by default. Existing config is a merge proposal only, even with apply=true. */
@@ -52,6 +82,45 @@ export async function initializeProject(
   const request = initializeProjectSchema.parse(input);
   const current = await deps.config.read();
   const existing = current === undefined ? undefined : projectConfigSchema.parse(current);
+  if (request.source.kind === "codebase") {
+    if (deps.onboarding === undefined)
+      throw new ProjectInitializationError("ONBOARDING_DEPENDENCIES_REQUIRED");
+    const { variant } = request.source;
+    const { codebase, files, templates } = deps.onboarding;
+    const detection = await detectCodebase(codebase);
+    const targets = [
+      { path: ONBOARDING_PATHS.workflow(variant), content: await templates.workflow(variant) },
+      { path: ONBOARDING_PATHS.codebase, content: renderCodebaseConfig(detection) },
+      { path: ONBOARDING_PATHS.plan, content: renderOnboardingPlan(variant, detection) },
+    ];
+    const reports: OnboardingFileReport[] = [];
+    // project.yaml goes through its own store (validation, credential check, exclusive publish).
+    if (existing !== undefined) reports.push({ path: ONBOARDING_PATHS.config, action: "kept" });
+    else if (!request.apply)
+      reports.push({ path: ONBOARDING_PATHS.config, action: "would-create" });
+    else {
+      const written = await deps.config.create(request.config);
+      reports.push({
+        path: ONBOARDING_PATHS.config,
+        action: written === "created" ? "created" : "kept",
+      });
+    }
+    for (const target of targets) {
+      if (await files.exists(target.path)) reports.push({ path: target.path, action: "kept" });
+      else if (!request.apply) reports.push({ path: target.path, action: "would-create" });
+      else {
+        const written = await files.create(target.path, target.content);
+        reports.push({ path: target.path, action: written === "created" ? "created" : "kept" });
+      }
+    }
+    return {
+      kind: "codebase",
+      status: request.apply ? "applied" : "preview",
+      variant,
+      detection,
+      files: reports,
+    };
+  }
   if (request.source.kind === "template") {
     const source = request.source;
     const template = await inspectProject(deps.github, source.template);
