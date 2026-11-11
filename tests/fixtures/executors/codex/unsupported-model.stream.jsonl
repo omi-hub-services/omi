@@ -1,0 +1,2 @@
+{"type":"thread.started","thread_id":"thread-model"}
+{"type":"turn.failed","error":{"message":"The model 'fixture-model' is not supported when using Codex with a ChatGPT account.","code":"unsupported_model"}}
