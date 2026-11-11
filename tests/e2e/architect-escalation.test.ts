@@ -24,7 +24,12 @@ import { createSqliteStateUnitOfWork } from "../../src/infrastructure/persistenc
 import { createSqliteReworkRunReader } from "../../src/infrastructure/persistence/sqlite/sqlite-rework-run-reader.ts";
 import { createSqliteRecoveryRunReader } from "../../src/infrastructure/persistence/sqlite/sqlite-recovery-run-reader.ts";
 import { issue, item, request } from "../fixtures/github/task-import.ts";
-import { dispatchInput, h, rig } from "../unit/application/use-cases/runs/run-fakes.ts";
+import {
+  dispatchInput,
+  h,
+  rig,
+  skillEvidence,
+} from "../unit/application/use-cases/runs/run-fakes.ts";
 
 it("persists 2 + Architect + 2 across restart, excludes infrastructure, and runs an independent task", async () => {
   const directory = mkdtempSync(join(tmpdir(), "omi-rework-"));
@@ -157,6 +162,9 @@ it("persists 2 + Architect + 2 across restart, excludes infrastructure, and runs
       );
       if (!dispatched.ok) throw new Error(dispatched.reason);
       const execution = await r.executor.collectResult(dispatched.handle);
+      const skillProof = skillEvidence(dispatched.attempt, (path, text) =>
+        r.artifacts.publish(path, text),
+      );
       expect(
         recordStepResult(workerDeps, {
           attemptId: dispatched.attempt.id,
@@ -171,8 +179,9 @@ it("persists 2 + Architect + 2 across restart, excludes infrastructure, and runs
               role === "architect"
                 ? "Root cause: inconsistent input assumptions; fix the validation boundary."
                 : "Quality round evaluated",
-            artifacts: [],
+            artifacts: skillProof.artifacts,
             checks: [],
+            skillsApplied: skillProof.skillsApplied,
             findings: [],
           },
         }),

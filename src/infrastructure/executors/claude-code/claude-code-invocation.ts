@@ -8,8 +8,9 @@ export type SettingSource = "user" | "project" | "local";
 /**
  * Settings layers a worker loads. `user` is the profile's own `settings.json`: its hooks,
  * permission rules and default model run inside `-p` and made profiles behave differently
- * (ADR-0013 findings 3 and 4). Workers load only the task worktree's `project` and `local`
- * layers, so CLAUDE.md and project settings of the trusted worktree still apply. ADR-0023.
+ * (ADR-0013 findings 3 and 4), and so do the plugins the profile enables there. Workers load
+ * only the task worktree's `project` and `local` layers, so CLAUDE.md and project settings of
+ * the trusted worktree still apply. ADR-0023, ADR-0019 (decision update 2026-11-11).
  */
 export const DEFAULT_SETTING_SOURCES: readonly SettingSource[] = ["project", "local"];
 
@@ -51,6 +52,8 @@ export function buildClaudeInvocationArgs(
     "--verbose",
     "--no-session-persistence",
     "--strict-mcp-config",
+    // Workers get their skills inlined in the prompt; no native skill may be listed (OMI-072).
+    "--disable-slash-commands",
     "--setting-sources",
     sources.join(","),
     "--model",

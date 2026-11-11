@@ -14,6 +14,10 @@ import type {
 import type { UncommittedManifest } from "../../../../../src/application/contracts/checkpoint.ts";
 import type { ResolutionCatalog } from "../../../../../src/application/contracts/resolution-catalog.ts";
 import type { AgentExecutor } from "../../../../../src/application/ports/agent-executor.ts";
+import type {
+  SkillContent,
+  SkillSource,
+} from "../../../../../src/application/ports/skill-source.ts";
 import { AgentExecutorError } from "../../../../../src/application/ports/agent-executor.ts";
 import type {
   AttemptRecord,
@@ -64,6 +68,44 @@ export function catalog(): ResolutionCatalog {
       { id: "architecture-boundaries", version: "1", sha256: h("d"), mandatory: false },
       { id: "project-baseline", version: "4", sha256: h("e"), mandatory: true },
     ],
+  };
+}
+
+/** Skill text the fake source serves; the hash is the one the catalog pins unless overridden. */
+export class FakeSkillSource implements SkillSource {
+  readonly files = new Map<string, SkillContent>();
+  constructor() {
+    this.files.set("tdd", {
+      sha256: h("a"),
+      skillMd: "# TDD\nWrite the failing test first.\n",
+      bundledFiles: [".omi-squad/skills/tdd/references/cycle.md"],
+    });
+    this.files.set("debugging", {
+      sha256: h("c"),
+      skillMd: "# Debugging\nReproduce first.\n",
+      bundledFiles: [],
+    });
+  }
+  read(id: string): SkillContent | undefined {
+    return this.files.get(id);
+  }
+}
+
+/**
+ * What a worker's result must carry for every skill its attempt was given: an evidence artifact
+ * per skill (publish it with the result's `artifacts`) and the matching `skillsApplied` entries.
+ */
+export function skillEvidence(
+  attempt: { readonly skills: readonly { readonly id: string }[]; readonly artifactRoot: string },
+  publish: (path: string, text: string) => ArtifactReference,
+) {
+  const entries = attempt.skills.map((skill) => ({
+    id: skill.id,
+    artifact: publish(`${attempt.artifactRoot}/skill-${skill.id}.md`, `applied ${skill.id}`),
+  }));
+  return {
+    artifacts: entries.map((entry) => entry.artifact),
+    skillsApplied: entries.map((entry) => ({ id: entry.id, evidenceRef: entry.artifact.path })),
   };
 }
 
@@ -307,8 +349,10 @@ export interface Rig {
   workspaces: FakeWorkspaces;
   executor: FakeExecutor;
   unitOfWork: FakeUnitOfWork;
+  skills: FakeSkillSource;
   deps: {
     catalog: ResolutionCatalog;
+    skills: FakeSkillSource;
     steps: FakeSteps;
     attempts: FakeAttempts;
     artifacts: FakeArtifacts;
@@ -335,8 +379,10 @@ export function rig(stepStatus: StepRunRecord["status"] = "ready"): Rig {
   const workspaces = new FakeWorkspaces();
   const executor = new FakeExecutor();
   const unitOfWork = new FakeUnitOfWork(steps, workspaces.leases);
+  const skills = new FakeSkillSource();
   let n = 0;
   return {
+    skills,
     steps,
     attempts,
     artifacts,
@@ -345,6 +391,7 @@ export function rig(stepStatus: StepRunRecord["status"] = "ready"): Rig {
     unitOfWork,
     deps: {
       catalog: catalog(),
+      skills,
       steps,
       attempts,
       artifacts,

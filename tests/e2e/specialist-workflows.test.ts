@@ -12,6 +12,7 @@ import { recordApproval } from "../../src/application/use-cases/approvals/record
 import { validateWorkflowGraph } from "../../src/domain/workflows/workflow-policy.ts";
 import type { ApprovalSubject } from "../../src/domain/approvals/approval.ts";
 import { loadWorkflowTemplate } from "../../src/infrastructure/config/load-workflow-template.ts";
+import { createFileSkillSource } from "../../src/infrastructure/config/file-skill-source.ts";
 import { loadResolutionCatalog } from "../../src/infrastructure/config/load-resolution-catalog.ts";
 import { createSqliteApprovalStore } from "../../src/infrastructure/persistence/sqlite/sqlite-approval-store.ts";
 import { createSqliteStateUnitOfWork } from "../../src/infrastructure/persistence/sqlite/sqlite-state-unit-of-work.ts";
@@ -23,10 +24,12 @@ import {
   applyMigrations,
   loadMigrations,
 } from "../../src/infrastructure/persistence/sqlite/migration-runner.ts";
-import { rig, BASE, HEAD, h } from "../unit/application/use-cases/runs/run-fakes.ts";
+import { rig, BASE, HEAD, h, skillEvidence } from "../unit/application/use-cases/runs/run-fakes.ts";
 
 const templates = resolve(import.meta.dirname, "../../templates/project/workflows");
-const catalog = loadResolutionCatalog(resolve(templates, "../.omi-squad"));
+const squadDir = resolve(templates, "../.omi-squad");
+const catalog = loadResolutionCatalog(squadDir);
+const skills = createFileSkillSource(squadDir);
 let directory: string;
 let db: StateDatabase;
 beforeEach(() => {
@@ -84,6 +87,7 @@ async function setup(id: "ui-ux" | "ci-cd", stepId = "verify") {
   const deps = {
     ...r.deps,
     catalog,
+    skills,
     approvals: store,
     subjects: approvals.subjects,
     allowedPoActors: ["po"],
@@ -161,6 +165,9 @@ async function finish(
   );
   if (mode === "corrupt")
     s.r.artifacts.files.set(artifact.path, new TextEncoder().encode("changed"));
+  const skillProof = skillEvidence(dispatched.attempt, (path, text) =>
+    s.r.artifacts.publish(path, text),
+  );
   const result = {
     schemaVersion: 1,
     runId: "run-1",
@@ -168,9 +175,10 @@ async function finish(
     attemptId: dispatched.attempt.id,
     status: "succeeded",
     summary: "Verified",
-    artifacts: mode === "phantom" ? [] : [artifact],
+    artifacts: mode === "phantom" ? [] : [artifact, ...skillProof.artifacts],
     revision: { headSha: HEAD, baseSha: BASE },
     checks: mode === "missing" ? [] : [{ id: checkId, evidenceRef: artifact.path }],
+    skillsApplied: skillProof.skillsApplied,
     findings: [],
   };
   return recordStepResult(s.r.deps, {

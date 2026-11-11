@@ -20,6 +20,13 @@ export interface FakeClaudeScenario {
    */
   behaviour?: "replay" | "wait-for-sigint" | "ignore-sigint";
   onSigint?: string;
+  /**
+   * Rewrites the replayed `system/init` line the way the CLI reports its startup state (OMI-072
+   * probe on 2.1.322): `--disable-slash-commands` empties `skills`; plugins come from the `user`
+   * settings source; `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` removes the profile's auto-memory path.
+   * A model of the documented behaviour, not a recording.
+   */
+  initFromLaunch?: boolean;
   /** `claude --version`. */
   versionOutput?: string;
   versionExitCode?: number;
@@ -34,6 +41,7 @@ export interface Invocation {
   cwd: string;
   envKeys: string[];
   claudeConfigDir: string | undefined;
+  disableAutoMemory: string | undefined;
   disableAutoUpdater: string | undefined;
   stdin: string;
 }
@@ -66,6 +74,7 @@ process.stdin.on("end", () => {
       envKeys: Object.keys(process.env).sort(),
       claudeConfigDir: process.env.CLAUDE_CONFIG_DIR,
       disableAutoUpdater: process.env.DISABLE_AUTOUPDATER,
+      disableAutoMemory: process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY,
       stdin,
     }) + "\\n",
   );
@@ -87,7 +96,23 @@ process.stdin.on("end", () => {
   } else if (behaviour === "ignore-sigint") {
     process.on("SIGINT", () => undefined);
   }
-  process.stdout.write(scenario.stdout ?? "");
+  const launchInit = (line) => {
+    if (!scenario.initFromLaunch || !line.includes('"subtype":"init"')) return line;
+    const event = JSON.parse(line);
+    const sourcesIndex = argv.indexOf("--setting-sources");
+    const sources = (sourcesIndex < 0 ? "user,project,local" : argv[sourcesIndex + 1]).split(",");
+    const config = process.env.CLAUDE_CONFIG_DIR ?? "";
+    event.skills = argv.includes("--disable-slash-commands") ? [] : ["fixture-skill"];
+    event.plugins = sources.includes("user")
+      ? [{ name: "fixture-plugin", path: config + "/plugins/fixture-plugin" }]
+      : [];
+    event.memory_paths =
+      process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY === "1"
+        ? {}
+        : { auto: config + "/projects/fixture/memory/" };
+    return JSON.stringify(event);
+  };
+  process.stdout.write((scenario.stdout ?? "").split("\\n").map(launchInit).join("\\n"));
   process.stderr.write(scenario.stderr ?? "");
   if (behaviour === "replay") {
     process.exitCode = scenario.exitCode ?? 0;

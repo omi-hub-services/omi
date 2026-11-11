@@ -79,6 +79,58 @@ describe("dispatchStep", () => {
     expect(prompt).not.toContain(h("c"));
   });
 
+  it("inlines the SKILL.md of exactly the manifest skills in manifest order and names bundled files by path", async () => {
+    const r = rig();
+    const result = dispatched(
+      await dispatchStep(r.deps, dispatchInput({ stepSkills: ["debugging"] })),
+    );
+    const prompt = r.executor.started[0]?.prompt ?? "";
+    expect(result.attempt.skills.map((s) => s.id)).toEqual(["debugging", "tdd"]);
+    const debugging = prompt.indexOf("Reproduce first.");
+    const tdd = prompt.indexOf("Write the failing test first.");
+    expect(debugging).toBeGreaterThan(-1);
+    expect(tdd).toBeGreaterThan(debugging);
+    expect(prompt).toContain(".omi-squad/skills/tdd/references/cycle.md");
+  });
+
+  it("inlines no skill text the manifest does not contain", async () => {
+    const r = rig();
+    r.skills.files.set("unrelated", {
+      sha256: h("f"),
+      skillMd: "UNRELATED BODY",
+      bundledFiles: [],
+    });
+    dispatched(await dispatchStep(r.deps, dispatchInput()));
+    const prompt = r.executor.started[0]?.prompt ?? "";
+    expect(prompt).toContain("Write the failing test first.");
+    expect(prompt).not.toContain("Reproduce first.");
+    expect(prompt).not.toContain("UNRELATED BODY");
+  });
+
+  it("refuses with SKILL_MISSING when a manifest skill has no content, before allocating anything", async () => {
+    const r = rig();
+    r.skills.files.delete("tdd");
+    const result = await dispatchStep(r.deps, dispatchInput());
+    expect(result).toMatchObject({ ok: false, reason: "SKILL_MISSING" });
+    expect(result.ok ? "" : result.detail).toContain("tdd");
+    expect(r.attempts.rows.size).toBe(0);
+    expect(r.executor.started).toHaveLength(0);
+    expect(r.workspaces.leases.size).toBe(0);
+    expect(r.artifacts.files.size).toBe(0);
+    expect(r.steps.rows.get("step-1")?.status).toBe("ready");
+  });
+
+  it("refuses with SKILL_HASH_MISMATCH when the content hash differs from the manifest", async () => {
+    const r = rig();
+    r.skills.files.set("tdd", { sha256: h("0"), skillMd: "TAMPERED", bundledFiles: [] });
+    const result = await dispatchStep(r.deps, dispatchInput());
+    expect(result).toMatchObject({ ok: false, reason: "SKILL_HASH_MISMATCH" });
+    expect(result.ok ? "" : result.detail).toContain("tdd");
+    expect(r.attempts.rows.size).toBe(0);
+    expect(r.executor.started).toHaveLength(0);
+    expect(r.workspaces.leases.size).toBe(0);
+  });
+
   it("adds skills the workflow step asks for", async () => {
     const r = rig();
     const result = dispatched(

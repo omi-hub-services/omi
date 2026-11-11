@@ -9,6 +9,8 @@ export interface ClaudeInit {
   model?: string;
   effort?: Effort;
   apiKeySource?: string;
+  /** Native skills, plugins and memory paths the CLI listed at startup; absent if none reported. */
+  workerEnvironment?: { skills: string[]; plugins: string[]; memoryPaths: string[] };
 }
 
 export interface ClaudeResultEvent {
@@ -47,6 +49,24 @@ function isRecord(value: unknown): value is JsonObject {
 /** A short, non-empty string; longer values are dropped so they can never reach a contract. */
 function str(value: unknown, maxChars = 128): string | undefined {
   return typeof value === "string" && value !== "" && value.length <= maxChars ? value : undefined;
+}
+
+/** Names from a list whose items are strings or objects with a `name` (skills, plugins). */
+function names(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return (value as unknown[]).flatMap((item) => {
+    const name = isRecord(item) ? str(item["name"]) : str(item);
+    return name === undefined ? [] : [name];
+  });
+}
+
+/** Paths from a list or from the values of an object (`{ auto: "…" }`); `null` entries are none. */
+function paths(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    return (value as unknown[]).flatMap((item) => str(item, 1024) ?? []);
+  }
+  if (isRecord(value)) return Object.values(value).flatMap((item) => str(item, 1024) ?? []);
+  return undefined;
 }
 
 function wholeNumber(value: unknown): number | undefined {
@@ -130,7 +150,20 @@ export class ClaudeStreamState {
     const model = str(event["model"]);
     const effort = effortSchema.safeParse(event["effort"]);
     const apiKeySource = str(event["apiKeySource"]);
+    const skills = names(event["skills"]);
+    const plugins = names(event["plugins"]);
+    const memoryPaths = paths(event["memory_paths"]);
+    const reported = skills !== undefined || plugins !== undefined || memoryPaths !== undefined;
     this.init = {
+      ...(reported
+        ? {
+            workerEnvironment: {
+              skills: skills ?? [],
+              plugins: plugins ?? [],
+              memoryPaths: memoryPaths ?? [],
+            },
+          }
+        : {}),
       ...(sessionId === undefined ? {} : { sessionId }),
       ...(model === undefined ? {} : { model }),
       ...(effort.success ? { effort: effort.data } : {}),

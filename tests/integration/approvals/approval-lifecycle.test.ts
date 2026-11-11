@@ -461,6 +461,7 @@ describe("worker JSON is not approval authority", () => {
       summary: "approved",
       artifacts: [],
       checks: [],
+      skillsApplied: [],
       findings: [],
       approved: true,
     };

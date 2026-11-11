@@ -64,3 +64,34 @@ directory (`ui-styling` in UI UX Pro Max) carries Apache-2.0.
   skills should be curated in a later round (excluded now as outside the selected roles).
 - Whether a Taste-style browser check (screenshots at several widths) should become a runtime
   capability later; the skill currently only asks the agent to use tools the project already has.
+
+## Decision update 2026-11-11: workers get skills inline and no native skills (OMI-072)
+
+PO decision. Native skill loading is no guarantee (the OMI-039 worker had 50 skills listed and made
+0 `Skill` calls), so a dispatched worker receives its skills in the prompt and no other skill.
+
+1. **Inline.** `buildPrompt` (dispatch-step) puts the `SKILL.md` text of every `skillsManifest`
+   entry into the prompt, in manifest order. The text comes from the `SkillSource` port
+   (`FileSkillSource` in infrastructure), which recomputes the ADR-0019 skill hash from the bytes it
+   reads. A skill that is not installed refuses the dispatch with `SKILL_MISSING`; a hash that
+   differs from the manifest refuses it with `SKILL_HASH_MISMATCH`. Both happen before any
+   workspace, lease or attempt is created. Bundled files (`references/`, scripts) are listed by
+   their workspace path (`.omi-squad/...`), not inlined.
+2. **Claude Code.** Workers launch with `--disable-slash-commands` (CLI 2.1.322 probe: the native
+   skill list is empty; plugins would still load). The `user` setting source is already left out
+   (ADR-0023), which keeps the profile's plugins and hooks out; `project` and `local` stay, so
+   CLAUDE.md/AGENTS.md of the worktree still load. `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` keeps the
+   profile's auto-memory out. The adapter reports `skills`, `plugins` and `memory_paths` from the
+   `system/init` event as `workerEnvironment` in the execution result, so a run proves the three
+   are empty.
+3. **Codex.** Each worker runs with a per-attempt `CODEX_HOME` that holds only a link to the
+   profile's `auth.json`: no installed skills, no personal AGENTS.md. It is deleted with the run's
+   temporary directory. The profile itself is never changed.
+4. **Result contract.** `step-result.v1` gains a required `skillsApplied` list of
+   `{id, evidenceRef}`; `evidenceRef` must be a verified, non-empty artifact of the attempt.
+   `recordStepResult` (the review step's check) fails the step with `SKILL_EVIDENCE_MISSING` when a
+   given skill is not reported, and `SKILL_NOT_ASSIGNED` when a skill that was not given is
+   reported.
+
+Not verified here: the Codex CLI's behaviour with a symlinked `auth.json` on token refresh, and a
+live Claude run (needs a Coordinator probe).

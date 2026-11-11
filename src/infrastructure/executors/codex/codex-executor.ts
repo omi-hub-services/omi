@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -116,8 +116,15 @@ export class CodexExecutor implements AgentExecutor {
     if (!handle.success || this.runs.has(handle.data.executionId))
       throw new AgentExecutorError("INVALID_REQUEST");
     let outputDir: string;
+    let workerHome: string;
     try {
       outputDir = await mkdtemp(join(tmpdir(), "omi-codex-output-"));
+      // A worker's CODEX_HOME holds only the profile's login: no installed skills, no personal
+      // AGENTS.md. Its skills arrive inlined in the prompt (ADR-0019 update 2026-11-11). It lives
+      // inside outputDir, so it is removed with it.
+      workerHome = join(outputDir, "home");
+      await mkdir(workerHome);
+      await symlink(join(valid.profileHome, "auth.json"), join(workerHome, "auth.json"));
     } catch {
       throw new AgentExecutorError("SPAWN_FAILED");
     }
@@ -134,7 +141,7 @@ export class CodexExecutor implements AgentExecutor {
         executable: this.executable,
         args: buildCodexInvocationArgs(valid, run.outputPath),
         cwd: valid.workspace,
-        env: buildCodexEnvironment(this.parentEnv, valid.profileHome),
+        env: buildCodexEnvironment(this.parentEnv, workerHome),
         stdin: valid.prompt,
         onStdoutLine: (line) => {
           for (const draft of run.stream.ingest(line)) run.events.publish(draft);

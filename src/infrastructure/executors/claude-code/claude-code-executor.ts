@@ -228,6 +228,9 @@ export class ClaudeCodeExecutor implements AgentExecutor {
         requested: request.effort,
         ...(summary.init?.effort === undefined ? {} : { actual: summary.init.effort }),
       },
+      ...(summary.init?.workerEnvironment === undefined
+        ? {}
+        : { workerEnvironment: summary.init.workerEnvironment }),
       authMode: classification.authMode,
       ...(summary.result?.numTurns === undefined ? {} : { numTurns: summary.result.numTurns }),
       ...(succeeded && summary.result !== undefined

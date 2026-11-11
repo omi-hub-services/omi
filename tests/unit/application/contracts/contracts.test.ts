@@ -92,6 +92,7 @@ const validResult = {
   artifacts: [{ path: "reports/implementation.md", sha256: SHA256 }],
   revision: { headSha: GIT_SHA, baseSha: GIT_SHA },
   checks: [{ id: "unit-tests", evidenceRef: "checks/unit.json" }],
+  skillsApplied: [{ id: "test-driven-development", evidenceRef: "reports/tdd.md" }],
   findings: [],
   nextAction: "verify",
 };
@@ -299,6 +300,19 @@ describe("other invalid input is rejected", () => {
       }).success,
     ).toBe(false);
     expect(stepResultSchema.safeParse({ ...validResult, status: "done" }).success).toBe(false);
+    // The skills-applied section must be present, and every entry needs an evidence path.
+    expect(stepResultSchema.safeParse({ ...validResult, skillsApplied: undefined }).success).toBe(
+      false,
+    );
+    expect(
+      stepResultSchema.safeParse({ ...validResult, skillsApplied: [{ id: "tdd" }] }).success,
+    ).toBe(false);
+    expect(
+      stepResultSchema.safeParse({
+        ...validResult,
+        skillsApplied: [{ id: "tdd", evidenceRef: "../escape.md" }],
+      }).success,
+    ).toBe(false);
     expect(
       stepResultSchema.safeParse({ ...validResult, revision: { headSha: "abc", baseSha: GIT_SHA } })
         .success,

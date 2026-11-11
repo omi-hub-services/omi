@@ -55,7 +55,13 @@ import type {
   BridgeRequest,
 } from "../../templates/bridges/claude-code/omi-squad/bridge.ts";
 import { FakeGithub } from "../contract/github/fake-github.ts";
-import { dispatchInput, h, rig, catalog } from "../unit/application/use-cases/runs/run-fakes.ts";
+import {
+  dispatchInput,
+  h,
+  rig,
+  catalog,
+  skillEvidence,
+} from "../unit/application/use-cases/runs/run-fakes.ts";
 import { createFakeWsl } from "../unit/templates/wsl-fakes.ts";
 
 /**
@@ -217,6 +223,7 @@ async function slice() {
       artifact: publish(`${base}/reports/${id}.txt`, "all green"),
     }));
     const evidence = proofs.map(({ id, artifact }) => ({ id, evidenceRef: artifact.path }));
+    const skillProof = skillEvidence(attempt, publish);
     const head = git(request.workspace, "rev-parse", "HEAD");
     return {
       ...execution,
@@ -227,9 +234,10 @@ async function slice() {
         attemptId: attempt.id,
         status: "succeeded",
         summary: `${attempt.stepId} done`,
-        artifacts: [report, ...proofs.map(({ artifact }) => artifact)],
+        artifacts: [report, ...proofs.map(({ artifact }) => artifact), ...skillProof.artifacts],
         revision: { headSha: head, baseSha: head },
         checks: evidence,
+        skillsApplied: skillProof.skillsApplied,
         findings: [],
       }),
     };

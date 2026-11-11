@@ -103,6 +103,23 @@ async function started(executor: AgentExecutor, handle: ExecutionHandle): Promis
   throw new Error("worker ended before starting");
 }
 
+describe("worker CODEX_HOME (OMI-072): no installed skills", () => {
+  it("runs in a per-attempt home holding only auth.json, even if the profile has installed skills", async () => {
+    mkdirSync(join(profile, "skills", "installed-skill"), { recursive: true });
+    writeFileSync(join(profile, "skills", "installed-skill", "SKILL.md"), "# installed");
+    writeFileSync(join(profile, "AGENTS.md"), "personal");
+    const { executor, invocations } = harness();
+    const handle = await executor.start(request());
+    await executor.collectResult(handle);
+    const [run] = invocations();
+    expect(run?.codexHome).not.toBe(profile);
+    expect(run?.codexHomeEntries).toEqual(["auth.json"]);
+    // The temporary home is gone once the run is collected; the profile is untouched.
+    expect(existsSync(run?.codexHome ?? profile)).toBe(false);
+    expect(existsSync(join(profile, "skills", "installed-skill", "SKILL.md"))).toBe(true);
+  });
+});
+
 describe("Codex through the neutral port", () => {
   it("streams neutral ordered events and returns the final output file, with replay and idempotent result", async () => {
     const { executor, invocations } = harness();
@@ -233,12 +250,10 @@ describe("Codex authentication namespace", () => {
     await Promise.all([started(executor, a), started(executor, b)]);
     const runs = invocations();
     expect(runs[0]?.codexHome).toBe(profileB);
-    expect(
-      runs
-        .slice(1)
-        .map((run) => run.codexHome)
-        .sort(),
-    ).toEqual([profile, profileB].sort());
+    // Workers run in their own CODEX_HOME, never in the profile itself (OMI-072).
+    for (const run of runs.slice(1)) {
+      expect([profile, profileB]).not.toContain(run.codexHome);
+    }
     for (const run of runs) {
       expect(run.envKeys).toEqual(["CODEX_HOME", "HOME", "PATH", "https_proxy"]);
       for (const name of FORBIDDEN_AUTH_ENV) {

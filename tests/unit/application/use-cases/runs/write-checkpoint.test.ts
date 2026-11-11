@@ -204,6 +204,7 @@ describe("checkpoints at step boundaries", () => {
     const root = `attempts/${dispatch.attempt.id}`;
     const artifact = r.artifacts.publish(`${root}/reports/implementation.md`, "done");
     const evidenceArtifact = r.artifacts.publish(`${root}/reports/unit-tests.txt`, "ok");
+    const skillEvidence = r.artifacts.publish(`${root}/reports/skill-tdd.md`, "test first");
     const execution = await r.executor.collectResult(dispatch.handle);
     const recorded = recordStepResult(wired.deps, {
       attemptId: dispatch.attempt.id,
@@ -215,9 +216,10 @@ describe("checkpoints at step boundaries", () => {
         attemptId: dispatch.attempt.id,
         status: "succeeded",
         summary: "Implemented.",
-        artifacts: [artifact, evidenceArtifact],
+        artifacts: [artifact, evidenceArtifact, skillEvidence],
         revision: { headSha: HEAD, baseSha: BASE },
         checks: [{ id: "unit-tests", evidenceRef: `${root}/reports/unit-tests.txt` }],
+        skillsApplied: [{ id: "tdd", evidenceRef: skillEvidence.path }],
         findings: [],
       },
     });
@@ -232,6 +234,7 @@ describe("checkpoints at step boundaries", () => {
       outputs: [
         { path: artifact.path, sha256: artifact.sha256 },
         { path: evidenceArtifact.path, sha256: evidenceArtifact.sha256 },
+        { path: skillEvidence.path, sha256: skillEvidence.sha256 },
       ],
     });
   });

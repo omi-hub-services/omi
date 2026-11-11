@@ -39,7 +39,12 @@ import {
   type SupervisedProcess,
 } from "../../src/infrastructure/processes/supervised-process.ts";
 import { FakeGithub } from "../contract/github/fake-github.ts";
-import { dispatchInput, h, rig } from "../unit/application/use-cases/runs/run-fakes.ts";
+import {
+  dispatchInput,
+  h,
+  rig,
+  skillEvidence,
+} from "../unit/application/use-cases/runs/run-fakes.ts";
 
 class SimulatedCrash extends Error {}
 let directory: string;
@@ -501,6 +506,7 @@ describe("recovery with faults, SQLite restart, sandbox Git and fake GitHub", ()
     const dispatched = await r.start();
     if (!dispatched.ok) throw new Error(dispatched.reason);
     const report = r.writeArtifact(`${dispatched.attempt.artifactRoot}/report.md`, "accepted");
+    const skillProof = skillEvidence(dispatched.attempt, r.writeArtifact);
     const runtime = r.runtime();
     const recorded = recordStepResult(
       { ...runtime.dispatchDeps, checkpoint: () => ({ ok: false, reason: "CRASH" }) },
@@ -514,9 +520,10 @@ describe("recovery with faults, SQLite restart, sandbox Git and fake GitHub", ()
           attemptId: dispatched.attempt.id,
           status: "succeeded",
           summary: "Done",
-          artifacts: [report],
+          artifacts: [report, ...skillProof.artifacts],
           revision: { headSha: r.headSha, baseSha: r.headSha },
           checks: [{ id: "unit-tests", evidenceRef: report.path }],
+          skillsApplied: skillProof.skillsApplied,
           findings: [],
         },
       },
