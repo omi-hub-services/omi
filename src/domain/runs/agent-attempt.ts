@@ -1,3 +1,4 @@
+import type { Effort } from "../agents/capability.js";
 import { applyTransition, ruleBuilder } from "../shared/transition.js";
 import type { TransitionOutcome } from "../shared/transition.js";
 
@@ -49,4 +50,19 @@ export function transitionAgentAttempt(
   event: AgentAttemptEvent,
 ): TransitionOutcome<AgentAttemptStatus, AttemptRefusal> {
   return applyTransition(AGENT_ATTEMPT_RULES, from, event);
+}
+
+/** The requested choice and separately reported facts survive every profile switch as attempts. */
+export interface AttemptSelection {
+  readonly executor: "claude-code" | "codex";
+  readonly profileId: string;
+  readonly model: string;
+  readonly effort: Effort;
+}
+
+export interface AttemptSettings {
+  readonly chosen: AttemptSelection;
+  /** Missing means unreported; never fill actual values from the requested settings. */
+  readonly actualModel?: string;
+  readonly actualEffort?: Effort;
 }

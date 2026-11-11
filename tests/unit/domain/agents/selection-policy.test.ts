@@ -12,6 +12,8 @@ const candidate = (id: string, overrides: Partial<ExecutorCandidate> = {}): Exec
   candidateId: id,
   executor: "claude-code",
   modelAlias: "opus",
+  model: "verified-model",
+  modelAllowlist: ["verified-model"],
   profileId: `profile-${id}`,
   accountGroupId: `group-${id}`,
   profile: {
@@ -23,6 +25,8 @@ const candidate = (id: string, overrides: Partial<ExecutorCandidate> = {}): Exec
   supportedEfforts: ["medium", "high", "xhigh"],
   verifiedForCapability: true,
   preference: 1,
+  accountGroupActiveWorkers: 0,
+  accountGroupMaxConcurrency: 3,
   ...overrides,
 });
 
@@ -125,5 +129,106 @@ describe("selectExecutor", () => {
 
   it("waits when there are no candidates at all", () => {
     expect(select([])).toEqual({ outcome: "WAITING_RESOURCE", rejections: [] });
+  });
+});
+
+describe("verified profile models and tool requirements", () => {
+  it("requires both capability verification and the profile's explicit CLI-model allowlist", () => {
+    expect(select([candidate("a", { modelAllowlist: ["opus"] })])).toMatchObject({
+      outcome: "WAITING_RESOURCE",
+      rejections: [{ reasons: ["MODEL_NOT_ALLOWLISTED"] }],
+    });
+    expect(select([candidate("a", { modelAllowlist: [] })]).outcome).toBe("WAITING_RESOURCE");
+  });
+
+  it.each(["unknown", "cooldown", "login-required", "unavailable", "disabled"] as const)(
+    "never selects an ineligible %s profile",
+    (state) => {
+      expect(
+        select([
+          candidate("a", {
+            profile: {
+              state,
+              lastProbeAt: NOW,
+              cooldownUntil: NOW + 1,
+              activeWorkers: 0,
+              maxConcurrency: 1,
+            },
+          }),
+        ]).outcome,
+      ).toBe("WAITING_RESOURCE");
+    },
+  );
+
+  it("allows busy profiles below their verified concurrency ceiling", () => {
+    expect(
+      select([
+        candidate("busy", {
+          profile: {
+            state: "busy",
+            lastProbeAt: NOW,
+            activeWorkers: 1,
+            maxConcurrency: 2,
+          },
+        }),
+      ]).outcome,
+    ).toBe("selected");
+  });
+
+  it("enforces account concurrency independently of profile capacity", () => {
+    expect(
+      select([
+        candidate("a", {
+          accountGroupActiveWorkers: 2,
+          accountGroupMaxConcurrency: 2,
+        }),
+      ]),
+    ).toMatchObject({
+      outcome: "WAITING_RESOURCE",
+      rejections: [{ reasons: ["ACCOUNT_GROUP_AT_CONCURRENCY_LIMIT"] }],
+    });
+    expect(
+      select([
+        candidate("a", {
+          accountGroupActiveWorkers: 1,
+          accountGroupMaxConcurrency: 2,
+        }),
+      ]).outcome,
+    ).toBe("selected");
+  });
+
+  it("keeps the capability floor on Codex-to-Claude failover, or waits if Codex is required", () => {
+    const limited = candidate("codex", {
+      executor: "codex",
+      preference: 0,
+      profile: { state: "cooldown", cooldownUntil: NOW + 1, activeWorkers: 0, maxConcurrency: 1 },
+    });
+    const claude = candidate("claude", { supportedEfforts: ["low", "high"] });
+    expect(select([limited, claude])).toMatchObject({
+      candidate: { executor: "claude-code" },
+      effort: "high",
+    });
+    expect(select([limited, claude], { requiredExecutor: "codex" }).outcome).toBe(
+      "WAITING_RESOURCE",
+    );
+    expect(select([limited, candidate("weak", { supportedEfforts: ["medium"] })]).outcome).toBe(
+      "WAITING_RESOURCE",
+    );
+  });
+
+  it("uses the profile TTL and rejects evidence from a future clock", () => {
+    expect(select([candidate("a", { probeTtlMs: 1 })]).outcome).toBe("WAITING_RESOURCE");
+    expect(
+      select([
+        candidate("a", {
+          profile: {
+            state: "ready",
+            lastProbeAt: NOW + 1,
+            activeWorkers: 0,
+            maxConcurrency: 1,
+          },
+        }),
+      ]).outcome,
+    ).toBe("WAITING_RESOURCE");
   });
 });
