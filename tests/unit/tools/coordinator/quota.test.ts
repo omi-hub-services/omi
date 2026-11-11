@@ -285,8 +285,21 @@ describe("pickProfile", () => {
     });
   });
 
+  it("allows a profile with exactly 10% of the 5h window left", () => {
+    const r = pickProfile("claude", [quota("claude", "a", reading(90, 0))], settings, NOW);
+    expect(r).toMatchObject({
+      ok: true,
+      chosen: [{ profile: "a", fiveHourLeft: 10, blocked: null }],
+    });
+  });
+
+  it("blocks a profile with 9% of the 5h window left and names the 10% threshold", () => {
+    const r = pickProfile("claude", [quota("claude", "a", reading(91, 0))], settings, NOW);
+    expect(r).toMatchObject({ ok: false, reason: "claude: a 5h 9% left < 10%" });
+  });
+
   it("refuses below threshold with the earliest reset across profiles", () => {
-    const a = reading(75, 0); // 25% of 5h left, resets in 2h
+    const a = reading(95, 0); // 5% of 5h left, resets in 2h
     const b = reading(0, 95, { sevenDay: { usedPercent: 95, resetsAt: NOW + 30 * H } });
     const r = pickProfile(
       "claude",
@@ -297,7 +310,7 @@ describe("pickProfile", () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.earliestReset).toBe(NOW + 2 * H);
-    expect(r.reason).toContain("a 5h 25% left < 30%");
+    expect(r.reason).toContain("a 5h 5% left < 10%");
     expect(r.reason).toContain("b 7d 5% left < 10%");
     expect(formatPick("pick-profile 66", r)[0]).toMatch(/^pick-profile 66: refused: claude: /);
   });
