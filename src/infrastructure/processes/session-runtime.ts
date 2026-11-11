@@ -6,6 +6,7 @@ import {
   type SupervisedProcessOptions,
 } from "./supervised-process.js";
 import { SESSION_HEARTBEAT_PERIOD_MS, SESSION_WORKER_GRACE_MS } from "./session-timing.js";
+import { startResourceWakeupLoop, type ResourceWakeupOptions } from "./resource-wakeup-loop.js";
 
 /** Process ownership only; dispatch policy and recovery are separate use cases. */
 export async function startSessionRuntime(options: {
@@ -15,6 +16,7 @@ export async function startSessionRuntime(options: {
   stopAccepting(): Promise<void>;
   afterWorkersStopped?(): Promise<void>;
   renewPeriodMs?: number;
+  resourceWakeup?(canDispatch: () => boolean): ResourceWakeupOptions | undefined;
 }) {
   const watch = watchOwnerLiveness(options.owner);
   const workers = new Set<Promise<SupervisedProcess>>();
@@ -65,10 +67,15 @@ export async function startSessionRuntime(options: {
     }
   };
   let startupError: Error | undefined;
+  let resourceWakeup: ReturnType<typeof startResourceWakeupLoop> | undefined;
   try {
     options.session.record("session.started", { startedAt: options.session.lease.acquiredAt });
     await options.startAccepting();
-    if (!lifecycle.stopping) accepting = true;
+    if (!lifecycle.stopping) {
+      accepting = true;
+      const wakeupOptions = options.resourceWakeup?.(() => accepting);
+      if (wakeupOptions !== undefined) resourceWakeup = startResourceWakeupLoop(wakeupOptions);
+    }
   } catch (error) {
     startupError = error instanceof Error ? error : new Error("runtime startup failed");
     requestStop({ reason: "startup-failed" });
@@ -76,6 +83,7 @@ export async function startSessionRuntime(options: {
   const result = (async () => {
     const reason = await stop;
     let stopError: Error | undefined;
+    const wakeupStopped = resourceWakeup?.stop();
     try {
       await options.stopAccepting();
     } catch (error) {
@@ -98,6 +106,7 @@ export async function startSessionRuntime(options: {
       }),
     );
     try {
+      await wakeupStopped;
       await options.afterWorkersStopped?.();
       options.session.record("session.interrupted", { reason: reason.reason, workers: exits });
       options.session.release();

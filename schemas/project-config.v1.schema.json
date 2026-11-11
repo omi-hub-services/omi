@@ -193,6 +193,25 @@
       ],
       "additionalProperties": false
     },
+    "resource_wait": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "interval_ms": {
+          "default": 1000,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "max_backoff_ms": {
+          "default": 60000,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        }
+      },
+      "additionalProperties": false
+    },
     "workspace": {
       "type": "object",
       "properties": {

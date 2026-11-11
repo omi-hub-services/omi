@@ -99,6 +99,39 @@ const validResult = {
 
 const validCommand = { schemaVersion: 1, command: "dispatch", runId: "run-1", stepId: "implement" };
 
+describe("resource waiting settings", () => {
+  it("supplies wake timing defaults for existing project configs", () => {
+    expect(projectConfigSchema.parse(validProjectConfig)).toMatchObject({
+      resource_wait: { interval_ms: 1000, max_backoff_ms: 60000 },
+    });
+  });
+  it("accepts optional wake timing overrides", () => {
+    const result = projectConfigSchema.safeParse({
+      ...validProjectConfig,
+      resource_wait: { interval_ms: 2000 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success)
+      expect(result.data).toMatchObject({
+        resource_wait: { interval_ms: 2000, max_backoff_ms: 60000 },
+      });
+  });
+  it.each([
+    { interval_ms: 0 },
+    { interval_ms: -1 },
+    { interval_ms: 1.5 },
+    { max_backoff_ms: 0 },
+    { interval_ms: 2000, max_backoff_ms: 1000 },
+    { interval_ms: 2147483648 },
+    { max_backoff_ms: 2147483648 },
+    { unexpected: true },
+  ])("rejects invalid wake settings %j", (resource_wait) => {
+    expect(projectConfigSchema.safeParse({ ...validProjectConfig, resource_wait }).success).toBe(
+      false,
+    );
+  });
+});
+
 describe("valid input parses", () => {
   it.each([
     ["models", modelsConfigSchema, validModels],
