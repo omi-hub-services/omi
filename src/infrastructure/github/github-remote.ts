@@ -9,6 +9,7 @@ import type {
 } from "../../application/ports/github-remote.js";
 import { hasOperationMarker, operationMarker } from "../../domain/delivery/operation-marker.js";
 import type { GithubRestClient, PageVisit } from "./github-rest-client.js";
+import { lookupProjectCopy, sendProjectCopy } from "./github-project-copy.js";
 
 /**
  * GitHub side effects of the outbox, over the REST client. Every created Issue, comment or PR
@@ -19,6 +20,9 @@ import type { GithubRestClient, PageVisit } from "./github-rest-client.js";
 export function createGithubRemote(client: GithubRestClient): GithubRemote {
   return {
     async send(request: SendRequest): Promise<SendOutcome> {
+      if (request.operation.type === "project.copy") {
+        return sendProjectCopy(client, request.operation, request.operationKey);
+      }
       const marker = operationMarker(request.operationKey);
       const call = writeCall(request.operation, marker);
       const result = await client.request({
@@ -49,6 +53,9 @@ export function createGithubRemote(client: GithubRestClient): GithubRemote {
     },
 
     async lookup(request: LookupRequest): Promise<LookupOutcome> {
+      if (request.operation.type === "project.copy") {
+        return lookupProjectCopy(client, request.operation, request.operationKey);
+      }
       const scan = listing(request.operation, request.operationKey, request.notBefore);
       let found: string | undefined;
       const pages = await client.readPages(scan.path, (page): PageVisit => {
@@ -85,7 +92,10 @@ interface WriteCall {
   readonly format: (response: { id: number } | { number: number }) => string;
 }
 
-function writeCall(operation: GithubOperation, marker: string): WriteCall {
+function writeCall(
+  operation: Exclude<GithubOperation, { type: "project.copy" }>,
+  marker: string,
+): WriteCall {
   switch (operation.type) {
     case "issue.comment":
       return {
@@ -129,7 +139,11 @@ interface Listing {
 /** Local and remote clocks differ a little; read back from slightly before the intent. */
 const CLOCK_SKEW_MS = 5 * 60_000;
 
-function listing(operation: GithubOperation, operationKey: string, notBefore: string): Listing {
+function listing(
+  operation: Exclude<GithubOperation, { type: "project.copy" }>,
+  operationKey: string,
+  notBefore: string,
+): Listing {
   const since = encodeURIComponent(new Date(Date.parse(notBefore) - CLOCK_SKEW_MS).toISOString());
   const bodyHasMarker = (item: Record<string, unknown>): boolean =>
     typeof item["body"] === "string" && hasOperationMarker(item["body"], operationKey);

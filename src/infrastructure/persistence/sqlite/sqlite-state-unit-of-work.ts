@@ -62,7 +62,13 @@ export function createSqliteStateUnitOfWork(db: StateDatabase): StateUnitOfWork 
         }
 
         let newVersion: number;
-        if (target.kind === "approval_request" || target.kind === "approval_decision") {
+        if (target.kind === "outbox_intent") {
+          if (outbox === undefined) throw new Error("outbox_intent requires an outbox entry");
+          if (db.prepare("SELECT 1 FROM outbox WHERE operation_key = ?").get(outbox.operationKey)) {
+            return { ok: false, reason: "ALREADY_EXISTS" };
+          }
+          newVersion = 0;
+        } else if (target.kind === "approval_request" || target.kind === "approval_decision") {
           const request = target.request;
           const decision = request.decision;
           const values = [

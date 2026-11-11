@@ -110,12 +110,12 @@ export class FakeArtifacts {
   }
 }
 
-export const COMMENT: GithubOperation = {
+export const COMMENT = {
   type: "issue.comment",
   repo: "acme/app",
   issueNumber: 7,
   body: "Run finished",
-};
+} satisfies GithubOperation;
 
 /** Adds an outbox row whose payload is stored and pinned by hash. */
 export function enqueue(
