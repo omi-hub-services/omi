@@ -23,6 +23,12 @@ one, take `ready[0]` unless the status gives a reason not to. Unfinished work in
 PR, a running worker) comes first. Read the Issue (`gh issue view N`) and the docs CLAUDE.md
 lists.
 
+**New Issues** are created only with `node tools/coordinator/flow.ts new-issue --file <spec.md>`
+(`--dry-run` first; spec format in ADR-0014). Never `gh issue create` by hand: `set-status`
+Ready/In Progress and `start-branch` refuse an Issue that fails the readiness gate (Plan Key
+matching the marker, Priority/Work Type/Workflow/Role/Area, at least one top-level AC), and
+`status.ts` lists such Issues under Attention.
+
 ## 2. Start
 
 ```
