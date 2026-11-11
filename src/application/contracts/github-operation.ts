@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { gitShaSchema } from "./identifiers.js";
+import { isValidOperationKey } from "../../domain/delivery/operation-marker.js";
 import { githubIdSchema } from "./project-config.js";
 
 /**
@@ -46,6 +48,16 @@ export const githubOperationSchema = z.discriminatedUnion("type", [
     base: branchSchema,
     title: titleSchema,
     body: bodySchema,
+  }),
+  z.strictObject({
+    type: z.literal("pull_request.merge"),
+    repo: repoSchema,
+    pullNumber: positiveInt,
+    /** Task delivery only; release merges use the separate PO-approved flow. */
+    base: z.literal("develop"),
+    expectedHeadSha: gitShaSchema,
+    /** Correlates to the existing PR creation intent; never an approval. */
+    prOperationKey: z.string().refine(isValidOperationKey),
   }),
 ]);
 export type GithubOperation = z.infer<typeof githubOperationSchema>;

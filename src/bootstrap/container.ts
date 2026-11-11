@@ -1,3 +1,11 @@
+import type { AttemptStore } from "../application/ports/attempt-store.js";
+import type { ProjectSession } from "../application/ports/lease-store.js";
+import type { SupervisedProcess } from "../infrastructure/processes/supervised-process.js";
+import { createWorkerRecovery } from "../infrastructure/processes/worker-recovery.js";
+import { createSqliteWorkerProcessStore } from "../infrastructure/persistence/sqlite/sqlite-worker-process-store.js";
+import { pauseRun, type PauseRunDependencies } from "../application/use-cases/runs/pause-run.js";
+import { resumeRun, type ResumeRunDependencies } from "../application/use-cases/runs/resume-run.js";
+import type { WriteCheckpointDependencies } from "../application/use-cases/runs/write-checkpoint.js";
 import type { ExecutorSelectionStore } from "../application/ports/executor-selection-store.js";
 import { launchWindowsSession } from "../infrastructure/processes/windows-session-launcher.js";
 import { randomUUID } from "node:crypto";
@@ -115,5 +123,44 @@ export function createApprovalUseCases(options: {
         },
         input,
       ),
+  };
+}
+
+/** Bind recovery to the existing session owner. The workflow supplies its pinned execution plan,
+ * current approval/check validator and dispatchStep binding; this factory introduces no daemon.
+ */
+export function createRunRecoveryUseCases(
+  options: ResumeRunDependencies & {
+    readonly hasher: WriteCheckpointDependencies["hasher"];
+    readonly snapshot: PauseRunDependencies["snapshot"];
+    readonly credentialPolicy?: NonNullable<WriteCheckpointDependencies["credentialPolicy"]>;
+  },
+) {
+  return {
+    pauseRun: (input: unknown) => pauseRun(options, input),
+    resumeRun: (input: unknown) => resumeRun(options, input),
+  };
+}
+
+/** Pass onWorkerStarted to either CLI executor and processes to the recovery use cases. */
+export function createRunProcessRecovery(options: {
+  readonly database: StateDatabase;
+  readonly session: ProjectSession;
+  readonly attempts: AttemptStore;
+  readonly now: () => number;
+}) {
+  const processes = createWorkerRecovery(
+    createSqliteWorkerProcessStore(options.database, {
+      fence: options.session.lease,
+      now: options.now,
+    }),
+  );
+  return {
+    processes,
+    onWorkerStarted: (attemptId: string, worker: SupervisedProcess): void => {
+      const attempt = options.attempts.get(attemptId);
+      if (attempt === undefined) throw new Error("ATTEMPT_NOT_FOUND");
+      processes.track(attempt, worker);
+    },
   };
 }

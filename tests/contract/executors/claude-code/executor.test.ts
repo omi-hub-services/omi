@@ -13,7 +13,11 @@ import {
 } from "../../../../src/application/contracts/agent-execution.js";
 import { AgentExecutorError } from "../../../../src/application/ports/agent-executor.js";
 import { FORBIDDEN_AUTH_ENV } from "../../../../src/infrastructure/executors/claude-code/claude-code-environment.js";
-import { ClaudeCodeExecutor } from "../../../../src/infrastructure/executors/claude-code/claude-code-executor.js";
+import type { ProcessExit } from "../../../../src/infrastructure/processes/supervised-process.js";
+import {
+  ClaudeCodeExecutor,
+  type ClaudeCodeExecutorOptions,
+} from "../../../../src/infrastructure/executors/claude-code/claude-code-executor.js";
 import {
   fixture,
   readInvocations,
@@ -60,7 +64,10 @@ interface Harness {
 
 function harness(
   scenario: FakeClaudeScenario,
-  options: { graceMs?: number; executable?: string; newExecutionId?: () => string } = {},
+  options: Pick<
+    ClaudeCodeExecutorOptions,
+    "graceMs" | "executable" | "newExecutionId" | "onWorkerStarted"
+  > = {},
 ): Harness {
   counter += 1;
   const recordPath = join(root, `record-${String(counter)}.jsonl`);
@@ -71,6 +78,9 @@ function harness(
       executable,
       parentEnv: hostileParentEnv,
       graceMs: options.graceMs ?? 5000,
+      ...(options.onWorkerStarted === undefined
+        ? {}
+        : { onWorkerStarted: options.onWorkerStarted }),
       ...(options.newExecutionId === undefined ? {} : { newExecutionId: options.newExecutionId }),
     }),
     recordPath,
@@ -507,5 +517,33 @@ describe("rejected input", () => {
     await expect(executor.collectResult(forged)).rejects.toMatchObject(unknown);
     const otherAttempt: ExecutionHandle = { ...real, attemptId: "attempt-other" };
     await expect(executor.collectResult(otherAttempt)).rejects.toMatchObject(unknown);
+  });
+});
+
+describe("durable worker process registration", () => {
+  it("exposes the owned handle before start resolves", async () => {
+    const observed: { attemptId?: string; pid?: number } = {};
+    const { executor } = harness(SUCCESS, {
+      onWorkerStarted: (attemptId, worker) => {
+        observed.attemptId = attemptId;
+        observed.pid = worker.pid;
+      },
+    });
+    const handle = await executor.start(request());
+    expect(observed.attemptId).toBe(handle.attemptId);
+    expect(observed.pid).toBeGreaterThan(0);
+    await executor.collectResult(handle);
+  });
+
+  it("stops the entire owned group before refusing a failed registration", async () => {
+    let exit: Promise<ProcessExit> | undefined;
+    const { executor } = harness(SUCCESS, {
+      onWorkerStarted: (_attemptId, worker) => {
+        exit = worker.exit;
+        throw new Error("REGISTRATION_FAILED");
+      },
+    });
+    await expect(executor.start(request())).rejects.toMatchObject({ code: "SPAWN_FAILED" });
+    expect(await exit).toMatchObject({ cancelRequested: true });
   });
 });

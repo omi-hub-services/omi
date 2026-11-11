@@ -3,7 +3,7 @@
  * `gh api` (gh-api-transport.ts); tests use an in-memory fake GitHub that implements this
  * interface, so no test needs a network.
  */
-export type HttpMethod = "GET" | "POST";
+export type HttpMethod = "GET" | "POST" | "PUT";
 
 export interface HttpRequest {
   readonly method: HttpMethod;

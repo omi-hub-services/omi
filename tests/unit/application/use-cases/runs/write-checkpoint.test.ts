@@ -41,8 +41,8 @@ class FakeCheckpoints implements CheckpointStore {
   latestValid(): undefined {
     return undefined;
   }
-  reconcile(): { interrupted: string[]; orphanFiles: string[] } {
-    return { interrupted: [], orphanFiles: [] };
+  reconcile() {
+    return { interrupted: [], orphanFiles: [], problems: [] };
   }
   manifests() {
     return this.saved.map((s) =>

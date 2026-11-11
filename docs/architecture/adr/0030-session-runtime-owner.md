@@ -126,3 +126,41 @@ CLI interruption mid tool call, runtime SIGKILL/OOM, escaped process groups and 
 unverified. A blocked runtime event loop delays heartbeat detection and renewal. A kill can
 interrupt a file write; preserving files does not establish their consistency. Independent
 review and checks on a merged revision belong to the Coordinator's separate review/merge run.
+
+## Recovery boundary (OMI-027)
+
+`pause-run` and `resume-run` operate serially under the `ProjectSession` already claimed by the
+runtime. They renew and verify that lock before work, after awaited boundaries and before
+continuation; they retain it on return. The session runtime continues its normal renewal during
+long operations. The bootstrap recovery factory binds use cases to that session; the workflow
+supplies the current authorization/check validator and a `dispatchStep` binding from its trusted
+plan. No checkpoint next-action text authorizes an operation. Runtime IPC/vertical-slice command
+registration remains with the bridge composition work.
+
+The process recovery adapter consumes existing supervised handles, never adopts a persisted PID
+and never signals an old process by lookup. `track` persists PID, boot id plus kernel start ticks,
+and writer generation in the existing attempt process columns through the fenced SQLite store.
+Both CLI executors expose a synchronous `onWorkerStarted` observer before returning a handle;
+`createRunProcessRecovery` wires it to the process store and recovery adapter. It must run before
+a caller treats the spawn as recoverable. Persistence failure cancels the
+owned handle. A spawn/recording crash without an identity is unknown and requires reconciliation;
+it is never assumed dead. After restart the adapter inspects the entire group and releases a
+writer reservation only after proving it absent. A live inherited process, mismatched identity,
+or stale generation refuses recovery. Owned handles may be stopped for pause; the adapter waits
+for the existing supervisor's group exit before taking a snapshot. Accepted terminal attempt
+statuses without process references rely on the result recorder's existing writer-stopped contract.
+
+Checkpoint reconciliation reports typed missing-file, hash-mismatch, invalid-file and incomplete
+reasons, including on later passes over interrupted rows. Resume selects the newest intact valid
+file and reports any discarded newer checkpoints. It checks manifest identity, worktree path,
+head, branch, dirty state, bounded uncommitted hashes and output files before remote reconciliation.
+Truncated, excluded or unhashed uncommitted entries require explicit resolution rather than an
+unverifiable match. No stash, reset, drop, cleanup, transcript read or credential copy occurs.
+
+Current gates are revalidated after remote reconciliation. Already succeeded step rows remain
+unchanged even when the checkpoint predates their acceptance. Only interrupted/paused steps are
+readied; failed steps keep the retry/rework authorization boundary. A continuation uses a fresh
+attempt and writer generation through the existing dispatcher. Partial recovery commits can be
+retried from running state, with compare-and-swap and project fences preserving accepted results.
+The run remains running for the workflow's normal completion/delivery gates; recovery does not
+mark a task Done.
