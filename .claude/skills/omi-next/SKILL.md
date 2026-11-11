@@ -52,7 +52,24 @@ Write the prompt to WSL `~/omi-runs/omi-NNN-prompt.md` (Windows path
 the branch, what to build, `npm run check` before reporting, **no push/PR/merge**, `gh`
 read-only, no env-prefixed commands or pipes (use a script in `.tmp/` run with `node`), no
 writes under `.claude/` (protected; the worker cannot), and the final report format (branch,
-SHAs, files per layer, check result, what is unverified, open decisions).
+SHAs, files per layer, check result, **Skills applied** with evidence per skill, what is
+unverified, open decisions).
+
+**Curated skills inline (OMI-073).** Workers get the role's curated skills as prompt text, never
+as native skills: native listing is no guarantee (the OMI-039 worker had 50 skills listed and made
+0 `Skill` calls) and would expose the Coordinator skills. Developer workers (Claude and Codex)
+get `test-driven-development`, `minimal-change` and `verification-before-completion`; append them
+after writing the prompt, from the worker's checkout:
+
+```
+MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-24.04 --cd <repo> --exec bash -lc "for s in test-driven-development minimal-change verification-before-completion; do printf '\n\n## Skill: %s (follow it; report it under Skills applied)\n\n' \$s; cat templates/project/.omi-squad/skills/\$s/SKILL.md; done >> ~/omi-runs/omi-NNN-prompt.md"
+```
+
+The review subagent's prompt gets `independent-review` the same way (read the file and paste
+it in). Claude workers launch with `--disable-slash-commands` (no native skills at all, CLI
+2.1.322 probe); Codex workers have no `--disable` flag, so `$CODEX_HOME/skills` of a worker
+profile stays empty. Plugins and their hooks still load for Claude workers; removing them is
+OMI-072 (product runtime).
 
 Pick the worker profile by quota (script, OMI-053) right before launching:
 
@@ -83,7 +100,7 @@ the `--cd /home/...` path into a Windows path (`Wsl/ERROR_PATH_NOT_FOUND`); Powe
 prefix.
 
 ```
-MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-24.04 --cd /home/<user>/github/omi --exec bash -lc "source ~/.nvm/nvm.sh >/dev/null; export CLAUDE_CONFIG_DIR=\$HOME/.claude-profiles/<profile>; unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; ts=\$(date +%Y%m%d-%H%M%S); claude -p --output-format stream-json --verbose --max-turns 200 --permission-mode acceptEdits --allowedTools Read Edit Write Grep Glob TodoWrite 'Bash(git status*)' 'Bash(git diff*)' 'Bash(git log*)' 'Bash(git show*)' 'Bash(git add *)' 'Bash(git commit *)' 'Bash(git switch *)' 'Bash(git fetch*)' 'Bash(git rev-parse *)' 'Bash(git restore *)' 'Bash(git ls-files*)' 'Bash(git grep *)' 'Bash(npm run *)' 'Bash(npm ci)' 'Bash(node *)' 'Bash(gh issue view *)' 'Bash(gh issue list *)' 'Bash(gh pr view *)' 'Bash(gh pr list *)' 'Bash(gh pr diff *)' 'Bash(gh project item-list *)' 'Bash(gh project field-list *)' 'Bash(gh project view *)' 'Bash(ls *)' 'Bash(cat *)' 'Bash(mkdir *)' 'Bash(ps *)' --disallowedTools 'Bash(git push*)' 'Bash(git reset --hard*)' 'Bash(gh api*)' 'Bash(npm install*)' 'Bash(git commit --no-verify*)' 'Bash(git commit -n*)' 'Bash(git commit --amend*)' 'Bash(git switch --discard-changes*)' 'Bash(git switch -C*)' 'Bash(git switch -f*)' 'Bash(git switch --force*)' < ~/omi-runs/omi-NNN-prompt.md > ~/omi-runs/omi-NNN-<profile>-\$ts.jsonl 2> ~/omi-runs/omi-NNN-<profile>-\$ts.err; echo exit=\$?"
+MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-24.04 --cd /home/<user>/github/omi --exec bash -lc "source ~/.nvm/nvm.sh >/dev/null; export CLAUDE_CONFIG_DIR=\$HOME/.claude-profiles/<profile>; unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN; ts=\$(date +%Y%m%d-%H%M%S); claude -p --disable-slash-commands --output-format stream-json --verbose --max-turns 200 --permission-mode acceptEdits --allowedTools Read Edit Write Grep Glob TodoWrite 'Bash(git status*)' 'Bash(git diff*)' 'Bash(git log*)' 'Bash(git show*)' 'Bash(git add *)' 'Bash(git commit *)' 'Bash(git switch *)' 'Bash(git fetch*)' 'Bash(git rev-parse *)' 'Bash(git restore *)' 'Bash(git ls-files*)' 'Bash(git grep *)' 'Bash(npm run *)' 'Bash(npm ci)' 'Bash(node *)' 'Bash(gh issue view *)' 'Bash(gh issue list *)' 'Bash(gh pr view *)' 'Bash(gh pr list *)' 'Bash(gh pr diff *)' 'Bash(gh project item-list *)' 'Bash(gh project field-list *)' 'Bash(gh project view *)' 'Bash(ls *)' 'Bash(cat *)' 'Bash(mkdir *)' 'Bash(ps *)' --disallowedTools 'Bash(git push*)' 'Bash(git reset --hard*)' 'Bash(gh api*)' 'Bash(npm install*)' 'Bash(git commit --no-verify*)' 'Bash(git commit -n*)' 'Bash(git commit --amend*)' 'Bash(git switch --discard-changes*)' 'Bash(git switch -C*)' 'Bash(git switch -f*)' 'Bash(git switch --force*)' < ~/omi-runs/omi-NNN-prompt.md > ~/omi-runs/omi-NNN-<profile>-\$ts.jsonl 2> ~/omi-runs/omi-NNN-<profile>-\$ts.err; echo exit=\$?"
 ```
 
 - This allowlist is the default for every task: specific git subcommands, `npm run`/`npm ci`,
@@ -122,7 +139,9 @@ dependency/ADR notes, approval needs, and any extra worker permissions used for 
 ## 5. Independent review (judge)
 
 Start a fresh review subagent (not the worker, not you) pinned to `<sha>`: diff, AC, rules in
-AGENTS.md, evidence. Post its verdict with `gh pr comment <pr> --body-file <f>` from the
+AGENTS.md, evidence, and the worker's "Skills applied" claims against the diff (e.g. tests
+before or with the implementation, check output quoted; a claim without evidence is a
+finding, not a FAIL by itself). Post its verdict with `gh pr comment <pr> --body-file <f>` from the
 Coordinator account (`COORDINATOR_LOGIN` in `coordinator-settings.ts`); `VERDICT` comments by
 any other account are ignored by `merge`, `close` and `status.ts` (which flags them). The body
 must contain:

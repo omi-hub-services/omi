@@ -17,3 +17,14 @@ export const mergedPullSchema = z.strictObject({
   head: z.string(),
   mergedAt: z.iso.datetime(),
 });
+
+/** Publishes the tag and GitHub Release of a release PR that is already merged into `main`. */
+export const publishReleaseSchema = z.strictObject({
+  repository: prepareReleaseSchema.shape.repository,
+  /** Same label that prepared the release; tag name and idempotency keys derive from it. */
+  release: prepareReleaseSchema.shape.release,
+  /** The merged `develop` → `main` release PR. */
+  prNumber: z.number().int().positive(),
+  title: prepareReleaseSchema.shape.title,
+});
+export type PublishReleaseRequest = z.infer<typeof publishReleaseSchema>;

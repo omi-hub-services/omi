@@ -107,6 +107,9 @@ export class FakeGithub implements GithubTransport {
   /** Commit statuses in creation order (served newest first, like GitHub). */
   readonly statuses: { repo: string; sha: string; context: string; state: string }[] = [];
   readonly reviews: FakeReview[] = [];
+  /** `<repo>:<tag>` → commit SHA of a lightweight tag. */
+  readonly tags = new Map<string, string>();
+  readonly releases: { id: number; repo: string; tag: string; name: string; body: string }[] = [];
   /** `<repo>:<branch>` → active ruleset rules for the branch (GitHub's wire shape). */
   readonly rules = new Map<string, unknown[]>();
   /** Login of the credential the runtime uses. */
@@ -335,6 +338,14 @@ export class FakeGithub implements GithubTransport {
     };
   }
 
+  private tagWire(tag: string, sha: string): unknown {
+    return { ref: `refs/tags/${tag}`, object: { sha, type: "commit" } };
+  }
+
+  private releaseWire(r: { id: number; tag: string; name: string; body: string }): unknown {
+    return { id: r.id, tag_name: r.tag, name: r.name, body: r.body, draft: false };
+  }
+
   private findPull(repo: string, number: number): FakePull | undefined {
     return this.pulls.find((p) => p.repo === repo && p.number === number);
   }
@@ -379,7 +390,50 @@ export class FakeGithub implements GithubTransport {
       if (input["state"] === "closed" || input["state"] === "open") found.state = input["state"];
       return this.json(200, this.issueWire(found));
     }
+    if (request.method === "POST" && rest === "git/refs") {
+      const input = payloadOf(request);
+      const ref = /^refs\/tags\/(.+)$/.exec(text(input["ref"]))?.[1];
+      const sha = text(input["sha"]);
+      if (ref === undefined || !/^[0-9a-f]{40}$/.test(sha))
+        return this.json(422, { message: "Validation Failed" });
+      if (this.tags.has(`${repo}:${ref}`))
+        return this.json(422, { message: "Reference already exists" });
+      this.tags.set(`${repo}:${ref}`, sha);
+      return this.json(201, this.tagWire(ref, sha));
+    }
+    if (request.method === "POST" && rest === "releases") {
+      const input = payloadOf(request);
+      const tag = text(input["tag_name"]);
+      if (this.releases.some((r) => r.repo === repo && r.tag === tag))
+        return this.json(422, { message: "Validation Failed: already_exists" });
+      const created = {
+        id: (this.nextId += 1),
+        repo,
+        tag,
+        name: text(input["name"]),
+        body: text(input["body"]),
+      };
+      this.releases.push(created);
+      return this.json(201, this.releaseWire(created));
+    }
     if (!get) return undefined;
+
+    const tagRef = /^git\/ref\/tags\/(.+)$/.exec(rest);
+    if (tagRef?.[1] !== undefined) {
+      const name = decodeURIComponent(tagRef[1]);
+      const sha = this.tags.get(`${repo}:${name}`);
+      return sha === undefined
+        ? this.json(404, { message: "Not Found" })
+        : this.json(200, this.tagWire(name, sha));
+    }
+    const releaseByTag = /^releases\/tags\/(.+)$/.exec(rest);
+    if (releaseByTag?.[1] !== undefined) {
+      const name = decodeURIComponent(releaseByTag[1]);
+      const found = this.releases.find((r) => r.repo === repo && r.tag === name);
+      return found === undefined
+        ? this.json(404, { message: "Not Found" })
+        : this.json(200, this.releaseWire(found));
+    }
 
     const branch = /^branches\/([^/]+)$/.exec(rest);
     if (branch?.[1] !== undefined) {

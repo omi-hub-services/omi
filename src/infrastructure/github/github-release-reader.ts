@@ -60,7 +60,12 @@ export function createGithubReleaseReader(client: GithubRestClient): ReleaseRead
       throw new DeliveryError(pages.kind === "failed" ? pages.code : "INCOMPLETE_PR_LIST");
     return found;
   }
+  async function releasePulls(repository: string): Promise<MergedPull[]> {
+    const pulls = await mergedInto(repository, RELEASE_BASE, RELEASE_HEAD);
+    return pulls.filter((p) => p.head === RELEASE_HEAD);
+  }
   return {
+    mergedReleasePulls: releasePulls,
     async lastReleaseMergedAt(repository) {
       const releases = await mergedInto(repository, RELEASE_BASE, RELEASE_HEAD);
       const times = releases

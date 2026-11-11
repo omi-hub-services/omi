@@ -10,6 +10,12 @@ import type {
 import { hasOperationMarker, operationMarker } from "../../domain/delivery/operation-marker.js";
 import { writeOutcome } from "./github-rest-client.js";
 import type { GithubRestClient, PageVisit } from "./github-rest-client.js";
+import {
+  isReleaseArtifactOperation,
+  lookupReleaseArtifact,
+  sendReleaseArtifact,
+} from "./github-release-artifacts.js";
+import type { ReleaseArtifactOperation } from "./github-release-artifacts.js";
 import { lookupPullMerge, sendPullMerge } from "./github-pull-merge.js";
 import { lookupProjectCopy, sendProjectCopy } from "./github-project-copy.js";
 import {
@@ -22,7 +28,7 @@ import type { StateOperation } from "./github-state-operations.js";
 /** Operations that create a body carrying the marker. */
 type MarkedOperation = Exclude<
   GithubOperation,
-  { type: "project.copy" | "pull_request.merge" } | StateOperation
+  { type: "project.copy" | "pull_request.merge" } | StateOperation | ReleaseArtifactOperation
 >;
 
 /**
@@ -40,6 +46,8 @@ export function createGithubRemote(client: GithubRestClient): GithubRemote {
       }
       if (operation.type === "pull_request.merge") return sendPullMerge(client, operation);
       if (isStateOperation(operation)) return sendStateOperation(client, operation);
+      if (isReleaseArtifactOperation(operation))
+        return sendReleaseArtifact(client, operation, request.operationKey);
       const marker = operationMarker(request.operationKey);
       const call = writeCall(operation, marker);
       const result = await client.request({
@@ -61,6 +69,8 @@ export function createGithubRemote(client: GithubRestClient): GithubRemote {
       }
       if (operation.type === "pull_request.merge") return lookupPullMerge(client, operation);
       if (isStateOperation(operation)) return lookupStateOperation(client, operation);
+      if (isReleaseArtifactOperation(operation))
+        return lookupReleaseArtifact(client, operation, request.operationKey);
       const scan = listing(operation, request.operationKey, request.notBefore);
       let found: string | undefined;
       const pages = await client.readPages(scan.path, (page): PageVisit => {

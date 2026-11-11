@@ -37,6 +37,7 @@ function setup(pulls: MergedPull[] = merged, last?: string) {
     ...h.deps,
     releases: {
       lastReleaseMergedAt: () => Promise.resolve(last),
+      mergedReleasePulls: () => Promise.resolve([]),
       mergedDevelopPulls: () => Promise.resolve(pulls),
     },
     pulls: {
