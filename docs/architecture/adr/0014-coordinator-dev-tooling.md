@@ -180,6 +180,27 @@ Issues, Epics, PRs and drafts are excluded from readiness warnings.
   `--json`), produced by the same `promotableBacklog` function. It does not change Priority,
   move a task back to Backlog, or repair Issues that fail the gate (those stay Attention lines).
 
+## Worker log retention (OMI-056)
+
+Worker stream-json logs in WSL `~/omi-runs` grew without bound. `flow.ts cleanup <branch>` now
+ends with a log step for that task, and `flow.ts prune-runs` runs the same step once for every
+task whose Project Status is Done. Both take `--dry-run` (which still lists the directory, but
+changes nothing) and are safe to re-run. `runs-retention.ts` holds the pure rules; `flow.ts`
+reads one listing and applies the result with one bash script, both through the runner.
+
+- Scope: only `omi-NNN-*` files of the selected task(s). `quota/`, `watch.mjs` and other files
+  (for example `smoke-*`) are never touched.
+- Kept at the root: the newest `omi-*.jsonl` of each profile (the part of the name before the
+  timestamp, across all tasks), so `quota.ts` and `status.ts` read what they read before; files
+  held open by a process (`/proc/*/fd`) or written in the last 30 minutes.
+- Deleted: empty `.err` and `omi-NNN-current`.
+- Archived: everything else of the task (`.jsonl`, `.err`, `.md`, `.log`) is moved to
+  `~/omi-runs/archive/` and gzipped.
+- `archive/` is capped by `RUNS_RETENTION` in `coordinator-settings.ts`: files older than 30 days
+  go, then the oldest until the total is at most 50 MB. The cap sees the archive as listed, so
+  files archived by the same run count at the next one.
+- A failed `cleanup` of the branch (refused or error) skips the log step.
+
 ## Boundaries
 
 - This is not product code. `src/` must never import `tools/` (already enforced by

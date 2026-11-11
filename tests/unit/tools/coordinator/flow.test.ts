@@ -18,7 +18,8 @@ function fakeContext(): { ctx: Context; seen: Command[] } {
     const args = command.file === "wsl.exe" ? gitArgs(command) : command.args;
     const [sub, flag] = args;
     let stdout = "";
-    if (sub === "remote") stdout = "https://github.com/omi-hub-services/omi.git\n";
+    if (isRunsListing(command)) stdout = "@@now\n2000000000\n@@root\n@@archive\n";
+    else if (sub === "remote") stdout = "https://github.com/omi-hub-services/omi.git\n";
     else if (sub === "rev-parse") stdout = flag === "--abbrev-ref" ? `${BRANCH}\n` : "abc\n";
     return Promise.resolve({ code: 0, stdout, stderr: "" });
   };
@@ -28,6 +29,9 @@ function fakeContext(): { ctx: Context; seen: Command[] } {
 
 /** git argv of a single-command WSL payload (`git a b c`); a chained payload keeps its `&&`. */
 const gitArgs = (c: Command) => (c.args.at(-1) ?? "").split(" ").slice(1);
+
+/** The read-only ~/omi-runs listing that follows the branch cleanup (OMI-056). */
+const isRunsListing = (c: Command) => (c.args.at(-1) ?? "").includes("@@now");
 
 const READ_ONLY_GIT = new Set(["remote", "rev-parse", "status", "merge-base"]);
 const text = (c: Command) => [c.file, ...c.args].join(" ");
@@ -88,7 +92,7 @@ describe("flow cleanup", () => {
     const { ctx, seen } = fakeContext();
     expect(await cleanup(ctx, BRANCH, true)).toBe(true);
     expect(seen.map(text).join("\n")).not.toMatch(/fetch|switch|merge --ff-only|branch -D/);
-    for (const c of seen) {
+    for (const c of seen.filter((x) => !isRunsListing(x))) {
       const args = c.file === "wsl.exe" ? gitArgs(c) : c.args;
       expect(args.includes("&&"), text(c)).toBe(false);
       expect(READ_ONLY_GIT.has(args[0] ?? ""), text(c)).toBe(true);
