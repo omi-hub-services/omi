@@ -75,6 +75,8 @@ export type PagesResult =
 
 export interface GithubRestClient {
   request(request: HttpRequest): Promise<RestResult>;
+  /** GraphQL queries use POST but are safe to retry as reads. Mutations must use request(). */
+  queryGraphql(query: string, variables: Readonly<Record<string, unknown>>): Promise<RestResult>;
   /** Reads a paginated GET listing page by page, following `Link: rel="next"`. */
   readPages(path: string, visit: (page: unknown) => PageVisit): Promise<PagesResult>;
 }
@@ -87,8 +89,7 @@ export function createGithubRestClient(deps: RestClientDeps): GithubRestClient {
   const backoff = (tryIndex: number): number =>
     backoffDelayMs(tryIndex, deps.random(), policy.backoff);
 
-  async function request(req: HttpRequest): Promise<RestResult> {
-    const isRead = req.method === "GET";
+  async function performRequest(req: HttpRequest, isRead: boolean): Promise<RestResult> {
     for (let attempt = 1; ; attempt += 1) {
       const last = attempt >= policy.maxTries;
 
@@ -198,7 +199,7 @@ export function createGithubRestClient(deps: RestClientDeps): GithubRestClient {
     let next: string | undefined = path;
     for (let pages = 0; next !== undefined; pages += 1) {
       if (pages >= policy.maxPages) return { kind: "failed", code: "PAGINATION_LIMIT" };
-      const result = await request({ method: "GET", path: next });
+      const result = await performRequest({ method: "GET", path: next }, true);
       if (result.kind === "ok") {
         const verdict = visit(result.json);
         if (verdict === "stop") return { kind: "stopped" };
@@ -214,7 +215,14 @@ export function createGithubRestClient(deps: RestClientDeps): GithubRestClient {
     return { kind: "complete" };
   }
 
-  return { request, readPages };
+  return {
+    request: (req) => performRequest(req, req.method === "GET"),
+    queryGraphql(query, variables) {
+      if (!/^query\s*[(\s{]/.test(query)) throw new Error("Expected an explicit GraphQL query");
+      return performRequest({ method: "POST", path: "graphql", body: { query, variables } }, true);
+    },
+    readPages,
+  };
 }
 
 const INVALID_JSON = Symbol("invalid-json");

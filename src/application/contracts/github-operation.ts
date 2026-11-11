@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { githubIdSchema } from "./project-config.js";
 
 /**
  * Payload of one GitHub outbox operation, stored as an immutable artifact whose path and sha-256
@@ -18,6 +19,12 @@ const branchSchema = z
   .regex(/^[A-Za-z0-9._/-]+$/, "must be a plain branch name");
 
 export const githubOperationSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("project.copy"),
+    sourceProjectId: githubIdSchema,
+    ownerId: githubIdSchema,
+    title: z.string().min(1).max(100),
+  }),
   z.strictObject({
     type: z.literal("issue.comment"),
     repo: repoSchema,

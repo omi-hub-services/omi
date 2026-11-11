@@ -348,7 +348,7 @@ Backup SQLite dùng backup API hoặc quiesce phù hợp; không chỉ copy file
 
 ## 11. GitHub và delivery
 
-GitHub adapter dùng `gh` đã xác thực để gọi API qua argv/stdin, tránh nhúng secret vào command. GraphQL phù hợp Projects; REST phù hợp Issues/PR và quan hệ issue khi khả dụng. Pagination, retry-after, rate limit và mapping ID phải được xử lý trong adapter. Không hardcode tên field đồng nghĩa với field ID.
+GitHub adapter dùng `gh` đã xác thực để gọi API qua argv/stdin, tránh nhúng secret vào command. GraphQL phù hợp Projects; REST phù hợp Issues/PR và quan hệ issue khi khả dụng. Pagination, retry-after, rate limit và mapping ID phải được xử lý trong adapter. Không hardcode tên field đồng nghĩa với field ID. Init dùng mapping ID tường minh, preview và create-only config; luồng copy template qua outbox rồi inspect ID mới được quy định ở [ADR-0029](adr/0029-project-initialization-and-id-mapping.md).
 
 Outbox lưu ý định trước khi gọi remote. Timeout không rõ kết quả phải đọc/đối soát remote trước khi retry. Issue/PR/comment có logical operation marker khi phù hợp; unique local key chưa đủ đảm bảo remote không trùng nếu đã timeout. Đảm bảo idempotent/reconciliation, không hứa exactly-once qua mạng. Chi tiết state machine outbox, marker, grace period và phân loại lỗi nằm ở ADR-0025: adapter chỉ lặp lại thao tác ghi khi GitHub đã trả lời từ chối; timeout, mất kết nối hoặc 5xx trên thao tác ghi chuyển operation sang `outcome_unknown` và chỉ được gửi lại sau khi đọc remote không thấy marker.
 
