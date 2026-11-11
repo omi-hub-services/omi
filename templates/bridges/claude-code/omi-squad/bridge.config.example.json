@@ -1,0 +1,5 @@
+{
+  "distribution": "Ubuntu",
+  "repository": "/home/user/project",
+  "shim": "/home/user/project/.omi-squad/bin/omi"
+}
