@@ -276,6 +276,15 @@ a long-lived runtime. Replay and idempotent collection currently retain complete
 for the lifetime of an adapter instance; OMI-015/runtime lifecycle must bound that lifetime or
 define an explicit release contract before daemon use.
 
+## OMI-004 update (2026-11-11, ADR-0031)
+
+The OMI-004 live suites ran `ClaudeCodeExecutor` and `CodexExecutor` with their default flags on
+real subscription profiles (Claude Code 2.1.322, Codex 0.167.0). For the Claude adapter this
+confirms `--setting-sources project,local`, `--effort low` with `claude-haiku-5-5`, `init.model`
+read back, and `allowed`/`five_hour` quota signals. It resolves open decision 5. Two profiles at
+once and two Codex workers on one profile ran without interference. Still unproven: real limit
+and login error text through the adapter, and concurrent Codex token refresh (see ADR-0031).
+
 ## Not proven
 
 - **Everything above has not been run against the real CLI** in this task: no live test was run

@@ -284,6 +284,8 @@ Chọn executor theo thứ tự: khả dụng → đáp ứng capability tối t
 
 Khả năng isolate nhiều subscription Claude Code là **PoC bắt buộc**, chưa được chứng minh chỉ bằng hỗ trợ headless. Không đổi auth global qua lại trong khi các process song song đang chạy. Với Codex cũng phải kiểm tra keyring/profile namespace và token refresh concurrent. Mặc định đề xuất một worker/profile; tăng sau khi có bằng chứng an toàn.
 
+Kết quả PoC (ADR-0031, OMI-004): hai profile Claude tách namespace config/credential/session theo `CLAUDE_CONFIG_DIR`, chạy đồng thời và tiếp tục từ checkpoint khi đổi profile; profile Codex tách khỏi `~/.codex` và chạy hai worker đồng thời. Chưa chứng minh: token refresh Codex khi chạy đồng thời, failover giữa hai profile Codex (chỉ có một profile) và cửa sổ quota theo model (không có trong log).
+
 ## 8. State model và persistence
 
 | Bảng | Trường/quan hệ trọng tâm |
@@ -451,6 +453,7 @@ CI kiểm tra root allowlist, import direction, cycles, file naming, generated s
 | ADR-0012 | Coordinator trên Windows, runtime/worker trong WSL2 | Quyết định PO 10/11/2026; lifecycle xuyên ranh giới cần PoC (OMI-005) |
 | ADR-0014 | Dev tooling Coordinator ở `tools/coordinator/` | Tạm thời tới khi có CLI `omi`; script trước, LLM sau (OMI-050) |
 | ADR-0025 | Outbox GitHub, operation marker, đối soát trước retry | Idempotent bằng reconciliation, không hứa exactly-once (OMI-024) |
+| ADR-0031 | Profile = thư mục theo process, failover từ checkpoint | PoC OMI-004; failover Codex giữa hai profile chưa chứng minh |
 
 ## 16. Kiểm chứng kiến trúc
 

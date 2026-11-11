@@ -9,6 +9,7 @@ and e-mail here is made up (`00000000-…` ids, `example.invalid`). Do not paste
 | `cancelled.stream.jsonl`                         | OMI-002: SIGINT gives exit 0 with `error_during_execution` and `is_error: true`.                               |
 | `unsupported-model.*`                            | OMI-002: unknown model gives subtype `success` with `is_error: true`, exit 1, stderr tag `unrecognized_model`. |
 | `usage-limit*.stream.jsonl`                      | **Synthetic.** No real limit was captured; wording follows the CLI's documented messages.                      |
+| `rate-limit-allowed-recorded.jsonl`              | **Recorded** (OMI-004, ADR-0031): one `rate_limit_event` of a live Haiku run, Claude Code 2.1.322; ids zeroed. |
 | `auth-failure.stream.jsonl`                      | **Synthetic.** Same caveat.                                                                                    |
 | `auth-not-logged-in.stderr.txt`                  | **Synthetic.** Same caveat.                                                                                    |
 | `unsupported-effort.stderr.txt`                  | **Synthetic.** Option-parser wording; not captured.                                                            |
