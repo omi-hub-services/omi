@@ -138,8 +138,7 @@ Các npm script cần được implement khi scaffold:
 | `schemas:generate` / `schemas:check` | Sinh schema và phát hiện drift |
 | `test:unit` | Domain/use cases với fake ports |
 | `test:integration` | SQLite, Git, process, IPC thật trong temp |
-| `test:contract` | Adapter CLI/API với output fixture đã khử secret và fake executable; không gọi CLI thật |
-| `test:contract` | Fixtures CLI/API schema theo version |
+| `test:contract` | Adapter CLI/API với output fixture đã khử secret theo version CLI và fake executable; không gọi CLI thật |
 | `test:e2e` | Full flow với fake agent và sandbox local |
 | `test:live` | Opt-in CLI subscription/GitHub, không thuộc CI mặc định |
 | `pack:check` | npm pack, kiểm tra nội dung và smoke install trong thư mục sạch |
