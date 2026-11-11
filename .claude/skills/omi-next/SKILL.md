@@ -145,7 +145,7 @@ FAIL → resume the worker with the findings, then repeat 4–5 for the new SHA 
 then Architect, then 2 more; design-patterns.md; then ask the PO).
 
 **Parallel tasks, one review each (OMI-069, ADR-0014).** Before step 4, merge `origin/develop`
-into a finished branch so the review sees the current base. A PR that goes `BEHIND` *after* its
+into a finished branch so the review sees the current base. A PR that goes `BEHIND` _after_ its
 PASS (another task merged first) is synced with a script, not re-reviewed:
 
 ```
