@@ -17,7 +17,7 @@ function runWorker(r: Rig, attemptId: string, mode: "good" | "silent") {
   const root = `attempts/${attemptId}`;
   const artifact = r.artifacts.publish(`${root}/reports/implementation.md`, `work of ${attemptId}`);
   const evidence = `${root}/reports/unit-tests.txt`;
-  r.artifacts.publish(evidence, "all green");
+  const evidenceArtifact = r.artifacts.publish(evidence, "all green");
   return {
     schemaVersion: 1,
     runId: "run-1",
@@ -25,7 +25,7 @@ function runWorker(r: Rig, attemptId: string, mode: "good" | "silent") {
     attemptId,
     status: "succeeded",
     summary: "Implemented.",
-    artifacts: [artifact],
+    artifacts: [artifact, evidenceArtifact],
     revision: { headSha: HEAD, baseSha: BASE },
     checks: [{ id: "unit-tests", evidenceRef: evidence }],
     findings: [],

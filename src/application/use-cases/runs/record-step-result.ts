@@ -244,7 +244,16 @@ function verify(
     return { failure: "PATH_OUTSIDE_ROOT", report };
   }
   try {
-    deps.artifacts.manifest(report.artifacts);
+    const manifest = deps.artifacts.manifest(report.artifacts);
+    // Check names alone are claims. Every evidence path must have verified, nonempty bytes.
+    if (
+      !report.checks.every((check) =>
+        manifest.artifacts.some(
+          (artifact) => artifact.path === check.evidenceRef && artifact.size > 0,
+        ),
+      )
+    )
+      return { failure: "ARTIFACT_INVALID", report };
   } catch (error) {
     if (!(error instanceof ArtifactError)) throw error;
     return {
