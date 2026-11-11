@@ -4,6 +4,7 @@ import { contextPacketSchema } from "./context.js";
 import { modelsConfigSchema } from "./model-capability.js";
 import { projectConfigSchema } from "./project-config.js";
 import { stepResultSchema } from "./result.js";
+import { roleSchema, ruleMetadataSchema } from "./role.js";
 import { CONTRACT_SCHEMA_VERSION } from "./schema-version.js";
 import { workflowSchema } from "./workflow.js";
 
@@ -16,6 +17,8 @@ const CONTRACTS: readonly { name: string; schema: z.ZodType }[] = [
   { name: "workflow", schema: workflowSchema },
   { name: "project-config", schema: projectConfigSchema },
   { name: "models-config", schema: modelsConfigSchema },
+  { name: "role", schema: roleSchema },
+  { name: "rule-metadata", schema: ruleMetadataSchema },
   { name: "context-packet", schema: contextPacketSchema },
   { name: "step-result", schema: stepResultSchema },
   { name: "command", schema: commandSchema },
