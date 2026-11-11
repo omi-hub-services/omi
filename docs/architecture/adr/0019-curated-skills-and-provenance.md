@@ -84,14 +84,21 @@ PO decision. Native skill loading is no guarantee (the OMI-039 worker had 50 ski
    profile's auto-memory out. The adapter reports `skills`, `plugins` and `memory_paths` from the
    `system/init` event as `workerEnvironment` in the execution result, so a run proves the three
    are empty.
-3. **Codex.** Each worker runs with a per-attempt `CODEX_HOME` that holds only a link to the
-   profile's `auth.json`: no installed skills, no personal AGENTS.md. It is deleted with the run's
-   temporary directory. The profile itself is never changed.
+3. **Codex.** Workers run with the profile's own `CODEX_HOME`, unchanged, so the CLI's token
+   refresh writes stay in the profile (a rename over a symlinked `auth.json` could lose a rotated
+   refresh token and log the profile out, ADR-0033). Before launching, the executor reads
+   `$CODEX_HOME/skills` and refuses `start` with `CODEX_HOME_HAS_SKILLS` when it exists and is not
+   empty; dispatch reports it as `EXECUTOR_START_FAILED` with that detail. The runtime never
+   writes to the profile; the user removes the installed skills.
 4. **Result contract.** `step-result.v1` gains a required `skillsApplied` list of
    `{id, evidenceRef}`; `evidenceRef` must be a verified, non-empty artifact of the attempt.
    `recordStepResult` (the review step's check) fails the step with `SKILL_EVIDENCE_MISSING` when a
    given skill is not reported, and `SKILL_NOT_ASSIGNED` when a skill that was not given is
    reported.
 
-Not verified here: the Codex CLI's behaviour with a symlinked `auth.json` on token refresh, and a
-live Claude run (needs a Coordinator probe).
+Evidence (Coordinator probe, real Claude Code CLI 2.1.322, 2026-11-11): launched with
+`--disable-slash-commands --setting-sources project,local` and `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`,
+the `system/init` event showed `skills: []`, no user plugins (only the built-in `cc-plugin-*`) and
+no `memory_paths`, and CLAUDE.md still loaded.
+
+Not verified here: a live Codex run against a profile with and without skills.

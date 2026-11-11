@@ -77,13 +77,7 @@ describe("Codex probe (no model calls)", () => {
       supportedRange: ">=0.167.0 <0.167.1",
     });
     expect(invocations()).toMatchObject([
-      {
-        argv: ["--version"],
-        codexHome: profile,
-        codexHomeEntries: ["auth.json"],
-        envKeys: ["CODEX_HOME", "PATH"],
-        stdin: "",
-      },
+      { argv: ["--version"], codexHome: profile, envKeys: ["CODEX_HOME", "PATH"], stdin: "" },
     ]);
     expect(JSON.stringify(result)).not.toMatch(/synthetic|tokens|auth_mode|profile/);
     expect(readFileSync(join(profile, "auth.json"), "utf8")).toBe(cache);

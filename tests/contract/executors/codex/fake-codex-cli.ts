@@ -25,8 +25,6 @@ export interface Invocation {
   cwd: string;
   envKeys: string[];
   codexHome: string;
-  /** Entries of CODEX_HOME at launch time. */
-  codexHomeEntries: string[];
   stdin: string;
 }
 
@@ -41,7 +39,7 @@ export function writeFakeCodex(
   writeFileSync(
     path,
     String.raw`#!/usr/bin/env node
-import { appendFileSync, writeFileSync, mkdirSync, symlinkSync, readdirSync } from "node:fs";
+import { appendFileSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
 const scenario = ${JSON.stringify(scenario)};
 const recordPath = ${JSON.stringify(recordPath)};
 const argv = process.argv.slice(2);
@@ -49,7 +47,7 @@ let stdin = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { stdin += chunk; });
 process.stdin.on("end", () => {
-  appendFileSync(recordPath, JSON.stringify({ argv, cwd: process.cwd(), envKeys: Object.keys(process.env).sort(), codexHome: process.env.CODEX_HOME, codexHomeEntries: readdirSync(process.env.CODEX_HOME).sort(), stdin }) + "\n");
+  appendFileSync(recordPath, JSON.stringify({ argv, cwd: process.cwd(), envKeys: Object.keys(process.env).sort(), codexHome: process.env.CODEX_HOME, stdin }) + "\n");
   if (argv[0] === "--version") {
     process.stdout.write(scenario.versionOutput ?? "codex-cli 0.167.0\n");
     process.exitCode = scenario.versionExitCode ?? 0;

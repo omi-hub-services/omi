@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { statSync } from "node:fs";
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { readdirSync, statSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -52,6 +52,15 @@ interface Run {
   outputPath: string;
   supervised?: SupervisedProcess;
   result?: Promise<ExecutionResult>;
+}
+
+/** Installed skills would reach the worker next to the inlined ones (ADR-0019 update 2026-11-11). */
+function hasInstalledSkills(profileHome: string): boolean {
+  try {
+    return readdirSync(join(profileHome, "skills")).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function isDirectory(path: string): boolean {
@@ -108,6 +117,9 @@ export class CodexExecutor implements AgentExecutor {
     // Expiry/refresh remains entirely the CLI's job; a runtime auth rejection is classified below.
     if ((await inspectCodexAuth(valid.profileHome)) !== "ready")
       throw new AgentExecutorError("INVALID_REQUEST");
+    // Read-only check; the profile is never written. The user removes the skills, not the runtime.
+    if (hasInstalledSkills(valid.profileHome))
+      throw new AgentExecutorError("CODEX_HOME_HAS_SKILLS");
     const handle = executionHandleSchema.safeParse({
       executionId: this.newExecutionId(),
       attemptId: valid.attemptId,
@@ -116,15 +128,8 @@ export class CodexExecutor implements AgentExecutor {
     if (!handle.success || this.runs.has(handle.data.executionId))
       throw new AgentExecutorError("INVALID_REQUEST");
     let outputDir: string;
-    let workerHome: string;
     try {
       outputDir = await mkdtemp(join(tmpdir(), "omi-codex-output-"));
-      // A worker's CODEX_HOME holds only the profile's login: no installed skills, no personal
-      // AGENTS.md. Its skills arrive inlined in the prompt (ADR-0019 update 2026-11-11). It lives
-      // inside outputDir, so it is removed with it.
-      workerHome = join(outputDir, "home");
-      await mkdir(workerHome);
-      await symlink(join(valid.profileHome, "auth.json"), join(workerHome, "auth.json"));
     } catch {
       throw new AgentExecutorError("SPAWN_FAILED");
     }
@@ -141,7 +146,7 @@ export class CodexExecutor implements AgentExecutor {
         executable: this.executable,
         args: buildCodexInvocationArgs(valid, run.outputPath),
         cwd: valid.workspace,
-        env: buildCodexEnvironment(this.parentEnv, workerHome),
+        env: buildCodexEnvironment(this.parentEnv, valid.profileHome),
         stdin: valid.prompt,
         onStdoutLine: (line) => {
           for (const draft of run.stream.ingest(line)) run.events.publish(draft);
