@@ -38,6 +38,8 @@ export interface CodexExecutorOptions {
   parentEnv?: NodeJS.ProcessEnv;
   graceMs?: number;
   newExecutionId?: () => string;
+  /** Synchronous durable process registration before start returns. Failure stops the group. */
+  onWorkerStarted?: (attemptId: string, worker: SupervisedProcess) => void;
 }
 
 interface Run {
@@ -66,6 +68,7 @@ export class CodexExecutor implements AgentExecutor {
   private readonly parentEnv: NodeJS.ProcessEnv;
   private readonly graceMs: number;
   private readonly newExecutionId: () => string;
+  private readonly onWorkerStarted: CodexExecutorOptions["onWorkerStarted"];
   private readonly runs = new Map<string, Run>();
 
   constructor(options: CodexExecutorOptions = {}) {
@@ -73,6 +76,7 @@ export class CodexExecutor implements AgentExecutor {
     this.parentEnv = options.parentEnv ?? process.env;
     this.graceMs = options.graceMs ?? 15_000;
     this.newExecutionId = options.newExecutionId ?? randomUUID;
+    this.onWorkerStarted = options.onWorkerStarted;
   }
 
   async probe(request: ProbeRequest): Promise<ProbeResult> {
@@ -138,7 +142,10 @@ export class CodexExecutor implements AgentExecutor {
         maxLineChars: 16 * 1024 * 1024,
         maxStderrChars: 64_000,
       });
+      this.onWorkerStarted?.(valid.attemptId, run.supervised);
     } catch {
+      run.supervised?.cancel("SIGINT", "group");
+      if (run.supervised !== undefined) await run.supervised.exit;
       // Preserve the port error if filesystem cleanup itself fails.
       await rm(outputDir, { recursive: true, force: true }).catch(() => undefined);
       throw new AgentExecutorError("SPAWN_FAILED");

@@ -6,6 +6,7 @@ import type { MergeEvidence } from "../../src/application/contracts/merge-delive
 import type { TaskCompletion } from "../../src/application/ports/merge-delivery.ts";
 import { mergeTaskPr } from "../../src/application/use-cases/delivery/merge-task-pr.ts";
 import type { MergeTaskPrDeps } from "../../src/application/use-cases/delivery/merge-task-pr.ts";
+import { operationMarker } from "../../src/domain/delivery/operation-marker.ts";
 import type { TaskStatus } from "../../src/domain/tasks/task-status.ts";
 import { createLocalArtifactStore } from "../../src/infrastructure/artifacts/local-artifact-store.ts";
 import { createGithubMergeDelivery } from "../../src/infrastructure/github/github-merge-delivery.ts";
@@ -32,6 +33,8 @@ const HEAD = "a".repeat(40);
 const BASE = "b".repeat(40);
 const PUSHED = "c".repeat(40);
 const NOW = Date.parse("2026-11-11T08:00:00.000Z");
+/** The key `preparePr` created the PR under; its marker is on the PR body. */
+const PR_CREATION_KEY = `create-pr:${REPO}:task-27:task/omi-023-merge-gates:develop`;
 
 const ISSUE_BODY = [
   "## Goal",
@@ -91,7 +94,7 @@ function sandbox() {
     number: PR,
     repo: REPO,
     title: "Merge gates",
-    body: `Issue: #${String(ISSUE)}\nTask: task-27\n\n## Acceptance criteria and evidence`,
+    body: `Issue: #${String(ISSUE)}\nTask: task-27\n\n## Acceptance criteria and evidence\n\n${operationMarker(PR_CREATION_KEY)}`,
     createdAt: new Date(NOW).toISOString(),
     head: "task/omi-023-merge-gates",
     base: "develop",
@@ -243,6 +246,18 @@ describe("merge a task PR, then tick, close and record Done", () => {
     expect(s.writes("PUT", "/merge")).toBe(0);
     expect(s.issue()?.state ?? "open").toBe("open");
     expect(s.task.status).toBe("in_progress");
+  });
+
+  it("refuses a PR that does not carry the task's PR creation marker, and merges nothing", async () => {
+    const s = sandbox();
+    const pull = s.pull();
+    if (pull !== undefined) pull.body = pull.body.replace(operationMarker(PR_CREATION_KEY), "");
+    expect(await mergeTaskPr(s.deps, request)).toEqual({
+      status: "refused",
+      step: "merge",
+      reasons: ["PR_NOT_CORRELATED"],
+    });
+    expect(s.writes("PUT", "/merge")).toBe(0);
   });
 
   it("refuses a failing required check on the exact head", async () => {

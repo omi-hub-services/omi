@@ -31,6 +31,9 @@ export interface FakeIssue {
   readonly createdAt: string;
   state?: "open" | "closed";
 }
+/** The head SHA of a PR whose test did not set one. */
+export const DEFAULT_HEAD_SHA = "a".repeat(40);
+
 export interface FakePull extends FakeIssue {
   readonly head: string;
   readonly base: string;
@@ -281,14 +284,14 @@ export class FakeGithub implements GithubTransport {
       number: p.number,
       title: p.title,
       body: p.body,
-      state: p.state ?? "open",
+      state: p.state ?? (p.merged === true ? "closed" : "open"),
       draft: p.draft ?? false,
       merged: p.merged ?? false,
       merge_commit_sha: p.mergeCommitSha ?? null,
       mergeable_state: p.mergeableState ?? "clean",
       user: { login: p.author ?? this.authenticatedLogin },
       html_url: `https://github.com/${p.repo}/pull/${String(p.number)}`,
-      head: { ref: p.head, sha: p.headSha ?? "0".repeat(40), repo: { full_name: p.repo } },
+      head: { ref: p.head, sha: p.headSha ?? DEFAULT_HEAD_SHA, repo: { full_name: p.repo } },
       base: { ref: p.base, repo: { full_name: p.repo } },
     };
   }
@@ -413,7 +416,7 @@ export class FakeGithub implements GithubTransport {
   private merge(repo: string, number: number, input: Record<string, unknown>): HttpResponse {
     const pull = this.findPull(repo, number);
     if (pull === undefined) return this.json(404, { message: "Not Found" });
-    const headSha = pull.headSha ?? "0".repeat(40);
+    const headSha = pull.headSha ?? DEFAULT_HEAD_SHA;
     if (pull.merged === true || (pull.state ?? "open") !== "open" || pull.draft === true) {
       return this.json(405, { message: "Pull Request is not mergeable" });
     }

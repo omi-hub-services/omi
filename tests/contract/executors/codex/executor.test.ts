@@ -13,7 +13,11 @@ import {
   AgentExecutorError,
   type AgentExecutor,
 } from "../../../../src/application/ports/agent-executor.js";
-import { CodexExecutor } from "../../../../src/infrastructure/executors/codex/codex-executor.js";
+import type { ProcessExit } from "../../../../src/infrastructure/processes/supervised-process.js";
+import {
+  CodexExecutor,
+  type CodexExecutorOptions,
+} from "../../../../src/infrastructure/executors/codex/codex-executor.js";
 import { FORBIDDEN_AUTH_ENV } from "../../../../src/infrastructure/executors/codex/codex-environment.js";
 import {
   fixture,
@@ -59,7 +63,7 @@ const STARTED = '{"type":"thread.started","thread_id":"thread-cancel"}\n{"type":
 
 function harness(
   scenario: FakeCodexScenario = SUCCESS,
-  options: { graceMs?: number; executable?: string } = {},
+  options: Pick<CodexExecutorOptions, "graceMs" | "executable" | "onWorkerStarted"> = {},
 ) {
   counter += 1;
   const recordPath = join(root, `record-${String(counter)}.jsonl`);
@@ -69,6 +73,7 @@ function harness(
     executable,
     parentEnv: parent,
     graceMs: options.graceMs ?? 3000,
+    ...(options.onWorkerStarted === undefined ? {} : { onWorkerStarted: options.onWorkerStarted }),
   });
   return { executor, invocations: () => readInvocations(recordPath) };
 }
@@ -463,5 +468,33 @@ describe("request and handle boundary", () => {
     await expect(harness().executor.collectResult(real)).rejects.toMatchObject({
       code: "UNKNOWN_EXECUTION",
     });
+  });
+});
+
+describe("durable worker process registration", () => {
+  it("exposes the owned handle before start resolves", async () => {
+    const observed: { attemptId?: string; pid?: number } = {};
+    const { executor } = harness(SUCCESS, {
+      onWorkerStarted: (attemptId, worker) => {
+        observed.attemptId = attemptId;
+        observed.pid = worker.pid;
+      },
+    });
+    const handle = await executor.start(request());
+    expect(observed.attemptId).toBe(handle.attemptId);
+    expect(observed.pid).toBeGreaterThan(0);
+    await executor.collectResult(handle);
+  });
+
+  it("stops the entire owned group before refusing a failed registration", async () => {
+    let exit: Promise<ProcessExit> | undefined;
+    const { executor } = harness(SUCCESS, {
+      onWorkerStarted: (_attemptId, worker) => {
+        exit = worker.exit;
+        throw new Error("REGISTRATION_FAILED");
+      },
+    });
+    await expect(executor.start(request())).rejects.toMatchObject({ code: "SPAWN_FAILED" });
+    expect(await exit).toMatchObject({ cancelRequested: true });
   });
 });

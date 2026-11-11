@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GithubOperation } from "../../../src/application/contracts/github-operation.ts";
+import { operationMarker } from "../../../src/domain/delivery/operation-marker.ts";
 import { createGithubMergeDelivery } from "../../../src/infrastructure/github/github-merge-delivery.ts";
 import { createGithubRemote } from "../../../src/infrastructure/github/github-remote.ts";
 import { createGithubRestClient } from "../../../src/infrastructure/github/github-rest-client.ts";
@@ -10,6 +11,7 @@ const REPO = "acme/app";
 const HEAD = "a".repeat(40);
 const BASE = "b".repeat(40);
 const OTHER = "c".repeat(40);
+const PR_KEY = "create-pr:acme/app:task-1:task/omi-1:develop";
 
 function setup() {
   const github = new FakeGithub({ now: () => T0 });
@@ -17,7 +19,7 @@ function setup() {
     number: 5,
     repo: REPO,
     title: "Task",
-    body: "Issue: #4",
+    body: `Issue: #4\n\n${operationMarker(PR_KEY)}`,
     createdAt: new Date(T0).toISOString(),
     head: "task/omi-1",
     base: "develop",
@@ -48,12 +50,13 @@ function setup() {
   };
 }
 
-const merge = (headSha: string): GithubOperation => ({
+const merge = (expectedHeadSha: string): GithubOperation => ({
   type: "pull_request.merge",
   repo: REPO,
   pullNumber: 5,
-  headSha,
-  mergeMethod: "merge",
+  base: "develop",
+  expectedHeadSha,
+  prOperationKey: PR_KEY,
 });
 
 describe("GitHub merge reader", () => {
@@ -133,26 +136,54 @@ describe("GitHub merge reader", () => {
 });
 
 describe("GitHub state operations of the outbox", () => {
-  it("merges with the head guard and finds the merge again by reading the PR", async () => {
+  it("merges with a merge commit and the head guard, and finds the merge again by reading the PR", async () => {
     const s = setup();
     const sent = await s.remote.send({ operation: merge(HEAD), operationKey: "merge-pr:x" });
     const sha = s.github.pulls[0]?.mergeCommitSha ?? "";
-    expect(sent).toEqual({
-      kind: "succeeded",
-      remoteIdentity: `pull_request_merge:${REPO}#5:${sha}`,
-    });
+    expect(sha).not.toBe(OTHER);
+    expect(sent).toEqual({ kind: "succeeded", remoteIdentity: `merge:${REPO}#5:${sha}` });
+    expect(s.github.commits.get(sha)?.parents).toEqual([BASE, HEAD]);
     const notBefore = new Date(T0).toISOString();
     expect(await s.remote.lookup({ operation: merge(HEAD), operationKey: "k", notBefore })).toEqual(
-      { kind: "found", remoteIdentity: `pull_request_merge:${REPO}#5:${sha}` },
+      { kind: "found", remoteIdentity: `merge:${REPO}#5:${sha}` },
     );
-    // A merge at another head is not this operation's effect.
+    // A merge at another head is not this operation's effect, and never reads as absent.
     expect(
       await s.remote.lookup({ operation: merge(OTHER), operationKey: "k", notBefore }),
-    ).toEqual({ kind: "absent" });
+    ).toEqual({ kind: "unavailable", code: "MERGE_IDENTITY_MISMATCH" });
   });
 
-  it("is refused, applying nothing, when the head moved", async () => {
+  it("sends no merge when the head already differs from the expected head", async () => {
     const s = setup();
+    expect(await s.remote.send({ operation: merge(OTHER), operationKey: "merge-pr:x" })).toEqual({
+      kind: "outcome_unknown",
+      code: "MERGE_IDENTITY_MISMATCH",
+    });
+    expect(s.github.requests.filter((r) => r.method === "PUT")).toEqual([]);
+    expect(s.github.pulls[0]?.merged).toBeUndefined();
+  });
+
+  it("is refused by GitHub's head guard, applying nothing, when the head moved after the read", async () => {
+    const s = setup();
+    const pull = s.github.pulls[0];
+    if (pull === undefined) throw new Error("PR missing");
+    // The read before the PUT still sees the expected head; the push lands right after it.
+    s.github.inject({
+      method: "GET",
+      pathIncludes: "/pulls/5",
+      effect: {
+        type: "status",
+        status: 200,
+        body: JSON.stringify({
+          number: 5,
+          body: pull.body,
+          merged: false,
+          merge_commit_sha: null,
+          head: { ref: pull.head, sha: OTHER, repo: { full_name: REPO } },
+          base: { ref: "develop", repo: { full_name: REPO } },
+        }),
+      },
+    });
     expect(await s.remote.send({ operation: merge(OTHER), operationKey: "merge-pr:x" })).toEqual({
       kind: "rejected_final",
       code: "HTTP_409",

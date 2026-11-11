@@ -5,7 +5,7 @@ import {
   evaluateMergeConfirmation,
 } from "../../../domain/delivery/merge-policy.js";
 import type { ReviewObservation } from "../../../domain/delivery/merge-policy.js";
-import { operationMarker } from "../../../domain/delivery/operation-marker.js";
+import { hasOperationMarker, operationMarker } from "../../../domain/delivery/operation-marker.js";
 import {
   acceptanceCriteria,
   tickAcceptanceCriteria,
@@ -29,7 +29,7 @@ import type {
   MergePull,
   MergeTaskPrRequest,
 } from "../../contracts/merge-delivery.js";
-import { prMappingSchema } from "../../contracts/pr-delivery.js";
+import { prMappingSchema, pullRequestCreationKey } from "../../contracts/pr-delivery.js";
 import type { LeaseStore } from "../../ports/lease-store.js";
 import type {
   MergeDeliveryReader,
@@ -159,6 +159,11 @@ async function mergeUnderLock(
     if (pull.merged) return undefined;
     if (pull.state !== "open") return refused("merge", ["PULL_REQUEST_CLOSED"]);
     const { repository } = request;
+    // The merge intent names the PR's creation intent; its marker proves this is the task's PR.
+    const prOperationKey = pullRequestCreationKey(repository, request.taskId, pull.headRef);
+    if (!hasOperationMarker(pull.body, prOperationKey)) {
+      return refused("merge", ["PR_NOT_CORRELATED"]);
+    }
     const [baseSha, rules, issue, checks, reviews, actor] = await Promise.all([
       deps.reader.branchHead(repository, INTEGRATION_BRANCH),
       deps.reader.branchRules(repository, INTEGRATION_BRANCH),
@@ -205,8 +210,9 @@ async function mergeUnderLock(
       type: "pull_request.merge",
       repo: repository,
       pullNumber: request.prNumber,
-      headSha: request.reviewedHeadSha,
-      mergeMethod: "merge",
+      base: INTEGRATION_BRANCH,
+      expectedHeadSha: request.reviewedHeadSha,
+      prOperationKey,
     });
     if (outcome.kind === "pending") return pendingAt("merge", outcome);
     // GitHub refused after every local gate passed (e.g. protection the runtime cannot see).

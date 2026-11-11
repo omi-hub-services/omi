@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { identifierSchema } from "./identifiers.js";
-import { githubOperationSchema, shaSchema } from "./github-operation.js";
+import { gitShaSchema, identifierSchema } from "./identifiers.js";
+import { githubOperationSchema } from "./github-operation.js";
 
 const pullOperation = githubOperationSchema.options[3];
 const positiveInt = z.number().int().positive();
@@ -14,7 +14,7 @@ export const mergeTaskPrSchema = z.strictObject({
   issueNumber: positiveInt,
   prNumber: positiveInt,
   /** The head the independent review examined; the merge is guarded by it. */
-  reviewedHeadSha: shaSchema,
+  reviewedHeadSha: gitShaSchema,
   /** Checks the workflow requires; the base branch ruleset can add more, never remove any. */
   requiredChecks: z.array(checkNameSchema).min(1).max(50),
   /** The project's minimum; the ruleset's required approving review count applies when higher. */
@@ -39,11 +39,13 @@ export const mergePullSchema = z.strictObject({
   repository: pullOperation.shape.repo,
   state: z.enum(["open", "closed"]),
   merged: z.boolean(),
-  headSha: shaSchema,
+  headSha: gitShaSchema,
+  /** The head branch; with the task it names the PR creation intent (`pullRequestCreationKey`). */
+  headRef: pullOperation.shape.head,
   baseRef: z.string().min(1),
   author: z.string().min(1),
   mergeableState: mergeableStateSchema,
-  mergeCommitSha: shaSchema.nullable(),
+  mergeCommitSha: gitShaSchema.nullable(),
   body: z.string(),
 });
 export type MergePull = z.infer<typeof mergePullSchema>;
@@ -65,7 +67,7 @@ export type BranchRules = z.infer<typeof branchRulesSchema>;
 export const checkObservationsSchema = z.array(
   z.strictObject({
     name: checkNameSchema,
-    headSha: shaSchema,
+    headSha: gitShaSchema,
     status: z.enum(["passed", "failed", "pending"]),
   }),
 );
@@ -76,14 +78,14 @@ export const nativeReviewsSchema = z.array(
     actor: z.string().min(1),
     actorType: z.string().min(1),
     state: z.enum(["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED", "PENDING"]),
-    commitSha: shaSchema,
+    commitSha: gitShaSchema,
   }),
 );
 export type NativeReviews = z.infer<typeof nativeReviewsSchema>;
 
 export const mergeCommitSchema = z.strictObject({
-  sha: shaSchema,
-  parents: z.array(shaSchema),
+  sha: gitShaSchema,
+  parents: z.array(gitShaSchema),
 });
 export type MergeCommit = z.infer<typeof mergeCommitSchema>;
 
@@ -97,8 +99,8 @@ export const mergeEvidenceSchema = z.strictObject({
     .strictObject({
       reviewerRunId: z.string(),
       reviewerAgentId: z.string(),
-      headSha: shaSchema,
-      baseSha: shaSchema,
+      headSha: gitShaSchema,
+      baseSha: gitShaSchema,
       verdict: z.enum(["pass", "fail"]),
       body: z.string().max(60_000),
     })

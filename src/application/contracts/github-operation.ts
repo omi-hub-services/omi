@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { gitShaSchema } from "./identifiers.js";
+import { isValidOperationKey } from "../../domain/delivery/operation-marker.js";
 import { githubIdSchema } from "./project-config.js";
 
 /**
@@ -17,7 +19,6 @@ const branchSchema = z
   .min(1)
   .max(255)
   .regex(/^[A-Za-z0-9._/-]+$/, "must be a plain branch name");
-export const shaSchema = z.string().regex(/^[0-9a-f]{40}$/, "must be a full lowercase commit SHA");
 
 export const githubOperationSchema = z.discriminatedUnion("type", [
   z.strictObject({
@@ -49,16 +50,20 @@ export const githubOperationSchema = z.discriminatedUnion("type", [
     body: bodySchema,
   }),
   /**
-   * Merge commit (never squash or rebase, so the reviewed head stays in history) guarded by the
-   * reviewed head: GitHub refuses with 409 when the PR head moved. Its read-back is the PR's own
-   * merged state, not a marker; a merge is not a body the adapter can tag.
+   * Merges a task PR with a merge commit (the adapter never asks for squash or rebase, so the
+   * reviewed head stays in history), guarded by the expected head: GitHub refuses with 409 when
+   * the PR head moved. A merge has no body to tag, so its read-back is the PR's own merged state,
+   * correlated through the creation intent's marker on the PR body.
    */
   z.strictObject({
     type: z.literal("pull_request.merge"),
     repo: repoSchema,
     pullNumber: positiveInt,
-    headSha: shaSchema,
-    mergeMethod: z.literal("merge"),
+    /** Task delivery only; release merges use the separate PO-approved flow. */
+    base: z.literal("develop"),
+    expectedHeadSha: gitShaSchema,
+    /** Correlates to the existing PR creation intent; never an approval. */
+    prOperationKey: z.string().refine(isValidOperationKey),
   }),
   /**
    * Replaces an Issue body that is still exactly `fromBody`. No marker is written, because only

@@ -10,6 +10,7 @@ import type {
 import { hasOperationMarker, operationMarker } from "../../domain/delivery/operation-marker.js";
 import { writeOutcome } from "./github-rest-client.js";
 import type { GithubRestClient, PageVisit } from "./github-rest-client.js";
+import { lookupPullMerge, sendPullMerge } from "./github-pull-merge.js";
 import { lookupProjectCopy, sendProjectCopy } from "./github-project-copy.js";
 import {
   isStateOperation,
@@ -19,7 +20,10 @@ import {
 import type { StateOperation } from "./github-state-operations.js";
 
 /** Operations that create a body carrying the marker. */
-type MarkedOperation = Exclude<GithubOperation, { type: "project.copy" } | StateOperation>;
+type MarkedOperation = Exclude<
+  GithubOperation,
+  { type: "project.copy" | "pull_request.merge" } | StateOperation
+>;
 
 /**
  * GitHub side effects of the outbox, over the REST client. Every created Issue, comment or PR
@@ -34,6 +38,7 @@ export function createGithubRemote(client: GithubRestClient): GithubRemote {
       if (operation.type === "project.copy") {
         return sendProjectCopy(client, operation, request.operationKey);
       }
+      if (operation.type === "pull_request.merge") return sendPullMerge(client, operation);
       if (isStateOperation(operation)) return sendStateOperation(client, operation);
       const marker = operationMarker(request.operationKey);
       const call = writeCall(operation, marker);
@@ -54,6 +59,7 @@ export function createGithubRemote(client: GithubRestClient): GithubRemote {
       if (operation.type === "project.copy") {
         return lookupProjectCopy(client, operation, request.operationKey);
       }
+      if (operation.type === "pull_request.merge") return lookupPullMerge(client, operation);
       if (isStateOperation(operation)) return lookupStateOperation(client, operation);
       const scan = listing(operation, request.operationKey, request.notBefore);
       let found: string | undefined;

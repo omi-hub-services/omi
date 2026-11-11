@@ -46,12 +46,18 @@ same rules behind ports, with the outbox's crash safety, and without faking nati
    latest decisive review per reviewer counts, and outstanding requested changes refuse. The
    runtime never submits a review, and the merge call never asks to bypass protection; GitHub's
    own refusal (405) is reported as `MERGE_REJECTED`.
-4. **State operations in the outbox** (`contracts/github-operation.ts`,
-   `infrastructure/github/github-state-operations.ts`): `pull_request.merge` (merge commit, `sha`
-   head-match guard), `issue.update_body` (`fromBody` → `body`), `issue.close`. They change an
-   existing object, so no marker is written: a merge has no body, and the Issue body may change
-   only in its Acceptance criteria section. Their read-back is the remote state — merged at the
-   expected head, body equal to the target, Issue closed — found at any time, absent only after
+4. **State operations in the outbox** (`contracts/github-operation.ts`): `pull_request.merge`,
+   `issue.update_body` (`fromBody` → `body`), `issue.close`. They change an existing object, so
+   no marker is written: a merge has no body, and the Issue body may change only in its
+   Acceptance criteria section. `pull_request.merge` is the one operation OMI-027 (ADR-0025,
+   "Recovery integration") also uses — `{ repo, pullNumber, base: "develop", expectedHeadSha,
+   prOperationKey }`, sent and read back only by `infrastructure/github/github-pull-merge.ts`:
+   always a merge commit with the `sha` head-match guard, read before the PUT so a confirmed
+   merge is never sent again, and found only when the PR carries the `prOperationKey` marker
+   (`pullRequestCreationKey`, the key `preparePr` created the PR under; `mergeTaskPr` refuses
+   `PR_NOT_CORRELATED` without it) and GitHub shows it merged into `develop` at the expected
+   head with a merge commit. The Issue operations (`github-state-operations.ts`) read back the
+   remote state — body equal to the target, Issue closed — found at any time, absent only after
    the grace period, as in ADR-0025. GitHub has no conditional Issue update, so the adapter reads
    the body right before the write and refuses `ISSUE_BODY_CHANGED` when it is neither the
    expected nor the target body. Operation keys name the PR or Issue and the reviewed head.

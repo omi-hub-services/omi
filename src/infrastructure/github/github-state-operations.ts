@@ -5,38 +5,27 @@ import { writeOutcome } from "./github-rest-client.js";
 import type { GithubRestClient } from "./github-rest-client.js";
 
 /**
- * Outbox operations that change the state of an existing PR or Issue instead of creating a body
- * (ADR-0025 decision 3 covers created bodies). They cannot carry a marker: a merge has no body of
- * its own, and the Issue body may change only in its Acceptance criteria section. Their read-back
- * is the remote state itself, which is at least as strong as a marker: the PR is merged at the
- * expected head, the Issue body is the target body, the Issue is closed.
+ * Outbox operations that change the state of an existing Issue instead of creating a body
+ * (ADR-0025 decision 3 covers created bodies). They cannot carry a marker: the Issue body may
+ * change only in its Acceptance criteria section. Their read-back is the remote state itself,
+ * which is at least as strong as a marker: the Issue body is the target body, the Issue is closed.
+ * `pull_request.merge` is the other state operation; it lives in `github-pull-merge.ts`.
  */
 export type StateOperation = Extract<
   GithubOperation,
-  { type: "pull_request.merge" | "issue.update_body" | "issue.close" }
+  { type: "issue.update_body" | "issue.close" }
 >;
 
 export function isStateOperation(operation: GithubOperation): operation is StateOperation {
-  return (
-    operation.type === "pull_request.merge" ||
-    operation.type === "issue.update_body" ||
-    operation.type === "issue.close"
-  );
+  return operation.type === "issue.update_body" || operation.type === "issue.close";
 }
 
-const mergeResponse = z.looseObject({ merged: z.literal(true), sha: z.string().min(1) });
-const pullState = z.looseObject({
-  merged: z.boolean(),
-  merge_commit_sha: z.string().nullable(),
-  head: z.looseObject({ sha: z.string() }),
-});
 const issueState = z.looseObject({
   number: z.number().int().positive(),
   state: z.enum(["open", "closed"]),
   body: z.string().nullable(),
 });
 
-const pullPath = (repo: string, number: number): string => `repos/${repo}/pulls/${String(number)}`;
 const issuePath = (repo: string, number: number): string =>
   `repos/${repo}/issues/${String(number)}`;
 
@@ -45,20 +34,6 @@ export async function sendStateOperation(
   operation: StateOperation,
 ): Promise<SendOutcome> {
   switch (operation.type) {
-    case "pull_request.merge": {
-      // `sha` is GitHub's head-match guard: a moved head answers 409 and merges nothing.
-      const result = await client.request({
-        method: "PUT",
-        path: `${pullPath(operation.repo, operation.pullNumber)}/merge`,
-        body: { sha: operation.headSha, merge_method: operation.mergeMethod },
-      });
-      return writeOutcome(result, (json) => {
-        const parsed = mergeResponse.safeParse(json);
-        return parsed.success
-          ? mergeIdentity(operation.repo, operation.pullNumber, parsed.data.sha)
-          : undefined;
-      });
-    }
     case "issue.update_body": {
       // GitHub has no conditional Issue update, so the body is compared right before the write.
       const current = await readIssue(client, operation.repo, operation.issueNumber);
@@ -98,23 +73,6 @@ export async function lookupStateOperation(
   client: GithubRestClient,
   operation: StateOperation,
 ): Promise<LookupOutcome> {
-  if (operation.type === "pull_request.merge") {
-    const result = await client.request({
-      method: "GET",
-      path: pullPath(operation.repo, operation.pullNumber),
-    });
-    if (result.kind !== "ok") return { kind: "unavailable", code: result.code };
-    const parsed = pullState.safeParse(result.json);
-    if (!parsed.success) return { kind: "unavailable", code: "INVALID_RESPONSE" };
-    const { merged, merge_commit_sha: mergeSha, head } = parsed.data;
-    // Merged at another head is not this operation's effect; the use case refuses that merge.
-    return merged && mergeSha !== null && head.sha === operation.headSha
-      ? {
-          kind: "found",
-          remoteIdentity: mergeIdentity(operation.repo, operation.pullNumber, mergeSha),
-        }
-      : { kind: "absent" };
-  }
   const current = await readIssue(client, operation.repo, operation.issueNumber);
   if (current.kind !== "ok") return { kind: "unavailable", code: current.code };
   if (operation.type === "issue.update_body") {
@@ -144,8 +102,6 @@ async function readIssue(
   return { kind: "ok", issue: parsed.data };
 }
 
-const mergeIdentity = (repo: string, number: number, sha: string): string =>
-  `pull_request_merge:${repo}#${String(number)}:${sha}`;
 const bodyIdentity = (operation: { repo: string; issueNumber: number }): string =>
   `issue_body:${operation.repo}#${String(operation.issueNumber)}`;
 const closeIdentity = (repo: string, number: number): string =>

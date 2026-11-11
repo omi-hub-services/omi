@@ -6,6 +6,7 @@ import {
   deliveryPullSchema,
   preparePrSchema,
   prMappingSchema,
+  pullRequestCreationKey,
 } from "../../contracts/pr-delivery.js";
 import type { PrMapping } from "../../contracts/pr-delivery.js";
 import { DeliveryError } from "../../ports/pr-delivery.js";
@@ -48,7 +49,7 @@ export async function preparePr(deps: PreparePrDeps, input: unknown): Promise<Pr
     )
   )
     throw new DeliveryError("CLOSING_REFERENCE_FORBIDDEN");
-  const key = `create-pr:${repository}:${taskId}:${head}:develop`;
+  const key = pullRequestCreationKey(repository, taskId, head);
   operationMarker(key);
   const backlinkKey = `${key}:backlink`;
   operationMarker(backlinkKey);

@@ -1,5 +1,5 @@
 import type { OutboxState } from "../../domain/delivery/outbox-operation.js";
-import type { AuditEvent } from "./state-unit-of-work.js";
+import type { AuditEvent, LeaseFence } from "./state-unit-of-work.js";
 
 /** One outbox row. Timestamps are ISO-8601 UTC text supplied by the runtime. */
 export interface OutboxRecord {
@@ -22,6 +22,7 @@ export interface OutboxRecord {
 
 /** The values a transition writes. The target state comes from the domain machine. */
 export interface OutboxTransition {
+  readonly fence?: LeaseFence;
   readonly operationKey: string;
   /** Compare-and-swap guard: the row must still be in this state with this attempt count. */
   readonly expectedState: OutboxState;
@@ -36,7 +37,7 @@ export interface OutboxTransition {
   readonly event: AuditEvent;
 }
 
-export type OutboxRejection = "NOT_FOUND" | "STALE_STATE";
+export type OutboxRejection = "NOT_FOUND" | "STALE_STATE" | "STALE_LEASE" | "LEASE_EXPIRED";
 
 export type OutboxTransitionResult =
   | { readonly ok: true; readonly record: OutboxRecord }
