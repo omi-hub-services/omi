@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"thread-limit"}
+{"type":"rate_limits.updated","rateLimits":{"primary":{"usedPercent":12,"windowDurationMins":300,"resetsAt":1794310800},"secondary":{"usedPercent":100,"windowDurationMins":10080,"resetsAt":1794657600}}}
+{"type":"error","message":"You've hit your usage limit.","code":"usage_limit_reached"}
+{"type":"turn.failed","error":{"message":"You've hit your usage limit.","code":"usage_limit_reached"}}
