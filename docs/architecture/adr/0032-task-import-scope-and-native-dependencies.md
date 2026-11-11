@@ -42,7 +42,7 @@ the hash; key order, dependency order and scope changes alone do not. Noncapture
 such as comments/reactions, is outside this snapshot contract.
 
 `selectReadyTasks` revalidates the graph and checks current scope, repository, Project membership
-and import eligibility on every call. Only pending/ready tasks with all predecessors in verified
+and import eligibility on every call. Only Ready tasks with all predecessors in verified
 runtime `done` state can be returned. Missing runtime state means pending; closed Issue state is
 never inferred to be Done. Caller-provided runtime states must come from trusted runtime storage,
 not Issue text. No state is transitioned or persisted by these read-only use cases. Dependency-only
@@ -78,3 +78,27 @@ cross-scope dependency evidence, cycle refusal, selection/runtime states and com
 pagination through the existing gh stdin transport. Live permissions, remote concurrent edits,
 CLI wiring and durable snapshot recovery are unverified here. Independent review on a fixed
 revision remains the Coordinator's separate gate.
+
+## Bounded scheduler selection (OMI-025, Issue #30)
+
+`selectReadyTasks` now requires explicit runtime Ready state; pending and absent states never
+become dispatch candidates. Trusted state records may supply Project priority P0/P1/P2;
+missing priority sorts after P2, with opaque Issue ID breaking ties. Issue prose never supplies
+priority or readiness. Existing repository, Project membership and scope gates still apply.
+
+The domain dependency policy plans one initial worker per admitted task, with configurable
+`maxTasks` (default 2) and `maxWorkers` (default 4). Callers must explicitly supply project-wide active task IDs
+(including pending reservations) and pending/running worker counts. In-progress state records
+also occupy task capacity, including records outside the imported closure or PO scope. Counts
+must include read-only workers. Zero capacity returns no tasks; invalid limits are rejected.
+Dependency classification propagates blocked causes transitively through the validated DAG;
+unfinished predecessors wait and cannot dispatch. These remain read-only projections, not
+persisted lifecycle transitions.
+
+The runtime must serialize selection and reserve the returned batch before another tick; this
+pure selector is not an atomic resource reservation. For each selected task it must still call
+`selectExecutor` with its existing transactional selection store (profile `maxConcurrency`,
+default 1, and account-group concurrency), then `dispatchStep` to acquire the existing fenced
+worktree writer lease. There is no second profile counter or worktree lock. One writer is the
+lease's safety invariant; additional parallel writers require separate worktrees. This task
+does not add a runtime loop or change the supervisor lifecycle.

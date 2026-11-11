@@ -49,7 +49,22 @@ export const importedTasksSchema = z.strictObject({
 export const selectReadyTasksSchema = z.strictObject({
   imported: importedTasksSchema,
   /** Runtime state, never an Issue body or an inference from Issue closure. */
-  states: z.array(z.strictObject({ id: githubIdSchema, status: z.enum(TASK_STATUSES) })),
+  states: z.array(
+    z.strictObject({
+      id: githubIdSchema,
+      status: z.enum(TASK_STATUSES),
+      priority: z.enum(["P0", "P1", "P2"]).nullable().default(null),
+    }),
+  ),
+  /** Trusted runtime occupancy across the whole project, not just imported scope. */
+  activeTaskIds: z.array(githubIdSchema),
+  activeWorkers: z.number().int().nonnegative(),
+  limits: z
+    .strictObject({
+      maxTasks: z.number().int().positive().default(2),
+      maxWorkers: z.number().int().positive().default(4),
+    })
+    .prefault({}),
 });
 export type TaskIssue = z.infer<typeof taskIssueSchema>;
 export type TaskItem = z.infer<typeof taskItemSchema>;

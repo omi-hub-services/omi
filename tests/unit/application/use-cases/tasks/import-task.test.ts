@@ -126,7 +126,9 @@ describe("task snapshot import", () => {
       const h = setup([{ ...issue, state, title, body }], [{ ...item, kind, archived }]);
       const imported = await importTask(h, request);
       expect(imported.snapshots).toEqual([]);
-      expect(selectReadyTasks({ imported, states: [] })).toEqual([]);
+      expect(
+        selectReadyTasks({ activeTaskIds: [], activeWorkers: 0, imported, states: [] }),
+      ).toEqual([]);
       if (kind !== "Issue" || archived) expect(h.reads).toEqual([]);
     },
   );
@@ -202,14 +204,34 @@ describe("ready task scope boundary", () => {
     );
     const imported = await importTask(h, { ...request, scope });
     expect(ids(imported.snapshots)).toEqual(["I_1", "I_2"]);
-    expect(selectReadyTasks({ imported, states: [] })).toEqual([]);
-    expect(ids(selectReadyTasks({ imported, states: [{ id: "I_2", status: "done" }] }))).toEqual([
-      "I_1",
-    ]);
+    expect(selectReadyTasks({ activeTaskIds: [], activeWorkers: 0, imported, states: [] })).toEqual(
+      [],
+    );
+    expect(
+      ids(
+        selectReadyTasks({
+          activeTaskIds: [],
+          activeWorkers: 0,
+          imported,
+          states: [
+            { id: "I_1", status: "ready" },
+            { id: "I_2", status: "done" },
+          ],
+        }),
+      ),
+    ).toEqual(["I_1"]);
     // Re-evaluate scope on selection, even if a caller supplies previously imported snapshots.
     const changed = { ...imported, scope: { kind: "list", issueIds: [] } };
     expect(
-      selectReadyTasks({ imported: changed, states: [{ id: "I_2", status: "done" }] }),
+      selectReadyTasks({
+        activeTaskIds: [],
+        activeWorkers: 0,
+        imported: changed,
+        states: [
+          { id: "I_1", status: "ready" },
+          { id: "I_2", status: "done" },
+        ],
+      }),
     ).toEqual([]);
   });
 
@@ -227,15 +249,35 @@ describe("ready task scope boundary", () => {
         ),
         { ...request, scope: { kind: "list", issueIds: ["I_1", "I_3"] } },
       );
-      expect(ids(selectReadyTasks({ imported, states: [{ id: "I_2", status }] }))).toEqual(["I_3"]);
+      expect(
+        ids(
+          selectReadyTasks({
+            activeTaskIds: [],
+            activeWorkers: 0,
+            imported,
+            states: [
+              { id: "I_1", status: "ready" },
+              { id: "I_3", status: "ready" },
+              { id: "I_2", status },
+            ],
+          }),
+        ),
+      ).toEqual(["I_3"]);
     },
   );
 
-  it.each(["in_progress", "blocked", "blocked_by_dependency", "done", "cancelled"])(
+  it.each(["pending", "in_progress", "blocked", "blocked_by_dependency", "done", "cancelled"])(
     "does not dispatch task in state %s",
     async (status) => {
       const imported = await importTask(setup(), request);
-      expect(selectReadyTasks({ imported, states: [{ id: issue.id, status }] })).toEqual([]);
+      expect(
+        selectReadyTasks({
+          activeTaskIds: [],
+          activeWorkers: 0,
+          imported,
+          states: [{ id: issue.id, status }],
+        }),
+      ).toEqual([]);
     },
   );
 
@@ -247,13 +289,17 @@ describe("ready task scope boundary", () => {
       ]),
       request,
     );
-    expect(selectReadyTasks({ imported, states: [] })).toEqual([]);
+    expect(selectReadyTasks({ activeTaskIds: [], activeWorkers: 0, imported, states: [] })).toEqual(
+      [],
+    );
   });
 
   it("revalidates graph and runtime states before selection", async () => {
     const imported = await importTask(setup(), request);
     expect(() =>
       selectReadyTasks({
+        activeTaskIds: [],
+        activeWorkers: 0,
         imported,
         states: [
           { id: "I_1", status: "ready" },
@@ -262,6 +308,8 @@ describe("ready task scope boundary", () => {
       }),
     ).toThrow("DUPLICATE_TASK_STATE");
     imported.snapshots[0]?.issue.blockedBy.push("I_unknown");
-    expect(() => selectReadyTasks({ imported, states: [] })).toThrow("UNKNOWN_DEPENDENCY");
+    expect(() =>
+      selectReadyTasks({ activeTaskIds: [], activeWorkers: 0, imported, states: [] }),
+    ).toThrow("UNKNOWN_DEPENDENCY");
   });
 });
