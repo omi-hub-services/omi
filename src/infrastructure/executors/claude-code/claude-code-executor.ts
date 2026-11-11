@@ -38,6 +38,8 @@ export interface ClaudeCodeExecutorOptions {
   /** Time between the polite cancel signal and killing the process group. */
   graceMs?: number;
   newExecutionId?: () => string;
+  /** Synchronous durable process registration before start returns. Failure stops the group. */
+  onWorkerStarted?: (attemptId: string, worker: SupervisedProcess) => void;
 }
 
 const DEFAULT_GRACE_MS = 15_000;
@@ -77,6 +79,7 @@ export class ClaudeCodeExecutor implements AgentExecutor {
   private readonly settingSources: readonly SettingSource[] | undefined;
   private readonly graceMs: number;
   private readonly newExecutionId: () => string;
+  private readonly onWorkerStarted: ClaudeCodeExecutorOptions["onWorkerStarted"];
   private readonly runs = new Map<string, Run>();
 
   constructor(options: ClaudeCodeExecutorOptions = {}) {
@@ -85,6 +88,7 @@ export class ClaudeCodeExecutor implements AgentExecutor {
     this.settingSources = options.settingSources;
     this.graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
     this.newExecutionId = options.newExecutionId ?? randomUUID;
+    this.onWorkerStarted = options.onWorkerStarted;
   }
 
   async probe(request: ProbeRequest): Promise<ProbeResult> {
@@ -128,7 +132,7 @@ export class ClaudeCodeExecutor implements AgentExecutor {
       events: new ExecutionEventStream(),
     };
 
-    let supervised: SupervisedProcess;
+    let supervised: SupervisedProcess | undefined;
     try {
       supervised = await startSupervisedProcess({
         executable: this.executable,
@@ -145,7 +149,10 @@ export class ClaudeCodeExecutor implements AgentExecutor {
         graceMs: this.graceMs,
         ...LIMITS,
       });
+      this.onWorkerStarted?.(valid.attemptId, supervised);
     } catch {
+      supervised?.cancel("SIGINT", "group");
+      if (supervised !== undefined) await supervised.exit;
       throw new AgentExecutorError("SPAWN_FAILED");
     }
     run.supervised = supervised;

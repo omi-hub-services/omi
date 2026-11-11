@@ -9,6 +9,7 @@ import type {
 } from "../../application/ports/github-remote.js";
 import { hasOperationMarker, operationMarker } from "../../domain/delivery/operation-marker.js";
 import type { GithubRestClient, PageVisit } from "./github-rest-client.js";
+import { lookupPullMerge, sendPullMerge } from "./github-pull-merge.js";
 import { lookupProjectCopy, sendProjectCopy } from "./github-project-copy.js";
 
 /**
@@ -22,6 +23,9 @@ export function createGithubRemote(client: GithubRestClient): GithubRemote {
     async send(request: SendRequest): Promise<SendOutcome> {
       if (request.operation.type === "project.copy") {
         return sendProjectCopy(client, request.operation, request.operationKey);
+      }
+      if (request.operation.type === "pull_request.merge") {
+        return sendPullMerge(client, request.operation);
       }
       const marker = operationMarker(request.operationKey);
       const call = writeCall(request.operation, marker);
@@ -55,6 +59,9 @@ export function createGithubRemote(client: GithubRestClient): GithubRemote {
     async lookup(request: LookupRequest): Promise<LookupOutcome> {
       if (request.operation.type === "project.copy") {
         return lookupProjectCopy(client, request.operation, request.operationKey);
+      }
+      if (request.operation.type === "pull_request.merge") {
+        return lookupPullMerge(client, request.operation);
       }
       const scan = listing(request.operation, request.operationKey, request.notBefore);
       let found: string | undefined;
@@ -93,7 +100,7 @@ interface WriteCall {
 }
 
 function writeCall(
-  operation: Exclude<GithubOperation, { type: "project.copy" }>,
+  operation: Exclude<GithubOperation, { type: "project.copy" | "pull_request.merge" }>,
   marker: string,
 ): WriteCall {
   switch (operation.type) {
@@ -140,7 +147,7 @@ interface Listing {
 const CLOCK_SKEW_MS = 5 * 60_000;
 
 function listing(
-  operation: Exclude<GithubOperation, { type: "project.copy" }>,
+  operation: Exclude<GithubOperation, { type: "project.copy" | "pull_request.merge" }>,
   operationKey: string,
   notBefore: string,
 ): Listing {

@@ -87,3 +87,20 @@ GitHub shows at that moment.
   the sandbox is next used.
 - Adding an operation kind means a schema in `contracts/github-operation.ts` and a send/list pair
   in `github-remote.ts`; the use cases and the state machine do not change.
+
+## Recovery integration (OMI-027)
+
+`resume-run` invokes the existing reconcile use case while holding the runtime's `project-owner`
+lease. Its outbox transitions carry that lease fence; SQLite checks owner, generation and expiry
+inside the same transaction as the transition and audit event. Losing ownership during a remote
+read cannot record a success under the old session. Unreadable payloads, incomplete read-backs,
+unknown outcomes inside the grace period and stale transitions all prevent recovered dispatch.
+
+The operation vocabulary also accepts `pull_request.merge` for task PRs into `develop`. It pins
+the PR number, expected head SHA and the existing creation operation key. Read-back checks the
+creation marker, repository, base and head, then requires both GitHub's `merged` flag and a merge
+commit SHA. The remote identity includes that commit. It does not interpret a closed PR as
+merged or use the marker as approval. Sending uses the same outbox intent and state machine,
+reads before PUT, passes the expected SHA to GitHub and reads back afterwards. A confirmed merge
+requires no further PUT. The workflow must evaluate delivery gates before queueing the intent;
+release merges to `main` remain outside this task path.

@@ -14,9 +14,11 @@ import { identifierSchema } from "../../application/contracts/identifiers.js";
 import {
   CheckpointError,
   type CheckpointRecord,
+  type CheckpointProblem,
   type CheckpointSave,
   type CheckpointStore,
 } from "../../application/ports/checkpoint-store.js";
+import { ArtifactError } from "../../application/ports/artifact-store.js";
 import type { StateDatabase } from "../persistence/sqlite/sqlite-connection.js";
 import { runInTransaction } from "../persistence/sqlite/sqlite-transaction.js";
 import { hasFsCode, resolveArtifactPath, syncDirectory } from "./artifact-path.js";
@@ -109,7 +111,7 @@ export function createLocalCheckpointStore(
     `SELECT ${COLUMNS} FROM checkpoints WHERE run_id = ? AND status = 'valid' ORDER BY created_at DESC, rowid DESC`,
   );
   const openRows = db.prepare(
-    `SELECT ${COLUMNS} FROM checkpoints WHERE run_id = ? AND status IN ('pending', 'valid') ORDER BY created_at, rowid`,
+    `SELECT ${COLUMNS} FROM checkpoints WHERE run_id = ? ORDER BY created_at, rowid`,
   );
   const promote = db.prepare(
     "UPDATE checkpoints SET status = 'valid', status_changed_at = ? WHERE id = ? AND status = 'pending'",
@@ -119,18 +121,24 @@ export function createLocalCheckpointStore(
   );
 
   /** `bytes` when the file is present, regular and matches its recorded hash. */
-  function verified(row: Row): Uint8Array | undefined {
+  function verify(row: Row): { bytes: Uint8Array } | { reason: CheckpointProblem["reason"] } {
     let fd: number | undefined;
     try {
       const target = resolveArtifactPath(canonicalRoot, row.manifest_path, false);
       fd = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-      if (!fs.fstatSync(fd).isFile()) return undefined;
+      if (!fs.fstatSync(fd).isFile()) return { reason: "CHECKPOINT_FILE_INVALID" };
       const bytes = fs.readFileSync(fd);
-      return hash(bytes) === row.manifest_hash ? bytes : undefined;
+      return hash(bytes) === row.manifest_hash ? { bytes } : { reason: "CHECKPOINT_HASH_MISMATCH" };
     } catch (error) {
-      if (hasFsCode(error, "ENOENT") || hasFsCode(error, "ELOOP")) return undefined;
+      if (hasFsCode(error, "ENOENT")) return { reason: "CHECKPOINT_FILE_MISSING" };
+      if (hasFsCode(error, "ELOOP")) return { reason: "CHECKPOINT_FILE_INVALID" };
       // resolveArtifactPath reports a missing or non-regular file as an ArtifactError.
-      if (error instanceof Error && error.name === "ArtifactError") return undefined;
+      if (error instanceof ArtifactError) {
+        return {
+          reason:
+            error.code === "NOT_FOUND" ? "CHECKPOINT_FILE_MISSING" : "CHECKPOINT_FILE_INVALID",
+        };
+      }
       throw error;
     } finally {
       if (fd !== undefined) fs.closeSync(fd);
@@ -214,10 +222,11 @@ export function createLocalCheckpointStore(
       return row === undefined ? undefined : toRecord(row);
     },
 
-    latestValid(runId, at) {
+    latestValid(runId, at, onProblem) {
       for (const row of validRows.all(runId) as Row[]) {
-        const bytes = verified(row);
-        if (bytes !== undefined) return { record: toRecord(row), bytes };
+        const result = verify(row);
+        if ("bytes" in result) return { record: toRecord(row), bytes: result.bytes };
+        onProblem?.({ checkpointId: row.id, reason: result.reason });
         interrupt.run(at, row.id);
       }
       return undefined;
@@ -225,10 +234,16 @@ export function createLocalCheckpointStore(
 
     reconcile(runId, at) {
       const interrupted: string[] = [];
+      const problems: CheckpointProblem[] = [];
       for (const row of openRows.all(runId) as Row[]) {
         // A `pending` row means the save never finished. Even if its file is intact it is not
         // trusted: the next checkpoint supersedes it.
-        if (row.status === "pending" || verified(row) === undefined) {
+        const result = verify(row);
+        if (row.status !== "valid" || "reason" in result) {
+          problems.push({
+            checkpointId: row.id,
+            reason: "reason" in result ? result.reason : "CHECKPOINT_INCOMPLETE",
+          });
           if (interrupt.run(at, row.id).changes === 1) interrupted.push(row.id);
         }
       }
@@ -246,7 +261,7 @@ export function createLocalCheckpointStore(
           if (!referenced.has(name)) orphanFiles.push(`checkpoints/${runId}/${name}`);
         }
       }
-      return { interrupted, orphanFiles };
+      return { interrupted, orphanFiles, problems };
     },
   };
 }

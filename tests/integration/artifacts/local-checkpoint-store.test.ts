@@ -156,7 +156,11 @@ describe("crash at each file/DB boundary", () => {
     expect(store.get("cp-1")?.status).toBe("pending");
     expect(store.latestValid("run-1", T2)?.record.id).toBe("cp-good");
 
-    expect(store.reconcile("run-1", T2)).toEqual({ interrupted: ["cp-1"], orphanFiles: [] });
+    expect(store.reconcile("run-1", T2)).toEqual({
+      interrupted: ["cp-1"],
+      orphanFiles: [],
+      problems: [{ checkpointId: "cp-1", reason: "CHECKPOINT_FILE_MISSING" }],
+    });
     expect(status("cp-1")).toBe("interrupted");
   });
 
@@ -189,6 +193,7 @@ describe("crash at each file/DB boundary", () => {
     expect(store.reconcile("run-1", T2)).toEqual({
       interrupted: ["cp-1"],
       orphanFiles: ["checkpoints/run-1/cp-1.json"],
+      problems: [{ checkpointId: "cp-1", reason: "CHECKPOINT_INCOMPLETE" }],
     });
     expect(store.get("cp-1")?.status).toBe("interrupted");
     expect(store.latestValid("run-1", T2)?.record.id).toBe("cp-good");
@@ -208,7 +213,11 @@ describe("crash at each file/DB boundary", () => {
     crashAt = "row-pending";
     expect(() => store.save(save("cp-1", T1))).toThrow(SimulatedCrash);
     store.reconcile("run-1", T2);
-    expect(store.reconcile("run-1", T2)).toEqual({ interrupted: [], orphanFiles: [] });
+    expect(store.reconcile("run-1", T2)).toEqual({
+      interrupted: [],
+      orphanFiles: [],
+      problems: [{ checkpointId: "cp-1", reason: "CHECKPOINT_FILE_MISSING" }],
+    });
     expect(status("cp-good")).toBe("valid");
   });
 });

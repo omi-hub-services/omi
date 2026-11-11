@@ -37,7 +37,17 @@ export class CheckpointError extends Error {
   }
 }
 
+export interface CheckpointProblem {
+  readonly checkpointId: string;
+  readonly reason:
+    | "CHECKPOINT_FILE_MISSING"
+    | "CHECKPOINT_HASH_MISMATCH"
+    | "CHECKPOINT_FILE_INVALID"
+    | "CHECKPOINT_INCOMPLETE";
+}
+
 export interface CheckpointReconciliation {
+  readonly problems: readonly CheckpointProblem[];
   /** Checkpoints newly marked `interrupted` by this pass. */
   readonly interrupted: readonly string[];
   /** Files under the checkpoint directory that no `valid` row references (collectable). */
@@ -54,11 +64,14 @@ export interface CheckpointStore {
   save(input: CheckpointSave): CheckpointRecord;
   get(checkpointId: string): CheckpointRecord | undefined;
   /** Newest `valid` checkpoint of the run whose file still matches its recorded hash. A row whose
-   * file is missing or altered is marked `interrupted` and skipped. */
+   * file is missing or altered is marked `interrupted` and skipped. `onProblem` reports failures
+   * found during selection (including damage since the preceding reconcile). */
   latestValid(
     runId: string,
     at: string,
+    onProblem?: (problem: CheckpointProblem) => void,
   ): { readonly record: CheckpointRecord; readonly bytes: Uint8Array } | undefined;
-  /** Verifies every non-interrupted row of the run against its file. Never deletes anything. */
+  /** Verifies all rows, marks newly inconsistent rows interrupted and reports existing problems.
+   * Never deletes files or restores an interrupted checkpoint to valid. */
   reconcile(runId: string, at: string): CheckpointReconciliation;
 }

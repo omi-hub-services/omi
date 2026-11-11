@@ -54,6 +54,9 @@ function toRecord(row: OutboxRow): OutboxRecord {
  * compared as text, which is correct for the fixed-width ISO-8601 UTC form `assertIsoUtc` demands.
  */
 export function createSqliteOutboxStore(db: StateDatabase): OutboxStore {
+  const selectLease = db.prepare(
+    "SELECT owner, generation, expires_at FROM leases WHERE resource_key = ?",
+  );
   const selectOne = db.prepare(`SELECT ${COLUMNS} FROM outbox WHERE operation_key = ?`);
   const selectUnresolved = db.prepare(
     `SELECT ${COLUMNS} FROM outbox WHERE state IN ('in_flight', 'outcome_unknown') ORDER BY id`,
@@ -92,6 +95,17 @@ export function createSqliteOutboxStore(db: StateDatabase): OutboxStore {
       assertIsoUtc(change.at, "at");
       if (change.nextAttemptAt !== null) assertIsoUtc(change.nextAttemptAt, "nextAttemptAt");
       return runInTransaction(db, (): OutboxTransitionResult => {
+        if (change.fence !== undefined) {
+          const lease = selectLease.get(change.fence.resourceKey) as
+            { owner: string; generation: number; expires_at: string } | undefined;
+          if (
+            lease === undefined ||
+            lease.owner !== change.fence.owner ||
+            lease.generation !== change.fence.generation
+          )
+            return { ok: false, reason: "STALE_LEASE" };
+          if (lease.expires_at <= change.at) return { ok: false, reason: "LEASE_EXPIRED" };
+        }
         const updated = update.run(
           change.to,
           change.attemptCount,

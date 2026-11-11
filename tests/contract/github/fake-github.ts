@@ -32,6 +32,9 @@ export interface FakeIssue {
 export interface FakePull extends FakeIssue {
   readonly head: string;
   readonly base: string;
+  headSha?: string;
+  merged?: boolean;
+  mergeCommitSha?: string;
 }
 
 export type FaultEffect =
@@ -50,7 +53,7 @@ export type FaultEffect =
   | { readonly type: "apply_then_status"; readonly status: number };
 
 export interface Fault {
-  readonly method?: "GET" | "POST";
+  readonly method?: "GET" | "POST" | "PUT";
   /** The fault only hits requests whose path contains this text. */
   readonly pathIncludes?: string;
   /** How many matching requests it hits; default 1. */
@@ -147,6 +150,16 @@ export class FakeGithub implements GithubTransport {
     const url = new URL(request.path, "https://api.github.com/");
     const route = url.pathname;
 
+    const merge = /^\/repos\/([^/]+\/[^/]+)\/pulls\/(\d+)\/merge$/.exec(route);
+    if (request.method === "PUT" && merge?.[1] !== undefined && merge[2] !== undefined) {
+      const pull = this.pulls.find((p) => p.repo === merge[1] && p.number === Number(merge[2]));
+      if (pull === undefined) return this.json(404, {});
+      if (pull.merged === true) return this.json(405, {});
+      if (payloadOf(request)["sha"] !== (pull.headSha ?? "a".repeat(40))) return this.json(409, {});
+      pull.merged = true;
+      pull.mergeCommitSha = "b".repeat(40);
+      return this.json(200, { merged: true, sha: pull.mergeCommitSha });
+    }
     const detail = /^\/repos\/([^/]+\/[^/]+)\/(issues|pulls)\/(\d+)$/.exec(route);
     if (request.method === "GET" && detail?.[1] !== undefined && detail[3] !== undefined) {
       const [repo, number] = [detail[1], Number(detail[3])];
@@ -249,9 +262,11 @@ export class FakeGithub implements GithubTransport {
       number: p.number,
       title: p.title,
       body: p.body,
-      state: "open",
+      state: p.merged === true ? "closed" : "open",
+      merged: p.merged ?? false,
+      merge_commit_sha: p.mergeCommitSha ?? null,
       html_url: `https://github.com/${p.repo}/pull/${String(p.number)}`,
-      head: { ref: p.head, repo: { full_name: p.repo } },
+      head: { ref: p.head, sha: p.headSha ?? "a".repeat(40), repo: { full_name: p.repo } },
       base: { ref: p.base, repo: { full_name: p.repo } },
     };
   }
