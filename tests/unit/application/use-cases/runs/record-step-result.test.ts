@@ -14,7 +14,7 @@ function goodResult(r: Rig, attemptId: string, overrides: Record<string, unknown
   const root = `attempts/${attemptId}`;
   const artifact = r.artifacts.publish(`${root}/reports/implementation.md`, "done");
   const evidence = `${root}/reports/unit-tests.txt`;
-  r.artifacts.publish(evidence, "ok");
+  const evidenceArtifact = r.artifacts.publish(evidence, "ok");
   return {
     schemaVersion: 1,
     runId: "run-1",
@@ -22,7 +22,7 @@ function goodResult(r: Rig, attemptId: string, overrides: Record<string, unknown
     attemptId,
     status: "succeeded",
     summary: "Implemented.",
-    artifacts: [artifact],
+    artifacts: [artifact, evidenceArtifact],
     revision: { headSha: HEAD, baseSha: BASE },
     checks: [{ id: "unit-tests", evidenceRef: evidence }],
     findings: [],
