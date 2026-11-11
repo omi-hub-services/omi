@@ -205,3 +205,48 @@ describe("worker log tail", () => {
     );
   });
 });
+
+it("collapses a Codex node wrapper and musl binary to the root pid, regardless of ps order", () => {
+  const ps = [
+    "201 60 200 /opt/codex/x86_64-unknown-linux-musl/codex/codex exec --json -m gpt-6.1-sol",
+    "200 61 1 node /opt/bin/codex exec --json -m gpt-6.1-sol",
+    "300 10 1 node /opt/bin/codex exec --json",
+    "301 9 300 /opt/codex/x86_64-unknown-linux-musl/codex/codex exec --json",
+  ];
+  for (const lines of [ps, [...ps].reverse()])
+    expect(
+      parseProcesses(lines.join("\n"))
+        .map((p) => p.pid)
+        .sort(),
+    ).toEqual([200, 300]);
+});
+
+it("collapses unrelated processes writing the same log but keeps separate workers", async () => {
+  const run: Runner = (command) =>
+    Promise.resolve({
+      code: 0,
+      stderr: "",
+      stdout: command.input
+        ? [201, 200, 300]
+            .map((pid) =>
+              JSON.stringify({
+                pid,
+                path: `/runs/omi-068-codex-${pid === 300 ? "other" : "test"}-20261111-120000.jsonl`,
+                summary: {
+                  numTurns: 4,
+                  lastAction: "checking",
+                  finished: false,
+                  isError: false,
+                  limited: false,
+                },
+              }),
+            )
+            .join("\n")
+        : "@@ps\n201 60 1 /opt/codex/codex exec --json\n200 61 1 node /opt/bin/codex exec --json\n300 30 1 codex exec --json\n@@log\n",
+    });
+  const result = await readWorkers(run, windows);
+  expect(result.available && result.processes.map((p) => [p.pid, p.profile])).toEqual([
+    [200, "test"],
+    [300, "other"],
+  ]);
+});

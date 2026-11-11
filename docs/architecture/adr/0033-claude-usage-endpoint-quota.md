@@ -20,21 +20,32 @@ a row returned the same utilization.
    `Authorization: Bearer <claudeAiOauth.accessToken>` and `anthropic-beta: oauth-2025-04-20`. The
    token comes from `~/.claude-profiles/<profile>/.credentials.json`.
 2. **Source priority per Claude profile:** `claude-probe` (with `--probe`), then `claude-usage-api`,
-   then `claude-log`. The usage call is made on every read, also with `--probe`; the probe wins.
+   then the last good cached API/probe reading, then `claude-log`. OMI-068 stores validated,
+   redacted readings per profile in WSL `~/omi-runs/.quota-cache.json`; cache reads retain the
+   original source and observation time. API calls are spaced by `QUOTA_MIN_INTERVAL_MS`
+   (five minutes), shared across status, terminal/web watch and pick-profile collectors.
+   HTTP 429 records the next allowed call from `Retry-After` (delta seconds or HTTP date),
+   with the same five-minute minimum/default. Calls are skipped until then, even without a
+   cached reading. Per-profile reservation locks prevent simultaneous calls; atomic writes
+   with a short cache-write lock preserve other profiles. A failed cache reservation skips
+   the endpoint. Stale locks expire after 30 seconds (the fetch timeout is 10 seconds).
+   `--probe` still runs during backoff and updates the cache without clearing backoff;
+   cached model windows are retained because probe events do not report them.
 3. **Parsing is pure** (`parseClaudeUsage`): `five_hour` and `seven_day` (`utilization` 0–100,
    `resets_at` ISO) become `QuotaWindow`s; `limits[]` entries of kind `weekly_scoped` with a model
    display name become `ModelWindow`s (`model`, `usedPercent`, `resetsAt`). `session` and
    `weekly_all` entries are ignored, as they repeat the two windows. `observedAt` is the collector
    clock at the call. A reading with a full window is `limited`.
-4. **Fallback to `claude-log`** on an expired token (`expiresAt`), a missing credential file, any
+4. **Fallback to the last good cache, then `claude-log`** on an expired token (`expiresAt`), a missing credential file, any
    HTTP error, a timeout, a network error, a body that is not a JSON object, or a shape the parser
    rejects (neither window readable, non-numeric utilization). The reason is kept in
    `ProfileQuota.note` (`usage api: HTTP 401`) and shown in `status.ts` next to the log reading.
 5. **Per-model windows** are display only: `status.ts` shows `weekly Fable 99%`, `watch.ts` appends
    `Fable 99%`. `pickProfile` keeps its score. Only with a worker model (`pick-profile --model
    NAME`, case-insensitive exact match on the display name) does a window below
-   `minSevenDayLeftPercent` refuse the profile, with `reason: <Model> weekly N% left < M%`. Without
-   `--model` nothing changes, because the model is chosen after the profile (OMI-058).
+   `minSevenDayLeftPercent` refuse the profile, with `reason: <Model> weekly N% left < M%`.
+   Since OMI-068, pick-profile infers complexity/model before quota filtering and checks the
+   selected Claude model automatically when `--model` is omitted. Invocation is unchanged.
 
 ## Risk: undocumented API
 
@@ -63,11 +74,22 @@ detection replaces it.
 
 A refresh rotates the refresh token and writes `.credentials.json`. That is a write into a profile
 directory, which the Coordinator tooling must not do, and a failed or racing write could log a
-worker out. An expired token is expected for an idle profile; the log fallback is enough.
+worker out. An expired token is expected for an idle profile; the cache/log fallback keeps tooling available.
 
 ## Consequences
 
 - `status.ts`, `watch.ts` and `pick-profile` show fresh Claude numbers without a probe.
-- Idle profiles with an expired token fall back to the log reading until the profile runs again.
+- Idle profiles with an expired token fall back to the last good cache, then logs, until the profile runs again.
 - Model windows are visible, which closes ADR-0031 decision 4's "invisible until rejected" for
   Claude; whether the product scheduler uses them is left to OMI-018.
+
+## Token investigation (OMI-068, 2026-11-11)
+
+Read-only inspection found both the WSL `ggtintran` credential and the readable Windows default
+credential unexpired. The local account UUIDs match (identities themselves were not emitted).
+Access and refresh tokens differ, which is compatible with separate login sessions and does not
+establish staleness. The WSL expiry was about five minutes later than the
+Windows expiry. No credentials were changed or refreshed, and no live endpoint request was made
+for this investigation. Thus expiry and account mismatch are ruled out for the inspected profiles at inspection time;
+usage-endpoint acceptance of each token and the historical cause of HTTP 429 remain unverified. The reported successful
+probe uses the CLI/model path, so it does not prove that the usage endpoint accepts the same token.

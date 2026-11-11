@@ -128,6 +128,63 @@ function sse(port: number, frames = 1) {
 }
 
 describe("watch-web HTTP", () => {
+  it("logs a broadcast failure on one line, keeps serving and recovers", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let broken = false;
+    let finishWorker:
+      ((value: { code: number; stdout: string; stderr: string }) => void) | undefined;
+    const server = createWatchServer({
+      run: (command) =>
+        isQuota(command)
+          ? Promise.resolve({ code: 0, stdout: "", stderr: "" })
+          : new Promise((resolve) => {
+              finishWorker = resolve;
+            }),
+      target,
+      profiles: WORKER_PROFILES,
+      settings: QUOTA_SETTINGS,
+      port: 0,
+      clock: () => {
+        if (broken) throw new Error("snapshot\nfailed");
+        return 1_700_000_000_000;
+      },
+    });
+    servers.push(server);
+    const port = await server.listen();
+    const client = await sse(port);
+    try {
+      broken = true;
+      finishWorker?.({ code: 0, stdout: "@@ps\n@@log\n", stderr: "" });
+      await vi.waitFor(() => {
+        expect(error).toHaveBeenCalledWith("watch-web: snapshot failed");
+      });
+      expect((await http(port, "GET", "/health")).status).toBe(200);
+      broken = false;
+      expect((await http(port, "POST", "/probe", { "X-Omi-Watch": "1" })).status).toBe(202);
+      await vi.waitFor(() => {
+        expect(client.snapshots.length).toBeGreaterThan(1);
+      });
+    } finally {
+      client.close();
+      error.mockRestore();
+    }
+  });
+
+  it("shares one poller among several open web windows", async () => {
+    const { port, commands } = await start();
+    const a = await sse(port);
+    const count = commands.filter(isQuota).length;
+    const b = await sse(port);
+    try {
+      expect(await isWatchRunning(port)).toBe(true);
+      expect(commands.filter(isQuota)).toHaveLength(count);
+      expect(count).toBe(1);
+    } finally {
+      a.close();
+      b.close();
+    }
+  });
+
   it("serves the page, health and 404/405 on 127.0.0.1", async () => {
     const { port } = await start();
     const page = await http(port, "GET", "/");
