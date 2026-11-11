@@ -62,6 +62,7 @@ Error codes (stable; a code is never reused or renamed):
 | `UNSUPPORTED_VERSION` | runtime | `protocolVersion` is a number other than 1                       |
 | `INVALID_COMMAND`     | runtime | Envelope is fine, `command` fails the v1 contract                |
 | `NOT_IMPLEMENTED`     | runtime | Valid command whose use case does not exist yet                  |
+| `APPROVAL_REFUSED`    | runtime | Approval use case refused the request; message gives the reason |
 | `INTERNAL_ERROR`      | runtime | The handler failed; no detail is sent                            |
 | `RUNTIME_UNAVAILABLE` | client  | Nothing listens on the socket (ENOENT, ECONNREFUSED, EACCES, …)  |
 | `TIMEOUT`             | client  | No complete response before the deadline (default 5 s)           |
@@ -75,7 +76,7 @@ Error codes (stable; a code is never reused or renamed):
 | 1    | `FAILURE`             | Unexpected CLI failure, or `INTERNAL_ERROR` from the runtime         |
 | 2    | `USAGE`               | Bad arguments, unknown command/option, missing command               |
 | 3    | `RUNTIME_UNAVAILABLE` | `RUNTIME_UNAVAILABLE` or `TIMEOUT`                                   |
-| 4    | `REQUEST_REJECTED`    | `PAYLOAD_TOO_LARGE`, `MALFORMED_REQUEST`, `UNSUPPORTED_VERSION`, `INVALID_COMMAND`, `NOT_IMPLEMENTED` |
+| 4    | `REQUEST_REJECTED`    | `PAYLOAD_TOO_LARGE`, `MALFORMED_REQUEST`, `UNSUPPORTED_VERSION`, `INVALID_COMMAND`, `NOT_IMPLEMENTED`, `APPROVAL_REFUSED` |
 | 5    | `PROTOCOL_ERROR`      | `PROTOCOL_ERROR`                                                     |
 
 Numbers are never reused or renumbered, only added. The mapping from IPC code to exit code is

@@ -15,7 +15,8 @@ import {
   type StateDatabase,
 } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
 
-// Scoped to 0001-0002: later migrations have their own tests (outbox-state-constraint.test.ts).
+// This suite isolates the v2 rebuild (0001-0002); later migrations have their own upgrade tests
+// (approval-migration.test.ts, outbox-state-constraint.test.ts).
 const MIGRATIONS = loadMigrations(resolve(import.meta.dirname, "../../../migrations")).filter(
   (migration) => migration.version <= 2,
 );

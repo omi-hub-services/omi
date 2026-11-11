@@ -1,8 +1,15 @@
+import type { ApprovalRequest } from "../../domain/approvals/approval.js";
 import type { RunStatus } from "../../domain/runs/workflow-run.js";
 import type { StepStatus } from "../../domain/runs/step-run.js";
 
 /** The state row to move, guarded by compare-and-swap on its `version`. */
 export type StateTarget =
+  | { readonly kind: "approval_request"; readonly request: ApprovalRequest }
+  | {
+      readonly kind: "approval_decision";
+      readonly request: ApprovalRequest;
+      readonly expectedVersion: number;
+    }
   | {
       readonly kind: "workflow_run";
       readonly id: string;
@@ -52,7 +59,8 @@ export interface StateChange {
   readonly fence?: LeaseFence;
 }
 
-export type StateRejection = "NOT_FOUND" | "STALE_VERSION" | "STALE_LEASE" | "LEASE_EXPIRED";
+export type StateRejection =
+  "NOT_FOUND" | "STALE_VERSION" | "STALE_LEASE" | "LEASE_EXPIRED" | "ALREADY_EXISTS";
 
 export type StateCommitResult =
   | { readonly ok: true; readonly newVersion: number; readonly eventSequence: number }

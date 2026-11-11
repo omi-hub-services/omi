@@ -19,11 +19,16 @@ export type CapabilityProfile = z.infer<typeof capabilityProfileSchema>;
 
 export const EXECUTORS = ["claude-code", "codex"] as const;
 export const executorSchema = z.enum(EXECUTORS);
+export type Executor = z.infer<typeof executorSchema>;
+
+/** Name passed to the CLI (`--model`). Not a credential; cannot start with `-`, so never a flag. */
+export const modelNameSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/, "must be a plain model name");
 
 const modelDeclarationSchema = z.strictObject({
   executor: executorSchema,
-  /** Name passed to the CLI (`--model`). Not a credential. */
-  model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/, "must be a plain model name"),
+  model: modelNameSchema,
   supported_efforts: z.array(effortSchema).min(1).max(EFFORT_LEVELS.length),
 });
 export type ModelDeclaration = z.infer<typeof modelDeclarationSchema>;

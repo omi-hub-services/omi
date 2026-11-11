@@ -1,0 +1,5 @@
+{"type":"system","subtype":"hook_started","hook_id":"00000000-0000-4000-8000-0000000000b1","hook_name":"SessionStart:startup","hook_event":"SessionStart","session_id":"00000000-0000-4000-8000-0000000000a1"}
+{"type":"system","subtype":"hook_response","hook_id":"00000000-0000-4000-8000-0000000000b1","hook_name":"SessionStart:startup","hook_event":"SessionStart","outcome":"success","exit_code":0,"session_id":"00000000-0000-4000-8000-0000000000a1"}
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000a1","cwd":"/tmp/omi-fixture-workspace","model":"claude-sonnet-5-5","permissionMode":"dontAsk","apiKeySource":"none","tools":["Glob","Grep","Read"]}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fixture_1","name":"Read","input":{"file_path":"README.md"}}]},"session_id":"00000000-0000-4000-8000-0000000000a1"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fixture_1","content":"fixture text"}]},"session_id":"00000000-0000-4000-8000-0000000000a1"}
