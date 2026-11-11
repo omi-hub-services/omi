@@ -42,7 +42,8 @@ node tools/coordinator/flow.ts start-branch N <slug>        # task/omi-NNN-<slug
 (`git worktree add --detach ~/github/omi-wt/omi-NNN origin/develop`, then `npm ci` there) and
 run every `flow.ts` step of that task with `OMI_WSL_REPO_DIR=/home/<user>/github/omi-wt/omi-NNN`
 (plus `MSYS_NO_PATHCONV=1` in Git Bash); dispatch with `--cd` to the worktree and tell the
-worker to stay in it. Remove the worktree after `cleanup`.
+worker to stay in it. `cleanup` with the same `OMI_WSL_REPO_DIR` removes a clean worktree,
+fast-forwards develop in the main checkout and deletes the merged branch (OMI-062).
 
 ## 3. Dispatch the worker (judge the prompt)
 
@@ -162,9 +163,9 @@ node tools/coordinator/flow.ts cleanup <branch>
 - `cleanup --dry-run` only reads (no fetch); the real run fetches first.
 - `cleanup` also archives the task's worker logs in `~/omi-runs` (OMI-056): moved to
   `archive/` and gzipped, empty `.err` and `omi-NNN-current` deleted, the newest `.jsonl` of each
-  profile and files of a running worker kept, `archive/` capped by `RUNS_RETENTION`. Run it from
-  the main checkout (`~/github/omi`, on develop); for a worktree task remove the worktree and
-  delete the merged branch there. `flow.ts prune-runs [--dry-run]` sweeps all Done tasks once.
+  profile and files of a running worker kept, `archive/` capped by `RUNS_RETENTION`. For a
+  worktree task it refuses while the worktree has uncommitted files (OMI-062).
+  `flow.ts prune-runs [--dry-run]` sweeps all Done tasks once.
 
 **(judge)** The closing comment states the PR, merge commit, checks and review verdict. Report
 the outcome to the PO in a few lines.
