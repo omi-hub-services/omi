@@ -16,6 +16,7 @@ import {
   formatQuotaSection,
   logProfile,
   parseClaudeRateLimitEvent,
+  parseClaudeUsage,
   parseCodexRateLimits,
   parseQuotaOutput,
   pickProfile,
@@ -50,6 +51,7 @@ function reading(used5: number, used7: number, over: Partial<QuotaReading> = {})
     limited: false,
     planType: null,
     resetCredits: null,
+    modelWindows: [],
     ...over,
   };
 }
@@ -94,6 +96,7 @@ describe("parseCodexRateLimits", () => {
       limited: false,
       planType: "plus",
       resetCredits: 2,
+      modelWindows: [],
     });
   });
 
@@ -386,5 +389,164 @@ describe("pickProfile", () => {
       reason: "codex: no profile configured",
       earliestReset: null,
     });
+  });
+});
+
+describe("parseClaudeUsage", () => {
+  const T0 = Date.UTC(2026, 10, 11, 11, 10) / 1000;
+  it("reads 0-100 utilization, ISO resets and the weekly_scoped model windows", () => {
+    const r = parseClaudeUsage(fixture("claude-usage.json"), NOW);
+    expect(r).toEqual({
+      source: "claude-usage-api",
+      observedAt: NOW,
+      fiveHour: { usedPercent: 33, resetsAt: T0 },
+      sevenDay: { usedPercent: 41.5, resetsAt: Date.UTC(2026, 10, 16, 7) / 1000 },
+      status: "allowed",
+      limited: false,
+      planType: null,
+      resetCredits: null,
+      modelWindows: [
+        { model: "Fable", usedPercent: 1, resetsAt: Date.UTC(2026, 10, 16, 7) / 1000 },
+      ],
+    });
+  });
+
+  it("marks a full window as limited and tolerates a null window and missing limits", () => {
+    const r = parseClaudeUsage(
+      { five_hour: { utilization: 100, resets_at: "2026-11-11T11:10:00Z" }, seven_day: null },
+      NOW,
+    );
+    expect(r).toMatchObject({
+      limited: true,
+      status: "rejected",
+      sevenDay: null,
+      modelWindows: [],
+    });
+  });
+
+  it("throws on a shape it does not know so the caller falls back to the log", () => {
+    expect(() => parseClaudeUsage({}, NOW)).toThrow(/no five_hour or seven_day/);
+    expect(() => parseClaudeUsage({ five_hour: { utilization: "x" } }, NOW)).toThrow(/utilization/);
+    expect(() => parseClaudeUsage("nope", NOW)).toThrow();
+  });
+});
+
+describe("usage endpoint source in parseQuotaOutput", () => {
+  const usage = fixture("claude-usage.json");
+  const lines = (...objs: unknown[]) => objs.map((o) => JSON.stringify(o)).join("\n");
+  const log = {
+    kind: "log",
+    file: "omi-060-ggtintran-20261110-160000.jsonl",
+    mtime: NOW - 600,
+    event: rawClaude,
+  };
+
+  it("prefers the usage endpoint over a log, with a fresh observedAt", () => {
+    const { profiles } = parseQuotaOutput(
+      lines({ kind: "now", now: NOW }, log, { kind: "usage", profile: "ggtintran", usage }),
+      PROFILES,
+      null,
+    );
+    expect(profiles[0]?.reading).toMatchObject({ source: "claude-usage-api", observedAt: NOW });
+    expect(profiles[0]?.note).toBeNull();
+  });
+
+  it("prefers a probe over the usage endpoint", () => {
+    const { profiles } = parseQuotaOutput(
+      lines(
+        { kind: "now", now: NOW },
+        { kind: "usage", profile: "minibox", usage },
+        { kind: "probe", profile: "minibox", event: rawClaude },
+      ),
+      PROFILES,
+      null,
+    );
+    expect(profiles[1]?.reading?.source).toBe("claude-probe");
+  });
+
+  it.each([
+    [
+      "token expired",
+      { kind: "error", tool: "claude-usage", profile: "ggtintran", message: "token expired" },
+      "token expired",
+    ],
+    [
+      "HTTP error",
+      { kind: "error", tool: "claude-usage", profile: "ggtintran", message: "HTTP 429" },
+      "HTTP 429",
+    ],
+    [
+      "unknown schema",
+      { kind: "usage", profile: "ggtintran", usage: { five_hour: 5 } },
+      "unreadable data",
+    ],
+  ])("falls back to the log on %s and says why", (_name, event, why) => {
+    const { profiles } = parseQuotaOutput(
+      lines({ kind: "now", now: NOW }, log, event),
+      PROFILES,
+      null,
+    );
+    expect(profiles[0]?.reading).toMatchObject({ source: "claude-log", observedAt: NOW - 600 });
+    expect(profiles[0]?.note).toContain(`usage api: ${why}`);
+    const q = profiles[0];
+    expect(
+      q && formatQuotaSection({ available: true, now: NOW, profiles: [q] }).join("\n"),
+    ).toContain(`[usage api: ${why}`);
+  });
+
+  it("explains a missing reading with the usage failure and the missing log", () => {
+    const err = { kind: "error", tool: "claude-usage", profile: "minibox", message: "HTTP 401" };
+    const { profiles } = parseQuotaOutput(lines({ kind: "now", now: NOW }, err), PROFILES, null);
+    expect(profiles[1]).toMatchObject({ reading: null });
+    expect(profiles[1]?.note).toMatch(/^usage api: HTTP 401; no worker log/);
+  });
+
+  it("shows model windows in the quota section", () => {
+    const { profiles } = parseQuotaOutput(
+      lines({ kind: "now", now: NOW }, { kind: "usage", profile: "minibox", usage }),
+      PROFILES,
+      null,
+    );
+    const text = formatQuotaSection({ available: true, now: NOW, profiles }).join("\n");
+    expect(text).toContain("weekly Fable 99%");
+    expect(text).toContain("(claude-usage-api)");
+  });
+});
+
+describe("pickProfile with a per-model weekly window", () => {
+  const fable = (used: number, resetsAt: number | null = NOW + 40 * H) => ({
+    modelWindows: [{ model: "Fable", usedPercent: used, resetsAt }],
+  });
+  const qs = [
+    quota("claude", "a", reading(10, 10, fable(95))),
+    quota("claude", "b", reading(40, 40, fable(5))),
+  ];
+
+  it("ignores model windows when the worker has no model or another one", () => {
+    for (const model of [null, "opus"]) {
+      const r = pickProfile("claude", qs, settings, NOW, true, model);
+      expect(r.ok && r.chosen[0]?.profile).toBe("a");
+    }
+  });
+
+  it("refuses a profile whose window for the worker's exact model is under the 7d threshold", () => {
+    const r = pickProfile("claude", qs, settings, NOW, true, "fable");
+    expect(r.ok && r.chosen[0]?.profile).toBe("b");
+    const a = r.ranked.find((c) => c.profile === "a");
+    expect(a?.blocked).toBe("Fable weekly 5% left < 10%");
+    expect(a?.blockedUntil).toBe(NOW + 40 * H);
+    expect(formatPick("p", r).join("\n")).toContain("blocked: Fable weekly 5% left < 10%");
+  });
+
+  it("refuses with the earliest reset when every profile is out of that model", () => {
+    const only = [quota("claude", "a", reading(10, 10, fable(95)))];
+    const r = pickProfile("claude", only, settings, NOW, true, "Fable");
+    expect(r).toMatchObject({ ok: false, earliestReset: NOW + 40 * H });
+    expect(!r.ok && r.reason).toContain("Fable weekly 5% left");
+  });
+
+  it("treats a model window past its reset as full again", () => {
+    const stale = [quota("claude", "a", reading(10, 10, fable(99, NOW - 1)))];
+    expect(pickProfile("claude", stale, settings, NOW, true, "Fable").ok).toBe(true);
   });
 });
