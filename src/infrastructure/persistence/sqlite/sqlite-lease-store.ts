@@ -41,8 +41,8 @@ function toLease(row: LeaseRow): Lease {
 /**
  * Lease adapter over the `leases` table (one row per resource key). Every operation is one
  * short BEGIN IMMEDIATE transaction, so concurrent claimants are serialised by SQLite and
- * exactly one wins. A released lease keeps its row (expired at release time) so the generation
- * keeps counting up.
+ * exactly one wins. Release sets expiry equal to acquisition, retaining the fencing generation.
+ * This distinguishes explicit release from timeout for resources that forbid expired takeover.
  */
 export function createSqliteLeaseStore(db: StateDatabase): LeaseStore {
   const select = db.prepare("SELECT * FROM leases WHERE resource_key = ?");
@@ -71,7 +71,10 @@ export function createSqliteLeaseStore(db: StateDatabase): LeaseStore {
         const row = read(request.resourceKey);
         if (row === undefined) {
           insert.run(request.resourceKey, request.owner, request.now, request.expiresAt);
-        } else if (row.expires_at > request.now) {
+        } else if (
+          row.expires_at > request.now ||
+          (request.reclaimExpired === false && row.expires_at !== row.acquired_at)
+        ) {
           return {
             ok: false,
             reason: "HELD",
@@ -105,7 +108,7 @@ export function createSqliteLeaseStore(db: StateDatabase): LeaseStore {
       return runInTransaction(db, (): ReleaseLeaseResult => {
         const row = read(request.resourceKey);
         if (!isCurrent(row, request)) return { ok: false, reason: "STALE_LEASE" };
-        if (row.expires_at > request.now) extend.run(request.now, request.resourceKey);
+        extend.run(row.acquired_at, request.resourceKey);
         return { ok: true };
       });
     },

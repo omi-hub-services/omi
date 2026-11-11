@@ -5,6 +5,8 @@
  *
  * Timestamps are ISO-8601 UTC strings supplied by the caller (`YYYY-MM-DDTHH:mm:ss.sssZ`); the
  * store never reads the clock. A lease is held while `expiresAt` is after `now`.
+ * A released row has `expiresAt === acquiredAt`. Acquisitions with `reclaimExpired: false`
+ * retain their reservation after timeout until explicit release confirms the writer stopped.
  */
 export interface Lease {
   readonly resourceKey: string;
@@ -19,6 +21,8 @@ export interface AcquireLeaseRequest {
   readonly owner: string;
   readonly now: string;
   readonly expiresAt: string;
+  /** Writers require explicit release after their process stops, even after expiry. */
+  readonly reclaimExpired?: boolean;
 }
 
 export interface LeaseHolderRequest {
@@ -50,10 +54,10 @@ export type ReleaseLeaseResult =
   { readonly ok: true } | { readonly ok: false; readonly reason: "STALE_LEASE" };
 
 export interface LeaseStore {
-  /** Takes a free or expired resource (generation + 1); refuses while another holder has it. */
+  /** Takes a free/released resource; expired takeover defaults to true for existing callers. */
   acquire(request: AcquireLeaseRequest): AcquireLeaseResult;
   /** Extends the lease of the current holder and generation; stale or expired is refused. */
   renew(request: RenewLeaseRequest): RenewLeaseResult;
-  /** Ends the current holder's lease. The generation is kept so it is never reused. */
+  /** Marks explicit release with expiry equal to acquisition; retains owner and generation. */
   release(request: LeaseHolderRequest): ReleaseLeaseResult;
 }
