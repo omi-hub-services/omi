@@ -1,0 +1,7 @@
+{
+  "guard": "naming",
+  "files": {
+    "src/domain/tasks/task-status.ts": "export const time = Date.now();"
+  },
+  "message": "Pass time in through a clock port"
+}

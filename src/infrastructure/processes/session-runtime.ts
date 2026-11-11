@@ -1,4 +1,4 @@
-import type { ProjectSession } from "../../application/services/claim-project-session.js";
+import type { ProjectSession } from "../../application/ports/lease-store.js";
 import { watchOwnerLiveness, type OwnerLivenessOptions, type OwnerGone } from "./owner-liveness.js";
 import {
   startSupervisedProcess,

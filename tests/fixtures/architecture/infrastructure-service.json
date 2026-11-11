@@ -1,0 +1,8 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/infrastructure/github/client.ts": "import type { Session } from \"../../application/services/session.js\"; export type Client = Session;",
+    "src/application/services/session.ts": "export interface Session {}"
+  },
+  "message": "infrastructure-not-to-interfaces-or-bootstrap"
+}

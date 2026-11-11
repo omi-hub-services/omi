@@ -1,0 +1,7 @@
+{
+  "guard": "naming",
+  "files": {
+    "src/domain/tasks/task-status.ts": "export const response = fetch(\"https://example.invalid\");"
+  },
+  "message": "no-restricted-globals"
+}

@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "tests/fixtures/state.db": ""
+  },
+  "message": "state, log or key material"
+}

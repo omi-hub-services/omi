@@ -1,0 +1,8 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/bootstrap/container.ts": "import \"../../vitest.config.js\";",
+    "vitest.config.ts": "export {};"
+  },
+  "message": "src-only-source-modules"
+}

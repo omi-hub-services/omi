@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "src/domain/tasks/task.js": "export {};"
+  },
+  "message": "source files must be kebab-case .ts"
+}

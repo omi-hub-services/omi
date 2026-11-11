@@ -1,0 +1,8 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/interfaces/ipc/protocol.ts": "import \"../../application/services/session.js\";",
+    "src/application/services/session.ts": "export {};"
+  },
+  "message": "interfaces-not-to-infrastructure"
+}

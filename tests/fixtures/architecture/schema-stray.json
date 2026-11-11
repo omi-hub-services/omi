@@ -1,0 +1,7 @@
+{
+  "guard": "schema",
+  "files": {
+    "stray.schema.json": "{}\n"
+  },
+  "message": "stray.schema.json: not produced by any contract"
+}
