@@ -18,6 +18,7 @@ import {
   findMismatches,
   groupByStatus,
   ignoredVerdictWarnings,
+  issueReadinessWarnings,
   linkedIssue,
   parseSnapshotPage,
   partitionReady,
@@ -187,7 +188,11 @@ function buildReport(
     readyBlocked: blocked.map(readyView),
     requiredChecks: required,
     pulls,
-    mismatches: [...findMismatches(project.items), ...ignoredVerdictWarnings(pulls)],
+    mismatches: [
+      ...findMismatches(project.items),
+      ...issueReadinessWarnings(project.items),
+      ...ignoredVerdictWarnings(pulls),
+    ],
     workers,
     quota,
   };

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
+  main,
   pickProfileCommand,
   referencingPulls,
   type Context,
@@ -160,6 +161,21 @@ describe("flow pick-profile", () => {
     };
     return { ctx: { ...ctx, run }, seen };
   }
+
+  it.each([
+    ["set-status", "96", "Ready"],
+    ["set-status", "96", "In Progress"],
+    ["start-branch", "96", "a-task"],
+  ])("%s refuses incomplete Issue data before any write or git probe", async (...argv) => {
+    const { ctx, seen } = context();
+    expect(await main(argv, ctx)).toBe(1);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.file).toBe("gh");
+    const output = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(output).toContain("refused:");
+    expect(output).toContain("missing Plan Key");
+    expect(output).toContain("missing Role");
+  });
 
   it("prints model advice for both selected tools and reviewer without changing quota choices", async () => {
     const { ctx, seen } = context();

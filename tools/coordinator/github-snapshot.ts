@@ -1,5 +1,6 @@
 // Project/PR snapshot for the status script: one GraphQL query, boundary parsing and the pure
 // classification rules (status grouping, Ready-with-closed-blockers, check and review state).
+import { issueReadinessReasons } from "./issue-readiness.ts";
 import { COORDINATOR_LOGIN, PRIORITY_ORDER, STATUS_ORDER } from "./coordinator-settings.ts";
 import {
   asArray,
@@ -23,11 +24,14 @@ const ITEM_FIELDS = `
     status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
     priority: fieldValueByName(name: "Priority") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
     workType: fieldValueByName(name: "Work Type") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+    workflow: fieldValueByName(name: "Workflow") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+    role: fieldValueByName(name: "Role") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+    area: fieldValueByName(name: "Area") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
     planKey: fieldValueByName(name: "Plan Key") { ... on ProjectV2ItemFieldTextValue { text } }
     content {
       __typename
       ... on Issue {
-        number title state
+        number title state body
         milestone { title }
         blockedBy(first: ${String(BLOCKER_PAGE)}) { totalCount nodes { number state } }
       }
@@ -74,6 +78,10 @@ export interface ProjectItem {
   readonly priority: string | null;
   readonly workType: string | null;
   readonly planKey: string | null;
+  readonly body: string;
+  readonly workflow: string | null;
+  readonly role: string | null;
+  readonly area: string | null;
   readonly milestone: string | null;
   readonly blockers: readonly Blocker[];
   /** More blockers exist than were fetched; treat as blocked. */
@@ -132,6 +140,10 @@ function parseItem(raw: unknown, path: string): ProjectItem | null {
     priority: selectName(item.priority, `${path}.priority`),
     workType: selectName(item.workType, `${path}.workType`),
     planKey: optString(optObject(item.planKey, `${path}.planKey`)?.text, `${path}.planKey.text`),
+    body: kind === "Issue" ? asString(content.body, `${path}.content.body`) : "",
+    workflow: selectName(item.workflow, `${path}.workflow`),
+    role: selectName(item.role, `${path}.role`),
+    area: selectName(item.area, `${path}.area`),
     milestone: optString(
       optObject(content.milestone, `${path}.milestone`)?.title,
       `${path}.milestone.title`,
@@ -402,4 +414,19 @@ export function findMismatches(items: readonly ProjectItem[]): string[] {
     }
   }
   return out;
+}
+
+/** Legacy Issues are reported, never rejected while reading status. */
+export function issueReadinessWarnings(items: readonly ProjectItem[]): string[] {
+  return items.flatMap((item) => {
+    if (
+      item.kind !== "Issue" ||
+      item.state !== "OPEN" ||
+      item.workType === "Epic" ||
+      item.planKey?.startsWith("EP-")
+    )
+      return [];
+    const reasons = issueReadinessReasons(item);
+    return reasons.length === 0 ? [] : [`#${String(item.number)}: ${reasons.join("; ")}`];
+  });
 }

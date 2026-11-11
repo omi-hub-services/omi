@@ -6,6 +6,8 @@
 // the argv it needs. Auth comes from the local gh/git logins; nothing token-like is printed.
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { createIssue } from "./issue-creation.ts";
+import { issueReadinessReasons, type IssueReadiness } from "./issue-readiness.ts";
 import { countAcceptanceCriteria } from "./acceptance-criteria.ts";
 import { inferComplexity, type EffortInput } from "./effort-policy.ts";
 import {
@@ -59,6 +61,7 @@ import { createProcessRunner, formatCommand, runChecked, type Runner } from "./p
 import { formatPick, pickProfile, readQuota, WORKER_KINDS, type WorkerKind } from "./quota.ts";
 
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
+  new-issue --file <spec.md>                 validated Issue with Project fields and Backlog
   set-status <issue> <status>
   start-branch <issue> <slug>                 WSL: task/omi-NNN-<slug> from origin/${BASE_BRANCH}
   push <branch>                               WSL: git push -u origin <branch>
@@ -93,6 +96,7 @@ query($owner: String!, $repo: String!, $number: Int!, $project: Int!) {
       status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       workflow: fieldValueByName(name: "Workflow") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       workType: fieldValueByName(name: "Work Type") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      role: fieldValueByName(name: "Role") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       area: fieldValueByName(name: "Area") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       priority: fieldValueByName(name: "Priority") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       planKey: fieldValueByName(name: "Plan Key") { ... on ProjectV2ItemFieldTextValue { text } }
@@ -101,6 +105,7 @@ query($owner: String!, $repo: String!, $number: Int!, $project: Int!) {
 
 interface IssueContext {
   readonly effortInput: EffortInput;
+  readonly readiness: IssueReadiness;
   readonly field: StatusField;
   readonly item: IssueItem | null;
   readonly planKey: string | null;
@@ -155,6 +160,15 @@ async function readIssue(ctx: Context, number: number): Promise<IssueContext> {
   }
   const select = (name: string) => optString(optObject(item?.[name], name)?.name, `${name}.name`);
   return {
+    readiness: {
+      planKey: item ? optString(optObject(item.planKey, "planKey")?.text, "planKey.text") : null,
+      body: asString(issue.body, "issue.body"),
+      priority: select("priority"),
+      workType: select("workType"),
+      workflow: select("workflow"),
+      role: select("role"),
+      area: select("area"),
+    },
     effortInput: {
       workflow: select("workflow"),
       workType: select("workType"),
@@ -358,12 +372,13 @@ export async function pickProfileCommand(
   return result.ok ? 0 : 1;
 }
 
-async function main(argv: readonly string[]): Promise<number> {
+export async function main(argv: readonly string[], context?: Context): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...argv],
     allowPositionals: true,
     options: {
       "dry-run": { type: "boolean", default: false },
+      file: { type: "string" },
       head: { type: "string" },
       title: { type: "string" },
       "body-file": { type: "string" },
@@ -380,7 +395,7 @@ async function main(argv: readonly string[]): Promise<number> {
     return values.help ? 0 : 2;
   }
   const dry = values["dry-run"];
-  const ctx: Context = {
+  const ctx: Context = context ?? {
     run: createProcessRunner(),
     target: wslTarget(),
     hostCwd: process.cwd(),
@@ -390,14 +405,21 @@ async function main(argv: readonly string[]): Promise<number> {
   const go = async (plan: Plan) => ((await execute(ctx, label, plan, dry)) ? 0 : 1);
 
   switch (sub) {
+    case "new-issue":
+      return createIssue(ctx.run, required(values.file, "--file"), dry);
     case "set-status": {
       const n = issueNumber(a);
       const issue = await readIssue(ctx, n);
-      return go(planSetStatus(n, required(b, "status argument"), issue.field, issue.item));
+      return go(
+        planSetStatus(n, required(b, "status argument"), issue.field, issue.item, issue.readiness),
+      );
     }
     case "start-branch": {
       const n = issueNumber(a);
       const issue = await readIssue(ctx, n);
+      const reasons = issueReadinessReasons(issue.readiness);
+      if (reasons.length > 0)
+        return go({ kind: "refuse", reason: `#${String(n)}: ${reasons.join("; ")}` });
       if (!issue.planKey) throw new Error(`#${String(n)} has no Plan Key on the Project`);
       const branch = taskBranchName(issue.planKey, required(b, "slug argument"));
       return go(planStartBranch(branch, await probeWsl(ctx, branch)));
