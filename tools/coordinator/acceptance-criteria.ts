@@ -41,6 +41,11 @@ function criterionLines(lines: readonly string[], start: number): number[] {
 }
 const AC_LINE = /^\s*(?:[-*+]\s+)?AC-(\d+):\s*(met|not met)\b/;
 
+/** The `AC-<n>: met|not met` lines of a review, verbatim and in order (carried PASS copies them). */
+export function acLines(review: string): string[] {
+  return review.split("\n").filter((line) => AC_LINE.test(line));
+}
+
 export type AcVerdict = "met" | "not met";
 
 /** AC number -> verdict. A criterion with conflicting lines counts as not met. */

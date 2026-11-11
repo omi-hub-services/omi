@@ -9,6 +9,7 @@ import { readProject, readRequiredChecks } from "./github-reads.ts";
 import {
   classifyReview,
   findMismatches,
+  formatAgentReview,
   groupByStatus,
   ignoredVerdictWarnings,
   issueReadinessWarnings,
@@ -108,9 +109,7 @@ function renderText(report: ReturnType<typeof buildReport>): string {
   out.push(`Open PRs (required checks: ${report.requiredChecks.join(", ") || "none"}):`);
   if (report.pulls.length === 0) out.push("  (none)");
   for (const p of report.pulls) {
-    const agent = p.review.agent
-      ? `agent ${p.review.agent.verdict}${p.review.agent.current ? " @head" : ` @${p.review.agent.head.slice(0, 7)} (stale)`}`
-      : "no agent review";
+    const agent = formatAgentReview(p.review.agent);
     const checkDetail = [...p.checks.failing, ...p.checks.pending.map((n) => `${n}…`)].join(",");
     out.push(
       `  #${String(p.number)} ${p.branch} -> ${p.base} @${p.head.slice(0, 7)}${p.draft ? " draft" : ""}` +
