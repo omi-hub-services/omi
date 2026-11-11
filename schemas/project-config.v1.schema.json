@@ -147,6 +147,52 @@
       ],
       "additionalProperties": false
     },
+    "effort_policy": {
+      "default": {
+        "low": "low",
+        "medium": "medium",
+        "high": "high"
+      },
+      "type": "object",
+      "properties": {
+        "low": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        "medium": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        "high": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      },
+      "required": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "additionalProperties": false
+    },
     "policies": {
       "type": "object",
       "properties": {

@@ -1,3 +1,5 @@
+import { inspectRuntime } from "../../../src/application/use-cases/project/inspect-runtime.ts";
+import { presentStatus } from "../../../src/interfaces/cli/presenters/status-presenter.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -238,6 +240,8 @@ describe("SQLite registry and executor selection", () => {
     db = openStateDatabase(join(dir, "state.sqlite"));
     const persisted = createSqliteExecutorSelectionStore(db, createSqliteProfileRegistry(db));
     expect(persisted.settings("a")).toEqual({
+      selectionReason:
+        "missing Project fields: Workflow, Work Type, Area, Priority; default medium; complexity medium requires medium; capability floor high; minimum high",
       chosen: { executor: "codex", profileId: "cx", model: "tested-codex", effort: "high" },
     });
     expect(persisted.settings("failover")).toMatchObject({
@@ -327,5 +331,45 @@ describe("SQLite registry and executor selection", () => {
     };
     expect(await probeProfile(registry, race, "a", () => now)).toMatchObject({ outcome: "stale" });
     expect(registry.list()[0]?.metadata.state).toBe("disabled");
+  });
+  it("persists task choice and reason across reopen and exposes it through status", () => {
+    const registry = createSqliteProfileRegistry(db);
+    registry.save(profile("cc"), now);
+    const selected = selectExecutor(
+      createSqliteExecutorSelectionStore(db, registry),
+      request("complex", {
+        task: { workflow: "poc", workType: "Spike", area: "runtime", priority: "P1", acCount: 6 },
+      }),
+    );
+    expect(selected).toMatchObject({ outcome: "selected", effort: "high" });
+    db.close();
+    db = openStateDatabase(join(dir, "state.sqlite"));
+    const store = createSqliteExecutorSelectionStore(db, createSqliteProfileRegistry(db));
+    const status = inspectRuntime(
+      { runtimeVersion: "test", startedAt: "2026-11-11T00:00:00.000Z" },
+      store,
+    );
+    expect(status.attempts).toEqual([
+      {
+        attemptId: "complex",
+        settings: {
+          chosen: {
+            executor: "claude-code",
+            profileId: "cc",
+            model: "tested-model",
+            effort: "high",
+          },
+          selectionReason:
+            "research / Spike / PoC; complexity high requires high; capability floor high; minimum high",
+        },
+      },
+    ]);
+    const presented = presentStatus({ ok: true, result: status }, "text");
+    expect(JSON.stringify(presented)).toContain(
+      "model: tested-model effort: high reason: research / Spike / PoC",
+    );
+    expect(JSON.stringify(presentStatus({ ok: true, result: status }, "json"))).toContain(
+      "selectionReason",
+    );
   });
 });

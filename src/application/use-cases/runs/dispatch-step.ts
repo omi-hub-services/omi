@@ -1,3 +1,6 @@
+import { resolveTaskEffort } from "../../../domain/agents/complexity-policy.js";
+import { taskComplexitySchema, effortPolicySchema } from "../../contracts/task-complexity.js";
+import { modelsConfigSchema } from "../../contracts/model-capability.js";
 import { z, ZodError } from "zod";
 import { transitionAgentAttempt } from "../../../domain/runs/agent-attempt.js";
 import { transitionStep } from "../../../domain/runs/step-run.js";
@@ -28,6 +31,9 @@ export function attemptArtifactRoot(attemptId: string): string {
 }
 
 const dispatchStepSchema = z.strictObject({
+  models: modelsConfigSchema,
+  task: taskComplexitySchema,
+  effortPolicy: effortPolicySchema,
   stepRunId: identifierSchema,
   taskId: identifierSchema,
   /** Worktree slug, see `TaskWorkspaceId`. */
@@ -147,9 +153,32 @@ export async function dispatchStep(
   const step = deps.steps.get(command.stepRunId);
   if (step === undefined) return { ok: false, reason: "STEP_NOT_FOUND" };
   if (step.status !== "ready") return { ok: false, reason: "STEP_NOT_READY" };
+  const capability = command.models.capability_profiles[command.context.capabilityProfile.id];
+  const contextFloor = command.context.capabilityProfile.min_effort;
+  const modelFloor = capability?.min_effort ?? contextFloor;
+  const decision = resolveTaskEffort(
+    { ...command.task, acCount: command.context.acceptanceCriteria.length },
+    command.effortPolicy,
+    effortRank(modelFloor) > effortRank(contextFloor) ? modelFloor : contextFloor,
+  );
+  const verified = command.models.verified_models[command.context.capabilityProfile.id] ?? [];
+  const modelSupported = Object.entries(command.models.models).some(
+    ([alias, model]) =>
+      verified.includes(alias) &&
+      model.executor === deps.executor.executor &&
+      model.model === command.execution.model &&
+      model.supported_efforts.includes(command.execution.effort),
+  );
   // Fail before allocating anything when the chosen executor settings cannot meet the step.
   if (
-    effortRank(command.execution.effort) < effortRank(command.context.capabilityProfile.min_effort)
+    !modelSupported ||
+    capability === undefined ||
+    (capability.required_executor !== undefined &&
+      capability.required_executor !== deps.executor.executor) ||
+    (command.context.capabilityProfile.required_executor !== undefined &&
+      command.context.capabilityProfile.required_executor !== deps.executor.executor) ||
+    effortRank(command.execution.effort) < effortRank(capability.min_effort) ||
+    effortRank(command.execution.effort) < effortRank(decision.minEffort)
   ) {
     return { ok: false, reason: "NO_ELIGIBLE_EXECUTOR" };
   }
@@ -272,6 +301,11 @@ export async function dispatchStep(
       attemptNumber,
       status: "pending",
       executor: deps.executor.executor,
+      selection: {
+        model: command.execution.model,
+        effort: command.execution.effort,
+        reason: decision.reason,
+      },
       access: command.execution.access,
       role: resolved.role,
       skills: packet.skillsManifest,
@@ -321,6 +355,7 @@ export async function dispatchStep(
         payload: JSON.stringify({
           attemptId,
           attemptNumber,
+          selection: record.selection,
           role: resolved.role,
           skills: record.skills,
           rules: record.rules,

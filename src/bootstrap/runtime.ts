@@ -17,7 +17,12 @@ import {
   SESSION_HEARTBEAT_TIMEOUT_MS,
   SESSION_LEASE_MS,
 } from "../infrastructure/processes/session-timing.js";
-import { createRuntimeIpcServer, defaultSocketPath, readPackageVersion } from "./container.js";
+import {
+  createProfileStores,
+  createRuntimeIpcServer,
+  defaultSocketPath,
+  readPackageVersion,
+} from "./container.js";
 
 export async function runSessionRuntime(projectDir: string): Promise<void> {
   wslPathSchema.parse(projectDir);
@@ -44,6 +49,7 @@ export async function runSessionRuntime(projectDir: string): Promise<void> {
     });
     const server = createRuntimeIpcServer({
       socketPath: defaultSocketPath(projectDir),
+      selections: createProfileStores(database).selections,
       identity: { runtimeVersion: readPackageVersion(), startedAt: session.lease.acquiredAt },
     });
     const runtime = await startSessionRuntime({

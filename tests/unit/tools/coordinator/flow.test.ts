@@ -252,7 +252,11 @@ describe("flow pick-profile", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  function context(workflow: string | null = "feature", labels: string[] = []) {
+  function context(
+    workflow: string | null = "feature",
+    labels: string[] = [],
+    complexity: string | null = null,
+  ) {
     const { ctx, seen } = fakeContext();
     const run: Runner = (command) => {
       seen.push(command);
@@ -278,6 +282,7 @@ describe("flow pick-profile", () => {
                         {
                           id: "item",
                           project: { id: "project" },
+                          complexity: complexity === null ? null : { name: complexity },
                           workflow: workflow === null ? null : { name: workflow },
                           workType: { name: "Task" },
                           area: { name: "runtime" },
@@ -308,6 +313,16 @@ describe("flow pick-profile", () => {
     expect(output).toContain("refused:");
     expect(output).toContain("missing Plan Key");
     expect(output).toContain("missing Role");
+  });
+
+  it("uses the manual field before a conflicting label and reports explicit settings", async () => {
+    const { ctx } = context("docs", ["complexity:low"], "high");
+    expect(await pickProfileCommand(ctx, 93, "codex", true, true)).toBe(0);
+    expect(JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0]))).toMatchObject({
+      complexity: "high",
+      reason: "field complexity:high",
+      chosen: [{ model: "gpt-6.1-sol", effort: "high" }],
+    });
   });
 
   it("prints model advice for both selected tools and reviewer without changing quota choices", async () => {

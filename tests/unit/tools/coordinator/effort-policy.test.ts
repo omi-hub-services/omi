@@ -1,3 +1,8 @@
+import {
+  inferComplexity as productPolicy,
+  DEFAULT_EFFORT_POLICY,
+} from "../../../../src/domain/agents/complexity-policy.ts";
+import { EFFORT_POLICY } from "../../../../tools/coordinator/coordinator-settings.ts";
 import { describe, expect, it } from "vitest";
 import { inferComplexity, type EffortInput } from "../../../../tools/coordinator/effort-policy.ts";
 
@@ -80,4 +85,54 @@ describe("inferComplexity", () => {
       }
     },
   );
+});
+
+// Temporary tools must mirror the product without a production cross-boundary import.
+
+it("keeps Coordinator inference and configured efforts aligned with the product", () => {
+  for (const workflow of [
+    null,
+    "",
+    "docs",
+    "feature",
+    "bugfix",
+    "refactor",
+    "research",
+    "poc",
+    "security",
+  ]) {
+    for (const workType of [null, "Task", "Docs", "PoC", "Spike", "security"]) {
+      for (const area of [null, "tooling", "runtime", "adapters", "github", "domain", "security"]) {
+        for (const priority of [null, "P0", "P1"]) {
+          for (const acCount of [0, 3, 4, 5, 6]) {
+            for (const hasLiveTests of [false, true]) {
+              for (const override of [
+                {},
+                { labels: ["complexity:low", "complexity:high"] },
+                { complexity: "low" as const },
+                { complexity: "high" as const },
+              ]) {
+                const input = {
+                  ...task,
+                  workflow,
+                  workType,
+                  area,
+                  priority,
+                  acCount,
+                  hasLiveTests,
+                  ...override,
+                };
+                expect(inferComplexity(input)).toEqual(productPolicy(input));
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  for (const complexity of ["low", "medium", "high"] as const) {
+    for (const tool of ["claude", "codex", "reviewer"] as const) {
+      expect(EFFORT_POLICY[tool][complexity].effort).toBe(DEFAULT_EFFORT_POLICY[complexity]);
+    }
+  }
 });
