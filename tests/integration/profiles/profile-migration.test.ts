@@ -26,7 +26,9 @@ it("upgrades legacy rows without inferring models, efforts or readiness", () => 
       VALUES ('old','s',1,'codex','legacy-model','legacy-profile','succeeded','t');
       INSERT INTO profile_observations (profile_id,availability,source,observed_at)
       VALUES ('legacy-profile','ready','old-probe','t');`);
-    expect(applyMigrations(db, migrations).applied.map((entry) => entry.name)).toEqual([
+    // This suite pins migration 0006 without incorporating later additive schema changes.
+    const upTo6 = migrations.filter((migration) => migration.version <= 6);
+    expect(applyMigrations(db, upTo6).applied.map((entry) => entry.name)).toEqual([
       "0006-profile-registry",
     ]);
     expect(
@@ -55,7 +57,7 @@ it("upgrades legacy rows without inferring models, efforts or readiness", () => 
       db.prepare("UPDATE profile_observations SET metadata_json='not-json'").run(),
     ).toThrow(/CHECK/);
     expect(db.pragma("foreign_key_check")).toEqual([]);
-    expect(applyMigrations(db, migrations).applied).toEqual([]);
+    expect(applyMigrations(db, upTo6).applied).toEqual([]);
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });

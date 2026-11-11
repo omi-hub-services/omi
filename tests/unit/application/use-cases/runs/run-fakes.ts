@@ -11,6 +11,7 @@ import type {
   ArtifactReference,
   ArtifactWrite,
 } from "../../../../../src/application/contracts/artifact.ts";
+import type { UncommittedManifest } from "../../../../../src/application/contracts/checkpoint.ts";
 import type { ResolutionCatalog } from "../../../../../src/application/contracts/resolution-catalog.ts";
 import type { AgentExecutor } from "../../../../../src/application/ports/agent-executor.ts";
 import { AgentExecutorError } from "../../../../../src/application/ports/agent-executor.ts";
@@ -176,6 +177,10 @@ export class FakeWorkspaces implements GitWorkspace {
       ok: true,
       value: { path, headSha: this.headSha, branch: null, dirty: false, hasIgnoredFiles: false },
     };
+  }
+  uncommitted: UncommittedManifest = { entries: [], truncated: false, excludedCredentialPaths: 0 };
+  listUncommitted(): GitWorkspaceResult<UncommittedManifest> {
+    return { ok: true, value: this.uncommitted };
   }
   acquireWriter(request: {
     slug: string;
