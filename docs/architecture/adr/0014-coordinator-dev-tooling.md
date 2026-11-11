@@ -250,14 +250,19 @@ identifies its linked worktree. Before removing it, cleanup reads tracked and un
 there, excluding `node_modules`. Changes produce `refused:` with the file list and skip branch
 and log cleanup. The merged-into-`origin/develop` gate still applies.
 
-For a clean linked worktree, commands run from the main checkout: `git worktree remove`,
-`git merge --ff-only origin/develop` only when that checkout is on `develop`, then
-`git branch -d <branch>` (never force-delete on this path). A failed command stops the remaining
-steps and log retention. Cleanup does not switch the main checkout's branch. Its existing
-main-checkout cleanup behaviour is unchanged.
+For a clean linked worktree, cleanup runs `git fetch origin`,
+`git switch --detach origin/develop`, then `git branch -d <branch>` inside that worktree
+(OMI-063). The detached HEAD contains the merged task even when the main checkout is on
+another task branch. Only then does it run `git -C <main> worktree remove -- <path>` and
+`git -C <main> merge --ff-only origin/develop` when the main checkout is on `develop`.
+This path never force-deletes. A failed command stops the remaining steps and log retention.
+Cleanup does not switch the main checkout's branch. Its existing main-checkout cleanup
+behaviour is unchanged.
 
 The log-retention step runs from the surviving main checkout after worktree removal. If the
-configured WSL directory has already disappeared, the WSL branch step reports `done:` and log
-retention runs from `/`; it does not attempt to rediscover or modify a remaining branch in an
-unknown repository. An already absent branch also reports `done:`. A dry run only probes and
+configured WSL directory has already disappeared, cleanup reports `refused:` rather than
+assuming the branch is gone: the main repository cannot be discovered from that directory.
+It names `git -C <main-checkout> branch -d <branch>` for recovery after verifying the branch
+is merged into `origin/develop`, with a HEAD containing the branch; it skips log retention.
+An already absent branch in an accessible checkout reports `done:`. A dry run only probes and
 prints the planned commands; it does not fetch, remove a worktree, update refs or change logs.

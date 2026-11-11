@@ -148,8 +148,10 @@ describe("linked-worktree cleanup", () => {
         if (!removed && !branchGone)
           stdout += `worktree /task repo\0branch refs/heads/${BRANCH}\0\0`;
       } else if (isRunsListing(command)) stdout = "@@now\n2000000000\n@@root\n@@archive\n";
-      else if (payload.includes("worktree remove")) removed = true;
-      else if (payload.includes("branch -d")) branchGone = true;
+      else if (payload.includes("worktree remove")) {
+        removed = true;
+        branchGone = true;
+      } else if (payload.includes("branch -d")) branchGone = true;
       else if (payload.includes("status --porcelain --untracked-files=all"))
         stdout = options.changes ?? "";
       else if (payload.includes("rev-parse --verify")) {
@@ -168,21 +170,21 @@ describe("linked-worktree cleanup", () => {
     return { ctx, seen };
   }
 
-  it("removes the linked worktree, fast-forwards main develop, safely deletes, then reads logs", async () => {
+  it("detaches and safely deletes before removal, fast-forwards main develop, then reads logs", async () => {
     const { ctx, seen } = worktreeContext();
     expect(await cleanup(ctx, BRANCH, false)).toBe(true);
     const write = seen.find((c) => text(c).includes("worktree remove"));
     expect(write?.args).toContain("/main repo");
     expect(write?.args.at(-1)).toBe(
-      `git -C '/main repo' worktree remove -- '/task repo' && git -C '/main repo' merge --ff-only origin/develop && git -C '/main repo' branch -d ${BRANCH}`,
+      `git -C '/task repo' fetch origin && git -C '/task repo' switch --detach origin/develop && git -C '/task repo' branch -d ${BRANCH} && git -C '/main repo' worktree remove -- '/task repo' && git -C '/main repo' merge --ff-only origin/develop`,
     );
     expect(seen.at(-1)?.args).toContain("/main repo");
     expect(isRunsListing(seen.at(-1) ?? { file: "", args: [] })).toBe(true);
-    expect(seen.map(text).join("\n")).not.toMatch(/switch|branch -D/);
+    expect(seen.map(text).join("\n")).not.toMatch(/branch -D|--force/);
     seen.length = 0;
-    expect(await cleanup(ctx, BRANCH, false)).toBe(true);
+    expect(await cleanup(ctx, BRANCH, false)).toBe(false);
     expect(seen.map(text).join("\n")).not.toMatch(/fetch|worktree remove|branch -d/);
-    expect(vi.mocked(console.log).mock.calls.flat().join("\n")).toContain("done:");
+    expect(vi.mocked(console.error).mock.calls.flat().join("\n")).toContain("refused:");
   });
 
   it.each([" M tracked.ts\n", "?? prompt.md\n"])(
@@ -200,7 +202,9 @@ describe("linked-worktree cleanup", () => {
     const { ctx, seen } = worktreeContext({ mainBranch: "task/omi-063-other" });
     expect(await cleanup(ctx, BRANCH, false)).toBe(true);
     expect(seen.map(text).join("\n")).not.toContain("merge --ff-only");
-    expect(seen.map(text).join("\n")).toContain("branch -d");
+    expect(seen.find((c) => text(c).includes("worktree remove"))?.args.at(-1)).toBe(
+      `git -C '/task repo' fetch origin && git -C '/task repo' switch --detach origin/develop && git -C '/task repo' branch -d ${BRANCH} && git -C '/main repo' worktree remove -- '/task repo'`,
+    );
   });
 
   it("dry-run prints removal and safe deletion but only reads", async () => {
@@ -211,6 +215,19 @@ describe("linked-worktree cleanup", () => {
     expect(output).toContain("worktree remove");
     expect(output).toContain("branch -d");
   });
+
+  it.each([false, true])(
+    "refuses a missing worktree with a remaining branch (dry-run=%s)",
+    async (dryRun) => {
+      const { ctx, seen } = worktreeContext({ absent: true });
+      expect(await cleanup(ctx, BRANCH, dryRun)).toBe(false);
+      expect(seen).toHaveLength(1);
+      expect(vi.mocked(console.log).mock.calls.flat().join("\n")).not.toContain("done:");
+      const error = vi.mocked(console.error).mock.calls.flat().join("\n");
+      expect(error).toContain("refused:");
+      expect(error).toContain(`git -C <main-checkout> branch -d ${BRANCH}`);
+    },
+  );
 
   it("an absent branch is done without deleting anything", async () => {
     const { ctx, seen } = worktreeContext({ branchGone: true });

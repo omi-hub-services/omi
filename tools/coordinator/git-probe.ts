@@ -67,10 +67,20 @@ export async function probeCleanupWsl(
   target: WslTarget,
   branch: string,
   options: ProbeOptions,
-): Promise<{ state: CleanupState | null; target: WslTarget }> {
+): Promise<{ state: CleanupState | null; target: WslTarget; refusal?: string }> {
   const outside = { ...target, repoDir: "/" };
   const exists = await run(wslCommand(joinSteps([["test", "-d", target.repoDir]]), outside));
-  if (exists.code === 1) return { state: null, target: outside };
+  if (exists.code === 1) {
+    return {
+      state: null,
+      target: outside,
+      refusal:
+        `cleanup directory ${target.repoDir} is missing; cannot verify whether ${branch} remains. ` +
+        `In the main repository, verify it is merged into origin/${BASE_BRANCH}, then run ` +
+        `git -C <main-checkout> branch -d ${branch} with a HEAD containing the branch; ` +
+        `do not force deletion`,
+    };
+  }
   if (exists.code !== 0) throw new Error(`cannot inspect cleanup directory: ${exists.stderr}`);
   const git = wslGit(target);
   const listing = await runChecked(run, git(["worktree", "list", "--porcelain", "-z"]));

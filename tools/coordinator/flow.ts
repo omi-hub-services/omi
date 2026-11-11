@@ -304,7 +304,7 @@ export async function cleanup(ctx: Context, branch: string, dryRun: boolean): Pr
   const wslOk = await execute(
     cleanupCtx,
     `${label} (wsl)`,
-    planCleanup(branch, "wsl", wsl.state),
+    wsl.refusal ? { kind: "refuse", reason: wsl.refusal } : planCleanup(branch, "wsl", wsl.state),
     dryRun,
   );
   if (!wslOk) return false;
