@@ -66,6 +66,28 @@ describe("2 + Architect + 2", () => {
   });
 
   describe("counting", () => {
+    it.each(["infrastructure", "awaiting_decision"] as const)(
+      "preserves both segment budgets through repeated %s failures",
+      (kind) => {
+        const normal = run(INITIAL_REWORK_STATE, failed("c1"));
+        const assisted = run(normal, failed("c2"), solution, failed("c3"));
+        for (const state of [normal, assisted]) {
+          for (let index = 0; index < 10; index++) {
+            expect(
+              transitionRework(state, {
+                type: "cycle_failed",
+                cycleId: `op-${String(index)}`,
+                kind,
+              }).ok,
+            ).toBe(false);
+          }
+          expect(state.failedCycles).toBe(1);
+        }
+        expect(run(normal, failed("c2")).phase).toBe("architect");
+        expect(run(assisted, failed("c4")).phase).toBe("blocked");
+      },
+    );
+
     it("counts several failed gates of one cycle once", () => {
       const first = run(INITIAL_REWORK_STATE, failed("c1"));
       expect(transitionRework(first, failed("c1"))).toEqual({
