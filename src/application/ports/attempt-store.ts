@@ -1,7 +1,7 @@
 import type { ArtifactReference } from "../contracts/artifact.js";
 import type { AccessLevel } from "../contracts/agent-execution.js";
 import type { ContextPacket } from "../contracts/context.js";
-import type { Executor } from "../contracts/model-capability.js";
+import type { Effort, Executor } from "../contracts/model-capability.js";
 import type { AgentAttemptStatus } from "../../domain/runs/agent-attempt.js";
 import type { StepStatus } from "../../domain/runs/step-run.js";
 
@@ -28,6 +28,11 @@ export interface AttemptRecord {
   readonly attemptNumber: number;
   readonly status: AgentAttemptStatus;
   readonly executor: Executor;
+  readonly selection?: {
+    readonly model: string;
+    readonly effort: Effort;
+    readonly reason: string;
+  };
   readonly access: AccessLevel;
   readonly role: { readonly id: string; readonly version: number; readonly sha256: string };
   /** Exactly the skills/rules the worker received, with version and hash. */

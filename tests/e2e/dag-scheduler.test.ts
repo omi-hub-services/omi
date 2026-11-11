@@ -132,6 +132,11 @@ describe("bounded DAG scheduler with sandbox worktrees and fake executors", () =
         });
         if (selection.outcome !== "selected") throw new Error("expected profile capacity");
         return dispatchInput({
+          models,
+          context: {
+            ...(dispatchInput().context as object),
+            capabilityProfile: { id: "coding", ...models.capability_profiles.coding },
+          },
           taskId: `omi-00${String(index + 1)}`,
           slug: `task-${String(index + 1)}`,
           stepRunId: `step-${task.id}`,
@@ -146,7 +151,10 @@ describe("bounded DAG scheduler with sandbox worktrees and fake executors", () =
         });
       });
       const results = await Promise.all(commands.map((command) => dispatchStep(deps, command)));
-      expect(results.every((result) => result.ok)).toBe(true);
+      expect(
+        results.every((result) => result.ok),
+        JSON.stringify(results.filter((result) => !result.ok)),
+      ).toBe(true);
       expect(runtime.executor.started).toHaveLength(2);
       expect(new Set(runtime.executor.started.map((entry) => entry.workspace)).size).toBe(2);
       expect(new Set(runtime.executor.started.map((entry) => entry.profileHome)).size).toBe(2);

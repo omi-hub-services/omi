@@ -197,4 +197,42 @@ describe("dispatchStep", () => {
     expect(second.attempt.attemptNumber).toBe(2);
     expect(second.attempt.id).not.toBe("id-1");
   });
+  it("refuses a task floor above the explicit effort before allocating resources", async () => {
+    expect(
+      await refusedWithoutAllocation(
+        dispatchInput({
+          task: { complexity: "high" },
+          effortPolicy: { low: "low", medium: "medium", high: "max" },
+        }),
+      ),
+    ).toEqual({ ok: false, reason: "NO_ELIGIBLE_EXECUTOR" });
+  });
+
+  it("refuses undeclared models and unsupported efforts even above the task floor", async () => {
+    const input = dispatchInput();
+    for (const settings of [{ model: "unknown" }, { effort: "max" }]) {
+      expect(
+        await refusedWithoutAllocation({
+          ...input,
+          execution: { ...(input.execution as object), ...settings },
+        }),
+      ).toEqual({ ok: false, reason: "NO_ELIGIBLE_EXECUTOR" });
+    }
+  });
+
+  it("records the explicit model, effort and policy reason in the attempt and event", async () => {
+    const r = rig();
+    const result = dispatched(
+      await dispatchStep(r.deps, dispatchInput({ task: { complexity: "high" } })),
+    );
+    expect(result.attempt.selection).toEqual({
+      model: "opus",
+      effort: "high",
+      reason:
+        "field complexity:high; complexity high requires high; capability floor medium; minimum high",
+    });
+    expect(r.attempts.get(result.attempt.id)?.selection).toEqual(result.attempt.selection);
+    const payload: unknown = JSON.parse(r.unitOfWork.commits[0]?.event.payload ?? "{}");
+    expect(payload).toMatchObject({ selection: result.attempt.selection });
+  });
 });

@@ -18,6 +18,7 @@ const settingsSchema = z.strictObject({
   profile_id: identifierSchema,
   model_id: modelNameSchema,
   chosen_effort: effortSchema,
+  selection_reason: z.string().min(1).max(2000).nullable(),
   actual_model: z.string().min(1).max(128).nullable(),
   actual_effort: effortSchema.nullable(),
 });
@@ -32,13 +33,14 @@ export function createSqliteExecutorSelectionStore(
     const row = db
       .prepare(
         `SELECT executor_id, profile_id, model_id, chosen_effort,
-      actual_model, actual_effort FROM agent_attempts WHERE id=?`,
+      actual_model, actual_effort, selection_reason FROM agent_attempts WHERE id=?`,
       )
       .get(attemptId);
     if (row === undefined) return undefined;
     const parsed = settingsSchema.parse(row);
     assertCredentialFree(parsed);
     return {
+      ...(parsed.selection_reason === null ? {} : { selectionReason: parsed.selection_reason }),
       chosen: {
         executor: parsed.executor_id,
         profileId: parsed.profile_id,
@@ -51,6 +53,19 @@ export function createSqliteExecutorSelectionStore(
   };
   return {
     settings,
+    listSettings() {
+      return db
+        .prepare(
+          "SELECT id FROM agent_attempts WHERE chosen_effort IS NOT NULL ORDER BY started_at, id",
+        )
+        .all()
+        .map((row) => {
+          const { id } = z.object({ id: identifierSchema }).parse(row);
+          const value = settings(id);
+          if (value === undefined) throw new Error("Attempt disappeared during status read");
+          return { attemptId: id, settings: value };
+        });
+    },
     reserve(attempt, choose) {
       identifierSchema.parse(attempt.id);
       identifierSchema.parse(attempt.stepRunId);
@@ -64,8 +79,8 @@ export function createSqliteExecutorSelectionStore(
         if (result.outcome === "selected") {
           db.prepare(
             `INSERT INTO agent_attempts
-            (id, step_run_id, attempt_number, executor_id, model_id, profile_id, chosen_effort, status, started_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+            (id, step_run_id, attempt_number, executor_id, model_id, profile_id, chosen_effort, status, started_at, selection_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
           ).run(
             attempt.id,
             attempt.stepRunId,
@@ -75,6 +90,7 @@ export function createSqliteExecutorSelectionStore(
             result.candidate.profileId,
             result.effort,
             at,
+            attempt.selectionReason ?? null,
           );
         }
         return result;

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { slugSchema } from "./identifiers.js";
+import { effortPolicySchema } from "./task-complexity.js";
 import { schemaVersionV1 } from "./schema-version.js";
 
 const githubNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/);
@@ -39,6 +40,7 @@ export const projectConfigSchema = z
       step_timeout_seconds: z.number().int().min(1).max(86_400),
       max_rework_cycles: z.number().int().min(0).max(10),
     }),
+    effort_policy: effortPolicySchema,
     policies: z.strictObject({
       /** Gates that always need a human; a runtime field must not remove them. */
       mandatory_approvals: z.array(slugSchema),

@@ -264,6 +264,14 @@ export class FakeExecutor implements AgentExecutor {
 
 export function dispatchInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
+    models: {
+      schema_version: 1,
+      models: {
+        opus: { executor: "claude-code", model: "opus", supported_efforts: ["medium", "high"] },
+      },
+      capability_profiles: { standard: { min_effort: "medium" } },
+      verified_models: { standard: ["opus"] },
+    },
     stepRunId: "step-1",
     taskId: "OMI-017",
     slug: "omi-017",

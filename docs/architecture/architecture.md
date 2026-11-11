@@ -273,6 +273,14 @@ Các trạng thái: `unknown`, `ready`, `busy`, `cooldown`, `login-required`, `u
 
 Chọn executor theo thứ tự: khả dụng → đáp ứng capability tối thiểu → không vượt limit đồng thời → preference cấu hình → độ bận. Không suy ra năng lực chỉ từ tên model. Capability profile do project duy trì và PoC xác minh.
 
+Task complexity policy (OMI-057, ADR-0016) maps validated Workflow, Work Type, Area, Priority,
+AC count and an explicit complexity field/label to `project.yaml`'s `effort_policy` minimum.
+The task floor and capability floor combine by maximum; selection never downgrades either.
+After preference and load ties, selection prefers the lower satisfying declared effort.
+Dispatch checks the explicit model/effort against `models.yaml` before allocating resources.
+Attempts record the choice and reason; runtime `status` exposes these separately from actual
+CLI-reported settings. Temporary Coordinator policy parity is scoped in ADR-0014.
+
 Capability profile trong models.yaml có thể khai báo `required_executor`; selector cũng nhận `requiredExecutor` tùy chọn từ step và từ chối nếu mâu thuẫn với profile. Không có yêu cầu tool thì cho phép cross-tool failover. Quyết định PO 2026-11-11: chỉ một profile Codex; Codex bị giới hạn và step bắt buộc Codex thì `waiting_resource`, nếu không có thể chọn Claude thỏa cùng minimum. Kết quả không có tổ hợp phù hợp luôn kèm lý do.
 
 Registry lưu snapshot nối tiếp trong `profile_observations` (migration 0006); snapshot mới nhất theo ID là cấu hình hiện hành. Observation cũ không có metadata không tự trở thành profile ready. `observedProfile` chiếu TTL hết hạn, chưa probe và cooldown hết hạn thành unknown; login-required giữ nguyên. Probe auth/version không xác minh quota hoặc thêm model vào allowlist, không xóa cooldown đang hiệu lực, và CAS revision chặn kết quả probe muộn ghi đè disable/cooldown.

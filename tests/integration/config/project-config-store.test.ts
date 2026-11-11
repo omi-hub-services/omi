@@ -110,4 +110,11 @@ describe("create-only project.yaml", () => {
     expect(await readFile(path, "utf8")).toBe(bytes);
     expect(await readdir(dir)).toEqual(["project.yaml"]);
   });
+  it("round-trips the configured task effort mapping in project.yaml", async () => {
+    const config = await createProjectConfigStore(dir);
+    const effort_policy = { low: "medium", medium: "high", high: "max" } as const;
+    await config.create({ ...baseline, effort_policy });
+    expect(await config.read()).toMatchObject({ effort_policy });
+    expect(await readFile(join(dir, "project.yaml"), "utf8")).toContain("high: max");
+  });
 });

@@ -8,6 +8,7 @@ export const baseline: ProjectConfig = {
   project: { owner: "acme", number: 4 },
   branches: { integration: "develop", release: "main" },
   limits: { max_parallel_workers: 2, step_timeout_seconds: 600, max_rework_cycles: 2 },
+  effort_policy: { low: "low", medium: "medium", high: "high" },
   policies: { mandatory_approvals: ["release", "deploy"] },
 };
 export const project: InspectedProject = {

@@ -9,6 +9,12 @@ export function renderStatusText(status: RuntimeStatus): string {
     `runtime: ${status.state}`,
     `version: ${status.runtimeVersion}`,
     `started: ${status.startedAt}`,
+    ...(status.attempts ?? []).map(
+      ({ attemptId, settings }) =>
+        `attempt: ${attemptId} model: ${settings.chosen.model} effort: ${settings.chosen.effort}` +
+        ` reason: ${settings.selectionReason ?? "unrecorded"}` +
+        ` actual model: ${settings.actualModel ?? "unreported"} effort: ${settings.actualEffort ?? "unreported"}`,
+    ),
   ].join("\n");
 }
 

@@ -70,3 +70,56 @@ drive prefix such as `C:/`.
   - The `project.yaml` v1 fields are a baseline; OMI-019 will revise them.
   - The `register-ts-imports.ts` hook stays.
   - `schemas/**` is not run through Prettier.
+
+## Task complexity policy (OMI-057, Issue #79)
+
+`src/domain/agents/complexity-policy.ts` is the authoritative pure product rule. It consumes
+Workflow, Work Type, Area, Priority, top-level AC count, labels and the optional manual
+`complexity` field. The field wins over labels; conflicting `complexity:low|medium|high`
+labels choose the highest value. Neither Issue prose nor model names are evaluated as
+instructions. Missing Project fields conservatively default to medium. Research/Spike/PoC,
+security work (Workflow, Work Type or Area), runtime/adapters/github with live tests and
+P0 with more than five AC are high. Docs and small non-runtime work are low; other work is
+medium. These rules retain the OMI-058 ordering; security is an explicit high-risk signal.
+
+`project.yaml` v1 adds `effort_policy`, defaulting to
+`{ low: low, medium: medium, high: high }`. Each value can be any declared effort level,
+including xhigh/max. This is additive: older files parse with defaults, and initialization
+writes the resolved mapping. Example:
+
+```yaml
+effort_policy:
+  low: low
+  medium: high
+  high: xhigh
+```
+
+Callers pass the pinned project's `effort_policy` as `effortPolicy` and validated task metadata
+as `task` to selection and dispatch. Omitted task metadata conservatively uses the missing-field
+medium decision. Dispatch uses the context packet's AC list for the count. A manual override
+changes complexity; it never removes a capability floor. The effective minimum is the higher
+of the mapped task effort and the capability profile minimum. Dispatch also preserves the
+context profile floor if it is higher than the models catalog's floor.
+
+Selection retains availability, allowlist, verified-model, account-group quota/concurrency and
+executor gates, then chooses an explicitly supported effort at or above the effective minimum.
+Among candidates with equal configured preference and load, the lower satisfying effort wins
+before the stable candidate ID; this is not an inferred model price or capability. No qualifying
+combination returns typed `waiting_resource` / `NO_MATCHING_COMBINATION` with candidate rejection
+codes. Dispatch validates the explicit model and effort against the supplied models catalog,
+verified aliases and executor requirements, refusing `NO_ELIGIBLE_EXECUTOR` before allocating
+anything when the pair is unsupported or below either floor. It never silently substitutes
+settings. No retry escalation, LLM call or new dependency is introduced.
+
+The selected model/effort remain in the existing attempt columns. Migration 0008 adds a nullable
+selection reason; legacy reasons remain unknown. The selector writes its reason in the same
+reservation transaction. Dispatch records model, effort and reason on its attempt and durable
+`step.dispatched` event. Runtime status reads reserved attempt settings through the existing
+selection port and shows chosen model, effort and reason in text and JSON; actual settings
+remain separately reported facts, never guessed from the chosen settings. Legacy attempts with
+no chosen effort are excluded from this settings view. Run-filtered status and the complete
+Coordinator IPC dispatch orchestration remain owned by OMI-030.
+
+The temporary Coordinator mirrors this rule under the scoped exception described in ADR-0014;
+parity tests compare inference and default effort mappings. Its fixed model mapping remains an
+explicit repository configuration rather than a product model-name heuristic.

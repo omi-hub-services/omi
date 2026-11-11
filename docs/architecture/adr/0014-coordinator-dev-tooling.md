@@ -84,10 +84,11 @@ Issue GraphQL read for Workflow, Work Type, Area, Priority and labels before sel
 so the inferred Claude model participates in weekly quota filtering (OMI-068). `effort-policy.ts` is
 pure; AC counts reuse `acceptance-criteria.ts`'s top-level counting convention. Rules, in order:
 
-- An exact `complexity:low|medium|high` label overrides inference, including missing fields.
+- A manual `complexity` Project single-select field (`low|medium|high`) wins first. An exact
+  `complexity:low|medium|high` label otherwise overrides inference, including missing fields.
   Conflicting labels choose the highest complexity, independent of label order.
 - Any missing/blank Project field defaults to `medium`, naming the missing fields in the reason.
-- Research, Spike/PoC, runtime/adapters/github with live tests, or P0 with more than five AC
+- Research, Spike/PoC, security Workflow/Work Type/Area, runtime/adapters/github with live tests, or P0 with more than five AC
   selects `high`. The live-test signal is the existing `--kind claude+codex-live`; PoCs normally
   use Workflow research or Work Type Spike (literal PoC values are also recognized).
 - Workflow docs or Work Type Docs selects `low`; otherwise one to three AC in a non-runtime
@@ -102,7 +103,18 @@ complexity and reason for each chosen tool and the reviewer; `--json` adds the s
 `chosen` and `reviewer`, with the decision also at the top level. Refusals remain refusals.
 The Coordinator consumes this advice and passes explicit CLI flags; no model invocation,
 retry escalation or native CLI configuration change is introduced by this policy. OMI-057
-replaces this temporary tooling in the product.
+provides the product policy in `src/domain/agents/complexity-policy.ts` (ADR-0016).
+
+**Scoped exception to AGENTS.md §1.4 / architecture §14.3 (one implementation):** until OMI-030
+switches Coordinator dispatch to the product CLI, `tools/coordinator/effort-policy.ts` mirrors
+only the pure complexity inference. Tools and product do not import each other. A parity test
+covers all branches, conflicting labels, manual fields, missing metadata and the default effort
+mapping. The product domain is authoritative; a rule change updates both and the test. The
+reason is to preserve the independent, Node-run Windows Coordinator tooling without adding a
+cross-layer runtime dependency. `pick-profile` reads the manual field, refuses invalid values,
+and continues reporting explicit model, effort and reason for worker flags and PO review.
+The `/omi-next` consumer must keep passing those explicit settings rather than CLI defaults;
+no skill or native configuration is changed by OMI-057.
 
 ## Issue creation and readiness gate (OMI-059)
 

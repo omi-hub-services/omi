@@ -6,6 +6,7 @@ import { createSqliteWorkerProcessStore } from "../infrastructure/persistence/sq
 import { pauseRun, type PauseRunDependencies } from "../application/use-cases/runs/pause-run.js";
 import { resumeRun, type ResumeRunDependencies } from "../application/use-cases/runs/resume-run.js";
 import type { WriteCheckpointDependencies } from "../application/use-cases/runs/write-checkpoint.js";
+import type { ExecutorSelectionStore } from "../application/ports/executor-selection-store.js";
 import { launchWindowsSession } from "../infrastructure/processes/windows-session-launcher.js";
 import { randomUUID } from "node:crypto";
 import { requestApproval } from "../application/use-cases/approvals/request-approval.js";
@@ -83,13 +84,14 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
 export function createRuntimeIpcServer(options: {
   readonly socketPath: string;
   readonly identity: RuntimeIdentity;
+  readonly selections?: Pick<ExecutorSelectionStore, "listSettings">;
   readonly approvals?: Pick<DispatchedUseCases, "requestApproval" | "recordApproval">;
   readonly idleTimeoutMs?: number;
 }): IpcServer {
   return createIpcServer({
     socketPath: options.socketPath,
     handler: createCommandDispatcher({
-      inspectRuntime: () => inspectRuntime(options.identity),
+      inspectRuntime: () => inspectRuntime(options.identity, options.selections),
       ...options.approvals,
     }),
     ...(options.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: options.idleTimeoutMs }),

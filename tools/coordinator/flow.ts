@@ -137,6 +137,7 @@ query($owner: String!, $repo: String!, $number: Int!, $project: Int!) {
       role: fieldValueByName(name: "Role") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       area: fieldValueByName(name: "Area") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       priority: fieldValueByName(name: "Priority") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      complexity: fieldValueByName(name: "complexity") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       planKey: fieldValueByName(name: "Plan Key") { ... on ProjectV2ItemFieldTextValue { text } }
     } } } }
 }`;
@@ -207,6 +208,15 @@ async function readIssue(ctx: Context, number: number): Promise<IssueContext> {
     };
   });
   const select = (name: string) => optString(optObject(item?.[name], name)?.name, `${name}.name`);
+  const complexity = select("complexity");
+  if (
+    complexity !== null &&
+    complexity !== "low" &&
+    complexity !== "medium" &&
+    complexity !== "high"
+  ) {
+    throw new Error("Invalid Project complexity field");
+  }
   return {
     readiness: {
       planKey: item ? optString(optObject(item.planKey, "planKey")?.text, "planKey.text") : null,
@@ -218,6 +228,7 @@ async function readIssue(ctx: Context, number: number): Promise<IssueContext> {
       area: select("area"),
     },
     effortInput: {
+      ...(complexity === null ? {} : { complexity }),
       workflow: select("workflow"),
       workType: select("workType"),
       area: select("area"),

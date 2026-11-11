@@ -62,6 +62,7 @@ export interface AttemptSelection {
 
 export interface AttemptSettings {
   readonly chosen: AttemptSelection;
+  readonly selectionReason?: string;
   /** Missing means unreported; never fill actual values from the requested settings. */
   readonly actualModel?: string;
   readonly actualEffort?: Effort;
