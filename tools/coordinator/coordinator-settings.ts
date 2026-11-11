@@ -110,7 +110,7 @@ export interface QuotaSettings {
 }
 
 export const QUOTA_SETTINGS: QuotaSettings = {
-  minFiveHourLeftPercent: 30,
+  minFiveHourLeftPercent: 10,
   minSevenDayLeftPercent: 10,
   coordinatorSharedPenalty: 20,
   staleAfterMinutes: 120,

@@ -62,7 +62,10 @@ export function createSqliteStateUnitOfWork(db: StateDatabase): StateUnitOfWork 
         }
 
         let newVersion: number;
-        if (target.kind === "outbox_intent") {
+        if (target.kind === "session_event") {
+          if (fence === undefined) throw new Error("session_event requires a lease fence");
+          newVersion = 0;
+        } else if (target.kind === "outbox_intent") {
           if (outbox === undefined) throw new Error("outbox_intent requires an outbox entry");
           if (db.prepare("SELECT 1 FROM outbox WHERE operation_key = ?").get(outbox.operationKey)) {
             return { ok: false, reason: "ALREADY_EXISTS" };

@@ -15,7 +15,9 @@ import {
   type StateDatabase,
 } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
 
-const ALL = loadMigrations(resolve(import.meta.dirname, "../../../migrations"));
+const ALL = loadMigrations(resolve(import.meta.dirname, "../../../migrations")).filter(
+  (migration) => migration.version <= 4,
+);
 // The schema this migration upgrades: 0001-0003 (0003 is the approval lifecycle of OMI-029).
 const UP_TO_0003 = ALL.filter((migration) => migration.version <= 3);
 
