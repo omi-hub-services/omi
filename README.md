@@ -36,24 +36,25 @@ Requirements: Node.js **24.22.2** (see `.nvmrc`; `engine-strict` rejects other v
 ```sh
 nvm use          # or install the version in .nvmrc
 npm ci
-npm run check    # everything below except build
+npm run check    # build, quality gates, offline tests and package contents
 ```
 
 Development commands that exist today:
 
-| Command                      | What it does                                                              |
-| ---------------------------- | ------------------------------------------------------------------------- |
-| `npm run typecheck`          | `tsc` strict type check of src, tests, tools and config                   |
-| `npm run lint`               | ESLint with typescript-eslint `strictTypeChecked`                         |
-| `npm run format:check`       | Prettier check (`npm run format` to write)                                |
-| `npm run check:architecture` | dependency-cruiser layer/cycle rules + `tools/check-structure.ts`         |
-| `npm run check:backlog`      | validates `docs/planning/github-backlog.yaml` against the project plan    |
-| `npm run test:unit`          | Vitest, `tests/unit/`                                                     |
-| `npm run test:integration`   | Vitest, `tests/integration/` (runs the guards on fixtures)                |
-| `npm run build`              | `tsc` emit to `dist/`; fails until `src/` has its first module (ADR-0011) |
+| Command                      | What it does                                                           |
+| ---------------------------- | ---------------------------------------------------------------------- |
+| `npm run typecheck`          | `tsc` strict type check of src, tests, tools and config                |
+| `npm run lint`               | ESLint with typescript-eslint `strictTypeChecked`                      |
+| `npm run format:check`       | Prettier check (`npm run format` to write)                             |
+| `npm run check:architecture` | dependency-cruiser layer/cycle rules + `tools/check-structure.ts`      |
+| `npm run check:backlog`      | validates `docs/planning/github-backlog.yaml` against the project plan |
+| `npm run test:unit`          | Vitest, `tests/unit/`                                                  |
+| `npm run test:integration`   | Vitest, `tests/integration/` (runs the guards on fixtures)             |
+| `npm run build`              | `tsc` emit to `dist/`                                                  |
+| `npm run pack:check`         | Real npm archive, runtime-only contents gate                           |
 
-`test:contract`, `test:e2e`, `test:live`, `schemas:*` and `pack:check` from tech-stack.md are
-added by the Issues that introduce those tests and artifacts.
+Project-local install/update commands, Windows launch instructions, conflict handling and backup
+recovery are documented in [packaging.md](docs/operations/packaging.md). `test:live` remains opt-in.
 
 ## Branches
 

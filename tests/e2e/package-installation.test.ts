@@ -1,0 +1,479 @@
+import { createProjectConfigStore } from "../../src/infrastructure/config/project-config-store.js";
+import { runCli } from "../../src/interfaces/cli/commands/create-program.js";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { packAndCheck, validatePackedFiles } from "../../tools/check-package.ts";
+import { installProjectTool } from "../../src/application/use-cases/project/install-project-tool.js";
+import {
+  createProjectInstallation,
+  type ProvisionPackage,
+  provisionPackage,
+} from "../../src/infrastructure/config/install-project-package.js";
+import { inspectInstallation } from "../../src/application/use-cases/project/inspect-installation.js";
+import {
+  createInstallationDoctor,
+  type WslProbe,
+} from "../../src/infrastructure/processes/installation-doctor.js";
+import { openStateDatabase } from "../../src/infrastructure/persistence/sqlite/sqlite-connection.js";
+import {
+  applyMigrations,
+  loadMigrations,
+  readHistory,
+} from "../../src/infrastructure/persistence/sqlite/migration-runner.js";
+import { createSqliteLeaseStore } from "../../src/infrastructure/persistence/sqlite/sqlite-lease-store.js";
+import { stringify } from "yaml";
+
+const root = resolve(import.meta.dirname, "../..");
+let temp: string;
+let artifact: string;
+let archive: string;
+// Offline fake package provisioner, like fake executors elsewhere in the E2E suite.
+// Real archive bytes are used; only dependency resolution/native compilation is simulated.
+const provision: ProvisionPackage = async (source, tool) => {
+  const destination = join(tool, "node_modules", "omi-squad");
+  await mkdir(dirname(destination), { recursive: true });
+  await cp(source, destination, { recursive: true });
+  await symlink(join(root, "node_modules"), join(destination, "node_modules"), "dir");
+  await writeFile(
+    join(tool, "package.json"),
+    JSON.stringify({ private: true, dependencies: { "omi-squad": "file:./omi-squad.tgz" } }),
+  );
+  await writeFile(join(tool, "package-lock.json"), "{}\n");
+};
+const store = () => createProjectInstallation({ sourceRoot: root, provision });
+async function project(name: string) {
+  const path = join(temp, name);
+  await mkdir(path);
+  return path;
+}
+async function input(name: string, packageDir = artifact) {
+  return { projectDir: await project(name), packageDir, distribution: "Ubuntu-24.04", apply: true };
+}
+async function candidate(name: string) {
+  const path = join(temp, name);
+  await cp(artifact, path, { recursive: true });
+  return path;
+}
+const statePath = (projectDir: string) => join(projectDir, ".omi-squad/local/state/state.sqlite");
+const textPath = "workflows/onboarding-empty-repo.yaml";
+
+beforeAll(async () => {
+  temp = await mkdtemp(join(tmpdir(), "omi-packaging-"));
+  archive = packAndCheck(root, temp);
+  artifact = join(temp, "package");
+  execFileSync("tar", ["-xzf", archive, "-C", temp]);
+}, 30_000);
+afterAll(async () => {
+  await rm(temp, { recursive: true, force: true });
+});
+
+describe("project-local distribution", () => {
+  it("packs only runtime assets and npm metadata, rejecting accidental source/state", () => {
+    const paths = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).trim().split("\n");
+    expect(paths.some((path) => path.endsWith("/dist/bootstrap/cli.js"))).toBe(true);
+    expect(paths.some((path) => /^package\/(src|tests|tools|\.omi-squad)\//.test(path))).toBe(
+      false,
+    );
+    for (const path of [
+      "src/bootstrap/cli.ts",
+      "templates/project/local/state.sqlite",
+      "dist/.env",
+      "coverage/index.html",
+    ])
+      expect(() => {
+        validatePackedFiles([{ path }]);
+      }).toThrow();
+  });
+
+  it("previews without creating runtime directories; installs a relocated shim without a global tool", async () => {
+    const request = await input("clean project $quote's");
+    await writeFile(join(request.projectDir, "package.json"), '{"name":"user-application"}\n');
+    expect((await installProjectTool(store(), { ...request, apply: false })).status).toBe(
+      "preview",
+    );
+    expect(await readdir(request.projectDir)).toEqual(["package.json"]);
+    expect((await installProjectTool(store(), request)).status).toBe("installed");
+    const shim = join(request.projectDir, ".omi-squad/bin/omi");
+    // Only the Node interpreter is on PATH; there is no global omi-squad installation.
+    const bin = join(temp, "node-only");
+    await mkdir(bin);
+    await symlink(process.execPath, join(bin, "node"));
+    // The POSIX shim also needs dirname; this is an OS utility, never a framework command.
+    await symlink("/usr/bin/dirname", join(bin, "dirname"));
+    expect(
+      execFileSync(shim, ["--version"], { cwd: temp, env: { PATH: bin }, encoding: "utf8" }).trim(),
+    ).toBe("0.0.0");
+    expect(await readFile(join(request.projectDir, "package.json"), "utf8")).toBe(
+      '{"name":"user-application"}\n',
+    );
+    const ps = await readFile(join(request.projectDir, ".omi-squad/bin/omi.cjs"), "utf8");
+    expect(ps).toContain("Ubuntu-24.04");
+    expect(ps).toContain(Buffer.from(request.projectDir).toString("base64"));
+    const windowsShim = join(request.projectDir, ".omi-squad/bin/omi.cjs");
+    await writeFile(
+      join(bin, "wsl.exe"),
+      "#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify(process.argv.slice(2)));\n",
+    );
+    await chmod(join(bin, "wsl.exe"), 0o755);
+    const args = ["status", "--json", "space value", 'quotes" $value *;'];
+    const forwarded: unknown = JSON.parse(
+      execFileSync(process.execPath, [windowsShim, ...args], {
+        env: { PATH: bin },
+        encoding: "utf8",
+      }),
+    );
+    expect(forwarded).toEqual([
+      "--distribution",
+      request.distribution,
+      "--cd",
+      request.projectDir,
+      "--exec",
+      shim,
+      ...args,
+    ]);
+    expect(
+      spawnSync(process.execPath, [windowsShim, "session", "start", "--project", "/other"], {
+        env: { PATH: bin },
+      }).status,
+    ).toBe(2);
+    const db = openStateDatabase(statePath(request.projectDir));
+    try {
+      expect(readHistory(db)).toHaveLength(loadMigrations(join(artifact, "migrations")).length);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("updates untouched templates while preserving independent overrides and local deletions", async () => {
+    const request = await input("overrides");
+    await installProjectTool(store(), request);
+    const target = join(request.projectDir, ".omi-squad", textPath);
+    await writeFile(target, "# local override\n");
+    await rm(join(request.projectDir, ".omi-squad/workflows/ui-ux.yaml"));
+    const next = await candidate("next-package");
+    const changed = "workflows/ci-cd.yaml";
+    await writeFile(join(next, "templates/project", changed), "# new upstream version\n");
+    const result = await installProjectTool(store(), { ...request, packageDir: next });
+    expect(result.status).toBe("installed");
+    expect(await readFile(target, "utf8")).toBe("# local override\n");
+    expect(await readFile(join(request.projectDir, ".omi-squad", changed), "utf8")).toBe(
+      "# new upstream version\n",
+    );
+    expect(await readdir(join(request.projectDir, ".omi-squad/workflows"))).not.toContain(
+      "ui-ux.yaml",
+    );
+    const lock: unknown = JSON.parse(
+      await readFile(join(request.projectDir, ".omi-squad/framework.lock.json"), "utf8"),
+    );
+    expect(lock).toMatchObject({
+      base: { [textPath]: await readFile(join(artifact, "templates/project", textPath), "utf8") },
+    });
+  });
+
+  it("reports divergent edits and deletion conflicts before changing the install or backups", async () => {
+    const request = await input("conflicts");
+    await installProjectTool(store(), request);
+    await rm(join(request.projectDir, ".omi-squad", textPath));
+    const next = await candidate("conflicting-package");
+    await writeFile(join(next, "templates/project", textPath), "# upstream edit\n");
+    const before = await readFile(
+      join(request.projectDir, ".omi-squad/framework.lock.json"),
+      "utf8",
+    );
+    const backups = await readdir(join(request.projectDir, ".omi-squad/local/backups"));
+    expect(await installProjectTool(store(), { ...request, packageDir: next })).toMatchObject({
+      status: "conflict",
+      conflicts: [textPath],
+    });
+    expect(await readFile(join(request.projectDir, ".omi-squad/framework.lock.json"), "utf8")).toBe(
+      before,
+    );
+    expect(await readdir(join(request.projectDir, ".omi-squad/local/backups"))).toEqual(backups);
+  });
+
+  it("backs up WAL state and config before applying SQL and existing v1 config defaults", async () => {
+    const request = await input("migration");
+    const configDir = join(request.projectDir, ".omi-squad/config");
+    await mkdir(configDir, { recursive: true });
+    const config =
+      "# user config comment\n" +
+      stringify({
+        schema_version: 1,
+        repository: { owner: "example", name: "project" },
+        project: { owner: "example", number: 1 },
+        branches: { integration: "develop", release: "main" },
+        limits: { max_parallel_workers: 2, step_timeout_seconds: 120, max_rework_cycles: 4 },
+        policies: { mandatory_approvals: ["release", "deploy"] },
+      }) +
+      "...\n";
+    await writeFile(join(configDir, "project.yaml"), config);
+    await mkdir(dirname(statePath(request.projectDir)), { recursive: true });
+    const writer = openStateDatabase(statePath(request.projectDir));
+    applyMigrations(writer, loadMigrations(join(artifact, "migrations")).slice(0, 1));
+    writer.exec(
+      "CREATE TABLE migration_probe(value TEXT); INSERT INTO migration_probe VALUES ('committed in WAL')",
+    );
+    try {
+      const result = await installProjectTool(store(), request);
+      if (!("backupDir" in result)) throw new Error("installation failed");
+      const backup = openStateDatabase(join(result.backupDir, "state.sqlite"));
+      try {
+        expect(readHistory(backup)).toHaveLength(1);
+        expect(backup.prepare("SELECT value FROM migration_probe").get()).toEqual({
+          value: "committed in WAL",
+        });
+      } finally {
+        backup.close();
+      }
+      expect(await readFile(join(result.backupDir, "config/project.yaml"), "utf8")).toBe(config);
+      expect(await (await createProjectConfigStore(configDir)).read()).toMatchObject({
+        effort_policy: { low: "low", medium: "medium", high: "high" },
+      });
+      expect(await readFile(join(configDir, "project.yaml"), "utf8")).toContain(
+        "# user config comment",
+      );
+      expect(await readFile(join(configDir, "project.yaml"), "utf8")).toContain(
+        "mandatory_approvals:",
+      );
+    } finally {
+      writer.close();
+    }
+  });
+
+  it("retains a usable backup and old runtime/config when a migration fails", async () => {
+    const request = await input("failed-migration");
+    await installProjectTool(store(), request);
+    const before = await readFile(
+      join(request.projectDir, ".omi-squad/framework.lock.json"),
+      "utf8",
+    );
+    const next = await candidate("broken-package");
+    const count = loadMigrations(join(next, "migrations")).length;
+    await writeFile(
+      join(next, "migrations", `${String(count + 1).padStart(4, "0")}-broken.sql`),
+      "CREATE TABLE should_rollback(value TEXT); SELECT missing_column FROM missing_table;",
+    );
+    await expect(installProjectTool(store(), { ...request, packageDir: next })).rejects.toThrow();
+    expect(await readFile(join(request.projectDir, ".omi-squad/framework.lock.json"), "utf8")).toBe(
+      before,
+    );
+    const db = openStateDatabase(statePath(request.projectDir));
+    try {
+      expect(
+        db.prepare("SELECT name FROM sqlite_schema WHERE name='should_rollback'").get(),
+      ).toBeUndefined();
+      expect(readHistory(db)).toHaveLength(count);
+    } finally {
+      db.close();
+    }
+    const backups = await readdir(join(request.projectDir, ".omi-squad/local/backups"));
+    expect(backups).toHaveLength(2);
+  });
+
+  it("refuses a running or unreconciled owner and a changed distro binding", async () => {
+    const request = await input("live-owner");
+    await installProjectTool(store(), request);
+    const db = openStateDatabase(statePath(request.projectDir));
+    try {
+      createSqliteLeaseStore(db).acquire({
+        resourceKey: "project-owner",
+        owner: "runtime",
+        now: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 30_000).toISOString(),
+      });
+      await expect(installProjectTool(store(), request)).rejects.toThrow("PROJECT_OWNER_HELD");
+      await expect(
+        installProjectTool(store(), { ...request, distribution: "Other" }),
+      ).rejects.toThrow("PROJECT_BINDING_CHANGED");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("refuses source targets and symlinked managed paths", async () => {
+    await expect(
+      installProjectTool(store(), {
+        projectDir: root,
+        packageDir: artifact,
+        distribution: "Ubuntu",
+        apply: true,
+      }),
+    ).rejects.toThrow("INVALID_INSTALLATION_TARGET");
+    const request = await input("symlink-target");
+    const outside = await project("outside");
+    await symlink(outside, join(request.projectDir, ".omi-squad"));
+    await expect(installProjectTool(store(), request)).rejects.toThrow("SYMLINK_INSTALLATION_PATH");
+    expect(await readdir(outside)).toEqual([]);
+  });
+});
+
+describe("packaged command wiring", () => {
+  it("prints a versioned install preview and fails doctor when WSL evidence is missing", async () => {
+    const request = await input("cli-preview");
+    const stdout: string[] = [];
+    const environment = {
+      version: "0.0.0",
+      defaultSocketPath: "/unused.sock",
+      timeoutMs: 100,
+      stdout: (text: string) => {
+        stdout.push(text);
+      },
+      stderr: () => undefined,
+      sendCommand: () => Promise.reject(new Error("unexpected IPC")),
+      installation: {
+        install: (raw: unknown) => installProjectTool(store(), raw),
+        doctor: () =>
+          Promise.resolve({
+            distribution: request.distribution,
+            supported: false,
+            checks: [{ name: "interop", ok: false, detail: "not available" }],
+          }),
+      },
+    };
+    expect(
+      await runCli(
+        [
+          "install",
+          "--project",
+          request.projectDir,
+          "--package",
+          request.packageDir,
+          "--distribution",
+          request.distribution,
+          "--json",
+        ],
+        environment,
+      ),
+    ).toBe(0);
+    expect(JSON.parse(stdout.join("")) as unknown).toMatchObject({
+      schemaVersion: 1,
+      ok: true,
+      result: { status: "preview" },
+    });
+    expect(await readdir(request.projectDir)).toEqual([]);
+    stdout.length = 0;
+    expect(
+      await runCli(
+        [
+          "doctor",
+          "--project",
+          request.projectDir,
+          "--distribution",
+          request.distribution,
+          "--json",
+        ],
+        environment,
+      ),
+    ).toBe(1);
+    expect(JSON.parse(stdout.join("")) as unknown).toMatchObject({
+      schemaVersion: 1,
+      ok: false,
+      exitCode: 1,
+    });
+  });
+});
+
+describe("installation failure boundaries", () => {
+  it("uses real npm pack/install to create a relocatable local tarball lock without registry access", async () => {
+    const source = await candidate("dependency-free-package");
+    // Fixture removes dependencies solely to test offline npm provisioning. Runtime dependency
+    // availability is exercised with the real installed dependencies by the archive smoke above.
+    const metadata: unknown = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+    if (typeof metadata !== "object" || metadata === null) throw new Error("invalid fixture");
+    await writeFile(
+      join(source, "package.json"),
+      JSON.stringify({ ...metadata, dependencies: {}, devDependencies: {} }),
+    );
+    const tool = join(temp, "real-npm-tool");
+    vi.stubEnv("npm_config_cache", join(temp, "offline-cache"));
+    vi.stubEnv("npm_config_offline", "true");
+    try {
+      await provisionPackage(source, tool);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    const manifest: unknown = JSON.parse(await readFile(join(tool, "package.json"), "utf8"));
+    expect(manifest).toMatchObject({
+      private: true,
+      dependencies: { "omi-squad": "file:omi-squad-0.0.0.tgz" },
+    });
+    const relocated = join(temp, "relocated-tool");
+    await cp(tool, relocated, { recursive: true });
+    expect(await readFile(join(relocated, "package-lock.json"), "utf8")).toContain(
+      "file:omi-squad-0.0.0.tgz",
+    );
+    expect(
+      await readFile(join(relocated, "node_modules/omi-squad/dist/bootstrap/cli.js"), "utf8"),
+    ).toContain("#!/usr/bin/env node");
+  }, 30_000);
+
+  it("refuses edits made while npm is installing, preserving the user's latest bytes", async () => {
+    const request = await input("concurrent-edit");
+    await installProjectTool(store(), request);
+    const target = join(request.projectDir, ".omi-squad", textPath);
+    const adapter = createProjectInstallation({
+      sourceRoot: root,
+      provision: async (source, tool) => {
+        await provision(source, tool);
+        await writeFile(target, "# changed during provisioning\n");
+      },
+    });
+    await expect(installProjectTool(adapter, request)).rejects.toThrow(
+      "INSTALLATION_PREVIEW_STALE",
+    );
+    expect(await readFile(target, "utf8")).toBe("# changed during provisioning\n");
+  });
+});
+
+describe("WSL2 doctor", () => {
+  function probe(overrides: Partial<WslProbe> = {}): WslProbe {
+    return {
+      kernel: () => Promise.resolve("6.6.87-microsoft-standard-WSL2"),
+      distro: () => "Ubuntu",
+      interop: () => Promise.resolve(true),
+      canonical: (path) => Promise.resolve(path),
+      command: (executable, args) => {
+        if (executable === "wsl.exe")
+          return Promise.resolve(
+            args[0] === "--list" ? "  NAME STATE VERSION\n* Ubuntu Running 2" : "0.0.0",
+          );
+        return Promise.resolve(
+          args[0] === "-w"
+            ? "\\\\wsl.localhost\\Ubuntu\\home\\user\\project"
+            : "/home/user/project",
+        );
+      },
+      ...overrides,
+    };
+  }
+  const request = { projectDir: "/home/user/project", distribution: "Ubuntu" };
+  it("verifies distro version, interop and round-trip path mapping with typed argv", async () => {
+    expect((await inspectInstallation(createInstallationDoctor(probe()), request)).supported).toBe(
+      true,
+    );
+  });
+  it.each([
+    { kernel: () => Promise.resolve("Linux") },
+    { distro: () => "Other" },
+    { interop: () => Promise.resolve(false) },
+    { canonical: () => Promise.resolve("/mnt/c/project") },
+    { command: () => Promise.resolve(undefined) },
+  ])("fails closed for missing WSL capabilities: %j", async (override) => {
+    expect(
+      (await inspectInstallation(createInstallationDoctor(probe(override)), request)).supported,
+    ).toBe(false);
+  });
+});

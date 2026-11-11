@@ -1,3 +1,7 @@
+import {
+  registerInstallationCommands,
+  type InstallationCommands,
+} from "./installation-commands.js";
 import type { SessionLauncher } from "../../../application/ports/session-launcher.js";
 import { registerSessionCommands } from "./session-commands.js";
 import { Command, CommanderError } from "commander";
@@ -17,6 +21,7 @@ export interface CliEnvironment extends CliOutput {
   readonly version: string;
   readonly launchSession?: SessionLauncher;
   readonly readStdin?: CliContext["readStdin"] | undefined;
+  readonly installation?: InstallationCommands;
 }
 
 /** Builds the Commander program. Every command is registered here and nowhere else. */
@@ -37,6 +42,7 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
       },
       outputError: () => undefined,
     });
+  registerInstallationCommands(program, context, environment.installation);
   registerStatusCommand(program, context);
   registerSessionCommands(program, context, environment.launchSession);
   registerApprovalCommands(program, context);

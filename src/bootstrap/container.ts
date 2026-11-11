@@ -1,3 +1,8 @@
+import { installProjectTool } from "../application/use-cases/project/install-project-tool.js";
+import { inspectInstallation } from "../application/use-cases/project/inspect-installation.js";
+import { createProjectInstallation } from "../infrastructure/config/install-project-package.js";
+import { createInstallationDoctor } from "../infrastructure/processes/installation-doctor.js";
+import { fileURLToPath } from "node:url";
 import type { AttemptStore } from "../application/ports/attempt-store.js";
 import type { ActiveRunReader } from "../application/ports/active-run-reader.js";
 import type { DispatchPlanner } from "../application/ports/dispatch-planner.js";
@@ -98,6 +103,16 @@ export interface CliWiringOptions {
 export function createCliEnvironment(options: CliWiringOptions): CliEnvironment {
   return {
     sendCommand,
+    installation: {
+      install: (input) =>
+        installProjectTool(
+          createProjectInstallation({
+            sourceRoot: fileURLToPath(new URL("../..", import.meta.url)),
+          }),
+          input,
+        ),
+      doctor: (input) => inspectInstallation(createInstallationDoctor(), input),
+    },
     launchSession: launchWindowsSession,
     readStdin: () => readStandardInput(process.stdin),
     defaultSocketPath: options.socketPath,
