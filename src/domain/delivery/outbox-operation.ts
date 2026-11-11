@@ -12,7 +12,7 @@ import type { TransitionOutcome, TransitionRule } from "../shared/transition.js"
  * to `in_flight`; its only exits are remote read-backs. This is idempotency by reconciliation,
  * not an exactly-once guarantee: a read-back can only prove what the remote shows.
  *
- * The SQLite CHECK on `outbox.state` (migration 0003) lists exactly `OUTBOX_STATES`.
+ * The SQLite CHECK on `outbox.state` (migration 0004) lists exactly `OUTBOX_STATES`.
  */
 export const OUTBOX_STATES = [
   "pending",

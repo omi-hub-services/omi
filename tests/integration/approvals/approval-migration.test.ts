@@ -13,7 +13,10 @@ import {
   type StateDatabase,
 } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
 
-const migrations = loadMigrations(resolve(import.meta.dirname, "../../../migrations"));
+// This suite isolates the 0003 rebuild; later migrations have their own upgrade tests.
+const migrations = loadMigrations(resolve(import.meta.dirname, "../../../migrations")).filter(
+  (migration) => migration.version <= 3,
+);
 let dir: string;
 let db: StateDatabase;
 

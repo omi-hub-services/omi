@@ -35,7 +35,7 @@ GitHub shows at that moment.
      recorded decision id.
    - `in_flight` is persisted **before** the call. A crash leaves it behind; the next
      reconcile turns it into `outcome_unknown`.
-2. **Migration 0003** adds the CHECK on `outbox.state` (list pinned to `OUTBOX_STATES` by an
+2. **Migration 0004** (`0004-outbox-state.sql`; 0003 is the approval lifecycle of ADR-0026) adds the CHECK on `outbox.state` (list pinned to `OUTBOX_STATES` by an
    integration test), a CHECK that `succeeded` carries a remote identity, and the columns
    `next_attempt_at` (Retry-After / rate-limit reset / backoff, persisted so it survives a
    restart) and `last_error` (a short code, never remote text).

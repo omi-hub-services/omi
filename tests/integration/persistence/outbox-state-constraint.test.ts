@@ -16,7 +16,8 @@ import {
 } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
 
 const ALL = loadMigrations(resolve(import.meta.dirname, "../../../migrations"));
-const UP_TO_0002 = ALL.filter((migration) => migration.version <= 2);
+// The schema this migration upgrades: 0001-0003 (0003 is the approval lifecycle of OMI-029).
+const UP_TO_0003 = ALL.filter((migration) => migration.version <= 3);
 
 let dir: string;
 let db: StateDatabase;
@@ -34,7 +35,7 @@ const outboxRows = () => db.prepare("SELECT * FROM outbox ORDER BY id").all();
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omi-outbox-state-"));
   db = openStateDatabase(join(dir, "state.db"));
-  applyMigrations(db, UP_TO_0002);
+  applyMigrations(db, UP_TO_0003);
 });
 
 afterEach(() => {
@@ -42,11 +43,11 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe("outbox state migration (0003)", () => {
-  it("is the third migration and records its checksum", () => {
+describe("outbox state migration (0004)", () => {
+  it("is the fourth migration, applies on top of the approval lifecycle and records its checksum", () => {
     const result = applyMigrations(db, ALL);
-    expect(result.applied.map((migration) => migration.name)).toEqual(["0003-outbox-state"]);
-    expect(readHistory(db).map((entry) => entry.version)).toEqual([1, 2, 3]);
+    expect(result.applied.map((migration) => migration.name)).toEqual(["0004-outbox-state"]);
+    expect(readHistory(db).map((entry) => entry.version)).toEqual([1, 2, 3, 4]);
     expect(applyMigrations(db, ALL).applied).toEqual([]);
   });
 
@@ -113,7 +114,7 @@ describe("outbox state migration (0003)", () => {
     const before = outboxRows();
     expect(() => applyMigrations(db, ALL)).toThrow(/CHECK constraint failed/);
     expect(outboxRows()).toEqual(before);
-    expect(readHistory(db).map((entry) => entry.version)).toEqual([1, 2]);
+    expect(readHistory(db).map((entry) => entry.version)).toEqual([1, 2, 3]);
     expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
     const columns = db.pragma("table_info(outbox)") as { name: string }[];
     expect(columns.map((column) => column.name)).not.toContain("next_attempt_at");

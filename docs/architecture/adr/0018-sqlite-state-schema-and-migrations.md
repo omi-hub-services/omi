@@ -61,7 +61,8 @@
    status (`pending`, `expired`, `invalidated`). Rebuild `checkpoints` and `artifacts` to reject
    empty paths, leading slash or backslash, Windows drive prefixes and parent traversal segments
    with either separator. Preserve valid rows, foreign key references, indexes and audit triggers.
-7. **Schema v3** (`0003-outbox-state.sql`, OMI-024): rebuild `outbox` with a CHECK on `state`
+7. **Schema v4** (`0004-outbox-state.sql`, OMI-024; v3 is `0003-approval-lifecycle.sql`,
+   ADR-0026): rebuild `outbox` with a CHECK on `state`
    that lists exactly `OUTBOX_STATES` (`domain/delivery/outbox-operation.ts`), a CHECK that a
    `succeeded` row has a remote identity, and two new nullable columns, `next_attempt_at` and
    `last_error`. A row with a state outside the list makes the whole migration roll back; nothing

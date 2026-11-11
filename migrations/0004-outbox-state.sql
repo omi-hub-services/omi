@@ -1,4 +1,4 @@
--- 0003-outbox-state: enforce the outbox operation states and keep retry bookkeeping.
+-- 0004-outbox-state: enforce the outbox operation states and keep retry bookkeeping.
 -- Allowed states: domain/delivery/outbox-operation.ts OUTBOX_STATES (a test pins the two).
 -- Moved here from OMI-054 (#73): the domain had no outbox state machine until OMI-024.
 --

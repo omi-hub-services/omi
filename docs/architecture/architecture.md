@@ -299,7 +299,7 @@ Khả năng isolate nhiều subscription Claude Code là **PoC bắt buộc**, c
 | `approvals` | Kind, subject hash, actor, channel, decision, revision |
 | `profile_observations` | Metadata availability/cooldown; không credential |
 | `leases` | Resource key, owner, fencing generation, expiry |
-| `outbox` | Operation key, payload ref, state (`pending`, `in_flight`, `outcome_unknown`, `succeeded`, `failed`; CHECK ở migration 0003), remote identity, `next_attempt_at`, `last_error` |
+| `outbox` | Operation key, payload ref, state (`pending`, `in_flight`, `outcome_unknown`, `succeeded`, `failed`; CHECK ở migration 0004), remote identity, `next_attempt_at`, `last_error` |
 | `events` | Append-only audit, sequence, causation/correlation IDs |
 | `github_mappings` | External IDs của task/PR/release và local logical key |
 

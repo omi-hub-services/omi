@@ -28,7 +28,7 @@ const COLUMNS =
   "operation_key, kind, subject, payload_ref, payload_hash, state, attempt_count, remote_identity, next_attempt_at, last_error, created_at, updated_at";
 
 function toRecord(row: OutboxRow): OutboxRecord {
-  // The CHECK in migration 0003 makes this unreachable; a stale schema fails loudly instead.
+  // The CHECK in migration 0004 makes this unreachable; a stale schema fails loudly instead.
   if (!isOutboxState(row.state)) {
     throw new RangeError(`outbox row has an unknown state: ${row.state}`);
   }
