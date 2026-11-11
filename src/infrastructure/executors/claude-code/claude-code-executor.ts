@@ -5,7 +5,6 @@ import {
   executionRequestSchema,
   executionResultSchema,
   probeRequestSchema,
-  executionEventSchema,
   type ExecutionEvent,
   type ExecutionHandle,
   type ExecutionRequest,
@@ -26,7 +25,8 @@ import { classifyClaudeRun } from "./claude-code-classifier.js";
 import { buildClaudeCodeEnvironment } from "./claude-code-environment.js";
 import { buildClaudeInvocationArgs, type SettingSource } from "./claude-code-invocation.js";
 import { probeClaudeCode } from "./claude-code-probe.js";
-import { ClaudeStreamState, type ExecutionEventDraft } from "./claude-code-stream.js";
+import { ClaudeStreamState } from "./claude-code-stream.js";
+import { ExecutionEventStream } from "../../processes/execution-event-stream.js";
 import { SUPPORTED_CLAUDE_CODE_RANGE } from "./claude-code-version.js";
 
 export interface ClaudeCodeExecutorOptions {
@@ -41,7 +41,6 @@ export interface ClaudeCodeExecutorOptions {
 }
 
 const DEFAULT_GRACE_MS = 15_000;
-const MAX_BUFFERED_EVENTS = 10_000;
 const LIMITS = {
   maxStdoutChars: 256 * 1024 * 1024,
   maxLineChars: 16 * 1024 * 1024,
@@ -52,10 +51,7 @@ interface Run {
   readonly handle: ExecutionHandle;
   readonly request: ExecutionRequest;
   readonly stream: ClaudeStreamState;
-  readonly events: ExecutionEvent[];
-  readonly waiters: (() => void)[];
-  nextSequence: number;
-  finished: boolean;
+  readonly events: ExecutionEventStream;
   supervised?: SupervisedProcess;
   result?: Promise<ExecutionResult>;
 }
@@ -129,10 +125,7 @@ export class ClaudeCodeExecutor implements AgentExecutor {
       handle,
       request: valid,
       stream: new ClaudeStreamState(),
-      events: [],
-      waiters: [],
-      nextSequence: 0,
-      finished: false,
+      events: new ExecutionEventStream(),
     };
 
     let supervised: SupervisedProcess;
@@ -146,7 +139,7 @@ export class ClaudeCodeExecutor implements AgentExecutor {
         env: buildClaudeCodeEnvironment(this.parentEnv, valid.profileHome),
         stdin: valid.prompt,
         onStdoutLine: (line) => {
-          for (const draft of run.stream.ingest(line)) this.publish(run, draft);
+          for (const draft of run.stream.ingest(line)) run.events.publish(draft);
         },
         timeoutMs: valid.timeoutMs,
         graceMs: this.graceMs,
@@ -162,17 +155,7 @@ export class ClaudeCodeExecutor implements AgentExecutor {
   }
 
   async *events(handle: ExecutionHandle): AsyncGenerator<ExecutionEvent, void> {
-    const run = this.lookup(handle);
-    let index = 0;
-    for (;;) {
-      while (index < run.events.length) {
-        const event = run.events[index];
-        index += 1;
-        if (event !== undefined) yield event;
-      }
-      if (run.finished) return;
-      await new Promise<void>((resolve) => run.waiters.push(resolve));
-    }
+    yield* this.lookup(handle).events.replay();
   }
 
   async cancel(handle: ExecutionHandle): Promise<void> {
@@ -199,17 +182,6 @@ export class ClaudeCodeExecutor implements AgentExecutor {
     return run;
   }
 
-  private publish(run: Run, draft: ExecutionEventDraft): void {
-    if (run.finished || run.events.length >= MAX_BUFFERED_EVENTS - 1) return;
-    run.events.push(executionEventSchema.parse({ ...draft, sequence: run.nextSequence }));
-    run.nextSequence += 1;
-    this.wake(run);
-  }
-
-  private wake(run: Run): void {
-    for (const waiter of run.waiters.splice(0)) waiter();
-  }
-
   private finish(run: Run, exit: ProcessExit): ExecutionResult {
     // Whatever happens below, consumers of events() must see the end and waiters must wake.
     let outcome = "failed";
@@ -218,11 +190,7 @@ export class ClaudeCodeExecutor implements AgentExecutor {
       outcome = result.outcome;
       return result;
     } finally {
-      // The terminal event goes in regardless of the buffer cap so a consumer always sees the end.
-      run.events.push({ kind: "finished", sequence: run.nextSequence, outcome });
-      run.nextSequence += 1;
-      run.finished = true;
-      this.wake(run);
+      run.events.finish(outcome);
     }
   }
 

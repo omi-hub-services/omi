@@ -1,11 +1,6 @@
-import { effortSchema, type Effort } from "../../../application/contracts/model-capability.js";
+import type { ExecutionEventDraft } from "../../processes/execution-event-stream.js";
 import type { ExecutionEvent } from "../../../application/contracts/agent-execution.js";
-
-export type ExecutionEventDraft = ExecutionEvent extends infer E
-  ? E extends { sequence: number }
-    ? Omit<E, "sequence">
-    : never
-  : never;
+import { effortSchema, type Effort } from "../../../application/contracts/model-capability.js";
 
 type QuotaStatus = Extract<ExecutionEvent, { kind: "quota-signal" }>["status"];
 
