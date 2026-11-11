@@ -35,6 +35,8 @@ const dispatchStepSchema = z.strictObject({
   task: taskComplexitySchema,
   effortPolicy: effortPolicySchema,
   stepRunId: identifierSchema,
+  /** Attempt id already reserved by executor selection; absent means a fresh id is allocated. */
+  reservedAttemptId: identifierSchema.optional(),
   taskId: identifierSchema,
   /** Worktree slug, see `TaskWorkspaceId`. */
   slug: slugSchema,
@@ -249,7 +251,7 @@ export async function dispatchStep(
       return { ok: false, reason: "CHECKPOINT_FAILED", detail: checkpoint.reason };
     }
 
-    const attemptId = deps.nextId();
+    const attemptId = command.reservedAttemptId ?? deps.nextId();
     const previous = deps.attempts.latestForStep(step.id);
     const attemptNumber = (previous?.attemptNumber ?? 0) + 1;
 
