@@ -11,6 +11,7 @@ import { presentFailure, presentUsageError } from "../presenters/result-presente
 import { createCliContext, formatOf } from "./command-context.js";
 import type { CliContext, CliOutput, GlobalOptions } from "./command-context.js";
 import { registerApprovalCommands } from "./approval-commands.js";
+import { registerRunCommands } from "./run-commands.js";
 import { registerStatusCommand } from "./status-command.js";
 
 export interface CliEnvironment extends CliOutput {
@@ -19,6 +20,7 @@ export interface CliEnvironment extends CliOutput {
   readonly timeoutMs: number;
   readonly version: string;
   readonly launchSession?: SessionLauncher;
+  readonly readStdin?: CliContext["readStdin"] | undefined;
   readonly installation?: InstallationCommands;
 }
 
@@ -44,6 +46,7 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
   registerStatusCommand(program, context);
   registerSessionCommands(program, context, environment.launchSession);
   registerApprovalCommands(program, context);
+  registerRunCommands(program, context);
   return program;
 }
 

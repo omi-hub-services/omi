@@ -25,6 +25,7 @@ export const SERVER_ERROR_CODES = [
   "NOT_IMPLEMENTED",
   "INTERNAL_ERROR",
   "APPROVAL_REFUSED",
+  "COMMAND_REFUSED",
 ] as const;
 
 /** Codes only the client produces: no usable response arrived. */

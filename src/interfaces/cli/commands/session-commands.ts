@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { CONTRACT_SCHEMA_VERSION } from "../../../application/contracts/schema-version.js";
 import { sessionLaunchSchema } from "../../../application/contracts/session-launch.js";
 import type { SessionLauncher } from "../../../application/ports/session-launcher.js";
 import {
@@ -15,8 +16,29 @@ export function registerSessionCommands(
   context: CliContext,
   launch?: SessionLauncher,
 ): void {
-  program
-    .command("session")
+  const session = program.command("session").description("Coordinator session");
+  session
+    .command("new")
+    .description("End this Coordinator session cleanly: pause all runs so a new session can resume")
+    .action(async (_options: unknown, command: Command) => {
+      const globals = command.optsWithGlobals<GlobalOptions>();
+      const format = formatOf(globals);
+      const outcome = await context.sendCommand({
+        socketPath: globals.socket ?? context.defaultSocketPath,
+        timeoutMs: Math.max(context.timeoutMs, 60_000),
+        command: {
+          schemaVersion: CONTRACT_SCHEMA_VERSION,
+          command: "handoff",
+          reason: "new-session",
+        },
+      });
+      context.emit(
+        outcome.ok
+          ? presentSuccess(outcome.result, JSON.stringify(outcome.result), format)
+          : presentFailure(outcome.error, format),
+      );
+    });
+  session
     .description("Managed foreground session (Ctrl-C to stop)")
     .command("start")
     .requiredOption("--project <wsl-path>", "absolute project path in WSL")

@@ -7,13 +7,34 @@ import {
 import type { RequestApprovalResult } from "../../application/use-cases/approvals/request-approval.js";
 import type { RecordApprovalResult } from "../../application/use-cases/approvals/record-approval.js";
 import type { RuntimeStatus } from "../../application/contracts/runtime-status.js";
-import type { CommandHandler } from "./protocol.js";
+import type { CommandHandler, HandlerOutcome } from "./protocol.js";
+
+/** What a run use case answers: a value, or a refusal with a stable reason. */
+type UseCaseOutcome =
+  | ({ readonly ok: true } & Readonly<Record<string, unknown>>)
+  | { readonly ok: false; readonly reason: string; readonly detail?: string };
+type RunUseCase = (input: unknown) => UseCaseOutcome | Promise<UseCaseOutcome>;
 
 /** The use cases the dispatcher may call. Bootstrap binds them to real dependencies. */
 export interface DispatchedUseCases {
   inspectRuntime(): RuntimeStatus;
   requestApproval?(input: RequestApprovalInput): RequestApprovalResult;
   recordApproval?(input: RecordApprovalInput): Promise<RecordApprovalResult>;
+  planRun?: RunUseCase;
+  dispatchRunStep?: RunUseCase;
+  waitForRun?: RunUseCase;
+  inspectRun?: RunUseCase;
+  pauseRun?: RunUseCase;
+  resumeRun?: RunUseCase;
+  deliverRun?: RunUseCase;
+  handoffCoordinator?: RunUseCase;
+}
+
+/** The command minus the routing fields; each use case validates the rest itself. */
+function payloadOf(command: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(command).filter(([key]) => key !== "command" && key !== "schemaVersion"),
+  );
 }
 
 /**
@@ -22,6 +43,15 @@ export interface DispatchedUseCases {
  * (never a silent success), so the v1 command set can be added one Issue at a time.
  */
 export function createCommandDispatcher(useCases: DispatchedUseCases): CommandHandler {
+  const run = async (
+    useCase: RunUseCase | undefined,
+    what: string,
+    command: Readonly<Record<string, unknown>>,
+  ): Promise<HandlerOutcome> =>
+    useCase === undefined
+      ? notImplemented(what)
+      : presentRunResult(await useCase(payloadOf(command)));
+
   return async (command) => {
     switch (command.command) {
       case "approval.request": {
@@ -41,17 +71,24 @@ export function createCommandDispatcher(useCases: DispatchedUseCases): CommandHa
         );
       }
       case "status":
-        // Run-level status needs a state read port that no Issue has added yet.
         if (command.runId !== undefined) {
-          return Promise.resolve(notImplemented("status for a single run"));
+          return run(useCases.inspectRun, "status for a single run", command);
         }
         return Promise.resolve({ ok: true, result: useCases.inspectRuntime() });
       case "plan":
+        return run(useCases.planRun, 'command "plan"', command);
       case "dispatch":
+        return run(useCases.dispatchRunStep, 'command "dispatch"', command);
       case "wait":
+        return run(useCases.waitForRun, 'command "wait"', command);
       case "pause":
+        return run(useCases.pauseRun, 'command "pause"', command);
       case "resume":
-        return Promise.resolve(notImplemented(`command "${command.command}"`));
+        return run(useCases.resumeRun, 'command "resume"', command);
+      case "deliver":
+        return run(useCases.deliverRun, 'command "deliver"', command);
+      case "handoff":
+        return run(useCases.handoffCoordinator, 'command "handoff"', command);
     }
   };
 }
@@ -61,6 +98,20 @@ function notImplemented(what: string) {
     ok: false,
     error: { code: "NOT_IMPLEMENTED", message: `${what} is not implemented yet` },
   } as const;
+}
+
+function presentRunResult(outcome: UseCaseOutcome): HandlerOutcome {
+  if (outcome.ok) {
+    return {
+      ok: true,
+      result: Object.fromEntries(Object.entries(outcome).filter(([key]) => key !== "ok")),
+    };
+  }
+  const detail = outcome.detail === undefined ? "" : `: ${outcome.detail}`;
+  return {
+    ok: false,
+    error: { code: "COMMAND_REFUSED", message: `${outcome.reason}${detail}`.slice(0, 1000) },
+  };
 }
 
 function presentApprovalResult(result: RequestApprovalResult | RecordApprovalResult) {

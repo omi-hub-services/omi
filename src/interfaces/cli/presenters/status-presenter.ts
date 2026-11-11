@@ -9,6 +9,7 @@ export function renderStatusText(status: RuntimeStatus): string {
     `runtime: ${status.state}`,
     `version: ${status.runtimeVersion}`,
     `started: ${status.startedAt}`,
+    ...(status.runs ?? []).map(({ runId, status: runStatus }) => `run: ${runId} ${runStatus}`),
     ...(status.attempts ?? []).map(
       ({ attemptId, settings }) =>
         `attempt: ${attemptId} model: ${settings.chosen.model} effort: ${settings.chosen.effort}` +
