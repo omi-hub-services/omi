@@ -1,3 +1,5 @@
+export const PROJECT_OWNER_LEASE_KEY = "project-owner";
+
 import type { StateChange, StateUnitOfWork } from "./state-unit-of-work.js";
 
 /**

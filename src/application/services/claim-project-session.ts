@@ -1,8 +1,9 @@
+import { PROJECT_OWNER_LEASE_KEY } from "../ports/lease-store.js";
 import type { LeaseStore, ProjectSession } from "../ports/lease-store.js";
 import type { StateUnitOfWork } from "../ports/state-unit-of-work.js";
 
 /** One key per project database; no PID or filesystem lock is a second authority. */
-export const PROJECT_OWNER_LEASE_KEY = "project-owner";
+export { PROJECT_OWNER_LEASE_KEY } from "../ports/lease-store.js";
 export function claimProjectSession(deps: {
   leases: LeaseStore;
   state: StateUnitOfWork;

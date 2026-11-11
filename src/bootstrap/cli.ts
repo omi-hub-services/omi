@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Executable entrypoint of the CLI: reads the process environment, wires, runs, sets the exit code.
 import { runCli } from "../interfaces/cli/commands/create-program.js";
 import { createCliEnvironment, defaultSocketPath } from "./container.js";
