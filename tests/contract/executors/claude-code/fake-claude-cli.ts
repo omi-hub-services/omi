@@ -77,19 +77,21 @@ process.stdin.on("end", () => {
     process.stdout.write(scenario.authStatusOutput ?? "");
     process.exit(scenario.authStatusExitCode ?? 0);
   }
-  process.stdout.write(scenario.stdout ?? "");
-  process.stderr.write(scenario.stderr ?? "");
   const behaviour = scenario.behaviour ?? "replay";
-  if (behaviour === "replay") {
-    process.exitCode = scenario.exitCode ?? 0;
-    return;
-  }
+  // The handler must exist before the first byte of stdout: a test waits for the first event and
+  // then cancels, and a SIGINT that lands earlier would take the default action and kill us.
   if (behaviour === "wait-for-sigint") {
     process.on("SIGINT", () => {
       process.stdout.write(scenario.onSigint ?? "", () => process.exit(0));
     });
-  } else {
+  } else if (behaviour === "ignore-sigint") {
     process.on("SIGINT", () => undefined);
+  }
+  process.stdout.write(scenario.stdout ?? "");
+  process.stderr.write(scenario.stderr ?? "");
+  if (behaviour === "replay") {
+    process.exitCode = scenario.exitCode ?? 0;
+    return;
   }
   setInterval(() => undefined, 1000);
 });
