@@ -14,6 +14,7 @@ import type { Lease, LeaseStore } from "../../application/ports/lease-store.js";
 import { worktreeLeaseKey } from "../../domain/runs/lease-resource.js";
 import { gitCommand } from "./git-command.js";
 import { gitObjectId, parseWorktrees } from "./git-worktree-output.js";
+import { listUncommittedFiles } from "./git-uncommitted.js";
 import { inspectGitStatus } from "./git-worktree-status.js";
 
 const taskShape = {
@@ -196,6 +197,12 @@ export function createCliGitWorkspace(
     },
     inspect(path) {
       return attempt(() => inspect(path));
+    },
+    listUncommitted(path, limits) {
+      return attempt(() => {
+        inspect(path);
+        return listUncommittedFiles(fs.realpathSync(path), limits);
+      });
     },
     acquireWriter(request) {
       return attempt(() => {
