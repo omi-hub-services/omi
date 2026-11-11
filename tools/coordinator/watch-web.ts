@@ -21,7 +21,7 @@ import {
   type WslTarget,
 } from "./coordinator-settings.ts";
 import { createProcessRunner, type Runner } from "./process-runner.ts";
-import { createWatchPoller } from "./watch-core.ts";
+import { clean, createWatchPoller } from "./watch-core.ts";
 import { PAGE_CSP, PAGE_HTML } from "./watch-page.ts";
 import { buildSnapshot } from "./watch-snapshot.ts";
 
@@ -102,6 +102,9 @@ export function createWatchServer(options: WatchServerOptions): WatchServer {
     workerIntervalMs: options.workerIntervalMs ?? 5000,
     ...(options.quotaIntervalMs === undefined ? {} : { quotaIntervalMs: options.quotaIntervalMs }),
     onChange: broadcast,
+    onError: (error) => {
+      console.error(`watch-web: ${clean(error instanceof Error ? error.message : String(error))}`);
+    },
   });
 
   const armIdle = () => {
@@ -280,6 +283,7 @@ export function openCandidates(
   edgePaths: readonly string[],
 ): Launch[] {
   const edgeArgs = [`--app=${url}`, `--window-size=${WINDOW_SIZE}`];
+  // Windows often returns ENOENT for msedge on PATH; try its installed paths next.
   const edge: Launch[] = [
     { file: "msedge", args: edgeArgs },
     ...edgePaths.map((file) => ({ file, args: edgeArgs })),

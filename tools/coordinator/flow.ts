@@ -468,7 +468,7 @@ function taskBranch(raw: string | undefined): string {
   return branch;
 }
 
-/** Read-only model/effort advice after quota selection. Never spends a Codex reset credit. */
+/** Read-only model/effort advice and model-aware quota selection. Never spends a Codex reset credit. */
 export async function pickProfileCommand(
   ctx: Context,
   issue: number,
@@ -490,21 +490,21 @@ export async function pickProfileCommand(
     else console.error(`${label}: refused: quota unavailable (${quota.reason.slice(0, 200)})`);
     return 1;
   }
+  const issueData = await readIssue(ctx, issue);
+  const decision = inferComplexity({
+    ...issueData.effortInput,
+    hasLiveTests: kind === "claude+codex-live",
+  });
   const result = pickProfile(
     kind as WorkerKind,
     quota.profiles,
     QUOTA_SETTINGS,
     quota.now,
     probe,
-    model,
+    model ?? EFFORT_POLICY.claude[decision.complexity].model,
   );
   const lines = formatPick(label, result);
   if (result.ok) {
-    const issueData = await readIssue(ctx, issue);
-    const decision = inferComplexity({
-      ...issueData.effortInput,
-      hasLiveTests: kind === "claude+codex-live",
-    });
     const chosen = result.chosen.map((candidate) => ({
       ...candidate,
       ...EFFORT_POLICY[candidate.tool][decision.complexity],

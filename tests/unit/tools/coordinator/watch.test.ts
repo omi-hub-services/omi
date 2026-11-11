@@ -1,3 +1,5 @@
+import { createWatchPoller, resetText } from "../../../../tools/coordinator/watch-core.ts";
+import { buildSnapshot } from "../../../../tools/coordinator/watch-snapshot.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   QUOTA_SETTINGS,
@@ -332,7 +334,7 @@ describe("watch polling and terminal lifecycle", () => {
     },
   );
 
-  it("retries WSL errors, polls workers at interval and quota at 60s without probing", async () => {
+  it("retries WSL errors, polls workers at interval and quota at 5 minutes without probing", async () => {
     vi.useFakeTimers();
     const commands: Command[] = [];
     const h = harness((c) => {
@@ -343,7 +345,7 @@ describe("watch polling and terminal lifecycle", () => {
     expect(commands.filter((c) => !isQuota(c))).toHaveLength(4);
     expect(commands.filter(isQuota)).toHaveLength(1);
     expect(h.writes.join("")).toContain("offline (retrying)");
-    await vi.advanceTimersByTimeAsync(45000);
+    await vi.advanceTimersByTimeAsync(285000);
     expect(commands.filter(isQuota)).toHaveLength(2);
     expect(commands.filter(isQuota).every((c) => c.args.at(-1)?.includes("omi-runs 0 "))).toBe(
       true,
@@ -392,4 +394,46 @@ describe("watch polling and terminal lifecycle", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(h.writes.at(-1)).toContain(ANSI.show);
   });
+});
+
+it.each([9999, 10000])("shares reset display between terminal and web at %s", (resetsAt) => {
+  const quota = quotaWith({ ...reading, fiveHour: { usedPercent: 96, resetsAt } });
+  expect(resetText(resetsAt, screen.now, true)).toBeNull();
+  expect(renderWatch({ ...screen, quota })).toContain("100% / 80%  reset ?");
+  expect(
+    buildSnapshot({ ...screen, quota, probing: false }).quota.profiles[0]?.reading?.fiveHour,
+  ).toMatchObject({ left: 100, resetText: null });
+});
+
+it("catches onChange exceptions, releases busy flags and continues polling", async () => {
+  vi.useFakeTimers();
+  const errors: unknown[] = [];
+  let broken = true;
+  const changed = vi.fn(() => {
+    if (broken) throw new Error("snapshot failed");
+  });
+  const poller = createWatchPoller({
+    run: () => Promise.resolve({ code: 127, stdout: "", stderr: "offline" }),
+    target: { viaWslExe: false, distro: "test", repoDir: "/test" },
+    profiles,
+    settings: QUOTA_SETTINGS,
+    workerIntervalMs: 5000,
+    quotaIntervalMs: 1,
+    onChange: changed,
+    onError: (e) => {
+      errors.push(e);
+    },
+  });
+  poller.start();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(errors).toHaveLength(2);
+  expect(poller.probing).toBe(false);
+  broken = false;
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(changed).toHaveBeenCalledTimes(3);
+  poller.probe();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(poller.quota?.available).toBe(false);
+  poller.stop();
+  expect(vi.getTimerCount()).toBe(0);
 });

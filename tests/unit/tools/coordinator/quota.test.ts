@@ -21,6 +21,9 @@ import {
   parseQuotaOutput,
   pickProfile,
   quotaCommand,
+  quotaRetryAt,
+  quotaCacheDecision,
+  parseCachedReading,
   readQuota,
   type ProfileQuota,
   type QuotaReading,
@@ -548,5 +551,60 @@ describe("pickProfile with a per-model weekly window", () => {
   it("treats a model window past its reset as full again", () => {
     const stale = [quota("claude", "a", reading(10, 10, fable(99, NOW - 1)))];
     expect(pickProfile("claude", stale, settings, NOW, true, "Fable").ok).toBe(true);
+  });
+});
+
+describe("shared Claude cache decisions", () => {
+  it("keeps the original age and source while a call is deferred, including an empty cache", () => {
+    const good = reading(29, 49);
+    expect(quotaCacheDecision({ reading: good, nextAllowedAt: NOW + 300 }, NOW + 299)).toEqual({
+      call: false,
+      reading: good,
+    });
+    expect(quotaCacheDecision({ reading: good, nextAllowedAt: NOW + 300 }, NOW + 300).call).toBe(
+      true,
+    );
+    expect(quotaCacheDecision({ nextAllowedAt: NOW + 300 }, NOW)).toEqual({
+      call: false,
+      reading: null,
+    });
+    expect(quotaCacheDecision(null, NOW)).toEqual({ call: true, reading: null });
+    expect(quotaCacheDecision({ nextAllowedAt: "tomorrow", reading: {} }, NOW)).toEqual({
+      call: true,
+      reading: null,
+    });
+  });
+
+  it("honours delta seconds and HTTP dates, with a five-minute minimum/default", () => {
+    expect(quotaRetryAt("600", NOW, 300)).toBe(NOW + 600);
+    expect(quotaRetryAt(new Date((NOW + 900) * 1000).toUTCString(), NOW, 300)).toBe(NOW + 900);
+    for (const value of [null, "garbage", "0", "-1", new Date((NOW - 100) * 1000).toUTCString()])
+      expect(quotaRetryAt(value, NOW, 300)).toBe(NOW + 300);
+  });
+
+  it("prefers validated cache to old logs on 429 and retains source and true age", () => {
+    const good = reading(29, 49, { observedAt: NOW - 300 });
+    const output = [
+      { kind: "now", now: NOW },
+      {
+        kind: "log",
+        file: "omi-068-ggtintran-20261111-120000.jsonl",
+        mtime: NOW - 61200,
+        event: { rate_limit_info: { status: "allowed" } },
+      },
+      { kind: "cache", profile: "ggtintran", reading: good },
+      { kind: "error", tool: "claude-usage", profile: "ggtintran", message: "HTTP 429" },
+    ]
+      .map((o) => JSON.stringify(o))
+      .join("\n");
+    const result = parseQuotaOutput(output, PROFILES, null);
+    expect(result.profiles[0]).toMatchObject({ reading: good, note: "usage api: HTTP 429" });
+    expect(formatQuotaSection({ available: true, ...result }).join("\n")).toContain(
+      "data 5m old (claude-probe)",
+    );
+    expect(parseCachedReading({ ...good, accessToken: "never-kept" })).toEqual(good);
+    expect(
+      parseCachedReading({ ...good, fiveHour: { usedPercent: "bad", resetsAt: null } }),
+    ).toBeNull();
   });
 });

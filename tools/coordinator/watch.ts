@@ -10,9 +10,10 @@ import {
   type WslTarget,
 } from "./coordinator-settings.ts";
 import { createProcessRunner, type Runner } from "./process-runner.ts";
-import { localTime, modelLeftText, windowLeft, type QuotaReport } from "./quota.ts";
+import { modelLeftText, windowLeft, type QuotaReport } from "./quota.ts";
 import {
   clean,
+  resetText,
   createWatchPoller,
   STALE_AFTER_SECONDS,
   windowsLow,
@@ -108,16 +109,11 @@ export function renderWatch(screen: WatchScreen): string {
     const scoped = modelLeftText(r, screen.now).map(clean);
     const models = scoped.length > 0 ? `  ${scoped.join(" ")}` : "";
     const age = ageSeconds < 60 ? "live" : `${String(Math.floor(ageSeconds / 60))} min ago`;
-    const reset = r.fiveHour?.resetsAt;
-    const resetDate = reset === null || reset === undefined ? null : new Date(reset * 1000);
-    const resetText =
-      resetDate && Number.isFinite(resetDate.getTime())
-        ? localTime(resetDate.getTime() / 1000).slice(11, 16)
-        : "?";
+    const reset = resetText(r.fiveHour?.resetsAt, screen.now, true) ?? "?";
     out.push(
       paint(
         fit(
-          `  ${profile.tool} ${clean(profile.profile)}  ${percent(left5)} / ${percent(left7)}${models}  reset ${resetText}  ${age}`,
+          `  ${profile.tool} ${clean(profile.profile)}  ${percent(left5)} / ${percent(left7)}${models}  reset ${reset}  ${age}`,
         ),
         `${low ? ANSI.yellow : ""}${ageSeconds > STALE_AFTER_SECONDS ? ANSI.dim : ""}`,
       ),
@@ -204,6 +200,7 @@ export function runWatch(options: WatchOptions): Promise<void> {
       settings,
       workerIntervalMs: options.intervalMs,
       onChange: draw,
+      onError: fail,
     });
     const ageTimer = setInterval(draw, 1000);
     const stop = () => {

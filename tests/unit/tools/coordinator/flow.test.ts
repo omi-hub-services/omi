@@ -360,12 +360,52 @@ describe("flow pick-profile", () => {
     },
   );
 
-  it("keeps the quota refusal and does not read Issue fields when no profile is usable", async () => {
+  it.each([
+    ["feature", "claude-sonnet-5-5"],
+    ["research", "claude-opus-5-5"],
+  ])("checks weekly quota for its inferred %s model without --model", async (workflow, model) => {
+    const { ctx } = context(workflow);
+    const run: Runner = (command) =>
+      command.file === "gh"
+        ? ctx.run(command)
+        : Promise.resolve({
+            code: 0,
+            stderr: "",
+            stdout: [
+              { kind: "now", now: 1794290000 },
+              ...["ggtintran", "minibox"].map((profile) => ({
+                kind: "usage",
+                profile,
+                usage: {
+                  five_hour: { utilization: 10, resets_at: "2026-12-01T00:00:00Z" },
+                  seven_day: { utilization: 10, resets_at: "2026-12-01T00:00:00Z" },
+                  limits: [
+                    {
+                      kind: "weekly_scoped",
+                      model,
+                      percent: 99,
+                      resets_at: "2026-12-01T00:00:00Z",
+                    },
+                  ],
+                },
+              })),
+            ]
+              .map((o) => JSON.stringify(o))
+              .join("\n"),
+          });
+    expect(await pickProfileCommand({ ...ctx, run }, 93, "claude", false, true)).toBe(1);
+    const output = JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0])) as {
+      reason: string;
+    };
+    expect(output.reason).toContain(`${model} weekly 1% left`);
+  });
+
+  it("keeps quota refusals after reading the Issue to choose its model", async () => {
     const { ctx, seen } = context();
     expect(await pickProfileCommand(ctx, 93, "claude", false, true)).toBe(1);
     expect(JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0]))).toMatchObject({
       ok: false,
     });
-    expect(seen.some((command) => command.file === "gh")).toBe(false);
+    expect(seen.filter((command) => command.file === "gh")).toHaveLength(1);
   });
 });
