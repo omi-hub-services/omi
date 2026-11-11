@@ -216,7 +216,9 @@ fake `claude` whose behaviour is chosen by `CLAUDE_CONFIG_DIR`:
    When it is limited, a step that requires Codex waits in `waiting_resource` until quota is back;
    other steps may fail over to a Claude profile that meets the same capability minimum.
    Codex profile-to-profile failover remains unproven and is not attempted.
-2. **Real-limit live run:** whether to spend a deliberately exhausted profile on one end-to-end
-   run with `OMI_LIVE_INJECT_LIMIT=0`, or to accept the fixture-based classification plus run C.
-3. **Per-model limits:** accept that a per-model weekly limit is visible only as a rejection (no
-   pre-emptive avoidance), or require a different quota source.
+2. **Real-limit live run — settled by PO 2026-11-11 (OMI-004 close, applied in OMI-018):**
+   no live run on an exhausted profile is required. Failover is verified by fault injection
+   (`tests/e2e/failover-from-checkpoint.test.ts`) plus the fixture-based classification and run C.
+3. **Per-model limits — settled by PO 2026-11-11 (applied in OMI-018):** a per-model limit is
+   visible only when the tool rejects a request. There is no pre-emptive avoidance and no other
+   quota source; `failoverStep` reacts to the rejection like any other usage limit.
