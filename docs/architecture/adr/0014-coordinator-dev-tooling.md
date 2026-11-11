@@ -197,6 +197,22 @@ Finished workers are grey, errors/rate limits red, quota below pick-profile thre
 and readings older than 30 minutes dim. Missing WSL is shown and retried on the next poll.
 This extends the existing worker reader and runner; it adds no dependency or product module.
 
+## Web watch (OMI-067)
+
+`node tools/coordinator/watch-web.ts [--port 4317] [--open]` serves the same workers and quota
+as the terminal watch on a small localhost page (`/omi-watch` opens it). `--open` starts an Edge
+`--app` window of 440×460 (default browser as fallback); if `GET /health` on the port already
+answers `omi-watch`, it only opens another window and exits. The server uses `node:http`, binds
+`127.0.0.1` only and rejects any `Host` or `Origin` other than `127.0.0.1:<port>` or
+`localhost:<port>` (DNS rebinding). `GET /events` is SSE, one snapshot per data change (workers
+every 5 seconds, quota every 60). The snapshot is built by a pure function and the page shows
+external strings only through `textContent`, under a CSP that allows its two inline blocks by
+hash. `POST /probe` runs the paid Haiku probe only with the header `X-Omi-Watch: 1`, which the
+page sends after the user confirms in the UI; nothing probes automatically. The server exits 60
+seconds after the last SSE client disconnects, or after start if none ever connects. Polling,
+colour rules and text cleaning are shared with `watch.ts` in `watch-core.ts`; the terminal watch
+stays as the fallback. No dependency is added.
+
 ## Worker log retention (OMI-056)
 
 Worker stream-json logs in WSL `~/omi-runs` grew without bound. `flow.ts cleanup <branch>` now
