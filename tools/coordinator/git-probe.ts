@@ -60,3 +60,65 @@ export async function probeBranch(
     remote: remote.split(/\s/)[0] || null,
   };
 }
+
+/** Cleanup can be retried after its configured worktree directory has been removed. */
+export async function probeCleanupWsl(
+  run: Runner,
+  target: WslTarget,
+  branch: string,
+  options: ProbeOptions,
+): Promise<{ state: CleanupState | null; target: WslTarget }> {
+  const outside = { ...target, repoDir: "/" };
+  const exists = await run(wslCommand(joinSteps([["test", "-d", target.repoDir]]), outside));
+  if (exists.code === 1) return { state: null, target: outside };
+  if (exists.code !== 0) throw new Error(`cannot inspect cleanup directory: ${exists.stderr}`);
+  const git = wslGit(target);
+  const listing = await runChecked(run, git(["worktree", "list", "--porcelain", "-z"]));
+  const trees = listing
+    .split("\0\0")
+    .filter(Boolean)
+    .map((record) => {
+      const lines = record.split("\0");
+      const path = lines[0]?.slice("worktree ".length);
+      if (!lines[0]?.startsWith("worktree ") || !path?.startsWith("/")) {
+        throw new Error("invalid git worktree listing");
+      }
+      return { path, branch: lines.find((line) => line.startsWith("branch "))?.slice(7) };
+    });
+  const main = trees[0];
+  if (!main) throw new Error("empty git worktree listing");
+  const linked = trees.slice(1).find((tree) => tree.branch === `refs/heads/${branch}`);
+  if (!linked) return { state: await probeBranch(run, git, branch, options), target };
+  const changes = await runChecked(
+    run,
+    git([
+      "-C",
+      linked.path,
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+      "--",
+      ".",
+      ":(exclude)**/node_modules/**",
+      ":(exclude)node_modules/**",
+    ]),
+  );
+  const state = await probeBranch(
+    run,
+    git,
+    branch,
+    changes ? { ...options, fetch: false } : options,
+  );
+  return {
+    state: {
+      ...state,
+      worktree: {
+        path: linked.path,
+        mainPath: main.path,
+        mainBranch: main.branch,
+        changes: changes.trimEnd(),
+      },
+    },
+    target: { ...target, repoDir: main.path },
+  };
+}

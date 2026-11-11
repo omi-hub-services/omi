@@ -215,6 +215,12 @@ export interface CleanupState extends BranchState {
   readonly merged: boolean;
   /** No tracked or untracked (non-ignored) changes in the checkout. */
   readonly clean: boolean;
+  readonly worktree?: {
+    readonly path: string;
+    readonly mainPath: string;
+    readonly mainBranch: string | undefined;
+    readonly changes: string;
+  };
 }
 
 export function planCleanup(branch: string, side: StepSide, state: CleanupState | null): Plan {
@@ -222,8 +228,25 @@ export function planCleanup(branch: string, side: StepSide, state: CleanupState 
   const where = side === "wsl" ? "WSL checkout" : "host checkout";
   if (state === null) return done(`no ${where}; nothing to clean`);
   if (state.local === null) return done(`${branch} is already gone from the ${where}`);
+  if (state.worktree?.changes) {
+    return refuse(`worktree ${state.worktree.path} has changes:\n${state.worktree.changes}`);
+  }
   if (!state.merged) return refuse(`${branch} is not merged into origin/${BASE_BRANCH} (${where})`);
   const step = (...argv: string[]): Step => ({ side, argv });
+  if (state.worktree) {
+    const tree = state.worktree;
+    const git = (...args: string[]) => step("git", "-C", tree.mainPath, ...args);
+    return {
+      kind: "run",
+      steps: [
+        git("worktree", "remove", "--", tree.path),
+        ...(tree.mainBranch === `refs/heads/${BASE_BRANCH}`
+          ? [git("merge", "--ff-only", `origin/${BASE_BRANCH}`)]
+          : []),
+        git("branch", "-d", branch),
+      ],
+    };
+  }
   const leave =
     state.current === branch
       ? [
