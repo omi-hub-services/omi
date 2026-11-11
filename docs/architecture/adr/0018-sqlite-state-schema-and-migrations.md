@@ -99,3 +99,23 @@ prompts, transcripts, auth data or raw result diagnostics, nor does it mark atte
 - Not yet covered: backup before migration, an integrity check, a recovery procedure, a
   read-only snapshot mode and repositories/ports. These belong to later Issues (tech-stack.md
   §6).
+
+## Durable quality controller (OMI-028, Issue #33)
+
+Migration `0009-rework-state.sql` extends `workflow_runs` with
+`architect_intervention_id`, `counted_cycle_ids` and `reopen_decision_ids`. Existing
+`quality_phase` and `failure_count` persist the domain's phase and segment counter. The old
+`implementation` placeholder becomes `normal`; existing failure counts are retained. Lists
+are JSON arrays and validated as identifier lists at the reader boundary. No operational retry
+state is stored in these fields.
+
+`recordReworkEvent` applies ADR-0017's existing controller. The workflow supplies a stable
+implement/fix cycle id for review/check FAIL, verified approval facts and an accepted Architect
+intervention reference. `architect_required` is a durable audit event and returned action for
+the Coordinator to dispatch the Architect role; the controller does not run an autonomous LLM.
+The runtime binds the use case through `createReworkUseCase`. State, run status and audit event
+share the existing version CAS and project-owner lease fence. A checkpoint must succeed before
+blocking, preserving failure history; a failed state transaction may leave a valid checkpoint
+but cannot spend the quality budget. The workflow maps a blocked run to task Blocked when
+calling the existing DAG scheduler and releases stopped worker/task reservations. Independent
+tasks remain eligible. CLI/Coordinator workflow wiring belongs to OMI-030.

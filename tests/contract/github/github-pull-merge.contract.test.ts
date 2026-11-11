@@ -50,9 +50,12 @@ describe("merge read-back through the existing GitHub outbox adapter", () => {
   it("reads merged state and commit, and a second send makes no PUT", async () => {
     const r = await setup();
     expect(await r.lookup()).toEqual({ kind: "absent" });
-    expect(await r.merge()).toMatchObject({
+    const first = await r.merge();
+    // The fake accepts only `merge_method: "merge"`, so a merge commit was asked for.
+    expect(r.pull.mergeCommitSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(first).toMatchObject({
       kind: "succeeded",
-      remoteIdentity: `merge:acme/app#${String(r.pull.number)}:${"b".repeat(40)}`,
+      remoteIdentity: `merge:acme/app#${String(r.pull.number)}:${r.pull.mergeCommitSha ?? ""}`,
     });
     expect(await r.merge()).toMatchObject({ kind: "succeeded" });
     expect(r.github.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
