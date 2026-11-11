@@ -1,3 +1,4 @@
+import { launchWindowsSession } from "../infrastructure/processes/windows-session-launcher.js";
 import { randomUUID } from "node:crypto";
 import { requestApproval } from "../application/use-cases/approvals/request-approval.js";
 import { recordApproval } from "../application/use-cases/approvals/record-approval.js";
@@ -50,6 +51,7 @@ export interface CliWiringOptions {
 export function createCliEnvironment(options: CliWiringOptions): CliEnvironment {
   return {
     sendCommand,
+    launchSession: launchWindowsSession,
     defaultSocketPath: options.socketPath,
     timeoutMs: options.timeoutMs ?? 5_000,
     version: readPackageVersion(),
