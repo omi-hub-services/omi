@@ -29,7 +29,7 @@ no place in the folder map.
    - `status.ts` — Project items by Status, Ready tasks whose blockers are all closed, open PRs
      with checks and review state, WSL workers. `--json` for machines.
    - `flow.ts` — the mechanical steps of a task: `set-status`, `start-branch`, `push`, `check`,
-     `open-pr`, `merge`, `close`, `cleanup`. Each reads the current state first and is
+     `open-pr`, `sync` (OMI-069, below), `merge`, `close`, `cleanup`. Each reads the current state first and is
      idempotent; `--dry-run` prints the argv it would run and changes nothing (no fetch either).
      `merge` requires green required checks, the newest agent review `PASS` on the exact head
      and merge state `CLEAN`/`HAS_HOOKS`. `close` ticks the Issue's Acceptance criteria from the
@@ -215,6 +215,53 @@ page sends after the user confirms in the UI; nothing probes automatically. The 
 seconds after the last SSE client disconnects, or after start if none ever connects. Polling,
 colour rules and text cleaning are shared with `watch.ts` in `watch-core.ts`; the terminal watch
 stays as the fallback. No dependency is added.
+
+## Carrying a review PASS over a clean sync (OMI-069)
+
+The `develop` ruleset requires branches to be up to date, so a PR that waited for another merge
+goes `BEHIND`. Merging `origin/develop` into the branch changes its head, and `merge`/`close`
+want a PASS on the exact head, which used to cost a full review although the task's own change is
+unchanged. `node tools/coordinator/flow.ts sync <branch> --reviewed <sha> [--dry-run]` carries the
+PASS over the sync without an LLM:
+
+1. It fetches and refuses unless the checkout is clean on `<branch>`, `<branch>` and
+   `origin/<branch>` are at `<sha>`, an open PR into `develop` exists, and the newest review of the
+   Coordinator account on the PR is a `PASS` on `<sha>` (a carried PASS counts only if its own
+   chain holds, below).
+2. It runs `git merge --no-edit origin/develop` (no rebase, no force-push). On a conflict it runs
+   `git merge --abort` and refuses with the conflicted files; nothing is pushed or posted.
+3. It runs the `check` step on the new head, then `push`, then posts as the Coordinator
+   `**VERDICT:** PASS · **REVIEWED_HEAD:** \`<new>\` · **CARRIED_FROM:** \`<sha>\`` with the
+   merge commit, the `origin/develop` commit merged in, the check result and the `AC-<n>` lines
+   of the old review copied verbatim (so `close` can still tick the Issue).
+
+A re-run is idempotent: it prints `done:` once the carried PASS is on the head and the head is
+pushed, and it resumes a run that stopped after the merge (failed check, failed push or comment).
+`--dry-run` fetches nothing, merges nothing and posts nothing; it previews conflicts with
+`git merge-tree`.
+
+**What makes a carried PASS valid.** `merge` and `close` never trust the comment text. A PASS
+with `CARRIED_FROM` counts only if git shows that the head is a merge commit whose first parent
+is the `CARRIED_FROM` commit, whose second parent is an ancestor of `origin/develop`, and whose
+tree equals the tree of `git merge-tree --write-tree <parent1> <parent2>`. A merge commit that
+was edited by hand, a conflict resolution (that merge does not apply automatically), or a merge
+of something not yet on `develop` fails this and is refused as a wrong-head PASS. When the source
+commit itself holds a carried PASS, the same test applies to every hop down to a PASS that a
+review posted (bounded at 20 hops). The decision is the pure `judgeCarriedHead`
+(`carried-pass.ts`); `carry-git.ts` only reads the facts through the injectable runner. A carried
+PASS from another account is ignored like any other `VERDICT` (OMI-052). `status.ts` shows it as
+`PASS @head (carried from <sha7>)`; it reads comments only, so the git test happens at `merge` and
+`close`.
+
+**Conflicts: reduced review.** A conflicting sync is resolved by hand and so gets no carried
+PASS. The reviewer does not review the task again: they check only the conflict resolution, that
+is the diff between the tree git merges automatically (`git merge-tree --write-tree` of the two
+parents, which keeps the conflict markers) and the new head, plus that the check passes, and post
+an ordinary `VERDICT` on the new head with `AC-<n>` lines. The Coordinator's `/omi-next` skill
+uses `sync` when a reviewed PR goes `BEHIND` and sends only conflicts to this reduced review.
+
+Out of scope: changing the ruleset, a merge queue, rebasing or force-pushing task branches. No
+dependency is added.
 
 ## Worker log retention (OMI-056)
 

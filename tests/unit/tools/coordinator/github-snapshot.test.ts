@@ -147,7 +147,7 @@ describe("classifyReview", () => {
     expect(
       classifyReview({ reviewDecision: null, headRefOid: head, comments: [verdict("PASS", head)] })
         .agent,
-    ).toEqual({ verdict: "PASS", head, current: true });
+    ).toEqual({ verdict: "PASS", head, current: true, carriedFrom: null });
     expect(
       classifyReview({
         reviewDecision: null,
@@ -165,7 +165,7 @@ describe("classifyReview", () => {
     });
     expect(r).toEqual({
       native: "APPROVED",
-      agent: { verdict: "PASS", head: "b0ab3b3", current: true },
+      agent: { verdict: "PASS", head: "b0ab3b3", current: true, carriedFrom: null },
       ignoredVerdictAuthors: [],
     });
     expect(
@@ -184,7 +184,7 @@ describe("classifyReview", () => {
         verdict("PASS", head, "someone-else"),
       ],
     });
-    expect(r.agent).toEqual({ verdict: "FAIL", head, current: true });
+    expect(r.agent).toEqual({ verdict: "FAIL", head, current: true, carriedFrom: null });
     expect(r.ignoredVerdictAuthors).toEqual(["someone-else", "(deleted account)"]);
     expect(latestAgentReview([verdict("PASS", head, "someone-else")])).toBe(null);
   });
