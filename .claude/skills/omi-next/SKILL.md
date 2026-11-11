@@ -160,6 +160,11 @@ node tools/coordinator/flow.ts cleanup <branch>
   nothing, when a criterion has no line or is `not met`; fix that with a new review comment,
   not by editing the Issue by hand.
 - `cleanup --dry-run` only reads (no fetch); the real run fetches first.
+- `cleanup` also archives the task's worker logs in `~/omi-runs` (OMI-056): moved to
+  `archive/` and gzipped, empty `.err` and `omi-NNN-current` deleted, the newest `.jsonl` of each
+  profile and files of a running worker kept, `archive/` capped by `RUNS_RETENTION`. Run it from
+  the main checkout (`~/github/omi`, on develop); for a worktree task remove the worktree and
+  delete the merged branch there. `flow.ts prune-runs [--dry-run]` sweeps all Done tasks once.
 
 **(judge)** The closing comment states the PR, merge commit, checks and review verdict. Report
 the outcome to the PO in a few lines.

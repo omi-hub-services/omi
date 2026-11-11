@@ -57,6 +57,22 @@ export const PRIORITY_ORDER = ["P0", "P1", "P2"] as const;
 /** Directory in WSL `$HOME` where worker stream-json logs are written (omi-next skill). */
 export const RUNS_DIR_FROM_HOME = "omi-runs";
 
+export interface RunsRetention {
+  /** Files written within this many minutes are never moved or deleted (a worker may be live). */
+  readonly recentMinutes: number;
+  /** `archive/` is trimmed oldest first until it is at most this large... */
+  readonly archiveMaxBytes: number;
+  /** ...and drops files whose mtime is older than this many days. */
+  readonly archiveMaxAgeDays: number;
+}
+
+/** Retention of worker logs in `~/omi-runs` (OMI-056). */
+export const RUNS_RETENTION: RunsRetention = {
+  recentMinutes: 30,
+  archiveMaxBytes: 50 * 1024 * 1024,
+  archiveMaxAgeDays: 30,
+};
+
 /** Hidden marker appended to the closing evidence comment so `close` never posts it twice. */
 export const CLOSE_EVIDENCE_MARKER = "<!-- omi-coordinator:close-evidence -->";
 

@@ -18,6 +18,7 @@ import {
   QUOTA_SETTINGS,
   REPO,
   REPO_SLUG,
+  RUNS_RETENTION,
   WORKER_PROFILES,
   wslTarget,
   type WslTarget,
@@ -58,7 +59,19 @@ import {
   optString,
   parseJson,
 } from "./json-shape.ts";
-import { createProcessRunner, formatCommand, runChecked, type Runner } from "./process-runner.ts";
+import {
+  createProcessRunner,
+  formatCommand,
+  runChecked,
+  wslCommand,
+  type Runner,
+} from "./process-runner.ts";
+import {
+  parseRunsListing,
+  planRetention,
+  retentionScript,
+  RUNS_LISTING,
+} from "./runs-retention.ts";
 import { formatPick, pickProfile, readQuota, WORKER_KINDS, type WorkerKind } from "./quota.ts";
 
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
@@ -71,7 +84,9 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   open-pr <issue> <branch> --title <t> --body-file <f>
   merge <pr> --head <sha>                     checks green, agent PASS @head, merge state clean
   close <issue> --comment-file <f>            tick AC from the review + comment + close + Done
-  cleanup <branch>                            delete the merged local branch (WSL and host)
+  cleanup <branch>                            delete the merged local branch (WSL and host), then
+                                              archive its worker logs in ~/omi-runs
+  prune-runs                                  one-time log sweep for every Done task
   pick-profile <issue> [--kind claude|codex|claude+codex-live] [--probe] [--json]
                                               worker profile by quota (--probe: 1 Haiku call/profile)`;
 
@@ -287,7 +302,61 @@ export async function cleanup(ctx: Context, branch: string, dryRun: boolean): Pr
   const wslOk = await execute(ctx, `${label} (wsl)`, planCleanup(branch, "wsl", wslState), dryRun);
   const hostState = await probeHost(ctx, branch, options);
   const hostPlan = planCleanup(branch, "host", hostState);
-  return (await execute(ctx, `${label} (host)`, hostPlan, dryRun)) && wslOk;
+  const hostOk = await execute(ctx, `${label} (host)`, hostPlan, dryRun);
+  if (!wslOk || !hostOk) return false;
+  const task = /^task\/omi-(\d+)-/.exec(branch)?.[1];
+  return task === undefined || (await retainRuns(ctx, label, new Set([task]), dryRun));
+}
+
+/**
+ * Archives/deletes the worker logs of `tasks` in WSL ~/omi-runs (runs-retention.ts decides).
+ * The listing is read-only and also runs with --dry-run; the changes are one bash script.
+ */
+export async function retainRuns(
+  ctx: Context,
+  label: string,
+  tasks: ReadonlySet<string>,
+  dryRun: boolean,
+): Promise<boolean> {
+  const listing = parseRunsListing(
+    await runChecked(ctx.run, wslCommand(RUNS_LISTING, ctx.target, 30_000)),
+  );
+  const decisions = planRetention(listing, tasks, RUNS_RETENTION);
+  const kept = decisions.filter((d) => d.action === "keep").length;
+  const script = retentionScript(decisions);
+  if (script === null) {
+    console.log(`${label} (logs): done: nothing to archive or delete (${String(kept)} kept)`);
+    return true;
+  }
+  for (const d of decisions.filter((x) => x.action !== "keep")) {
+    const verb = dryRun ? `would ${d.action}` : d.action;
+    console.log(`${label} (logs): ${verb} ${d.name} (${d.reason})`);
+  }
+  const command = wslCommand(script, ctx.target, 300_000);
+  if (dryRun) {
+    console.log(`${label} (logs): would run: ${formatCommand(command)}`);
+    return true;
+  }
+  const result = await ctx.run(command);
+  if (result.code !== 0) {
+    const detail = result.stderr.trim();
+    console.error(`${label} (logs): failed (exit ${String(result.code)}): ${detail}`);
+    return false;
+  }
+  console.log(`${label} (logs): ok (${String(kept)} kept)`);
+  return true;
+}
+
+/** One-time sweep: the logs of every task whose Project Status is Done. */
+export async function pruneRuns(ctx: Context, dryRun: boolean): Promise<boolean> {
+  const done = (await readProject(ctx.run)).items.filter((i) => i.status === "Done");
+  const tasks = new Set(
+    done.flatMap((i) => {
+      const key = /^OMI-(\d+)$/.exec(i.planKey ?? "")?.[1];
+      return key === undefined ? [] : [key];
+    }),
+  );
+  return retainRuns(ctx, "prune-runs", tasks, dryRun);
 }
 
 // ── execution ────────────────────────────────────────────────────────────────
@@ -510,6 +579,8 @@ export async function main(argv: readonly string[], context?: Context): Promise<
     }
     case "cleanup":
       return (await cleanup(ctx, taskBranch(a), dry)) ? 0 : 1;
+    case "prune-runs":
+      return (await pruneRuns(ctx, dry)) ? 0 : 1;
     case "pick-profile":
       return pickProfileCommand(ctx, issueNumber(a), values.kind, values.probe, values.json);
     default:
