@@ -26,7 +26,8 @@ Data collection is a script; do not re-derive it with `gh`/`git` calls (AGENTS.m
      no probe, so Claude numbers may be old or `unknown`; `/omi-next` probes before dispatch;
    - **Recommendation:** one next action with a one-line reason. Priority: finish work already
      in flight (merge a green, reviewed PR; resume a stopped worker) before starting a new task;
-     otherwise the first entry under "Ready, all blockers closed" unless something in the
-     status argues against it (say what, e.g. no worker quota until a reset).
+     otherwise the first entry under "Ready, all blockers closed", or when that is empty the
+     first under "Backlog, all blockers closed" (`/omi-next` promotes it), unless something in
+     the status argues against it (say what, e.g. no worker quota until a reset).
 
 3. Do not change anything. Starting the task is `/omi-next [OMI-xxx]`.

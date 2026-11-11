@@ -6,6 +6,7 @@ import type { StepStatus } from "../../domain/runs/step-run.js";
 export type StateTarget =
   /** Init may queue a remote intent before a project/run row exists. Requires `outbox`. */
   | { readonly kind: "outbox_intent" }
+  | { readonly kind: "session_event" }
   | { readonly kind: "approval_request"; readonly request: ApprovalRequest }
   | {
       readonly kind: "approval_decision";
