@@ -68,8 +68,9 @@ GitHub shows at that moment.
    timeout. Finding the marker is accepted at any time.
 8. **Transport**: `gh api --include` through `execFile` (argv and stdin, no shell, no token in
    this process), behind a `GithubTransport` seam so tests use an in-memory fake GitHub.
-9. `npm run check` now also runs `tests/contract` (`npm run test:contract`); until now no script
-   ran that directory.
+9. The contract tests of this task live in `tests/contract/github/` and run through
+   `npm run test:contract`, which `npm run check` includes (the script line is identical to the one
+   OMI-013 added on `develop`).
 
 ## Consequences
 
