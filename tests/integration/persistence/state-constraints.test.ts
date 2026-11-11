@@ -15,7 +15,10 @@ import {
   type StateDatabase,
 } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
 
-const MIGRATIONS = loadMigrations(resolve(import.meta.dirname, "../../../migrations"));
+// This suite isolates the v2 rebuild; later migrations have their own upgrade tests.
+const MIGRATIONS = loadMigrations(resolve(import.meta.dirname, "../../../migrations")).filter(
+  (migration) => migration.version <= 2,
+);
 const DECISIONS = ["approved", "rejected"] as const satisfies readonly Approval["decision"][];
 const STATE_COLUMNS = [
   { table: "workflow_runs", column: "status", allowed: RUN_STATUSES },

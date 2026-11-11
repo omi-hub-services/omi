@@ -16,6 +16,11 @@ export type ApprovalSubject =
       readonly baselineHash: string;
       readonly scopeIds: readonly string[];
     }
+  | {
+      readonly kind: "cost";
+      readonly estimateHash: string;
+      readonly scopeIds: readonly string[];
+    }
   | { readonly kind: "release"; readonly pullRequestId: string; readonly headSha: string }
   | {
       readonly kind: "deploy";
@@ -106,4 +111,32 @@ export function transitionApproval(
   event: ApprovalEvent,
 ): TransitionOutcome<ApprovalStatus, ApprovalRefusal> {
   return applyTransition(APPROVAL_RULES, from, event);
+}
+
+/** A request pins a subject revision; `invalidated` is the persisted stale state. */
+export interface ApprovalRequest {
+  readonly id: string;
+  readonly subjectId: string;
+  readonly subjectHash: string;
+  readonly subject: ApprovalSubject;
+  readonly status: ApprovalStatus;
+  readonly version: number;
+  readonly requestedAt: number;
+  readonly expiresAt?: number;
+  readonly runId?: string;
+  readonly decision?: Approval;
+}
+
+/** The authoritative revision hash comes from the current subject, never worker output. */
+export function approvalSubjectHash(subject: ApprovalSubject): string {
+  switch (subject.kind) {
+    case "business":
+      return subject.baselineHash;
+    case "cost":
+      return subject.estimateHash;
+    case "release":
+      return subject.headSha;
+    case "deploy":
+      return subject.artifactDigest;
+  }
 }
