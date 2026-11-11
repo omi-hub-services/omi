@@ -1,4 +1,18 @@
 import type { AttemptStore } from "../application/ports/attempt-store.js";
+import type { ActiveRunReader } from "../application/ports/active-run-reader.js";
+import type { DispatchPlanner } from "../application/ports/dispatch-planner.js";
+import type { RecoveryRunReader } from "../application/ports/run-recovery.js";
+import type { RunPlanStore } from "../application/ports/run-plan-store.js";
+import type { WorkflowCatalog } from "../application/ports/workflow-catalog.js";
+import { deliverRun } from "../application/use-cases/delivery/deliver-run.js";
+import type { MergeTaskPrDeps } from "../application/use-cases/delivery/merge-task-pr.js";
+import { dispatchRunStep } from "../application/use-cases/runs/dispatch-run-step.js";
+import type { DispatchStepDependencies } from "../application/use-cases/runs/dispatch-step.js";
+import { handoffCoordinator } from "../application/use-cases/runs/handoff-coordinator.js";
+import { inspectRun } from "../application/use-cases/runs/inspect-run.js";
+import { requestRunPause } from "../application/use-cases/runs/request-run-pause.js";
+import { planRun } from "../application/use-cases/runs/plan-run.js";
+import { waitForRun } from "../application/use-cases/runs/wait-for-run.js";
 import type { ProjectSession } from "../application/ports/lease-store.js";
 import {
   recordReworkEvent,
@@ -13,6 +27,7 @@ import { resumeRun, type ResumeRunDependencies } from "../application/use-cases/
 import type { WriteCheckpointDependencies } from "../application/use-cases/runs/write-checkpoint.js";
 import type { ExecutorSelectionStore } from "../application/ports/executor-selection-store.js";
 import { launchWindowsSession } from "../infrastructure/processes/windows-session-launcher.js";
+import { readStandardInput } from "../infrastructure/processes/read-standard-input.js";
 import { randomUUID } from "node:crypto";
 import { requestApproval } from "../application/use-cases/approvals/request-approval.js";
 import { recordApproval } from "../application/use-cases/approvals/record-approval.js";
@@ -84,6 +99,7 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
   return {
     sendCommand,
     launchSession: launchWindowsSession,
+    readStdin: () => readStandardInput(process.stdin),
     defaultSocketPath: options.socketPath,
     timeoutMs: options.timeoutMs ?? 5_000,
     version: readPackageVersion(),
@@ -101,13 +117,18 @@ export function createRuntimeIpcServer(options: {
   readonly identity: RuntimeIdentity;
   readonly selections?: Pick<ExecutorSelectionStore, "listSettings">;
   readonly approvals?: Pick<DispatchedUseCases, "requestApproval" | "recordApproval">;
+  readonly runs?: RunCommandUseCases;
+  /** Lets `status` list the unfinished runs. */
+  readonly activeRuns?: ActiveRunReader;
   readonly idleTimeoutMs?: number;
 }): IpcServer {
   return createIpcServer({
     socketPath: options.socketPath,
     handler: createCommandDispatcher({
-      inspectRuntime: () => inspectRuntime(options.identity, options.selections),
+      inspectRuntime: () =>
+        inspectRuntime(options.identity, options.selections, options.activeRuns),
       ...options.approvals,
+      ...options.runs,
     }),
     ...(options.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: options.idleTimeoutMs }),
   });
@@ -135,6 +156,90 @@ export function createApprovalUseCases(options: {
           source,
           store: createSqliteApprovalStore(options.database),
           allowedGitHubActors: options.allowedGitHubActors,
+        },
+        input,
+      ),
+  };
+}
+
+export type RunCommandUseCases = Pick<
+  DispatchedUseCases,
+  | "planRun"
+  | "dispatchRunStep"
+  | "waitForRun"
+  | "inspectRun"
+  | "pauseRun"
+  | "resumeRun"
+  | "deliverRun"
+  | "handoffCoordinator"
+>;
+
+export interface RunCommandWiring {
+  /** The runtime's claimed project-owner session; every run state change goes through it. */
+  readonly session: ProjectSession;
+  readonly runs: RecoveryRunReader & ActiveRunReader;
+  readonly plans: RunPlanStore;
+  readonly workflows: WorkflowCatalog;
+  /** Workflow used when `plan` names none. */
+  readonly defaultWorkflowId?: string;
+  /** Ports of the worker that runs steps: executor, workspaces, attempts, artifacts, state. */
+  readonly dispatch: DispatchStepDependencies;
+  readonly planner: DispatchPlanner;
+  /** Receives each attempt's completion promise so the runtime can drain it on shutdown. */
+  readonly track: (completion: Promise<void>) => void;
+  readonly recovery: ReturnType<typeof createRunRecoveryUseCases>;
+  readonly merge: MergeTaskPrDeps;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly pollMs: number;
+}
+
+/**
+ * Binds the Coordinator's run commands (plan, dispatch, wait, status, pause, resume, deliver,
+ * handoff) to their use cases. Wire only inside the runtime that holds the project-owner session.
+ * The use cases hold the rules; this function only supplies their dependencies.
+ */
+export function createRunCommandUseCases(wiring: RunCommandWiring): RunCommandUseCases {
+  const { session, runs, plans, workflows, dispatch } = wiring;
+  const dispatchDeps = { ...dispatch, runs, plans, workflows, session, planner: wiring.planner };
+  return {
+    planRun: (input) =>
+      planRun(
+        {
+          tasks: plans,
+          workflows,
+          ...(wiring.defaultWorkflowId === undefined
+            ? {}
+            : { defaultWorkflowId: wiring.defaultWorkflowId }),
+          now: dispatch.now,
+          nextId: dispatch.nextId,
+        },
+        input,
+      ),
+    dispatchRunStep: (input) => dispatchRunStep({ ...dispatchDeps, track: wiring.track }, input),
+    waitForRun: (input) =>
+      waitForRun({ runs, now: dispatch.now, sleep: wiring.sleep, pollMs: wiring.pollMs }, input),
+    inspectRun: (input) => inspectRun({ runs }, input),
+    pauseRun: (input) => requestRunPause({ session, pause: wiring.recovery.pauseRun }, input),
+    resumeRun: async (input) => {
+      const resumed = await wiring.recovery.resumeRun(input);
+      // The checkpoint manifest is large and is not the Coordinator's to act on; report the
+      // attempt that was started.
+      return resumed.ok
+        ? {
+            ok: true,
+            ...(resumed.attemptId === undefined ? {} : { attemptId: resumed.attemptId }),
+            ...(resumed.stepRunId === undefined ? {} : { stepRunId: resumed.stepRunId }),
+          }
+        : resumed;
+    },
+    deliverRun: (input) =>
+      deliverRun({ runs, plans, merge: wiring.merge, session, nextId: dispatch.nextId }, input),
+    handoffCoordinator: (input) =>
+      handoffCoordinator(
+        {
+          runs,
+          session,
+          pause: (runId) => wiring.recovery.pauseRun({ runId }),
         },
         input,
       ),

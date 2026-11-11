@@ -15,6 +15,8 @@ export interface CliContext {
   readonly sendCommand: SendCommand;
   readonly defaultSocketPath: string;
   readonly timeoutMs: number;
+  /** All of stdin as UTF-8 text; `undefined` when it is invalid or too large. */
+  readonly readStdin?: (() => Promise<string | undefined>) | undefined;
   /** Writes the presented output and records the exit code the process should end with. */
   emit(presented: Presented): void;
 }
@@ -26,7 +28,7 @@ export interface CliOutput {
 
 /** Collects what one CLI run printed and the exit code it ends with (the first non-zero wins). */
 export function createCliContext(
-  parts: Pick<CliContext, "sendCommand" | "defaultSocketPath" | "timeoutMs">,
+  parts: Pick<CliContext, "sendCommand" | "defaultSocketPath" | "timeoutMs" | "readStdin">,
   output: CliOutput,
 ): { context: CliContext; exitCode: () => ExitCode } {
   let exitCode: ExitCode = EXIT_CODES.OK;

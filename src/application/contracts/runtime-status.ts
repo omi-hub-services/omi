@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RUN_STATUSES } from "../../domain/runs/workflow-run.js";
 import { identifierSchema } from "./identifiers.js";
 import { effortSchema, executorSchema, modelNameSchema } from "./model-capability.js";
 import { schemaVersionV1 } from "./schema-version.js";
@@ -27,6 +28,15 @@ export const runtimeStatusSchema = z.strictObject({
           actualModel: z.string().min(1).max(128).optional(),
           actualEffort: effortSchema.optional(),
         }),
+      }),
+    )
+    .optional(),
+  /** Runs that are not finished, so a new Coordinator session can find what to resume. */
+  runs: z
+    .array(
+      z.strictObject({
+        runId: identifierSchema,
+        status: z.enum(RUN_STATUSES),
       }),
     )
     .optional(),

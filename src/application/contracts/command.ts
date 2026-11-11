@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { recordApprovalSchema, requestApprovalSchema } from "./approval.js";
 import { identifierSchema, slugSchema } from "./identifiers.js";
+import { mergeTaskPrSchema } from "./merge-delivery.js";
 import { schemaVersionV1 } from "./schema-version.js";
 
 const envelope = { schemaVersion: schemaVersionV1 };
@@ -43,6 +44,23 @@ export const commandSchema = z
       reason: z.string().min(1).max(500),
     }),
     z.strictObject({ ...envelope, command: z.literal("resume"), runId: identifierSchema }),
+    z.strictObject({
+      ...envelope,
+      command: z.literal("deliver"),
+      runId: identifierSchema,
+      ...mergeTaskPrSchema.pick({
+        prNumber: true,
+        reviewedHeadSha: true,
+        requiredChecks: true,
+        minimumNativeApprovals: true,
+      }).shape,
+    }),
+    z.strictObject({
+      ...envelope,
+      command: z.literal("handoff"),
+      reason: z.enum(["new-session", "profile-switch"]),
+      toProfile: slugSchema.optional(),
+    }),
   ])
   .meta({ title: "omi-squad command v1" });
 export type Command = z.infer<typeof commandSchema>;
