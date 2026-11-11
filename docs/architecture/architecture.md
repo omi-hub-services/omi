@@ -172,7 +172,7 @@ Framework source không được copy toàn bộ vào app đích. Package runtim
 
 Đề xuất lệnh `omi session start` khởi chạy một supervisor local, runtime và phiên Claude Code chính. Supervisor giữ process handle của Coordinator; runtime chỉ tồn tại trong session đó. Không cài system service hay daemon tự khởi động cùng máy.
 
-**Cập nhật theo ADR-0012:** Coordinator chạy trên Windows; runtime, CLI implementation, worker và worktree chạy trong WSL2. Launcher phía Windows khởi chạy runtime trong WSL2 rồi Coordinator, giữ một tiến trình `wsl.exe` nối với runtime để phát hiện Coordinator thoát (pipe EOF/heartbeat, không dựa vào PID xuyên ranh giới). Coordinator gọi CLI qua `wsl.exe` bằng argv có kiểu và đọc JSON; Unix socket IPC chỉ dùng bên trong WSL2.
+**Cập nhật theo ADR-0012:** Coordinator chạy trên Windows; runtime, CLI implementation, worker và worktree chạy trong WSL2. Launcher phía Windows khởi chạy runtime trong WSL2 rồi Coordinator, giữ một tiến trình `wsl.exe` nối với runtime để phát hiện Coordinator thoát (pipe EOF/heartbeat, không dựa vào PID xuyên ranh giới). Coordinator gọi CLI qua `wsl.exe` bằng argv có kiểu và đọc JSON; Unix socket IPC chỉ dùng bên trong WSL2. Kết quả PoC OMI-005 (phía runtime trong WSL2 đã chứng minh, phía `wsl.exe` thật trên Windows chưa): ADR-0028.
 
 Coordinator sử dụng bridge để gửi `plan`, `dispatch`, `wait`, `status`, `pause`, `resume` qua CLI. Runtime có thể chạy các step trong execution plan đã được Coordinator cho phép. Khi gặp nhu cầu đổi workflow, mở rộng scope hoặc quyết định mới, trả sự kiện để Coordinator xử lý. Việc chờ một nhóm worker hoàn tất là tool call/CLI wait có heartbeat kỹ thuật, không phải LLM tự gửi heartbeat.
 
