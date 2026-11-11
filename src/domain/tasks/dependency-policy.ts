@@ -60,20 +60,40 @@ export function classifyDependencies(
   task: TaskNode,
   byId: ReadonlyMap<string, TaskNode>,
 ): DependencyState {
-  const blockedOn: string[] = [];
-  const waitingOn: string[] = [];
-  for (const dependencyId of task.blockedBy) {
-    const status = byId.get(dependencyId)?.status;
-    if (status === "done") continue;
-    if (status === "blocked" || status === "blocked_by_dependency" || status === "cancelled") {
-      blockedOn.push(dependencyId);
-    } else {
-      waitingOn.push(dependencyId);
+  const memo = new Map<string, DependencyState>();
+  const visiting = new Set<string>();
+  function classify(current: TaskNode): DependencyState {
+    const cached = memo.get(current.id);
+    if (cached !== undefined) return cached;
+    // Validation reports the cycle; classification must also terminate on malformed graphs.
+    if (visiting.has(current.id)) return { kind: "blocked", blockedOn: [current.id] };
+    visiting.add(current.id);
+    const blockedOn: string[] = [];
+    const waitingOn: string[] = [];
+    for (const dependencyId of current.blockedBy) {
+      const predecessor = byId.get(dependencyId);
+      const status = predecessor?.status;
+      if (status === "done") continue;
+      if (
+        status === "blocked" ||
+        status === "blocked_by_dependency" ||
+        status === "cancelled" ||
+        (predecessor !== undefined && classify(predecessor).kind === "blocked")
+      )
+        blockedOn.push(dependencyId);
+      else waitingOn.push(dependencyId);
     }
+    visiting.delete(current.id);
+    const state: DependencyState =
+      blockedOn.length > 0
+        ? { kind: "blocked", blockedOn }
+        : waitingOn.length > 0
+          ? { kind: "waiting", waitingOn }
+          : { kind: "satisfied" };
+    memo.set(current.id, state);
+    return state;
   }
-  if (blockedOn.length > 0) return { kind: "blocked", blockedOn };
-  if (waitingOn.length > 0) return { kind: "waiting", waitingOn };
-  return { kind: "satisfied" };
+  return classify(task);
 }
 
 export type TaskScope =
@@ -116,4 +136,64 @@ export function isTaskImportable(task: {
     task.title.trim() !== "" &&
     task.body.trim() !== ""
   );
+}
+
+export interface SchedulingTask extends TaskNode {
+  /** Trusted Project priority, never parsed from Issue prose. Missing priority sorts last. */
+  readonly priority: "P0" | "P1" | "P2" | null;
+  readonly eligible: boolean;
+}
+
+export interface SchedulingCapacity {
+  /** Includes active tasks outside the current PO scope and pending reservations. */
+  readonly activeTaskIds: readonly string[];
+  /** Project-wide pending reservations plus running workers, including read-only workers. */
+  readonly activeWorkers: number;
+  readonly maxTasks: number;
+  readonly maxWorkers: number;
+}
+
+/**
+ * Plans one worker for each newly admitted task. The runtime serializes selection and records
+ * reservations before the next tick. Profile/account capacity is reserved by selectExecutor;
+ * worktree writers are acquired by dispatchStep through the existing fenced lease.
+ */
+export function selectTaskBatch(
+  tasks: readonly SchedulingTask[],
+  capacity: SchedulingCapacity,
+): readonly string[] {
+  if (
+    !Number.isSafeInteger(capacity.activeWorkers) ||
+    capacity.activeWorkers < 0 ||
+    !Number.isSafeInteger(capacity.maxTasks) ||
+    capacity.maxTasks < 1 ||
+    !Number.isSafeInteger(capacity.maxWorkers) ||
+    capacity.maxWorkers < 1
+  )
+    throw new RangeError("Invalid scheduling capacity");
+  const problems = validateTaskDependencies(tasks);
+  if (problems.length > 0) throw new RangeError(problems[0]?.code);
+  const active = new Set(capacity.activeTaskIds);
+  for (const task of tasks) if (task.status === "in_progress") active.add(task.id);
+  const available = Math.max(
+    0,
+    Math.min(capacity.maxTasks - active.size, capacity.maxWorkers - capacity.activeWorkers),
+  );
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const rank = { P0: 0, P1: 1, P2: 2 };
+  return tasks
+    .filter(
+      (task) =>
+        task.eligible &&
+        task.status === "ready" &&
+        !active.has(task.id) &&
+        classifyDependencies(task, byId).kind === "satisfied",
+    )
+    .sort(
+      (a, b) =>
+        (a.priority === null ? 3 : rank[a.priority]) -
+          (b.priority === null ? 3 : rank[b.priority]) || a.id.localeCompare(b.id),
+    )
+    .slice(0, available)
+    .map((task) => task.id);
 }
