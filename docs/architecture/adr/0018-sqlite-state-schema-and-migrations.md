@@ -61,12 +61,17 @@
    status (`pending`, `expired`, `invalidated`). Rebuild `checkpoints` and `artifacts` to reject
    empty paths, leading slash or backslash, Windows drive prefixes and parent traversal segments
    with either separator. Preserve valid rows, foreign key references, indexes and audit triggers.
+7. **Schema v3** (`0003-outbox-state.sql`, OMI-024): rebuild `outbox` with a CHECK on `state`
+   that lists exactly `OUTBOX_STATES` (`domain/delivery/outbox-operation.ts`), a CHECK that a
+   `succeeded` row has a remote identity, and two new nullable columns, `next_attempt_at` and
+   `last_error`. A row with a state outside the list makes the whole migration roll back; nothing
+   is rewritten or guessed. The decision and the state machine are in ADR-0025.
 
 ## Consequences
 
 - An applied migration is never edited; schema changes go in a new numbered file.
-- Remaining free-TEXT status columns need their own domain vocabulary before a migration can
-  constrain them. Integration tests pin persisted constrained values to the domain types.
+- Remaining free-TEXT status columns (`agent_attempts.status`) need their own domain vocabulary
+  before a migration can constrain them (OMI-016, #19). Integration tests pin persisted constrained values to the domain types.
 - Not yet covered: backup before migration, an integrity check, a recovery procedure, a
   read-only snapshot mode and repositories/ports. These belong to later Issues (tech-stack.md
   §6).

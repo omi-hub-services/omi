@@ -7,6 +7,7 @@ import {
   flushOutbox,
   type FlushOutboxDeps,
 } from "../../../src/application/use-cases/sync/flush-outbox.ts";
+import type { ArtifactStore } from "../../../src/application/ports/artifact-store.ts";
 import { operationMarker } from "../../../src/domain/delivery/operation-marker.ts";
 import { createLocalArtifactStore } from "../../../src/infrastructure/artifacts/local-artifact-store.ts";
 import { createGithubRemote } from "../../../src/infrastructure/github/github-remote.ts";
@@ -61,11 +62,14 @@ let github: FakeGithub;
 let clock: { ms: number };
 let payloads: number;
 let deps: FlushOutboxDeps;
+/** The use cases only read payloads; the test runtime writes them. */
+let artifactStore: ArtifactStore;
 
 /** Everything a runtime restart rebuilds from disk: connection, stores and adapters. */
 function wire(): void {
   db = openStateDatabase(join(dir, "state.db"));
   applyMigrations(db, loadMigrations(resolve(import.meta.dirname, "../../../migrations")));
+  artifactStore = createLocalArtifactStore(join(dir, "artifacts"), db);
   const client = createGithubRestClient({
     transport: github,
     sleep: (ms) => {
@@ -79,7 +83,7 @@ function wire(): void {
   let events = 0;
   deps = {
     outbox: createSqliteOutboxStore(db),
-    artifacts: createLocalArtifactStore(join(dir, "artifacts"), db),
+    artifacts: artifactStore,
     github: createGithubRemote(client),
     now: () => clock.ms,
     newEventId: () => `event-${String(Date.now())}-${String((events += 1))}`,
@@ -94,7 +98,7 @@ function wire(): void {
 function enqueue(operationKey: string, operation: GithubOperation): void {
   payloads += 1;
   const bytes = new TextEncoder().encode(JSON.stringify({ schemaVersion: 1, operation }));
-  const reference = deps.artifacts.write({
+  const reference = artifactStore.write({
     id: `payload-${String(payloads)}`,
     path: `outbox/payload-${String(payloads)}.json`,
     bytes,

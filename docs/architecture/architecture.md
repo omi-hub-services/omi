@@ -299,7 +299,7 @@ Khả năng isolate nhiều subscription Claude Code là **PoC bắt buộc**, c
 | `approvals` | Kind, subject hash, actor, channel, decision, revision |
 | `profile_observations` | Metadata availability/cooldown; không credential |
 | `leases` | Resource key, owner, fencing generation, expiry |
-| `outbox` | Operation key, payload ref, state, remote identity |
+| `outbox` | Operation key, payload ref, state (`pending`, `in_flight`, `outcome_unknown`, `succeeded`, `failed`; CHECK ở migration 0003), remote identity, `next_attempt_at`, `last_error` |
 | `events` | Append-only audit, sequence, causation/correlation IDs |
 | `github_mappings` | External IDs của task/PR/release và local logical key |
 
@@ -350,7 +350,7 @@ Backup SQLite dùng backup API hoặc quiesce phù hợp; không chỉ copy file
 
 GitHub adapter dùng `gh` đã xác thực để gọi API qua argv/stdin, tránh nhúng secret vào command. GraphQL phù hợp Projects; REST phù hợp Issues/PR và quan hệ issue khi khả dụng. Pagination, retry-after, rate limit và mapping ID phải được xử lý trong adapter. Không hardcode tên field đồng nghĩa với field ID.
 
-Outbox lưu ý định trước khi gọi remote. Timeout không rõ kết quả phải đọc/đối soát remote trước khi retry. Issue/PR/comment có logical operation marker khi phù hợp; unique local key chưa đủ đảm bảo remote không trùng nếu đã timeout. Đảm bảo idempotent/reconciliation, không hứa exactly-once qua mạng.
+Outbox lưu ý định trước khi gọi remote. Timeout không rõ kết quả phải đọc/đối soát remote trước khi retry. Issue/PR/comment có logical operation marker khi phù hợp; unique local key chưa đủ đảm bảo remote không trùng nếu đã timeout. Đảm bảo idempotent/reconciliation, không hứa exactly-once qua mạng. Chi tiết state machine outbox, marker, grace period và phân loại lỗi nằm ở ADR-0025: adapter chỉ lặp lại thao tác ghi khi GitHub đã trả lời từ chối; timeout, mất kết nối hoặc 5xx trên thao tác ghi chuyển operation sang `outcome_unknown` và chỉ được gửi lại sau khi đọc remote không thấy marker.
 
 ### PR vào develop
 
@@ -440,6 +440,7 @@ CI kiểm tra root allowlist, import direction, cycles, file naming, generated s
 | ADR-0010 | Runtime version riêng mỗi project | Update có kiểm soát, không phụ thuộc global install |
 | ADR-0012 | Coordinator trên Windows, runtime/worker trong WSL2 | Quyết định PO 10/11/2026; lifecycle xuyên ranh giới cần PoC (OMI-005) |
 | ADR-0014 | Dev tooling Coordinator ở `tools/coordinator/` | Tạm thời tới khi có CLI `omi`; script trước, LLM sau (OMI-050) |
+| ADR-0025 | Outbox GitHub, operation marker, đối soát trước retry | Idempotent bằng reconciliation, không hứa exactly-once (OMI-024) |
 
 ## 16. Kiểm chứng kiến trúc
 
