@@ -30,25 +30,12 @@ export interface RequiredApproval {
   readonly expected: ApprovalExpectation;
 }
 
-/** One native GitHub pull-request review, as read from GitHub. Never produced by the runtime. */
-export interface NativeReviewObservation {
-  readonly actor: string;
-  /** GitHub account type; only a `User` can give a native approval that counts. */
-  readonly actorType: string;
-  readonly state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
-  /** Commit the review was submitted on. */
-  readonly commitSha: string;
-}
-
-export interface NativeApprovalInputs {
-  /** Approvals GitHub requires (ruleset) or the project requires, whichever is higher. */
-  readonly requiredCount: number;
-  readonly pullAuthor: string;
-  /** Accounts the runtime itself acts as; their reviews are never a native approval. */
-  readonly runtimeActors: readonly string[];
-  /** Reviews in submission order, oldest first. */
-  readonly reviews: readonly NativeReviewObservation[];
-}
+export type {
+  NativeApprovalInputs,
+  NativeReviewObservation,
+} from "../approvals/native-approval-policy.js";
+import type { NativeApprovalInputs } from "../approvals/native-approval-policy.js";
+import { nativeApprovalRefusals } from "../approvals/native-approval-policy.js";
 
 /** GitHub's `mergeable_state` of the PR; `draft` also when the PR is a draft. */
 export type MergeableState =
@@ -133,14 +120,7 @@ export function evaluateMerge(input: MergeInputs): Decision<MergeRefusal> {
     }),
   );
 
-  const forHead = input.checks.filter((check) => check.headSha === input.currentHeadSha);
-  const missing = input.requiredChecks.filter(
-    (name) => !forHead.some((check) => check.name === name),
-  );
-  const required = forHead.filter((check) => input.requiredChecks.includes(check.name));
-  if (missing.length > 0) refusals.push("REQUIRED_CHECK_MISSING");
-  if (required.some((check) => check.status === "pending")) refusals.push("CHECKS_PENDING");
-  if (required.some((check) => check.status === "failed")) refusals.push("CHECKS_FAILED");
+  refusals.push(...requiredCheckRefusals(input.requiredChecks, input.checks, input.currentHeadSha));
 
   if (input.unresolvedMandatoryFindings > 0) refusals.push("FINDINGS_UNRESOLVED");
   if (!input.workflowGatesPassed) refusals.push("GATE_NOT_PASSED");
@@ -164,6 +144,23 @@ export function evaluateMerge(input: MergeInputs): Decision<MergeRefusal> {
   if (!input.mergeLockHeld) refusals.push("MERGE_LOCK_NOT_HELD");
 
   return decide(refusals);
+}
+
+/** Required CI contexts must all pass on the current head. */
+export function requiredCheckRefusals(
+  requiredChecks: readonly string[],
+  checks: readonly CheckObservation[],
+  headSha: string,
+): ("REQUIRED_CHECK_MISSING" | "CHECKS_PENDING" | "CHECKS_FAILED")[] {
+  const refusals: ("REQUIRED_CHECK_MISSING" | "CHECKS_PENDING" | "CHECKS_FAILED")[] = [];
+  const forHead = checks.filter((check) => check.headSha === headSha);
+  const missing = requiredChecks.filter((name) => !forHead.some((check) => check.name === name));
+  const required = forHead.filter((check) => requiredChecks.includes(check.name));
+  if (missing.length > 0) refusals.push("REQUIRED_CHECK_MISSING");
+  if (required.some((check) => check.status === "pending")) refusals.push("CHECKS_PENDING");
+  if (required.some((check) => check.status === "failed")) refusals.push("CHECKS_FAILED");
+
+  return refusals;
 }
 
 interface Authors {
@@ -203,41 +200,8 @@ function reviewRefusals(
   return refusals;
 }
 
-/**
- * Native approval is read from GitHub and only counted, never created (ADR-0026, architecture.md
- * §11). Per reviewer the latest decisive review (approve, request changes, dismissal) counts, as
- * on GitHub. An approval counts only for the current head, from a `User` who is neither the PR
- * author nor an account the runtime acts as: two agents behind one identity are not two reviewers.
- */
-function nativeApprovalRefusals(
-  native: NativeApprovalInputs,
-  headSha: string,
-): ("NATIVE_CHANGES_REQUESTED" | "NATIVE_APPROVAL_MISSING")[] {
-  const same = (left: string, right: string): boolean => left.toLowerCase() === right.toLowerCase();
-  const latest = new Map<string, NativeReviewObservation>();
-  for (const review of native.reviews) {
-    if (review.state === "COMMENTED" || review.state === "PENDING") continue;
-    latest.set(review.actor.toLowerCase(), review);
-  }
-  const decisive = [...latest.values()];
-  const refusals: ("NATIVE_CHANGES_REQUESTED" | "NATIVE_APPROVAL_MISSING")[] = [];
-  if (decisive.some((review) => review.state === "CHANGES_REQUESTED")) {
-    refusals.push("NATIVE_CHANGES_REQUESTED");
-  }
-  const approvals = decisive.filter(
-    (review) =>
-      review.state === "APPROVED" &&
-      review.commitSha === headSha &&
-      review.actorType === "User" &&
-      !same(review.actor, native.pullAuthor) &&
-      !native.runtimeActors.some((actor) => same(actor, review.actor)),
-  );
-  if (approvals.length < native.requiredCount) refusals.push("NATIVE_APPROVAL_MISSING");
-  return refusals;
-}
-
 /** Only `clean` and `has_hooks` merge without bypassing anything (same rule as ADR-0014). */
-function mergeableRefusals(state: MergeableState): MergeRefusal[] {
+export function mergeableRefusals(state: MergeableState): MergeRefusal[] {
   switch (state) {
     case "clean":
     case "has_hooks":

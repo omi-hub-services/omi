@@ -111,6 +111,8 @@ export class FakeGithub implements GithubTransport {
   readonly rules = new Map<string, unknown[]>();
   /** Login of the credential the runtime uses. */
   authenticatedLogin = "omi-bot";
+  repositoryPermissions = { push: true, admin: true };
+  readonly protections = new Map<string, unknown>();
   offline = false;
   /** Sent on every response as X-RateLimit-Remaining / -Reset (epoch seconds). */
   rateLimit: { remaining: number; resetEpochSeconds: number } | undefined;
@@ -191,6 +193,16 @@ export class FakeGithub implements GithubTransport {
 
     const merged = this.handleMergeRoutes(request, url);
     if (merged !== undefined) return merged;
+
+    const repository = /^\/repos\/([^/]+\/[^/]+)$/.exec(route);
+    if (request.method === "GET" && repository?.[1] !== undefined) {
+      return this.json(200, { full_name: repository[1], permissions: this.repositoryPermissions });
+    }
+    const protection = /^\/repos\/([^/]+\/[^/]+)\/branches\/([^/]+)\/protection$/.exec(route);
+    if (request.method === "GET" && protection?.[1] !== undefined && protection[2] !== undefined) {
+      const value = this.protections.get(`${protection[1]}:${decodeURIComponent(protection[2])}`);
+      return value === undefined ? this.json(404, {}) : this.json(200, value);
+    }
 
     const detail = /^\/repos\/([^/]+\/[^/]+)\/(issues|pulls)\/(\d+)$/.exec(route);
     if (request.method === "GET" && detail?.[1] !== undefined && detail[3] !== undefined) {
