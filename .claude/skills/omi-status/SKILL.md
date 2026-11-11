@@ -22,8 +22,10 @@ Data collection is a script; do not re-derive it with `gh`/`git` calls (AGENTS.m
    - "Attention" lines (Status and Issue state disagree) and running or finished workers
      (a finished log with an error, or a stale log with no worker process, needs action);
    - quota: one short line per profile from the "Quota" section (5h/7d left, data age);
-     say when no profile is above the thresholds and when the next reset is. This read has
-     no probe, so Claude numbers may be old or `unknown`; `/omi-next` probes before dispatch;
+     say when no profile is above the thresholds and when the next reset is. Claude numbers
+     come from the OAuth usage endpoint (OMI-065, ADR-0033), falling back to worker logs
+     (then they may be old or `unknown`); mention a per-model weekly window (e.g. Fable) when
+     shown; `/omi-next` probes before dispatch;
    - **Recommendation:** one next action with a one-line reason. Priority: finish work already
      in flight (merge a green, reviewed PR; resume a stopped worker) before starting a new task;
      otherwise the first entry under "Ready, all blockers closed", or when that is empty the
@@ -31,3 +33,6 @@ Data collection is a script; do not re-derive it with `gh`/`git` calls (AGENTS.m
      the status argues against it (say what, e.g. no worker quota until a reset).
 
 3. Do not change anything. Starting the task is `/omi-next [OMI-xxx]`.
+
+For a live view between status reads, the PO can keep `node tools/coordinator/watch.ts`
+(OMI-064) open in a small terminal pane: running workers and quota, refreshed in place.
