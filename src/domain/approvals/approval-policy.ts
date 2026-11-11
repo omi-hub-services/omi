@@ -1,8 +1,9 @@
 import { decide } from "../shared/decision.js";
 import type { Decision } from "../shared/decision.js";
-import type { Approval, ApprovalKind, ApprovalSubject } from "./approval.js";
+import type { Approval, ApprovalKind, ApprovalRequest, ApprovalSubject } from "./approval.js";
 
 export type ApprovalInvalidReason =
+  | "APPROVAL_NOT_ACTIVE"
   | "NO_APPROVAL"
   | "APPROVAL_REJECTED"
   | "WRONG_KIND"
@@ -25,7 +26,7 @@ export interface ApprovalExpectation {
 }
 
 /** Kinds where a conversational approval is not enough without evidence of the real message. */
-const NEEDS_MESSAGE_EVIDENCE: readonly ApprovalKind[] = ["business", "release", "deploy"];
+const NEEDS_MESSAGE_EVIDENCE: readonly ApprovalKind[] = ["business", "cost", "release", "deploy"];
 
 /**
  * Whether `approval` still authorises `expected`. Pure and total: a missing, rejected, stale,
@@ -83,6 +84,15 @@ function subjectRefusals(
       }
       return refusals;
     }
+    case "cost": {
+      if (expected.kind !== "cost") return ["WRONG_KIND"];
+      const refusals: ApprovalInvalidReason[] = [];
+      if (approved.estimateHash !== expected.estimateHash) refusals.push("STALE_REVISION");
+      if (!expected.scopeIds.every((id) => approved.scopeIds.includes(id))) {
+        refusals.push("SCOPE_NOT_COVERED");
+      }
+      return refusals;
+    }
     case "release": {
       if (expected.kind !== "release") return ["WRONG_KIND"];
       if (approved.pullRequestId !== expected.pullRequestId) return ["SUBJECT_MISMATCH"];
@@ -94,4 +104,31 @@ function subjectRefusals(
       return approved.artifactDigest === expected.artifactDigest ? [] : ["STALE_REVISION"];
     }
   }
+}
+
+/** Compare the complete pinned subject, including scope (order is immaterial). */
+export function isApprovalSubjectCurrent(
+  pinned: ApprovalSubject,
+  current: ApprovalSubject,
+): boolean {
+  return (
+    subjectRefusals(pinned, current).length === 0 && subjectRefusals(current, pinned).length === 0
+  );
+}
+
+/** Mandatory business/cost requirements are supplied by the execution plan, not by the worker. */
+export function evaluateExecutionApprovals(
+  requirements: readonly {
+    readonly request: ApprovalRequest | undefined;
+    readonly expected: ApprovalExpectation;
+  }[],
+): Decision<ApprovalInvalidReason> {
+  return decide(
+    requirements.flatMap(({ request, expected }) => {
+      if (request !== undefined && request.status !== "approved")
+        return ["APPROVAL_NOT_ACTIVE" as const];
+      const result = evaluateApproval(request?.decision, expected);
+      return result.allowed ? [] : result.reasons;
+    }),
+  );
 }
