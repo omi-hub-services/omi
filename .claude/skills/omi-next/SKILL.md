@@ -57,6 +57,10 @@ node tools/coordinator/flow.ts pick-profile N [--kind codex|claude+codex-live] -
   limits are read free through `codex app-server`.
 - Output `pick-profile N: claude <profile>` (and `codex <profile>`) names the profile(s) to
   use; the `reason:` and `ranked:` lines explain the choice.
+- It also prints `<tool> model: <m> effort: <e> (complexity <c>: <reason>)` for each chosen
+  tool and `reviewer: <m> <e>` (OMI-058, ADR-0014). Pass exactly these to the worker
+  (`--model`/`--effort`, Codex `-m`/`-c model_reasoning_effort=`) and to the review subagent;
+  do not re-derive them. A `complexity:low|medium|high` label on the Issue overrides the rule.
 - `refused:` (exit 1, every profile below the thresholds in `coordinator-settings.ts`) →
   **stop and ask the PO**: wait until the printed earliest reset, or spend a Codex reset
   credit (the count is printed). Spending a credit is the PO's decision, never yours.
