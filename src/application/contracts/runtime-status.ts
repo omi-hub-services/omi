@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { identifierSchema } from "./identifiers.js";
+import { effortSchema, executorSchema, modelNameSchema } from "./model-capability.js";
 import { schemaVersionV1 } from "./schema-version.js";
 
 /**
@@ -10,5 +12,23 @@ export const runtimeStatusSchema = z.strictObject({
   state: z.literal("ready"),
   runtimeVersion: z.string().min(1).max(64),
   startedAt: z.iso.datetime(),
+  attempts: z
+    .array(
+      z.strictObject({
+        attemptId: identifierSchema,
+        settings: z.strictObject({
+          chosen: z.strictObject({
+            executor: executorSchema,
+            profileId: identifierSchema,
+            model: modelNameSchema,
+            effort: effortSchema,
+          }),
+          selectionReason: z.string().min(1).max(2000).optional(),
+          actualModel: z.string().min(1).max(128).optional(),
+          actualEffort: effortSchema.optional(),
+        }),
+      }),
+    )
+    .optional(),
 });
 export type RuntimeStatus = z.infer<typeof runtimeStatusSchema>;

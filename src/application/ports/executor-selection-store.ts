@@ -14,10 +14,12 @@ export interface ExecutorSelectionStore {
       readonly stepRunId: string;
       readonly number: number;
       readonly at: number;
+      readonly selectionReason?: string;
     },
     choose: (profiles: readonly RegisteredProfile[]) => SelectionResult,
   ): SelectionResult;
   /** Saves only CLI-reported model/effort, after checking attempt and requested settings. */
   recordResult(attemptId: string, result: ExecutionResult): void;
+  listSettings(): readonly { readonly attemptId: string; readonly settings: AttemptSettings }[];
   settings(attemptId: string): AttemptSettings | undefined;
 }

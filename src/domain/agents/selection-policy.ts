@@ -1,6 +1,6 @@
 import { evaluateProfileAvailability } from "../profiles/availability-policy.js";
 import type { ProfileObservation, UnavailableReason } from "../profiles/availability-policy.js";
-import { lowestSatisfyingEffort } from "./capability.js";
+import { effortRank, lowestSatisfyingEffort } from "./capability.js";
 import type { CapabilityRequirement, Effort } from "./capability.js";
 
 export interface ExecutorCandidate {
@@ -101,6 +101,7 @@ export function selectExecutor(input: SelectionInput): SelectionResult {
     (a, b) =>
       a.candidate.preference - b.candidate.preference ||
       a.candidate.profile.activeWorkers - b.candidate.profile.activeWorkers ||
+      effortRank(a.effort) - effortRank(b.effort) ||
       a.candidate.candidateId.localeCompare(b.candidate.candidateId),
   )[0];
   if (best === undefined) {

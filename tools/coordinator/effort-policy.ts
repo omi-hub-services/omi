@@ -8,7 +8,8 @@ export interface EffortInput {
   readonly priority: string | null;
   readonly acCount: number;
   readonly labels: readonly string[];
-  readonly hasLiveTests?: boolean;
+  readonly hasLiveTests?: boolean | undefined;
+  readonly complexity?: Complexity | undefined;
 }
 
 export interface EffortDecision {
@@ -18,6 +19,9 @@ export interface EffortDecision {
 
 /** Override, missing fields, high-risk work, docs/small non-runtime work, then medium. */
 export function inferComplexity(input: EffortInput): EffortDecision {
+  if (input.complexity !== undefined) {
+    return { complexity: input.complexity, reason: `field complexity:${input.complexity}` };
+  }
   // Conflicting overrides choose the higher complexity, independent of label order.
   for (const complexity of ["high", "medium", "low"] as const) {
     if (input.labels.includes(`complexity:${complexity}`)) {
@@ -41,6 +45,9 @@ export function inferComplexity(input: EffortInput): EffortDecision {
   const workType = input.workType?.trim().toLowerCase();
   const area = input.area?.trim().toLowerCase() ?? "";
   const runtime = ["domain", "runtime", "adapters", "github"].includes(area);
+  if (workflow === "security" || area === "security" || workType === "security") {
+    return { complexity: "high", reason: "security work" };
+  }
   if (workflow === "research" || workType === "spike" || workType === "poc" || workflow === "poc") {
     return { complexity: "high", reason: "research / Spike / PoC" };
   }
