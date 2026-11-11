@@ -39,7 +39,8 @@ profile. ADR-0013 and ADR-0021 each proved one profile. ADR-0023 left "several p
    workspace before the domain gate lets the new attempt start.
 4. **Quota is read only from what the CLI reports.** Claude Code's `rate_limit_event` gives the
    binding window and every window in `unifiedWindows`. No per-model window (such as a weekly
-   Fable window) is readable from the logs. Selection must therefore treat a model-specific limit
+   Fable window) is readable from the logs; since OMI-065 the OAuth usage endpoint reports one
+   (ADR-0033), which only the Coordinator tooling reads. Selection must therefore treat a model-specific limit
    as invisible until a run is rejected, and cool down on the rejection.
 5. **Simulated limits are labelled and separate from real quota detection.** The failover path
    records the limit `source`: `cli-reported` (the adapter classified the CLI's own output as

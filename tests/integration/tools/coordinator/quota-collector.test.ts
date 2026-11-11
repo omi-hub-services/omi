@@ -1,7 +1,15 @@
 // Runs the quota collector (quota.ts REMOTE_COLLECTOR) with real Node against a temp $HOME, the
 // way the WSL payload runs it: source on stdin, argv after `-`.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,14 +20,71 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-function runCollector(home: string) {
-  return spawnSync(process.execPath, ["--input-type=module", "-", "omi-runs", "0"], {
-    input: REMOTE_COLLECTOR,
-    encoding: "utf8",
-    env: { ...process.env, HOME: home, USERPROFILE: home },
-    timeout: 30_000,
-  });
+function runCollector(home: string, targets: string[] = [], preload?: string, mode = "") {
+  const loader = preload ? ["--import", preload] : [];
+  return spawnSync(
+    process.execPath,
+    [...loader, "--input-type=module", "-", "omi-runs", "0", ...targets],
+    {
+      input: REMOTE_COLLECTOR,
+      encoding: "utf8",
+      env: { ...process.env, HOME: home, USERPROFILE: home, FAKE_FETCH: mode },
+      timeout: 30_000,
+    },
+  );
 }
+
+const TOKEN = "sk-ant-oat01-FAKE-token-for-tests-only";
+const USAGE_BODY = {
+  five_hour: { utilization: 33, resets_at: "2026-11-11T11:10:00+00:00", extra: "x" },
+  seven_day: { utilization: 41.5, resets_at: "2026-11-16T07:00:00+00:00" },
+  account: { email: "someone@example.com", uuid: "acct-secret" },
+  limits: [
+    {
+      kind: "weekly_scoped",
+      percent: 1,
+      resets_at: "2026-11-16T07:00:00+00:00",
+      scope: { model: { display_name: "Fable", id: "m-secret" } },
+    },
+  ],
+};
+
+/** A temp HOME with one profile credential file and a preload that replaces fetch. */
+function usageSetup(expiresAt: number | null) {
+  const home = mkdtempSync(join(tmpdir(), "omi-usage-"));
+  dirs.push(home);
+  const profile = join(home, ".claude-profiles", "p1");
+  mkdirSync(profile, { recursive: true });
+  const oauth: Record<string, unknown> = { accessToken: TOKEN, refreshToken: "refresh-FAKE" };
+  if (expiresAt !== null) oauth.expiresAt = expiresAt;
+  const credPath = join(profile, ".credentials.json");
+  writeFileSync(credPath, JSON.stringify({ claudeAiOauth: oauth }));
+  const seen = join(home, "seen.json");
+  const preload = join(home, "fetch-stub.mjs");
+  writeFileSync(
+    preload,
+    `import { writeFileSync } from "node:fs";
+globalThis.fetch = async (url, init) => {
+  const mode = process.env.FAKE_FETCH;
+  writeFileSync(${JSON.stringify(seen)}, JSON.stringify({ url: String(url), auth: init.headers.Authorization, beta: init.headers["anthropic-beta"], redirect: init.redirect }));
+  if (mode === "throw") throw new Error("connect failed to sk-ant-oat01-FAKE-token-for-tests-only");
+  if (mode === "timeout") { const e = new Error("t"); e.name = "TimeoutError"; throw e; }
+  if (mode === "401") return { ok: false, status: 401, json: async () => ({}) };
+  if (mode === "html") return { ok: true, status: 200, json: async () => { throw new SyntaxError("x"); } };
+  if (mode === "array") return { ok: true, status: 200, json: async () => [] };
+  return { ok: true, status: 200, json: async () => (${JSON.stringify(USAGE_BODY)}) };
+};
+`,
+  );
+  return { home, preload, seen, credPath };
+}
+
+const parsed = (stdout: string) =>
+  stdout
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>)
+    .filter((o) => o.kind !== "now");
 
 describe("quota collector", () => {
   it.skipIf(process.platform === "win32")(
@@ -50,4 +115,89 @@ describe("quota collector", () => {
       ]);
     },
   );
+
+  describe("claude usage endpoint", () => {
+    const run = (expiresAt: number | null, mode = "") => {
+      const setup = usageSetup(expiresAt);
+      const result = runCollector(setup.home, ["claude:p1"], setup.preload, mode);
+      return { ...setup, result };
+    };
+    const future = () => Date.now() + 3_600_000;
+
+    it("calls only api.anthropic.com with the bearer token and emits trimmed fields", () => {
+      const { result, seen } = run(future());
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(readFileSync(seen, "utf8"))).toEqual({
+        url: "https://api.anthropic.com/api/oauth/usage",
+        auth: `Bearer ${TOKEN}`,
+        beta: "oauth-2025-04-20",
+        redirect: "error",
+      });
+      expect(parsed(result.stdout)).toEqual([
+        {
+          kind: "usage",
+          profile: "p1",
+          usage: {
+            five_hour: { utilization: 33, resets_at: "2026-11-11T11:10:00+00:00" },
+            seven_day: { utilization: 41.5, resets_at: "2026-11-16T07:00:00+00:00" },
+            limits: [
+              {
+                kind: "weekly_scoped",
+                percent: 1,
+                resets_at: "2026-11-16T07:00:00+00:00",
+                model: "Fable",
+              },
+            ],
+          },
+        },
+      ]);
+    });
+
+    it("does not call the endpoint for an expired token, and does not touch the profile dir", () => {
+      const { result, seen, credPath } = run(Date.now() - 1000);
+      expect(parsed(result.stdout)).toEqual([
+        { kind: "error", tool: "claude-usage", profile: "p1", message: "token expired" },
+      ]);
+      expect(existsSync(seen)).toBe(false);
+      expect(readFileSync(credPath, "utf8")).toContain(TOKEN);
+    });
+
+    it.each([
+      ["401", "HTTP 401"],
+      ["throw", "network error"],
+      ["timeout", "timeout"],
+      ["html", "response is not JSON"],
+      ["array", "unexpected response shape"],
+    ])("reports only the error kind for %s", (mode, message) => {
+      const { result } = run(future(), mode);
+      expect(parsed(result.stdout)).toEqual([
+        { kind: "error", tool: "claude-usage", profile: "p1", message },
+      ]);
+    });
+
+    it("never prints the token or anything outside the whitelisted fields", () => {
+      for (const mode of ["", "401", "throw", "timeout", "html", "array"]) {
+        const { result } = run(future(), mode);
+        const all = result.stdout + result.stderr;
+        expect(all).not.toContain(TOKEN);
+        expect(all).not.toContain("refresh-FAKE");
+        expect(all).not.toMatch(/example\.com|acct-secret|m-secret|accessToken/);
+      }
+    });
+
+    it("reports a profile without credentials", () => {
+      const home = mkdtempSync(join(tmpdir(), "omi-usage-"));
+      dirs.push(home);
+      const result = runCollector(home, ["claude:nobody"]);
+      expect(parsed(result.stdout)).toEqual([
+        {
+          kind: "error",
+          tool: "claude-usage",
+          profile: "nobody",
+          message: "no readable credentials",
+        },
+      ]);
+    });
+  });
 });
