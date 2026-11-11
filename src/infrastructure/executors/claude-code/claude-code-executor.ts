@@ -211,12 +211,28 @@ export class ClaudeCodeExecutor implements AgentExecutor {
   }
 
   private finish(run: Run, exit: ProcessExit): ExecutionResult {
+    // Whatever happens below, consumers of events() must see the end and waiters must wake.
+    let outcome = "failed";
+    try {
+      const result = this.buildResult(run, exit);
+      outcome = result.outcome;
+      return result;
+    } finally {
+      // The terminal event goes in regardless of the buffer cap so a consumer always sees the end.
+      run.events.push({ kind: "finished", sequence: run.nextSequence, outcome });
+      run.nextSequence += 1;
+      run.finished = true;
+      this.wake(run);
+    }
+  }
+
+  private buildResult(run: Run, exit: ProcessExit): ExecutionResult {
     const summary = run.stream.summary();
     const classification = classifyClaudeRun(summary, exit);
     const { request, handle } = run;
     const succeeded = classification.outcome === "succeeded";
 
-    const result = executionResultSchema.parse({
+    return executionResultSchema.parse({
       executionId: handle.executionId,
       attemptId: handle.attemptId,
       executor: this.executor,
@@ -247,12 +263,5 @@ export class ClaudeCodeExecutor implements AgentExecutor {
       escalated: exit.escalated,
       leftoverProcessesKilled: exit.leftoverProcessesKilled,
     });
-
-    // The terminal event goes in regardless of the buffer cap so a consumer always sees the end.
-    run.events.push({ kind: "finished", sequence: run.nextSequence, outcome: result.outcome });
-    run.nextSequence += 1;
-    run.finished = true;
-    this.wake(run);
-    return result;
   }
 }

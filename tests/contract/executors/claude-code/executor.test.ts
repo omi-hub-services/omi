@@ -12,6 +12,7 @@ import {
   type ExecutionRequest,
 } from "../../../../src/application/contracts/agent-execution.js";
 import { AgentExecutorError } from "../../../../src/application/ports/agent-executor.js";
+import { FORBIDDEN_AUTH_ENV } from "../../../../src/infrastructure/executors/claude-code/claude-code-environment.js";
 import { ClaudeCodeExecutor } from "../../../../src/infrastructure/executors/claude-code/claude-code-executor.js";
 import {
   fixture,
@@ -59,7 +60,7 @@ interface Harness {
 
 function harness(
   scenario: FakeClaudeScenario,
-  options: { graceMs?: number; executable?: string } = {},
+  options: { graceMs?: number; executable?: string; newExecutionId?: () => string } = {},
 ): Harness {
   counter += 1;
   const recordPath = join(root, `record-${String(counter)}.jsonl`);
@@ -70,6 +71,7 @@ function harness(
       executable,
       parentEnv: hostileParentEnv,
       graceMs: options.graceMs ?? 5000,
+      ...(options.newExecutionId === undefined ? {} : { newExecutionId: options.newExecutionId }),
     }),
     recordPath,
     invocations: () => readInvocations(recordPath),
@@ -262,6 +264,11 @@ describe("profile isolation (no global auth swapping)", () => {
       "PATH",
       "https_proxy",
     ]);
+    for (const name of FORBIDDEN_AUTH_ENV) {
+      // The parent really has it, and the worker still does not.
+      expect(hostileParentEnv).toHaveProperty(name);
+      expect(run?.envKeys).not.toContain(name);
+    }
     expect(run?.envKeys.some((key) => key.startsWith("ANTHROPIC_"))).toBe(false);
     expect(run?.envKeys.some((key) => key.startsWith("CLAUDE_CODE_"))).toBe(false);
     expect(run?.envKeys).not.toContain("CLAUDECODE");
@@ -313,6 +320,17 @@ describe("profile isolation (no global auth swapping)", () => {
       ["-p", "--output-format", "stream-json"],
     ]);
     for (const invocation of all) expect(invocation.claudeConfigDir).toBe(profileA);
+  });
+});
+
+describe("a result that cannot be built", () => {
+  it("still ends the event stream and wakes waiters, and collectResult rejects", async () => {
+    // An id the result contract rejects makes building the result throw after the process ended.
+    const { executor } = harness(SUCCESS, { newExecutionId: () => "not a valid id!" });
+    const handle = await executor.start(request());
+    const events = await collectEvents(executor, handle);
+    expect(events.at(-1)).toMatchObject({ kind: "finished", outcome: "failed" });
+    await expect(executor.collectResult(handle)).rejects.toThrow();
   });
 });
 
