@@ -180,12 +180,33 @@ describe("watch rendering", () => {
     expect(renderWatch({ ...screen, confirming: true })).toContain(
       "Haiku call per Claude profile. y/N",
     );
-    expect(
-      renderWatch({ ...screen, columns: 40 })
-        .split("\n")
-        .every((line) => line.length <= 40 || line.startsWith(ANSI.clear)),
-    ).toBe(true);
   });
+
+  it("homes each frame, erases every line and clears the remainder without a trailing newline", () => {
+    const output = renderWatch(screen);
+    expect(output.startsWith("\x1b[HWorkers")).toBe(true);
+    expect(output).not.toContain("\x1b[2J");
+    expect(output.endsWith("\x1b[K\x1b[J")).toBe(true);
+    for (const line of output.slice(0, -ANSI.eraseRest.length).split("\n")) {
+      expect(line.endsWith("\x1b[K")).toBe(true);
+    }
+  });
+
+  it.each([1, 6, 19, 40, 160])(
+    "fits all visible lines to %s columns including coloured errors",
+    (columns) => {
+      const output = renderWatch({
+        ...screen,
+        columns,
+        workers: { available: false, reason: "offline ".repeat(40) },
+        quota: { available: false, reason: "offline ".repeat(40) },
+        confirming: true,
+      });
+      const plain = Object.values(ANSI).reduce((text, code) => text.replaceAll(code, ""), output);
+      expect(plain.split("\n").every((line) => line.length <= columns)).toBe(true);
+      expect(plain).toContain("…");
+    },
+  );
 
   it("validates interval input", () => {
     expect(watchInterval([])).toBe(5000);
@@ -197,18 +218,27 @@ describe("watch rendering", () => {
 
 afterEach(() => vi.useRealTimers());
 
-function harness(run: Runner) {
+function harness(run: Runner, signal?: AbortSignal, write?: (s: string) => void) {
+  let resize: (() => void) | undefined;
+  let columns = 160;
   let key: ((key: string) => void) | undefined;
   const writes: string[] = [];
   const raw: boolean[] = [];
   const terminal: WatchTerminal = {
     write: (s) => {
+      write?.(s);
       writes.push(s);
     },
     setRawMode: (b) => {
       raw.push(b);
     },
-    columns: () => 160,
+    columns: () => columns,
+    onResize: (listener) => {
+      resize = listener;
+      return () => {
+        resize = undefined;
+      };
+    },
     onKey: (listener) => {
       key = listener;
       return () => {
@@ -218,18 +248,90 @@ function harness(run: Runner) {
   };
   const done = runWatch({
     run,
+    ...(signal ? { signal } : {}),
     terminal,
     intervalMs: 5000,
     target: { viaWslExe: true, distro: "test", repoDir: "/test" },
     profiles,
     settings: QUOTA_SETTINGS,
   });
-  return { writes, raw, key: (s: string) => key?.(s), done };
+  return {
+    writes,
+    raw,
+    key: (s: string) => key?.(s),
+    done,
+    resize: (width: number) => {
+      columns = width;
+      resize?.();
+    },
+    hasListeners: () => key !== undefined || resize !== undefined,
+  };
 }
 
 const isQuota = (c: Command) => c.input?.includes("account/rateLimits/read") === true;
 
 describe("watch polling and terminal lifecycle", () => {
+  it.each(["q", "\u0003", "abort", "already aborted"])(
+    "restores the terminal on %s",
+    async (exit) => {
+      vi.useFakeTimers();
+      const controller = new AbortController();
+      if (exit === "already aborted") controller.abort();
+      const h = harness(() => new Promise(() => {}), controller.signal);
+      expect(h.writes[0]).toBe(`${ANSI.enter}${ANSI.hide}`);
+      if (exit === "abort") controller.abort();
+      else if (exit !== "already aborted") h.key(exit);
+      await h.done;
+      expect(h.raw).toEqual([true, false]);
+      expect(h.writes.at(-1)).toBe(`${ANSI.reset}${ANSI.exit}${ANSI.show}`);
+      expect(h.hasListeners()).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("redraws immediately at the resized width and removes the resize listener on exit", async () => {
+    vi.useFakeTimers();
+    const h = harness(() => new Promise(() => {}));
+    const before = h.writes.length;
+    h.resize(19);
+    expect(h.writes).toHaveLength(before + 1);
+    expect(h.writes.at(-1)).toBe(renderWatch({ ...screen, workers: null, columns: 19 }));
+    h.key("q");
+    await h.done;
+    const stopped = h.writes.length;
+    h.resize(80);
+    expect(h.writes).toHaveLength(stopped);
+  });
+
+  it.each(["initial draw", "resize draw", "refresh draw"])(
+    "restores the terminal after a failed %s",
+    async (failure) => {
+      vi.useFakeTimers();
+      let broken = failure === "initial draw";
+      const h = harness(
+        () =>
+          failure === "refresh draw"
+            ? Promise.resolve({ code: 127, stdout: "", stderr: "offline" })
+            : new Promise(() => {}),
+        undefined,
+        (text) => {
+          if (broken && text.startsWith(ANSI.clear)) throw new Error("draw failed");
+        },
+      );
+      const rejected = expect(h.done).rejects.toThrow("failed");
+      if (failure === "refresh draw") broken = true;
+      if (failure === "resize draw") {
+        broken = true;
+        h.resize(40);
+      }
+      await rejected;
+      expect(h.raw).toEqual([true, false]);
+      expect(h.writes.at(-1)).toBe(`${ANSI.reset}${ANSI.exit}${ANSI.show}`);
+      expect(h.hasListeners()).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
   it("retries WSL errors, polls workers at interval and quota at 60s without probing", async () => {
     vi.useFakeTimers();
     const commands: Command[] = [];

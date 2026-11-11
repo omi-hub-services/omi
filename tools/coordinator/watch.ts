@@ -21,7 +21,11 @@ import {
 import type { Workers } from "./wsl-workers.ts";
 
 export const ANSI = {
-  clear: "\x1b[2J\x1b[H",
+  clear: "\x1b[H",
+  enter: "\x1b[?1049h",
+  exit: "\x1b[?1049l",
+  eraseLine: "\x1b[K",
+  eraseRest: "\x1b[J",
   hide: "\x1b[?25l",
   show: "\x1b[?25h",
   reset: "\x1b[0m",
@@ -56,15 +60,15 @@ export interface WatchScreen {
 
 /** Pure: all data, current time, settings and terminal width are explicit inputs. */
 export function renderWatch(screen: WatchScreen): string {
-  const width = Math.max(20, screen.columns ?? 160);
+  const width = Math.max(1, screen.columns ?? 160);
   const fit = (s: string) => (s.length > width ? `${s.slice(0, width - 1)}…` : s);
-  const out = ["Workers"];
+  const out = [fit("Workers")];
   const workers = screen.workers;
-  if (!workers) out.push("  Loading…");
+  if (!workers) out.push(fit("  Loading…"));
   else if (!workers.available)
     out.push(paint(fit(`  WSL unavailable: ${clean(workers.reason)} (retrying)`), ANSI.red));
   else {
-    if (workers.processes.length === 0) out.push("  (none)");
+    if (workers.processes.length === 0) out.push(fit("  (none)"));
     for (const p of workers.processes) {
       const tone = workerTone(p.log);
       const colour = tone === "error" ? ANSI.red : tone === "done" ? ANSI.grey : "";
@@ -129,7 +133,7 @@ export function renderWatch(screen: WatchScreen): string {
           : "p probe quota (confirmation required) · q quit",
     ),
   );
-  return `${ANSI.clear}${out.join("\n")}\n`;
+  return `${ANSI.clear}${out.map((line) => `${line}${ANSI.eraseLine}`).join("\n")}${ANSI.eraseRest}`;
 }
 
 export function watchInterval(args: readonly string[]): number {
@@ -148,6 +152,7 @@ export interface WatchTerminal {
   write(text: string): void;
   setRawMode(enabled: boolean): void;
   onKey(listener: (key: string) => void): () => void;
+  onResize(listener: () => void): () => void;
   columns(): number;
 }
 
@@ -163,24 +168,34 @@ export interface WatchOptions {
 
 /** Polling lives in watch-core.ts; this wires it to a terminal. */
 export function runWatch(options: WatchOptions): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const { terminal, target, profiles, settings } = options;
     let stopped = false;
     let confirming = false;
+    let removeKey = () => {};
+    let removeResize = () => {};
+    const fail = (error: unknown) => {
+      reject(error instanceof Error ? error : new Error(String(error)));
+      stop();
+    };
     const draw = () => {
-      if (!stopped)
-        terminal.write(
-          renderWatch({
-            workers: poller.workers,
-            quota: poller.quota,
-            confirming,
-            probing: poller.probing,
-            now: Date.now() / 1000,
-            settings,
-            profiles,
-            columns: terminal.columns(),
-          }),
-        );
+      try {
+        if (!stopped)
+          terminal.write(
+            renderWatch({
+              workers: poller.workers,
+              quota: poller.quota,
+              confirming,
+              probing: poller.probing,
+              now: Date.now() / 1000,
+              settings,
+              profiles,
+              columns: terminal.columns(),
+            }),
+          );
+      } catch (error) {
+        fail(error);
+      }
     };
     const poller = createWatchPoller({
       run: options.run,
@@ -197,31 +212,37 @@ export function runWatch(options: WatchOptions): Promise<void> {
       clearInterval(ageTimer);
       poller.stop();
       removeKey();
+      removeResize();
       options.signal?.removeEventListener("abort", stop);
       terminal.setRawMode(false);
-      terminal.write(`${ANSI.reset}${ANSI.show}\n`);
+      terminal.write(`${ANSI.reset}${ANSI.exit}${ANSI.show}`);
       resolve();
     };
-    const removeKey = terminal.onKey((key) => {
-      if (key === "q" || key === "\u0003") {
+    try {
+      removeKey = terminal.onKey((key) => {
+        if (key === "q" || key === "\u0003") {
+          stop();
+          return;
+        }
+        if (confirming) {
+          confirming = false;
+          if (key.toLowerCase() === "y") poller.probe();
+        } else if (key === "p" && !poller.probing && !poller.probeQueued) confirming = true;
+        draw();
+      });
+      removeResize = terminal.onResize(draw);
+      options.signal?.addEventListener("abort", stop, { once: true });
+      terminal.setRawMode(true);
+      terminal.write(`${ANSI.enter}${ANSI.hide}`);
+      draw();
+      if (options.signal?.aborted) {
         stop();
         return;
       }
-      if (confirming) {
-        confirming = false;
-        if (key.toLowerCase() === "y") poller.probe();
-      } else if (key === "p" && !poller.probing && !poller.probeQueued) confirming = true;
-      draw();
-    });
-    options.signal?.addEventListener("abort", stop, { once: true });
-    terminal.setRawMode(true);
-    terminal.write(ANSI.hide);
-    draw();
-    if (options.signal?.aborted) {
-      stop();
-      return;
+      poller.start();
+    } catch (error) {
+      fail(error);
     }
-    poller.start();
   });
 }
 
@@ -253,6 +274,12 @@ async function main(): Promise<void> {
           process.stdin.setRawMode(enabled);
         },
         columns: () => process.stdout.columns,
+        onResize: (listener) => {
+          process.stdout.on("resize", listener);
+          return () => {
+            process.stdout.off("resize", listener);
+          };
+        },
         onKey: (listener) => {
           const onKey = (text: string | undefined, key: { name?: string; ctrl?: boolean }) => {
             listener(key.ctrl && key.name === "c" ? "\u0003" : (text ?? key.name ?? ""));
@@ -270,7 +297,7 @@ async function main(): Promise<void> {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
     process.stdin.setRawMode(wasRaw);
-    process.stdout.write(`${ANSI.reset}${ANSI.show}`);
+    process.stdout.write(`${ANSI.reset}${ANSI.exit}${ANSI.show}`);
   }
 }
 
