@@ -1,0 +1,1 @@
+[claude-code:unrecognized_model] omi-nonexistent-model-0

@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000a1","cwd":"/tmp/omi-fixture-workspace","model":"claude-opus-5-5","permissionMode":"dontAsk","apiKeySource":"none","tools":["Glob","Grep","Read"],"effort":"high"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":800,"num_turns":1,"result":"ok","session_id":"00000000-0000-4000-8000-0000000000a1"}
