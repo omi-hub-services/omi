@@ -84,3 +84,77 @@ for the effort mapping, probe gate and remaining live-validation decisions.
 - Claude Code worker: `OMI_LIVE_CLAUDE_CONFIG_DIR=$HOME/.claude-profiles/<id> npm run test:live`,
   then read `.tmp/live/omi-002-claude-subscription-evidence.json` and update the rows above with
   the date and versions it records. Never paste the raw event stream or auth output here.
+
+## Release PO approval gate (OMI-038)
+
+`checkReleaseMerge` is a read-only application gate for the release PR `develop` → `main`.
+The trusted release workflow supplies the repository, PR number, expected head SHA, PO login
+allowlist and required check names. Native reviews come from the existing task-delivery reader:
+the latest decisive review per human identity counts, only on the current head, excluding both
+the author and runtime credential identity. A PO review cannot be replaced by an ordinary
+reviewer, an approval comment or worker JSON. A push makes an older PO review stale even when
+GitHub retains its approval. Workflow, active ruleset and classic branch-protection check names
+are combined; the highest native approval count applies, with a minimum of one.
+
+Unavailable/malformed reviews, rulesets, checks, PR state or permission data return typed
+refusals. Classic branch protection is read separately because the branch-rules API reports
+rulesets. Its REST endpoint requires Administration (read) for fine-grained tokens
+([GitHub documentation](https://docs.github.com/en/rest/branches/branch-protection#get-branch-protection)).
+An ambiguous protection 404 fails closed, including for repository admins whose credential
+may have narrower scopes. Thus a ruleset-only branch without readable classic protection is
+refused even if GitHub would allow its merge. Configure readable classic protection alongside
+rulesets for this gate. Classic push restrictions require an explicitly
+listed user; team/app membership is not inferred. Locked branches, missing write permission and
+non-clean mergeability refuse. These conservative refusals never request a bypass.
+
+The result is a snapshot, not a stored authorization. Re-run immediately before a merge and use
+the expected SHA as GitHub's merge guard. This task adds no release merge write path; the task
+merge outbox remains restricted to `develop`. GitHub remains authoritative for restrictions and
+credential scopes at the eventual merge. Live merge attempts and server refusal responses are
+not exercised by the read-only probe below.
+
+### Opt-in sandbox verification
+
+After PO authorization, prepare a repository whose name contains `sandbox`, distinct from
+`omi-hub-services/omi`, with an open `develop` → `main` release PR. Configure native required
+reviews and at least one required check on `main`; checks must be green on the head. Use a
+logged-in `gh` runtime account distinct from the PR author/PO as appropriate, with repository
+write access and readable reviews, rulesets and classic protection. No token belongs in the config or evidence.
+
+Create an untracked JSON config outside source, for example `.tmp/live/release-config.json`:
+
+```json
+{
+  "scenario": "approved",
+  "request": {
+    "repository": "example/omi-sandbox",
+    "prNumber": 5,
+    "expectedHeadSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "poActors": ["example-po"],
+    "requiredChecks": ["ci"]
+  }
+}
+```
+
+Select the file directly (do not run the whole live suite):
+
+```sh
+OMI_LIVE_RELEASE_CONFIG=.tmp/live/release-config.json npx vitest run tests/live/github/release-approval.test.ts
+```
+
+Run the same read-only probe against three manually prepared snapshots, updating config each time:
+
+- `missing-po`: no approving reviews, green checks; verifies GitHub reports native mergeability
+  `blocked` and the gate refuses missing PO approval.
+- `approved`: the distinct PO submitted a native review on the exact current head; the gate permits.
+- `stale-po`: push a new head without a new PO review and update `expectedHeadSha`. Keep the old
+  PO review visible (disable GitHub's automatic stale-review dismissal for this sandbox phase);
+  the gate refuses `PO_APPROVAL_STALE` even if GitHub retains approval. If GitHub dismisses the
+  review instead, use `missing-po` after preparing a snapshot with no `APPROVED` reviews.
+
+Every scenario also verifies that a mismatched expected head refuses. The probe enforces GET-only
+access to the sandbox and `/user`, never submits a review or merge, skips when the environment
+variable is unset, and fails for an empty/invalid explicit config. Evidence is written to
+`.tmp/live/omi-038-release-approval-evidence.json` (copy it between phases if retaining all runs).
+It is outside `npm run check` and default CI. Contract tests exercise the same adapter through
+`tests/contract/github/fake-github.ts`, including missing permissions and classic restrictions.
