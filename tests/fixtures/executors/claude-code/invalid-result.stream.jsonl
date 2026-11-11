@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000a1","cwd":"/tmp/omi-fixture-workspace","model":"claude-sonnet-5-5","permissionMode":"dontAsk","apiKeySource":"none","tools":["Glob","Grep","Read"]}
+{"type":"result","subtype":"success","result":"no is_error field"}

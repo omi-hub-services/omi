@@ -1,0 +1,13 @@
+{
+  "analyticsDisabled": false,
+  "apiProvider": "firstParty",
+  "authMethod": "api_key",
+  "configDirectory": "/home/fixture/.claude-profiles/x",
+  "email": "fixture-user@example.invalid",
+  "loggedIn": true,
+  "orgId": "00000000-0000-4000-8000-0000000000c1",
+  "orgName": "Fixture Org",
+  "planTier": "pro",
+  "projectsDirectory": "/home/fixture/.claude-profiles/x/projects",
+  "storedClaudeAiLogin": true
+}
