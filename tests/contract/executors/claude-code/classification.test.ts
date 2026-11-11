@@ -50,6 +50,14 @@ describe("success", () => {
     expect(summary.quota).toMatchObject({ status: "allowed", limitType: "five_hour" });
   });
 
+  it("reads the recorded (OMI-004) rate-limit event shape as an allowed five_hour signal", () => {
+    const state = new ClaudeStreamState();
+    const drafts = state.ingest(fixture("rate-limit-allowed-recorded.jsonl").trim());
+    expect(drafts).toEqual([
+      { kind: "quota-signal", status: "allowed", limitType: "five_hour", resetsAt: 1794395400 },
+    ]);
+  });
+
   it("is not misread as a limit because the answer talks about limits", () => {
     const stdout = fixture("success.stream.jsonl").replace(
       "The codename is BLUE-HERON-42.",
