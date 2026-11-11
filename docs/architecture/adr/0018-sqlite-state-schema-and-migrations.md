@@ -68,6 +68,29 @@
    `last_error`. A row with a state outside the list makes the whole migration roll back; nothing
    is rewritten or guessed. The decision and the state machine are in ADR-0025.
 
+## Additive registry and attempt settings (OMI-015, Issue #18)
+
+Migration `0006-profile-registry.sql` extends existing tables; it adds no dependency or module.
+`profile_observations.metadata_json` is a strict, validated metadata snapshot. Existing rows stay
+unchanged with NULL metadata and remain observation history, not registered profiles. New snapshots
+keep the existing availability/cooldown columns consistent with the metadata. The latest snapshot
+by observation ID is authoritative even if a clock moves backwards. Registry saves compare the
+expected observation ID before appending, so an in-flight probe cannot overwrite a newer disable
+or cooldown. Tool, profile directory and account group identity are immutable after registration.
+Only one Codex profile may be registered (PO decision 2026-11-11).
+
+Selection reads registered profiles and counts pending/running attempts in the same short
+`BEGIN IMMEDIATE` transaction that inserts the selected pending attempt. This reserves both profile
+and account-group capacity across connections. Waiting creates no attempt. Step lifecycle and
+writer-stop fencing remain the responsibility of the run use cases, not this registry adapter.
+
+`agent_attempts.model_id` is the chosen CLI model. `chosen_effort`, `actual_model` and
+`actual_effort` are additive nullable columns; legacy NULLs mean unknown. New selections always
+write chosen model/effort. `ExecutorSelectionStore.recordResult` checks the attempt, tool and
+requested settings against the reservation before recording only reported actual settings.
+Unreported actual settings remain NULL, and conflicting replays are refused. It does not store
+prompts, transcripts, auth data or raw result diagnostics, nor does it mark attempts terminal.
+
 ## Consequences
 
 - An applied migration is never edited; schema changes go in a new numbered file.

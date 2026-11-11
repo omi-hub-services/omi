@@ -267,11 +267,17 @@ Codex có `codex exec`, JSON output/schema và sử dụng auth CLI đã lưu. C
 
 ### Profile registry và selection
 
-Registry local chứa `profileId`, `tool`, `authMode=subscription`, `credentialRef`, `accountGroupId`, `modelAllowlist`, `lastProbeAt`, `availability`, `cooldownUntil`, `maxConcurrency`; không chứa token. Các profile của cùng tài khoản chia sẻ nhóm hạn mức, không tính như nguồn quota độc lập.
+Registry local chứa `profileId`, `tool`, `authMode=subscription`, `credentialRef`, `accountGroupId`, `modelAllowlist`, `lastProbeAt`, `availability`, `cooldownUntil`, `maxConcurrency`, `accountGroupMaxConcurrency`, `probeTtlMs`, `preference`; không chứa token. `credentialRef` chỉ là đường dẫn thư mục profile cô lập, không phải file auth. `modelAllowlist` chứa tên model truyền cho CLI đã được kiểm chứng, còn `verified_models` trong models.yaml xác minh alias cho capability profile; selector yêu cầu cả hai. Các profile của cùng tài khoản chia sẻ nhóm hạn mức, không tính như nguồn quota độc lập.
 
 Các trạng thái: `unknown`, `ready`, `busy`, `cooldown`, `login-required`, `unavailable`, `disabled`. Probe có TTL; không hứa đọc được quota còn lại hoặc model list đầy đủ. Nếu CLI không expose dữ liệu, dùng cấu hình đã kiểm chứng và lỗi thực tế; unknown không được hiển thị như ready.
 
 Chọn executor theo thứ tự: khả dụng → đáp ứng capability tối thiểu → không vượt limit đồng thời → preference cấu hình → độ bận. Không suy ra năng lực chỉ từ tên model. Capability profile do project duy trì và PoC xác minh.
+
+Capability profile trong models.yaml có thể khai báo `required_executor`; selector cũng nhận `requiredExecutor` tùy chọn từ step và từ chối nếu mâu thuẫn với profile. Không có yêu cầu tool thì cho phép cross-tool failover. Quyết định PO 2026-11-11: chỉ một profile Codex; Codex bị giới hạn và step bắt buộc Codex thì `waiting_resource`, nếu không có thể chọn Claude thỏa cùng minimum. Kết quả không có tổ hợp phù hợp luôn kèm lý do.
+
+Registry lưu snapshot nối tiếp trong `profile_observations` (migration 0006); snapshot mới nhất theo ID là cấu hình hiện hành. Observation cũ không có metadata không tự trở thành profile ready. `observedProfile` chiếu TTL hết hạn, chưa probe và cooldown hết hạn thành unknown; login-required giữ nguyên. Probe auth/version không xác minh quota hoặc thêm model vào allowlist, không xóa cooldown đang hiệu lực, và CAS revision chặn kết quả probe muộn ghi đè disable/cooldown.
+
+Selection và tạo pending attempt diễn ra trong một transaction ngắn `BEGIN IMMEDIATE`. Pending và running attempt cùng chiếm slot; account group cộng theo profile, không theo số model alias. Nếu các profile cùng group cấu hình trần khác nhau, dùng trần nhỏ nhất. Lifecycle của run chịu trách nhiệm chuyển attempt sang terminal khi đã xác nhận worker dừng; ghi actual model/effort chỉ ghi sự kiện CLI báo, không giải phóng slot. Attempt mới khi failover giữ minimum từ capability profile, không sửa lựa chọn của attempt cũ. Chưa có dispatcher trong phạm vi registry này.
 
 ### Failover subscription
 
@@ -295,11 +301,11 @@ Kết quả PoC (ADR-0031, OMI-004): hai profile Claude tách namespace config/c
 | `task_dependencies` | Predecessor/successor, nguồn, revision |
 | `workflow_runs` | Task, template hash, status, quality phase, failure count |
 | `step_runs` | Run, step key, status, input hash, output ref |
-| `agent_attempts` | Step, executor/model/profile ID, status, process reference |
+| `agent_attempts` | Step, executor/model/profile ID, chosen effort, actual model/effort nếu CLI báo, status, process reference |
 | `checkpoints` | Run/step, manifest path, hash, git revision, snapshot kind |
 | `artifacts` | Relative path, hash, producer attempt, classification |
 | `approvals` | Kind, subject hash, actor, channel, decision, revision |
-| `profile_observations` | Metadata availability/cooldown; không credential |
+| `profile_observations` | Lịch sử availability/cooldown và snapshot registry `metadata_json`; không token hay nội dung credential |
 | `leases` | Resource key, owner, fencing generation, expiry |
 | `outbox` | Operation key, payload ref, state (`pending`, `in_flight`, `outcome_unknown`, `succeeded`, `failed`; CHECK ở migration 0004), remote identity, `next_attempt_at`, `last_error` |
 | `events` | Append-only audit, sequence, causation/correlation IDs |

@@ -8,6 +8,8 @@ export interface ExecutorCandidate {
   readonly executor: string;
   /** Model alias from `models.yaml`. */
   readonly modelAlias: string;
+  readonly model: string;
+  readonly modelAllowlist: readonly string[];
   readonly profileId: string;
   /** Profiles of one account share a quota; a cooldown on the group hits all of them. */
   readonly accountGroupId: string;
@@ -17,10 +19,19 @@ export interface ExecutorCandidate {
   readonly verifiedForCapability: boolean;
   /** Configured preference, lower is preferred. Only ranks candidates that qualify. */
   readonly preference: number;
+  readonly probeTtlMs?: number;
+  readonly accountGroupActiveWorkers: number;
+  readonly accountGroupMaxConcurrency: number;
 }
 
 export type CandidateRejection =
-  UnavailableReason | "ACCOUNT_GROUP_IN_COOLDOWN" | "MODEL_NOT_VERIFIED" | "EFFORT_BELOW_MINIMUM";
+  | UnavailableReason
+  | "ACCOUNT_GROUP_IN_COOLDOWN"
+  | "MODEL_NOT_VERIFIED"
+  | "EFFORT_BELOW_MINIMUM"
+  | "MODEL_NOT_ALLOWLISTED"
+  | "ACCOUNT_GROUP_AT_CONCURRENCY_LIMIT"
+  | "REQUIRED_EXECUTOR_MISMATCH";
 
 export interface SelectionInput {
   readonly requirement: CapabilityRequirement;
@@ -29,6 +40,7 @@ export interface SelectionInput {
   readonly cooldownAccountGroups: ReadonlySet<string>;
   readonly now: number;
   readonly probeTtlMs: number;
+  readonly requiredExecutor?: string;
 }
 
 export type SelectionResult =
@@ -61,15 +73,22 @@ export function selectExecutor(input: SelectionInput): SelectionResult {
     const availability = evaluateProfileAvailability(
       candidate.profile,
       input.now,
-      input.probeTtlMs,
+      candidate.probeTtlMs ?? input.probeTtlMs,
     );
     if (!availability.allowed) reasons.push(...availability.reasons);
     if (input.cooldownAccountGroups.has(candidate.accountGroupId)) {
       reasons.push("ACCOUNT_GROUP_IN_COOLDOWN");
     }
     if (!candidate.verifiedForCapability) reasons.push("MODEL_NOT_VERIFIED");
+    if (!candidate.modelAllowlist.includes(candidate.model)) reasons.push("MODEL_NOT_ALLOWLISTED");
+    if (input.requiredExecutor !== undefined && input.requiredExecutor !== candidate.executor) {
+      reasons.push("REQUIRED_EXECUTOR_MISMATCH");
+    }
     const effort = lowestSatisfyingEffort(input.requirement, candidate.supportedEfforts);
     if (effort === undefined) reasons.push("EFFORT_BELOW_MINIMUM");
+    if (candidate.accountGroupActiveWorkers >= candidate.accountGroupMaxConcurrency) {
+      reasons.push("ACCOUNT_GROUP_AT_CONCURRENCY_LIMIT");
+    }
 
     if (reasons.length === 0 && effort !== undefined) {
       qualifying.push({ candidate, effort });

@@ -212,9 +212,10 @@ fake `claude` whose behaviour is chosen by `CLAUDE_CONFIG_DIR`:
 
 ## Open decisions (PO)
 
-1. **Codex failover:** provide a second Codex account/profile, accept cross-tool failover to
-   Claude for Codex steps, or accept `waiting_resource` for Codex steps. Until then, Codex
-   profile-to-profile failover stays not proven.
+1. **Codex failover — settled by PO 2026-11-11 (OMI-004 close):** keep one Codex profile.
+   When it is limited, a step that requires Codex waits in `waiting_resource` until quota is back;
+   other steps may fail over to a Claude profile that meets the same capability minimum.
+   Codex profile-to-profile failover remains unproven and is not attempted.
 2. **Real-limit live run:** whether to spend a deliberately exhausted profile on one end-to-end
    run with `OMI_LIVE_INJECT_LIMIT=0`, or to accept the fixture-based classification plus run C.
 3. **Per-model limits:** accept that a per-model weekly limit is visible only as a rejection (no
