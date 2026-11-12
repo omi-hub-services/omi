@@ -1,0 +1,1810 @@
+{
+  "method": "Declared SVG label boxes with explicit textLength; connector segment boxes padded 3.5 viewBox units, arrowhead bounding boxes",
+  "diagrams": 9,
+  "labelBoxes": 95,
+  "connectorParts": 128,
+  "overlaps": 0,
+  "orthogonal": true,
+  "negativeControl": "deliberate crossing detected",
+  "browserGetBBox": false,
+  "items": [
+    {
+      "task": "OMI-201",
+      "labelBoxes": [
+        {
+          "text": "feature",
+          "x": 8,
+          "y": 2,
+          "w": 72,
+          "h": 20
+        },
+        {
+          "text": "✓ Analyze",
+          "x": 59,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "✓",
+          "x": 165,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Scope",
+          "x": 151,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "▶ Build",
+          "x": 209,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○ Verify",
+          "x": 315,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○ Review",
+          "x": 421,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○",
+          "x": 527,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Merge",
+          "x": 513,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        }
+      ],
+      "connectors": [
+        {
+          "kind": "segment",
+          "a": [141, 48],
+          "b": [156, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 151,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [185, 48],
+          "b": [200, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 195,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [291, 48],
+          "b": [306, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 301,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [397, 48],
+          "b": [412, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 407,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [503, 48],
+          "b": [518, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 513,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        }
+      ],
+      "collisions": []
+    },
+    {
+      "task": "OMI-202",
+      "labelBoxes": [
+        {
+          "text": "feature",
+          "x": 8,
+          "y": 2,
+          "w": 72,
+          "h": 20
+        },
+        {
+          "text": "✓ Analyze",
+          "x": 59,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "✓",
+          "x": 165,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Scope",
+          "x": 151,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "✓ Build",
+          "x": 209,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "▶ Verify",
+          "x": 315,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○ Review",
+          "x": 421,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○",
+          "x": 527,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Merge",
+          "x": 513,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        }
+      ],
+      "connectors": [
+        {
+          "kind": "segment",
+          "a": [141, 48],
+          "b": [156, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 151,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [185, 48],
+          "b": [200, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 195,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [291, 48],
+          "b": [306, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 301,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [397, 48],
+          "b": [412, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 407,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [503, 48],
+          "b": [518, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 513,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        }
+      ],
+      "collisions": []
+    },
+    {
+      "task": "OMI-203",
+      "labelBoxes": [
+        {
+          "text": "feature",
+          "x": 8,
+          "y": 2,
+          "w": 72,
+          "h": 20
+        },
+        {
+          "text": "✓ Analyze",
+          "x": 59,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "✓",
+          "x": 165,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Scope",
+          "x": 151,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "✓ Build",
+          "x": 209,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "✓ Verify",
+          "x": 315,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "▶ Review",
+          "x": 421,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○",
+          "x": 527,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Merge",
+          "x": 513,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "↶ 1 · prior",
+          "x": 305,
+          "y": 93,
+          "w": 96,
+          "h": 22
+        }
+      ],
+      "connectors": [
+        {
+          "kind": "segment",
+          "a": [141, 48],
+          "b": [156, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 151,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [185, 48],
+          "b": [200, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 195,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [291, 48],
+          "b": [306, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 301,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [397, 48],
+          "b": [412, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 407,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [503, 48],
+          "b": [518, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 513,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [459, 68],
+          "b": [459, 104],
+          "padding": 3.5,
+          "cls": "return history"
+        },
+        {
+          "kind": "segment",
+          "a": [459, 104],
+          "b": [412, 104],
+          "padding": 3.5,
+          "cls": "return history"
+        },
+        {
+          "kind": "segment",
+          "a": [294, 104],
+          "b": [247, 104],
+          "padding": 3.5,
+          "cls": "return history"
+        },
+        {
+          "kind": "segment",
+          "a": [247, 104],
+          "b": [247, 72],
+          "padding": 3.5,
+          "cls": "return history"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 243,
+            "y": 69,
+            "w": 8,
+            "h": 9
+          },
+          "cls": "return-head"
+        }
+      ],
+      "collisions": []
+    },
+    {
+      "task": "OMI-204",
+      "labelBoxes": [
+        {
+          "text": "feature",
+          "x": 8,
+          "y": 2,
+          "w": 72,
+          "h": 20
+        },
+        {
+          "text": "✓ Analyze",
+          "x": 59,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "✓",
+          "x": 165,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Scope",
+          "x": 151,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "▶ Build",
+          "x": 209,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○ Verify",
+          "x": 315,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "× Review",
+          "x": 421,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○",
+          "x": 527,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Merge",
+          "x": 513,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "↶ 1",
+          "x": 328,
+          "y": 93,
+          "w": 50,
+          "h": 22
+        }
+      ],
+      "connectors": [
+        {
+          "kind": "segment",
+          "a": [141, 48],
+          "b": [156, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 151,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [185, 48],
+          "b": [200, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 195,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [291, 48],
+          "b": [306, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 301,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [397, 48],
+          "b": [412, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 407,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [503, 48],
+          "b": [518, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 513,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [459, 68],
+          "b": [459, 104],
+          "padding": 3.5,
+          "cls": "return"
+        },
+        {
+          "kind": "segment",
+          "a": [459, 104],
+          "b": [389, 104],
+          "padding": 3.5,
+          "cls": "return"
+        },
+        {
+          "kind": "segment",
+          "a": [317, 104],
+          "b": [247, 104],
+          "padding": 3.5,
+          "cls": "return"
+        },
+        {
+          "kind": "segment",
+          "a": [247, 104],
+          "b": [247, 72],
+          "padding": 3.5,
+          "cls": "return"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 243,
+            "y": 69,
+            "w": 8,
+            "h": 9
+          },
+          "cls": "return-head"
+        }
+      ],
+      "collisions": []
+    },
+    {
+      "task": "OMI-092",
+      "labelBoxes": [
+        {
+          "text": "ui-ux",
+          "x": 8,
+          "y": 2,
+          "w": 72,
+          "h": 20
+        },
+        {
+          "text": "✓",
+          "x": 24,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "D·cost",
+          "x": 10,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "✓ Design",
+          "x": 68,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "Ⅱ",
+          "x": 174,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "D·ev",
+          "x": 160,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "○",
+          "x": 218,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "V·cost",
+          "x": 204,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "○ Verify",
+          "x": 262,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○",
+          "x": 368,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "V·ev",
+          "x": 354,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "○",
+          "x": 412,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "R·cost",
+          "x": 398,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "○ Review",
+          "x": 456,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○",
+          "x": 562,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Merge",
+          "x": 548,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        }
+      ],
+      "connectors": [
+        {
+          "kind": "segment",
+          "a": [44, 48],
+          "b": [59, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 54,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [150, 48],
+          "b": [165, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 160,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [194, 48],
+          "b": [209, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 204,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [238, 48],
+          "b": [253, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 248,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [344, 48],
+          "b": [359, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 354,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [388, 48],
+          "b": [403, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 398,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [432, 48],
+          "b": [447, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 442,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [538, 48],
+          "b": [553, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 548,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        }
+      ],
+      "collisions": []
+    },
+    {
+      "task": "OMI-205",
+      "labelBoxes": [
+        {
+          "text": "feature",
+          "x": 8,
+          "y": 2,
+          "w": 72,
+          "h": 20
+        },
+        {
+          "text": "✓ Analyze",
+          "x": 59,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "✓",
+          "x": 165,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Scope",
+          "x": 151,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "⊘ Build",
+          "x": 209,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○ Verify",
+          "x": 315,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○ Review",
+          "x": 421,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○",
+          "x": 527,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Merge",
+          "x": 513,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        }
+      ],
+      "connectors": [
+        {
+          "kind": "segment",
+          "a": [141, 48],
+          "b": [156, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 151,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [185, 48],
+          "b": [200, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 195,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [291, 48],
+          "b": [306, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 301,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [397, 48],
+          "b": [412, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 407,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [503, 48],
+          "b": [518, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 513,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        }
+      ],
+      "collisions": []
+    },
+    {
+      "task": "OMI-207",
+      "labelBoxes": [
+        {
+          "text": "feature",
+          "x": 8,
+          "y": 2,
+          "w": 72,
+          "h": 20
+        },
+        {
+          "text": "✓ Analyze",
+          "x": 59,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "✓",
+          "x": 165,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Scope",
+          "x": 151,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "○ Build",
+          "x": 209,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○ Verify",
+          "x": 315,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "× Review",
+          "x": 421,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○",
+          "x": 527,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Merge",
+          "x": 513,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "↶ 2",
+          "x": 328,
+          "y": 93,
+          "w": 50,
+          "h": 22
+        },
+        {
+          "text": "! Architect",
+          "x": 311,
+          "y": 134,
+          "w": 108,
+          "h": 24
+        }
+      ],
+      "connectors": [
+        {
+          "kind": "segment",
+          "a": [141, 48],
+          "b": [156, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 151,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [185, 48],
+          "b": [200, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 195,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [291, 48],
+          "b": [306, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 301,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [397, 48],
+          "b": [412, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 407,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [503, 48],
+          "b": [518, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 513,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [459, 68],
+          "b": [459, 104],
+          "padding": 3.5,
+          "cls": "return"
+        },
+        {
+          "kind": "segment",
+          "a": [459, 104],
+          "b": [389, 104],
+          "padding": 3.5,
+          "cls": "return"
+        },
+        {
+          "kind": "segment",
+          "a": [317, 104],
+          "b": [247, 104],
+          "padding": 3.5,
+          "cls": "return"
+        },
+        {
+          "kind": "segment",
+          "a": [247, 104],
+          "b": [247, 72],
+          "padding": 3.5,
+          "cls": "return"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 243,
+            "y": 69,
+            "w": 8,
+            "h": 9
+          },
+          "cls": "return-head"
+        },
+        {
+          "kind": "segment",
+          "a": [489, 68],
+          "b": [489, 96],
+          "padding": 3.5,
+          "cls": "branch"
+        },
+        {
+          "kind": "segment",
+          "a": [489, 96],
+          "b": [570, 96],
+          "padding": 3.5,
+          "cls": "branch"
+        },
+        {
+          "kind": "segment",
+          "a": [570, 96],
+          "b": [570, 145],
+          "padding": 3.5,
+          "cls": "branch"
+        },
+        {
+          "kind": "segment",
+          "a": [570, 145],
+          "b": [433, 145],
+          "padding": 3.5,
+          "cls": "branch"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 431,
+            "y": 141,
+            "w": 8,
+            "h": 8
+          },
+          "cls": "branch-head"
+        }
+      ],
+      "collisions": []
+    },
+    {
+      "task": "OMI-208",
+      "labelBoxes": [
+        {
+          "text": "feature",
+          "x": 8,
+          "y": 2,
+          "w": 72,
+          "h": 20
+        },
+        {
+          "text": "▶ Analyze",
+          "x": 59,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○",
+          "x": 165,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Scope",
+          "x": 151,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "○ Build",
+          "x": 209,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○ Verify",
+          "x": 315,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○ Review",
+          "x": 421,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○",
+          "x": 527,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Merge",
+          "x": 513,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        }
+      ],
+      "connectors": [
+        {
+          "kind": "segment",
+          "a": [141, 48],
+          "b": [156, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 151,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [185, 48],
+          "b": [200, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 195,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [291, 48],
+          "b": [306, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 301,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [397, 48],
+          "b": [412, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 407,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [503, 48],
+          "b": [518, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 513,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        }
+      ],
+      "collisions": []
+    },
+    {
+      "task": "OMI-209",
+      "labelBoxes": [
+        {
+          "text": "feature",
+          "x": 8,
+          "y": 2,
+          "w": 72,
+          "h": 20
+        },
+        {
+          "text": "✓ Analyze",
+          "x": 59,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "✓",
+          "x": 165,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Scope",
+          "x": 151,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "○ Build",
+          "x": 209,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○ Verify",
+          "x": 315,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "× Review",
+          "x": 421,
+          "y": 37,
+          "w": 76,
+          "h": 24
+        },
+        {
+          "text": "○",
+          "x": 527,
+          "y": 38,
+          "w": 14,
+          "h": 22
+        },
+        {
+          "text": "Merge",
+          "x": 513,
+          "y": 69,
+          "w": 42,
+          "h": 20
+        },
+        {
+          "text": "↶ 4",
+          "x": 328,
+          "y": 93,
+          "w": 50,
+          "h": 22
+        },
+        {
+          "text": "! Architect",
+          "x": 311,
+          "y": 134,
+          "w": 108,
+          "h": 24
+        },
+        {
+          "text": "? Ask PO",
+          "x": 138,
+          "y": 134,
+          "w": 92,
+          "h": 24
+        }
+      ],
+      "connectors": [
+        {
+          "kind": "segment",
+          "a": [141, 48],
+          "b": [156, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 151,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [185, 48],
+          "b": [200, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 195,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [291, 48],
+          "b": [306, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 301,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [397, 48],
+          "b": [412, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 407,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [503, 48],
+          "b": [518, 48],
+          "padding": 3.5,
+          "cls": "forward"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 513,
+            "y": 44,
+            "w": 8,
+            "h": 8
+          },
+          "cls": ""
+        },
+        {
+          "kind": "segment",
+          "a": [459, 68],
+          "b": [459, 104],
+          "padding": 3.5,
+          "cls": "return"
+        },
+        {
+          "kind": "segment",
+          "a": [459, 104],
+          "b": [389, 104],
+          "padding": 3.5,
+          "cls": "return"
+        },
+        {
+          "kind": "segment",
+          "a": [317, 104],
+          "b": [247, 104],
+          "padding": 3.5,
+          "cls": "return"
+        },
+        {
+          "kind": "segment",
+          "a": [247, 104],
+          "b": [247, 72],
+          "padding": 3.5,
+          "cls": "return"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 243,
+            "y": 69,
+            "w": 8,
+            "h": 9
+          },
+          "cls": "return-head"
+        },
+        {
+          "kind": "segment",
+          "a": [489, 68],
+          "b": [489, 96],
+          "padding": 3.5,
+          "cls": "branch"
+        },
+        {
+          "kind": "segment",
+          "a": [489, 96],
+          "b": [570, 96],
+          "padding": 3.5,
+          "cls": "branch"
+        },
+        {
+          "kind": "segment",
+          "a": [570, 96],
+          "b": [570, 145],
+          "padding": 3.5,
+          "cls": "branch"
+        },
+        {
+          "kind": "segment",
+          "a": [570, 145],
+          "b": [433, 145],
+          "padding": 3.5,
+          "cls": "branch"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 431,
+            "y": 141,
+            "w": 8,
+            "h": 8
+          },
+          "cls": "branch-head"
+        },
+        {
+          "kind": "segment",
+          "a": [300, 145],
+          "b": [241, 145],
+          "padding": 3.5,
+          "cls": "ask-edge"
+        },
+        {
+          "kind": "arrowhead",
+          "box": {
+            "x": 239,
+            "y": 141,
+            "w": 8,
+            "h": 8
+          },
+          "cls": "ask-head"
+        }
+      ],
+      "collisions": []
+    }
+  ]
+}
