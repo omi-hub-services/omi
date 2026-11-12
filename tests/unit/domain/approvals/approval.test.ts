@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  approvalSubjectHash,
   APPROVAL_RULES,
   APPROVAL_STATUSES,
   transitionApproval,
@@ -284,5 +285,31 @@ describe("approval lifecycle", () => {
     expect(transitionApproval("approved", events.invalidate)).toMatchObject({
       to: "invalidated",
     });
+  });
+});
+
+describe("deploy request revision", () => {
+  const subject = {
+    kind: "deploy",
+    artifactDigest: "sha256:1",
+    environment: "production",
+  } as const;
+
+  it("changes when the environment changes", () => {
+    expect(approvalSubjectHash(subject)).not.toBe(
+      approvalSubjectHash({ ...subject, environment: "staging" }),
+    );
+  });
+
+  it("changes when the artifact changes", () => {
+    expect(approvalSubjectHash(subject)).not.toBe(
+      approvalSubjectHash({ ...subject, artifactDigest: "sha256:2" }),
+    );
+  });
+
+  it("encodes both fields without delimiter collisions", () => {
+    expect(approvalSubjectHash({ ...subject, artifactDigest: "a:b", environment: "c" })).not.toBe(
+      approvalSubjectHash({ ...subject, artifactDigest: "a", environment: "b:c" }),
+    );
   });
 });

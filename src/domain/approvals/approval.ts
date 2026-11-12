@@ -137,6 +137,6 @@ export function approvalSubjectHash(subject: ApprovalSubject): string {
     case "release":
       return subject.headSha;
     case "deploy":
-      return subject.artifactDigest;
+      return JSON.stringify([subject.artifactDigest, subject.environment]);
   }
 }
