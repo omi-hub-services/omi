@@ -3,20 +3,11 @@ import type { ApprovalRequest } from "../../domain/approvals/approval.js";
 import { relativePathSchema } from "../contracts/identifiers.js";
 import { contextPacketSchema } from "../contracts/context.js";
 import { taskComplexitySchema } from "../contracts/task-complexity.js";
+import { DispatchPlanningError } from "./dispatch-planning-error.js";
+import type { DispatchPlanningRefusal } from "./dispatch-planning-error.js";
 import type { DispatchTask } from "./plan-step-dispatch.js";
 
-export type DispatchPlanningRefusal =
-  | "IMPLEMENTATION_MAP_EMPTY"
-  | "BUSINESS_APPROVAL_REQUIRED"
-  | "PLAN_KEY_REQUIRED"
-  | "TASK_NOT_FOUND";
-export class DispatchPlanningError extends Error {
-  readonly reason: DispatchPlanningRefusal;
-  constructor(reason: DispatchPlanningRefusal) {
-    super(reason);
-    this.reason = reason;
-  }
-}
+export { DispatchPlanningError, type DispatchPlanningRefusal };
 
 /** Pure Markdown parsing: only the Implementation map section contributes scope. */
 export function implementationPaths(body: string): readonly string[] {

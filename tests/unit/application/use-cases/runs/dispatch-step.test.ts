@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  executionRequestSchema,
+  MAX_PROMPT_CHARS,
+} from "../../../../../src/application/contracts/agent-execution.ts";
 import { contextPacketSchema } from "../../../../../src/application/contracts/context.ts";
 import { GitWorkspaceError } from "../../../../../src/application/ports/git-workspace.ts";
 import {
@@ -77,6 +81,123 @@ describe("dispatchStep", () => {
     // The library skill the role does not use is not handed over.
     expect(prompt).not.toContain("debugging");
     expect(prompt).not.toContain(h("c"));
+  });
+
+  it("inlines role and mandatory rules verbatim after skills in manifest order", async () => {
+    const r = rig();
+    const files = new Map([
+      [
+        "architecture-boundaries",
+        {
+          sha256: h("d"),
+          ruleMd: "---\nid: architecture-boundaries\n---\nKeep layers pure.  \n\n",
+        },
+      ],
+      ["project-baseline", { sha256: h("e"), ruleMd: "MANDATORY BASELINE\n" }],
+    ]);
+    dispatched(
+      await dispatchStep(
+        { ...r.deps, rules: { read: (id: string) => files.get(id) } },
+        dispatchInput(),
+      ),
+    );
+    const prompt = r.executor.started[0]?.prompt ?? "";
+    expect(prompt).toContain(
+      "=== Rule architecture-boundaries (version 1) ===\n" +
+        (files.get("architecture-boundaries")?.ruleMd ?? ""),
+    );
+    expect(prompt).toContain("=== Rule project-baseline (version 4) ===\nMANDATORY BASELINE\n");
+    expect(prompt.indexOf("=== Rule architecture-boundaries")).toBeGreaterThan(
+      prompt.indexOf("=== End of skill tdd ==="),
+    );
+    expect(prompt.indexOf("=== Rule project-baseline")).toBeGreaterThan(
+      prompt.indexOf("=== Rule architecture-boundaries"),
+    );
+    expect(prompt).not.toContain("Script first, LLM second: do deterministic steps");
+  });
+
+  it.each([
+    [undefined, "RULE_MISSING"],
+    [{ sha256: h("0"), ruleMd: "TAMPERED" }, "RULE_HASH_MISMATCH"],
+  ])(
+    "refuses unreadable or changed rules before allocating anything (%s)",
+    async (content, reason) => {
+      const r = rig();
+      const result = await dispatchStep(
+        { ...r.deps, rules: { read: () => content } },
+        dispatchInput(),
+      );
+      expect(result).toEqual({ ok: false, reason, detail: "architecture-boundaries" });
+      expect(r.attempts.rows.size).toBe(0);
+      expect(r.executor.started).toHaveLength(0);
+      expect(r.workspaces.leases.size).toBe(0);
+      expect(r.artifacts.files.size).toBe(0);
+      expect(r.unitOfWork.commits).toHaveLength(0);
+    },
+  );
+
+  it("inlines mandatory rules when role rules are empty and omits excluded optional rules", async () => {
+    const r = rig();
+    const catalog = r.deps.catalog;
+    const roles = catalog.roles.map((role) => ({
+      ...role,
+      definition: { ...role.definition, rules: [] },
+    }));
+    dispatched(
+      await dispatchStep(
+        { ...r.deps, catalog: { ...catalog, roles } },
+        dispatchInput({
+          stepRules: ["architecture-boundaries"],
+          excludedRules: ["architecture-boundaries"],
+        }),
+      ),
+    );
+    const prompt = r.executor.started[0]?.prompt ?? "";
+    expect(prompt).toContain("=== Rule project-baseline (version 4) ===");
+    expect(prompt).not.toContain("architecture-boundaries");
+  });
+
+  it("inlines optional rules added by the step", async () => {
+    const r = rig();
+    const catalog = r.deps.catalog;
+    const roles = catalog.roles.map((role) => ({
+      ...role,
+      definition: { ...role.definition, rules: [] },
+    }));
+    dispatched(
+      await dispatchStep(
+        { ...r.deps, catalog: { ...catalog, roles } },
+        dispatchInput({ stepRules: ["architecture-boundaries"] }),
+      ),
+    );
+    expect(r.executor.started[0]?.prompt).toContain(
+      "=== Rule architecture-boundaries (version 1) ===",
+    );
+  });
+
+  it("applies the existing skill prompt size limit to verbatim rule text", async () => {
+    const r = rig();
+    let ruleMd = "x";
+    const rules = {
+      read: (id: string) => {
+        const entry = r.deps.catalog.rules.find((rule) => rule.id === id);
+        return entry === undefined ? undefined : { sha256: entry.sha256, ruleMd };
+      },
+    };
+    dispatched(await dispatchStep({ ...r.deps, rules }, dispatchInput()));
+    const request = r.executor.started[0];
+    expect(executionRequestSchema.safeParse(request).success).toBe(true);
+    r.steps.rows.set("step-1", { ...r.steps.must("step-1"), status: "ready" });
+    ruleMd = "x".repeat(MAX_PROMPT_CHARS);
+    dispatched(await dispatchStep({ ...r.deps, rules }, dispatchInput()));
+    const oversized = r.executor.started[1];
+    expect(oversized?.prompt).toContain(ruleMd);
+    const parsed = executionRequestSchema.safeParse(oversized);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success)
+      expect(parsed.error.issues).toContainEqual(
+        expect.objectContaining({ code: "too_big", path: ["prompt"], maximum: MAX_PROMPT_CHARS }),
+      );
   });
 
   it("inlines the SKILL.md of exactly the manifest skills in manifest order and names bundled files by path", async () => {

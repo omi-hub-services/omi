@@ -40,6 +40,12 @@ Luồng dữ liệu: Coordinator gửi một quyết định có cấu trúc; ru
 
 Không dùng comment GitHub làm database runtime. Không dùng transcript Claude Code làm nguồn duy nhất để resume.
 
+### Nguyên tắc framework: script trước, LLM sau (OMI-077)
+
+Việc tất định (đọc trạng thái GitHub/Project, git/`gh` cơ học, parse log và report, chuyển trạng thái, kiểm tra gate, dựng lệnh launch hay comment theo định dạng cố định) do script, CLI hoặc runtime làm, không do LLM suy luận. LLM chỉ dùng cho việc cần phán đoán: chọn việc, viết prompt hay spec, review, quyết định khi một bước thất bại hoặc bị từ chối. Script từ chối một bước là gate, không phải vật cản. Bước nào phải làm tay lặp lại thì đưa vào script.
+
+Nguyên tắc áp dụng cho mọi project dùng omi-squad, không chỉ repository này: nó được ship là rule `.omi-squad/rules/script-first.md` (không bắt buộc), gắn vào role developer, reviewer và qa, và runtime nhắc nó trong prompt worker. Với repository này nguyên tắc nằm ở `AGENTS.md` §9. Danh sách rà soát `src/` theo nguyên tắc này: `docs/engineering/script-first-audit.md`.
+
 ## 3. Cấu trúc repository phát triển framework
 
 Repository này chứa mã nguồn **omi-squad**, khác với project sẽ cài framework. Mọi file mới phải thuộc một vùng dưới đây.
@@ -69,7 +75,7 @@ Root chỉ có file entry/config chuẩn: `package.json`, `package-lock.json`, `
 
 | Thư mục | File tiêu biểu | Trách nhiệm |
 |---|---|---|
-| `src/domain/tasks/` | `task.ts`, `task-status.ts`, `dependency-policy.ts` | Task, phạm vi và dependency |
+| `src/domain/tasks/` | `task.ts`, `task-status.ts`, `dependency-policy.ts`, `readiness-gate.ts`, `promotion-policy.ts`, `plan-key.ts` | Task, phạm vi và dependency; readiness gate và promote (OMI-079) |
 | `src/domain/workflows/` | `workflow.ts`, `step.ts`, `workflow-policy.ts` | Đồ thị workflow và gate |
 | `src/domain/runs/` | `workflow-run.ts`, `step-run.ts`, `retry-policy.ts` | State machine, 2 + Architect + 2 |
 | `src/domain/agents/` | `role.ts`, `capability.ts`, `selection-policy.ts` | Năng lực và eligibility |
@@ -85,7 +91,7 @@ Không tạo `common/`, `helpers/`, `utils/`, `manager.ts` chung chung. Hàm ch�
 | Đường dẫn | Nội dung |
 |---|---|
 | `src/application/use-cases/project/` | `initialize-project.ts`, `inspect-project.ts` |
-| `src/application/use-cases/tasks/` | `import-task.ts`, `select-ready-tasks.ts` |
+| `src/application/use-cases/tasks/` | `import-task.ts`, `select-ready-tasks.ts`, `create-issue-from-spec.ts`, `promote-task.ts`, `set-task-status.ts` |
 | `src/application/use-cases/runs/` | `start-run.ts`, `dispatch-step.ts`, `record-step-result.ts`, `pause-run.ts`, `resume-run.ts` |
 | `src/application/use-cases/profiles/` | `probe-profile.ts`, `select-executor.ts`, `failover-step.ts` |
 | `src/application/use-cases/approvals/` | `request-approval.ts`, `record-approval.ts` |
@@ -157,6 +163,7 @@ Tài liệu đặt ở `docs/product/product-overview.md`, `docs/architecture/ar
 | `.omi-squad/tool/node_modules/` | Không | Package runtime đã cài |
 | `.omi-squad/local/state/state.sqlite` | Không | Runtime state, WAL/SHM cùng vị trí |
 | `.omi-squad/local/runs/<run-id>/` | Không | Context, checkpoints, reports, logs |
+| `.omi-squad/local/logs/`, `archive/` | Không | Log worker `<taskId>--<profile>--<ts>.jsonl`; log task Done được nén vào `archive/` (ADR-0035) |
 | `.omi-squad/local/profiles/registry.json` | Không | Metadata/profile path, không đưa vào prompt |
 | `.omi-squad/local/credentials/<profile-id>/` | Không | Nơi profile lưu auth khi adapter hỗ trợ |
 | `.omi-squad/local/ipc/`, `locks/`, `tmp/` | Không | Socket, lock, dữ liệu tạm |
@@ -254,6 +261,8 @@ Manifest ghim phiên bản/hash; input thay đổi thì xác định step nào c
 ```
 
 Placeholder chỉ để minh họa. Runtime xác minh ID, schema, artifact tồn tại, hash, path nằm trong phạm vi và revision. Agent báo succeeded không tự làm task Done. Check do runtime/CI thực thi phải có command, exit status, thời điểm và revision; lời tường thuật không thay bằng chứng test.
+
+**Runtime tự chạy required checks (OMI-085).** `project.yaml` có khối `checks` (id → `command` dạng argv, `timeout_seconds`); step workflow khai báo `required_checks` (id). Sau khi worker kết thúc thành công và revision nó báo trùng HEAD của worktree, port `CheckRunner` (adapter `infrastructure/processes/process-check-runner.ts`) chạy từng command trong worktree của attempt, không qua shell và không thừa hưởng môi trường của runtime. Kết quả (command, exit status, thời điểm bắt đầu/kết thúc, revision = HEAD, log giới hạn 16.000 ký tự đã khử secret) lưu thành artifact `checks/<id>.json` dưới artifact root của attempt. `recordStepResult` chỉ cho step pass khi mọi check do runtime chạy đều `passed` trên đúng `revision.headSha` mà worker báo và evidence khớp hash; `checks` trong report của worker chỉ là thông tin tham khảo với các id đó. Check fail, timeout, thiếu lần chạy hoặc sai revision làm step `failed` (`CHECK_FAILED`, `CHECK_TIMED_OUT`, `CHECK_NOT_RUN`, `CHECK_REVISION_MISMATCH`) và đi theo rework controller hiện có. Id không có command trong `checks` (ví dụ bằng chứng của specialist step) vẫn xét theo evidence do worker báo; dispatch từ chối step có `required_checks` chưa cấu hình (`CHECK_UNCONFIGURED`). Step `verify` của QA chỉ còn phần phán đoán (AC có đạt không, bằng chứng có trung thực không). Ngoài phạm vi: thay CI của GitHub, chạy check ngoài worktree.
 
 ## 7. Agent adapter và profile
 
@@ -409,25 +418,32 @@ headless runtime dùng `--github-comment <numeric-id>` với actor được allo
 phải là quyết định cấu trúc đúng request/hash/version (ADR-0026), không suy diễn từ Issue prose.
 
 
-## 13. CLI surface đề xuất
+## 13. CLI surface v0.1
 
-Tên executable là `omi-squad` trong package; project shim gọi bằng `.omi-squad/bin/omi`. Trong các ví dụ sau, `omi` là shorthand của shim, không yêu cầu cài global. Cú pháp là thiết kế cần triển khai.
+Tên executable là `omi-squad` trong package; project shim gọi bằng `.omi-squad/bin/omi`. Trong các ví dụ sau, `omi` là shorthand của shim, không yêu cầu cài global.
+
+v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch --run --step` → `wait` → `status` → `deliver`. Runtime giữ retry hạ tầng/rework có giới hạn; `resume` chỉ phục hồi run paused/interrupted, không mở lại task blocked. Không thêm alias `run` cho một bước plan hoặc `retry` để bỏ gate PO.
 
 | Lệnh | Chức năng |
 |---|---|
-| `omi init` | Detect/init, preview mapping và cài bridge/config |
-| `omi doctor` | Kiểm tra CLI, version, profile, Git/GitHub, permission, filesystem |
+| `omi install/update --project <path> --package <path> --distribution <name> [--apply]` | Preview/cài runtime, templates, skill bridge và merge có marker vào CLAUDE.md/AGENTS.md |
+| `omi init --project <path> --config <baseline.json> [--variant new\|existing] [--apply]` | Detect codebase và tạo config/workflow/plan còn thiếu qua initializeProject; preview mặc định, giữ file đã có |
+| `omi doctor --project <path> --distribution <name>` | Kiểm tra cài đặt WSL2; lỗi `DOCTOR_FAILED`, exit 6 |
 | `omi session start` | Mở runtime và Claude Code Coordinator có quản lý lifecycle |
-| `omi run --issue <number>` | Giao một task |
-| `omi run --scope <scope-id>` | Giao phạm vi đã lưu |
+| `omi plan --issue <number> [--workflow <id>]` | Lập run cho Issue đã import |
+| `omi dispatch --run <id> --step <id>` | Dispatch step ready theo gate hiện hành |
+| `omi wait --run <id> [--timeout <seconds>]` | Chờ worker kết thúc |
+| `omi deliver --run <id> --pr <n> --head-sha <sha> --check <name>` | Gate merge bản đã được review độc lập |
 | `omi status --json` | Trạng thái máy đọc được; text mặc định cho PO |
 | `omi pause --run <id>` | Dừng có checkpoint |
 | `omi resume --run <id>` | Reconcile rồi tiếp tục |
-| `omi retry --task <id>` | Mở lại task đã blocked theo quyết định PO |
-| `omi profiles list/probe/login` | Quản lý profile local; login tương tác |
-| `omi approvals list/decide` | Xem và xử lý quyết định theo nguồn được xác thực |
-| `omi workflows validate` | Kiểm tra schema, reference, dependency, mandatory gate |
-| `omi sync` | Đối soát và flush outbox |
+| `omi profiles register <id> --tool <claude-code\|codex> --profile-home <path> --account-group <id> [--model <name> ...]` | Đăng ký metadata vào registry SQLite qua runtime; trạng thái unknown đến khi probe |
+| `omi profiles list` / `omi profiles probe <id>` | Liệt kê/probe qua adapter hiện có; login dùng native CLI với CLAUDE_CONFIG_DIR/CODEX_HOME |
+| `omi approvals decide <id> --expected-version <n> --decision <approved\|rejected> [--github-comment <id>]` | Chỉ runtime TTY hoặc GitHub actor được allowlist, theo ADR-0026 |
+
+`login`, `approvals list`, `workflows validate`, `sync` chưa có trong v0.1. `init` dùng nhánh local codebase của ADR-0029; mapping/copy GitHub Project vẫn là use case, chưa có CLI. Baseline JSON do caller cung cấp tường minh; không đoán repository, Project, branch, policy hay capability model. `models.yaml` do project cấu hình riêng trước khi chạy runtime.
+
+Runtime approval composition đọc business subject từ `content_hash` của task snapshot đã import, scope là task ID; một revision import mới làm request cũ stale. Các subject cost/release/deploy cần reader của workflow sở hữu chúng và không được suy ra từ request/agent text. GitHub pathway mặc định từ chối mọi actor; `policies.github_approval_actors` trong project.yaml cấu hình allowlist. Terminal pathway vẫn yêu cầu TTY thật của runtime.
 
 CLI command nhận argument có kiểu, không nối prompt/Issue body thành shell string. JSON output phải có schema/version, exit code và error classification ổn định.
 

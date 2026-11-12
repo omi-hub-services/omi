@@ -1,5 +1,7 @@
 import { stepResultSchema } from "../contracts/result.js";
 import type { ExecutionHandle } from "../contracts/agent-execution.js";
+import type { CheckRunRecord } from "../contracts/check-run.js";
+import type { CheckRunner } from "../ports/check-runner.js";
 import type { DispatchStepDependencies } from "../use-cases/runs/dispatch-step.js";
 import type { AdvanceRunDependencies } from "../use-cases/runs/advance-run.js";
 import { advanceRun } from "../use-cases/runs/advance-run.js";
@@ -18,6 +20,8 @@ import { transitionStep } from "../../domain/runs/step-run.js";
 export interface CompletionRouting {
   readonly failover?: FailoverStepDependencies;
   readonly rework?: RecordReworkEventDependencies;
+  /** Runs the required checks the project configured; their ids never pass on a worker's word. */
+  readonly checks?: CheckRunner;
   readonly selections?: ExecutorSelectionStore;
   readonly failoversMade?: (stepRunId: string) => number;
 }
@@ -69,9 +73,10 @@ export async function completeRunAttempt(
     } catch {
       report = undefined;
     }
-    const recorded = recordStepResult(deps, { attemptId, execution, result: report });
-    if (!recorded.ok) return;
     const reported = stepResultSchema.safeParse(report);
+    const checkRuns = await runRequiredChecks(deps, attempt, execution.outcome, reported);
+    const recorded = recordStepResult(deps, { attemptId, execution, result: report, checkRuns });
+    if (!recorded.ok) return;
     if (
       !(reported.success && reported.data.status === "blocked") &&
       recorded.stepStatus === "failed" &&
@@ -128,4 +133,38 @@ export async function completeRunAttempt(
       /* A lost session cannot append audit; recovery retains its durable state. */
     }
   }
+}
+
+/**
+ * Runs, in the attempt's worktree, every required check the runtime owns (OMI-085). Only a
+ * result that could still be accepted is worth a run: the process succeeded, the worker claims
+ * success and its revision is the worktree's head, so the check runs on exactly that revision.
+ */
+async function runRequiredChecks(
+  deps: DispatchStepDependencies & CompletionRouting,
+  attempt: NonNullable<ReturnType<DispatchStepDependencies["attempts"]["get"]>>,
+  outcome: string,
+  reported: ReturnType<typeof stepResultSchema.safeParse>,
+): Promise<CheckRunRecord[]> {
+  const runner = deps.checks;
+  if (runner === undefined || attempt.status !== "running" || outcome !== "succeeded") return [];
+  if (!reported.success || reported.data.status !== "succeeded") return [];
+  const revision = reported.data.revision?.headSha;
+  if (revision === undefined) return [];
+  const ids = attempt.requiredChecks.filter((id) => runner.has(id));
+  if (ids.length === 0) return [];
+  const state = deps.workspaces.inspect(attempt.workspace.path);
+  if (!state.ok || state.value.headSha !== revision) return [];
+  const runs: CheckRunRecord[] = [];
+  for (const checkId of ids) {
+    runs.push(
+      await runner.run({
+        attemptId: attempt.id,
+        checkId,
+        workspacePath: attempt.workspace.path,
+        artifactRoot: attempt.artifactRoot,
+      }),
+    );
+  }
+  return runs;
 }

@@ -10,6 +10,7 @@ import type {
   CatalogRule,
   ResolutionCatalog,
 } from "../../application/contracts/resolution-catalog.js";
+import type { RuleSource } from "../../application/ports/rule-source.js";
 import { roleSchema, ruleMetadataSchema } from "../../application/contracts/role.js";
 
 export class CatalogLoadError extends Error {
@@ -113,5 +114,20 @@ export function loadResolutionCatalog(squadDir: string): ResolutionCatalog {
     roles: loadRoles(squadDir),
     skills: loadSkills(squadDir),
     rules: loadRules(squadDir),
+  };
+}
+
+/** Re-read installed rule bytes at dispatch; the application checks the resolved catalog hash. */
+export function createFileRuleSource(squadDir: string): RuleSource {
+  return {
+    read(id) {
+      if (!slugSchema.safeParse(id).success) return undefined;
+      try {
+        const bytes = readFileSync(join(squadDir, "rules", `${id}.md`));
+        return { sha256: sha256(bytes), ruleMd: bytes.toString("utf8") };
+      } catch {
+        return undefined;
+      }
+    },
   };
 }

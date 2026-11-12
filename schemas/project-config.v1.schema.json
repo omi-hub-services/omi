@@ -212,6 +212,113 @@
       },
       "additionalProperties": false
     },
+    "quota": {
+      "type": "object",
+      "properties": {
+        "min_five_hour_left_percent": {
+          "default": 10,
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "min_seven_day_left_percent": {
+          "default": 10,
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "coordinator_shared_penalty": {
+          "default": 20,
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "coordinator_shared_policy": {
+          "default": "penalize",
+          "type": "string",
+          "enum": [
+            "penalize",
+            "forbid"
+          ]
+        },
+        "coordinator_shared_profiles": {
+          "default": [],
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          }
+        },
+        "stale_after_minutes": {
+          "default": 120,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10080
+        },
+        "probe_when_stale": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "minItems": 1,
+            "maxItems": 64,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          },
+          "timeout_seconds": {
+            "default": 600,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "log_retention": {
+      "type": "object",
+      "properties": {
+        "recent_minutes": {
+          "default": 30,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10080
+        },
+        "archive_max_bytes": {
+          "default": 52428800,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1099511627776
+        },
+        "archive_max_age_days": {
+          "default": 30,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        }
+      },
+      "additionalProperties": false
+    },
     "workspace": {
       "type": "object",
       "properties": {
@@ -235,6 +342,14 @@
           "items": {
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+          }
+        },
+        "github_approval_actors": {
+          "maxItems": 100,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
           }
         }
       },

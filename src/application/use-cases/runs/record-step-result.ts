@@ -5,6 +5,8 @@ import { transitionStep } from "../../../domain/runs/step-run.js";
 import type { StepStatus } from "../../../domain/runs/step-run.js";
 import { executionResultSchema } from "../../contracts/agent-execution.js";
 import { artifactPathSchema } from "../../contracts/artifact.js";
+import { checkRunRecordSchema } from "../../contracts/check-run.js";
+import type { CheckRunRecord } from "../../contracts/check-run.js";
 import { identifierSchema } from "../../contracts/identifiers.js";
 import { stepResultSchema } from "../../contracts/result.js";
 import type { StepResult } from "../../contracts/result.js";
@@ -12,6 +14,7 @@ import type { AttemptStore, StepRunReader } from "../../ports/attempt-store.js";
 import { ArtifactError } from "../../ports/artifact-store.js";
 import type { ArtifactStore } from "../../ports/artifact-store.js";
 import type { BoundaryCheckpointHook } from "../../ports/checkpoint-hook.js";
+import type { CheckRunner } from "../../ports/check-runner.js";
 import type { GitWorkspace } from "../../ports/git-workspace.js";
 import type { StateUnitOfWork } from "../../ports/state-unit-of-work.js";
 
@@ -21,6 +24,8 @@ const recordStepResultSchema = z.strictObject({
   execution: executionResultSchema,
   /** The worker's structured claim, still untrusted JSON. Absent when the worker produced none. */
   result: z.unknown().optional(),
+  /** What the runtime itself observed when it ran the step's required checks (OMI-085). */
+  checkRuns: z.array(checkRunRecordSchema).default([]),
 });
 export type RecordStepResultInput = z.input<typeof recordStepResultSchema>;
 
@@ -30,6 +35,11 @@ export interface RecordStepResultDependencies {
   readonly artifacts: ArtifactStore;
   readonly workspaces: GitWorkspace;
   readonly unitOfWork: StateUnitOfWork;
+  /**
+   * Says which required check ids the runtime runs itself. Those pass only through a matching
+   * run in the input; any other id is still accepted from the worker's evidence (OMI-085).
+   */
+  readonly checks?: Pick<CheckRunner, "has">;
   /** Business checkpoint after the output is confirmed (OMI-026); absent means none is taken. */
   readonly checkpoint?: BoundaryCheckpointHook;
   readonly now: () => number;
@@ -63,6 +73,12 @@ export type StepFailureReason =
   | "ARTIFACT_HASH_MISMATCH"
   | "REVISION_MISSING"
   | "REQUIRED_CHECK_MISSING"
+  /** A check the runtime runs has no run in the input. */
+  | "CHECK_NOT_RUN"
+  | "CHECK_FAILED"
+  | "CHECK_TIMED_OUT"
+  /** The runtime's check ran on another revision than the worker reported. */
+  | "CHECK_REVISION_MISMATCH"
   /** The attempt was given a skill the result does not report as applied. */
   | "SKILL_EVIDENCE_MISSING"
   /** The result reports a skill the attempt was not given. */
@@ -92,7 +108,7 @@ export function recordStepResult(
 ): RecordStepResult {
   const parsed = recordStepResultSchema.safeParse(input);
   if (!parsed.success) return { ok: false, reason: "INVALID_INPUT" };
-  const { attemptId, execution, result } = parsed.data;
+  const { attemptId, execution, result, checkRuns } = parsed.data;
 
   const attempt = deps.attempts.get(attemptId);
   if (attempt === undefined) return { ok: false, reason: "ATTEMPT_NOT_FOUND" };
@@ -108,7 +124,7 @@ export function recordStepResult(
     return { ok: false, reason: "EXECUTION_MISMATCH" };
   }
 
-  const verdict = verify(deps, attempt, execution.outcome, result);
+  const verdict = verify(deps, attempt, execution.outcome, result, checkRuns);
   if ("refusal" in verdict) {
     return {
       ok: false,
@@ -172,6 +188,15 @@ export function recordStepResult(
         outcome: execution.outcome,
         exitCode: execution.exitCode,
         ...(failure === undefined ? {} : { failure }),
+        ...(checkRuns.length === 0
+          ? {}
+          : {
+              checkRuns: checkRuns.map(({ checkId, status, revision }) => ({
+                checkId,
+                status,
+                revision,
+              })),
+            }),
         ...("report" in verdict ? { result: verdict.report } : {}),
       }),
     },
@@ -221,6 +246,7 @@ function verify(
   attempt: NonNullable<ReturnType<AttemptStore["get"]>>,
   outcome: string,
   raw: unknown,
+  checkRuns: readonly CheckRunRecord[],
 ): Verdict {
   // Exit code and process outcome describe the process only; a structured result is still needed.
   if (outcome !== "succeeded") return { failure: "EXECUTION_FAILED" };
@@ -275,10 +301,15 @@ function verify(
     if (state.value.headSha !== report.revision.headSha) return { refusal: "STALE_REVISION" };
   }
 
+  const runtimeChecks = attempt.requiredChecks.filter((id) => deps.checks?.has(id) === true);
+  // The worker's own check list is informational for these ids; only the runtime's run counts.
   const reported = new Set(report.checks.map((check) => check.id));
-  if (!attempt.requiredChecks.every((id) => reported.has(id))) {
+  const evidenceChecks = attempt.requiredChecks.filter((id) => !runtimeChecks.includes(id));
+  if (!evidenceChecks.every((id) => reported.has(id))) {
     return { failure: "REQUIRED_CHECK_MISSING", report };
   }
+  const checkFailure = verifyRuntimeChecks(deps, attempt, report, runtimeChecks, checkRuns);
+  if (checkFailure !== undefined) return { failure: checkFailure, report };
 
   // The worker saw exactly the manifest's skills (inlined at dispatch); it must account for each.
   const given = new Set(attempt.skills.map((skill) => skill.id));
@@ -288,4 +319,31 @@ function verify(
     return { failure: "SKILL_EVIDENCE_MISSING", report };
   }
   return { accepted: true, report };
+}
+
+/** Every check the runtime runs must have passed, on the worker's revision, with stored evidence. */
+function verifyRuntimeChecks(
+  deps: RecordStepResultDependencies,
+  attempt: NonNullable<ReturnType<AttemptStore["get"]>>,
+  report: StepResult,
+  ids: readonly string[],
+  runs: readonly CheckRunRecord[],
+): StepFailureReason | undefined {
+  for (const id of ids) {
+    const run = runs.find((candidate) => candidate.checkId === id);
+    if (run === undefined) return "CHECK_NOT_RUN";
+    if (run.status === "timed-out") return "CHECK_TIMED_OUT";
+    if (run.status !== "passed" || run.exitCode !== 0) return "CHECK_FAILED";
+    if (run.revision !== report.revision?.headSha) return "CHECK_REVISION_MISMATCH";
+    if (!run.evidence.path.startsWith(`${attempt.artifactRoot}/`)) return "PATH_OUTSIDE_ROOT";
+    try {
+      if (!deps.artifacts.manifest([run.evidence]).artifacts.every((entry) => entry.size > 0)) {
+        return "ARTIFACT_INVALID";
+      }
+    } catch (error) {
+      if (!(error instanceof ArtifactError)) throw error;
+      return error.code === "HASH_MISMATCH" ? "ARTIFACT_HASH_MISMATCH" : "ARTIFACT_INVALID";
+    }
+  }
+  return undefined;
 }

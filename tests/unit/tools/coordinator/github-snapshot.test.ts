@@ -247,6 +247,9 @@ describe("parseSnapshotPage", () => {
                 state: "OPEN",
                 milestone: { title: "M0 — Feasibility" },
                 blockedBy: { totalCount: 1, nodes: [{ number: 2, state: "CLOSED" }] },
+                comments: {
+                  nodes: [{ author: { login: COORDINATOR_LOGIN }, body: "**WAITING-PO:** x" }],
+                },
               },
             },
             { status: null, priority: null, workType: null, planKey: null, content: null },
@@ -315,6 +318,9 @@ describe("parseSnapshotPage", () => {
       ["DraftIssue", null],
     ]);
     expect(p.items[0]).toMatchObject({ planKey: "OMI-006", blockersTruncated: false });
+    expect(p.items[0]?.comments).toEqual([
+      { author: COORDINATOR_LOGIN, body: "**WAITING-PO:** x" },
+    ]);
     expect(p.pulls?.[0]?.checks).toEqual([
       { name: "check", state: "pass" },
       { name: "ci/x", state: "pending" },

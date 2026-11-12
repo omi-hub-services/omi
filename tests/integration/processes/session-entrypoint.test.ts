@@ -82,5 +82,6 @@ describe("runtime executable composition", () => {
     );
     third.child.stdin.destroy();
     expect(await third.exit).toBe(0);
-  });
+    // Three real runtime processes in a row: the 5 s default is too tight under a parallel run.
+  }, 20000);
 });

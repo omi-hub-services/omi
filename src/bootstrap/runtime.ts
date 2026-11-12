@@ -22,6 +22,7 @@ import {
 } from "../infrastructure/processes/session-timing.js";
 import {
   createProfileStores,
+  createProfileUseCases,
   createProjectRunCommandUseCases,
   type RuntimeCompositionOptions,
   createRuntimeIpcServer,
@@ -96,6 +97,8 @@ export async function runSessionRuntime(
           identity: { runtimeVersion: readPackageVersion(), startedAt: session.lease.acquiredAt },
           runs: composition.commands,
           activeRuns: composition.runs,
+          profiles: createProfileUseCases(database, () => runtime.accepting),
+          approvals: composition.approvals,
         });
         await server.start();
       },

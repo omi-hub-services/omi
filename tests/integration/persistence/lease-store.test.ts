@@ -148,6 +148,34 @@ describe("worktree lease", () => {
     });
   });
 
+  it.each([true, false])(
+    "reclaims an explicitly released lease after a clock rollback (reclaimExpired=%s)",
+    (reclaimExpired) => {
+      const leases = createSqliteLeaseStore(db);
+      leases.acquire({ resourceKey: KEY, owner: "A", now: T1, expiresAt: T3 });
+      expect(leases.release({ resourceKey: KEY, owner: "A", generation: 1, now: T1 })).toEqual({
+        ok: true,
+      });
+      // A new adapter represents a restarted process whose wall clock has stepped back.
+      const restarted = createSqliteLeaseStore(db);
+      expect(
+        restarted.acquire({ resourceKey: KEY, owner: "B", now: T0, expiresAt: T2, reclaimExpired }),
+      ).toMatchObject({ ok: true, lease: { generation: 2 } });
+      expect(
+        leases.renew({ resourceKey: KEY, owner: "A", generation: 1, now: T0, expiresAt: T3 }),
+      ).toEqual({ ok: false, reason: "STALE_LEASE" });
+    },
+  );
+
+  it("does not resurrect a released lease by renewing after clock rollback", () => {
+    const leases = createSqliteLeaseStore(db);
+    leases.acquire({ resourceKey: KEY, owner: "A", now: T1, expiresAt: T3 });
+    leases.release({ resourceKey: KEY, owner: "A", generation: 1, now: T1 });
+    expect(
+      leases.renew({ resourceKey: KEY, owner: "A", generation: 1, now: T0, expiresAt: T2 }),
+    ).toEqual({ ok: false, reason: "LEASE_EXPIRED" });
+  });
+
   it("keeps different worktrees independent", () => {
     const leases = createSqliteLeaseStore(db);
     expect(

@@ -12,6 +12,7 @@ import type { IpcErrorCode } from "../../ipc/protocol.js";
  *   4  REQUEST_REJECTED     the runtime understood the request and refused it with a typed error
  *                           (invalid command, unsupported version, too large, not implemented)
  *   5  PROTOCOL_ERROR       the runtime's answer was malformed or did not match the request
+ *   6  DOCTOR_FAILED        installation checks failed
  *
  * 0 does not mean a task passed acceptance; it only says this command succeeded.
  */
@@ -22,6 +23,7 @@ export const EXIT_CODES = {
   RUNTIME_UNAVAILABLE: 3,
   REQUEST_REJECTED: 4,
   PROTOCOL_ERROR: 5,
+  DOCTOR_FAILED: 6,
 } as const;
 
 export type ExitCode = (typeof EXIT_CODES)[keyof typeof EXIT_CODES];

@@ -232,6 +232,83 @@ describe("merge a task PR, then tick, close and record Done", () => {
     expect(await mergeTaskPr(s.deps, request)).toMatchObject({ status: "done" });
   });
 
+  describe("a PASS carried over a clean sync with develop", () => {
+    const SYNCED = "d".repeat(40);
+    const TREE = "e".repeat(40);
+    const facts = (over: { headTree?: string; mergeTree?: string | null } = {}) => ({
+      head: SYNCED,
+      parents: [HEAD, BASE],
+      secondParentOnBase: true,
+      headTree: TREE,
+      mergeTree: TREE,
+      ...over,
+    });
+    /** The PR head moved to the sync commit and CI is green on it; only HEAD was reviewed. */
+    function behindPr(carried: ReturnType<typeof facts>) {
+      const s = sandbox();
+      const pull = s.pull();
+      if (pull !== undefined) pull.headSha = SYNCED;
+      s.github.commits.set(SYNCED, { repo: REPO, parents: [HEAD, BASE] });
+      s.github.checkRuns.push({
+        repo: REPO,
+        id: 9,
+        name: "ci",
+        headSha: SYNCED,
+        status: "completed",
+        conclusion: "success",
+      });
+      return { s, deps: { ...s.deps, carry: { facts: () => carried } } };
+    }
+    const carriedRequest = { ...request, reviewedHeadSha: SYNCED };
+
+    it("merges the synced head on the carried PASS and ticks from its AC lines", async () => {
+      const { s, deps } = behindPr(facts());
+      expect(await mergeTaskPr(deps, carriedRequest)).toMatchObject({ status: "done", ticked: 2 });
+      expect(s.github.commits.get(s.pull()?.mergeCommitSha ?? "")?.parents).toEqual([BASE, SYNCED]);
+    });
+
+    it("refuses a synced head that was edited by hand, and merges nothing", async () => {
+      const { s, deps } = behindPr(facts({ headTree: "f".repeat(40) }));
+      const result = await mergeTaskPr(deps, carriedRequest);
+      expect(result).toMatchObject({ status: "refused", step: "merge" });
+      expect(result.status === "refused" ? result.reasons : []).toContain("REVIEW_MISSING");
+      expect(s.writes("PUT", "/merge")).toBe(0);
+    });
+
+    it("refuses the synced head when the runtime has no carry reader", async () => {
+      const { s } = behindPr(facts());
+      expect(await mergeTaskPr(s.deps, carriedRequest)).toMatchObject({ status: "refused" });
+      expect(s.writes("PUT", "/merge")).toBe(0);
+    });
+  });
+
+  describe("afterDone", () => {
+    it("runs once the task is recorded Done, and a failing follow-up never hides the merge", async () => {
+      const s = sandbox();
+      const done: string[] = [];
+      const afterDone = (taskId: string): Promise<void> => {
+        done.push(`${taskId}:${s.task.status}`);
+        return Promise.reject(new Error("disk full"));
+      };
+      expect(await mergeTaskPr({ ...s.deps, afterDone }, request)).toMatchObject({
+        status: "done",
+      });
+      expect(done).toEqual(["task-27:done"]);
+    });
+
+    it("is not called when the merge is refused", async () => {
+      const s = sandbox();
+      const pull = s.pull();
+      if (pull !== undefined) pull.headSha = PUSHED;
+      const done: string[] = [];
+      await mergeTaskPr(
+        { ...s.deps, afterDone: (taskId) => Promise.resolve(void done.push(taskId)) },
+        request,
+      );
+      expect(done).toEqual([]);
+    });
+  });
+
   it("refuses while another runtime holds the merge lock for develop", async () => {
     const s = sandbox();
     s.deps.leases.acquire({

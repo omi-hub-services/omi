@@ -13,7 +13,10 @@ import {
 import type { StepStatus } from "../../src/domain/runs/step-run.ts";
 import { loadWorkflowTemplate } from "../../src/infrastructure/config/load-workflow-template.ts";
 import { createFileSkillSource } from "../../src/infrastructure/config/file-skill-source.ts";
-import { loadResolutionCatalog } from "../../src/infrastructure/config/load-resolution-catalog.ts";
+import {
+  createFileRuleSource,
+  loadResolutionCatalog,
+} from "../../src/infrastructure/config/load-resolution-catalog.ts";
 import {
   BASE,
   HEAD,
@@ -27,6 +30,7 @@ const directory = resolve(import.meta.dirname, "../../templates/project/workflow
 const squadDir = resolve(directory, "../.omi-squad");
 const catalog = loadResolutionCatalog(squadDir);
 const skills = createFileSkillSource(squadDir);
+const rules = createFileRuleSource(squadDir);
 const ids = ["feature", "bugfix", "refactor", "docs"] as const;
 type Lifecycle = (typeof ids)[number];
 
@@ -74,7 +78,7 @@ async function execute(
   });
   const input = dispatchInput();
   const dispatched = await dispatchStep(
-    { ...r.deps, catalog, skills },
+    { ...r.deps, catalog, skills, rules },
     {
       ...input,
       stepRunId: rowId,

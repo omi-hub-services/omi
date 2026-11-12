@@ -5,6 +5,7 @@ import type { Command } from "../../../../tools/coordinator/process-runner.ts";
 import {
   buildTasks,
   countRework,
+  cyclePhase,
   deriveStep,
   detectArchitect,
   diagramNodes,
@@ -15,6 +16,7 @@ import {
   type StepInput,
   type TasksRead,
 } from "../../../../tools/coordinator/watch-tasks.ts";
+import { loadTemplate } from "../../../../tools/coordinator/watch-workflow.ts";
 import type { WorkerProcess, Workers } from "../../../../tools/coordinator/wsl-workers.ts";
 
 const HEAD = "abc1234def5678abc1234def5678abc1234def56";
@@ -152,12 +154,117 @@ describe("deriveStep", () => {
   });
 });
 
-describe("diagramNodes", () => {
-  const states = (s: Parameters<typeof diagramNodes>[0], rework = 0, called = false) =>
-    Object.fromEntries(diagramNodes(s, rework, called).map((n) => [n.id, n.state]));
+describe("cyclePhase (2 + Architect + 2)", () => {
+  const f = () => coord(verdict("FAIL"));
+  const arch = () => coord("**ARCHITECT:** fix the seam");
+  const phase = (...c: { author: string | null; body: string }[]) => cyclePhase(c);
 
-  it("has a text label for every node, in lifecycle order", () => {
-    const nodes = diagramNodes("Start", 0, false);
+  it("before-architect: 0 and 1 FAILs count k/2", () => {
+    expect(phase()).toEqual({ phase: "before-architect", fails: 0, k: 0, architectCalled: false });
+    expect(phase(f())).toEqual({
+      phase: "before-architect",
+      fails: 1,
+      k: 1,
+      architectCalled: false,
+    });
+  });
+
+  it("architect: the 2nd FAIL needs the Architect, and stays so at 3 FAILs without a marker", () => {
+    expect(phase(f(), f())).toEqual({ phase: "architect", fails: 2, k: 2, architectCalled: false });
+    expect(phase(f(), f(), f())).toMatchObject({
+      phase: "architect",
+      fails: 3,
+      architectCalled: false,
+    });
+  });
+
+  it("architect: a marker after 2 FAILs means it was called and no rework ran after it yet", () => {
+    expect(phase(f(), f(), arch())).toEqual({
+      phase: "architect",
+      fails: 2,
+      k: 0,
+      architectCalled: true,
+    });
+  });
+
+  it("after-architect: counts only FAILs after the marker, k/2", () => {
+    expect(phase(f(), f(), arch(), f())).toEqual({
+      phase: "after-architect",
+      fails: 3,
+      k: 1,
+      architectCalled: true,
+    });
+  });
+
+  it("escalate-po: the 2nd FAIL after the marker, and any later FAIL", () => {
+    expect(phase(f(), f(), arch(), f(), f())).toEqual({
+      phase: "escalate-po",
+      fails: 4,
+      k: 2,
+      architectCalled: true,
+    });
+    expect(phase(f(), f(), arch(), f(), f(), f())).toMatchObject({
+      phase: "escalate-po",
+      fails: 5,
+    });
+  });
+
+  it("ignores FAIL and marker comments of other accounts", () => {
+    const other = (body: string) => by("someone-else", body);
+    expect(phase(f(), other(verdict("FAIL")), other("**ARCHITECT:** nope"))).toMatchObject({
+      phase: "before-architect",
+      fails: 1,
+      architectCalled: false,
+    });
+    expect(phase(f(), f(), other("**ARCHITECT:** nope"), by(null, verdict("FAIL")))).toMatchObject({
+      phase: "architect",
+      architectCalled: false,
+    });
+    expect(phase(f(), f(), arch(), other(verdict("FAIL")), other(verdict("FAIL")))).toMatchObject({
+      phase: "architect",
+      k: 0,
+      architectCalled: true,
+    });
+  });
+
+  it("a marker without a reason does not count", () => {
+    expect(phase(f(), f(), coord("**ARCHITECT:**"))).toMatchObject({ architectCalled: false });
+  });
+
+  it("a marker before any FAIL counts as the call: lit at 0 FAILs, then FAILs count after it", () => {
+    expect(phase(arch())).toEqual({
+      phase: "architect",
+      fails: 0,
+      k: 0,
+      architectCalled: true,
+    });
+    expect(phase(arch(), f())).toMatchObject({ phase: "after-architect", fails: 1, k: 1 });
+    expect(phase(arch(), f(), f())).toMatchObject({ phase: "escalate-po", fails: 2, k: 2 });
+  });
+
+  it("uses the first marker, so a second call does not give two more reworks", () => {
+    expect(phase(f(), f(), arch(), f(), arch(), f())).toMatchObject({ phase: "escalate-po" });
+  });
+
+  it("a FAIL and the marker in one comment: the FAIL comes first", () => {
+    expect(phase(f(), coord(verdict("FAIL") + "**ARCHITECT:** two FAILs"))).toMatchObject({
+      phase: "architect",
+      fails: 2,
+      k: 0,
+      architectCalled: true,
+    });
+  });
+});
+
+describe("diagramNodes", () => {
+  // "F" = Coordinator FAIL, "A" = Coordinator **ARCHITECT:** marker, oldest first
+  const ph = (seq: string) =>
+    cyclePhase(Array.from(seq, (ch) => coord(ch === "F" ? verdict("FAIL") : "**ARCHITECT:** why")));
+  const states = (s: Parameters<typeof diagramNodes>[0], cycle = ph("")) =>
+    Object.fromEntries(diagramNodes(s, cycle).map((n) => [n.id, n.state]));
+
+  it("has a text label for every node, in lifecycle order, and no separate Rework node", () => {
+    const nodes = diagramNodes("Start", ph(""));
     expect(nodes.map((n) => n.id)).toEqual([
       "Start",
       "Work",
@@ -165,10 +272,9 @@ describe("diagramNodes", () => {
       "Review",
       "Merge",
       "Done",
-      "Rework",
-      "Architect",
     ]);
     expect(nodes.every((n) => n.label.length > 0)).toBe(true);
+    expect(diagramNodes("Rework", ph("F")).some((n) => n.id === "Rework")).toBe(false);
   });
 
   it("marks past nodes done and the current one current", () => {
@@ -183,19 +289,48 @@ describe("diagramNodes", () => {
     expect(states("Done")).toMatchObject({ Merge: "done", Done: "current" });
   });
 
-  it("lights the loop and Architect nodes", () => {
-    expect(states("Rework", 1)).toMatchObject({ Review: "done", Rework: "current", Merge: "todo" });
-    expect(states("Review", 1).Rework).toBe("done");
-    expect(states("Review", 0).Rework).toBe("todo");
-    expect(states("Architect", 2, true)).toMatchObject({ Architect: "current", Rework: "done" });
-    expect(states("Review", 2, true).Architect).toBe("lit");
-    expect(states("Review", 1, false).Architect).toBe("idle");
+  it("rework makes Work current with a rework k/2 sub-label", () => {
+    const nodes = diagramNodes("Rework", ph("F"));
+    expect(Object.fromEntries(nodes.map((n) => [n.id, n.state]))).toMatchObject({
+      Start: "done",
+      Work: "current",
+      "Verify/PR": "todo",
+      Review: "todo",
+      Merge: "todo",
+    });
+    expect(nodes.find((n) => n.id === "Work")?.sub).toBe("rework 1/2");
+    expect(diagramNodes("Work", ph("")).find((n) => n.id === "Work")?.sub).toBeUndefined();
+    expect(diagramNodes("Review", ph("F")).find((n) => n.id === "Work")?.sub).toBeUndefined();
   });
 
-  it("warns at two FAILs without the Architect, never once it was called", () => {
-    expect(states("Review", 2, false).Architect).toBe("warn");
-    expect(states("Rework", 3, false).Architect).toBe("warn");
-    expect(states("Rework", 2, true).Architect).toBe("lit");
+  it("shows the Architect node only from the 2nd FAIL or a marker", () => {
+    const ids = (s: Parameters<typeof diagramNodes>[0], c: ReturnType<typeof ph>) =>
+      diagramNodes(s, c).map((n) => n.id);
+    expect(ids("Review", ph(""))).not.toContain("Architect");
+    expect(ids("Rework", ph("F"))).not.toContain("Architect");
+    expect(ids("Review", ph("FF"))).toContain("Architect");
+    expect(ids("Review", ph("A"))).toContain("Architect");
+  });
+
+  it("Architect warns without a marker, is lit with one, current when it is the step", () => {
+    expect(states("Review", ph("FF")).Architect).toBe("warn");
+    expect(states("Rework", ph("FFF")).Architect).toBe("warn");
+    expect(states("Rework", ph("FFA")).Architect).toBe("lit");
+    expect(states("Architect", ph("FFA"))).toMatchObject({
+      Review: "done",
+      Work: "done",
+      Architect: "current",
+    });
+  });
+
+  it("after the Architect, Work is rework k/2 and Ask PO appears only at the 2nd FAIL after it", () => {
+    const after = diagramNodes("Rework", ph("FFAF"));
+    expect(after.find((n) => n.id === "Work")?.sub).toBe("rework 1/2");
+    expect(after.some((n) => n.id === "Ask PO")).toBe(false);
+    const esc = diagramNodes("Rework", ph("FFAFF"));
+    expect(esc.find((n) => n.id === "Ask PO")?.state).toBe("warn");
+    expect(esc.find((n) => n.id === "Work")?.sub).toBe("rework 2/2");
+    expect(esc.find((n) => n.id === "Architect")?.state).toBe("lit");
   });
 
   it("unknown highlights nothing", () => {
@@ -363,7 +498,7 @@ describe("buildTasks", () => {
       stepReason: null,
       role: "Developer",
       rework: 0,
-      architect: "none",
+      cycle: { phase: "before-architect", fails: 0, k: 0, architectCalled: false },
       pr: null,
       skills: ["minimal-change"],
       skillsNote: null,
@@ -380,7 +515,7 @@ describe("buildTasks", () => {
     expect(t?.rules).toEqual(
       expect.arrayContaining(["AGENTS.md", "no push, PR or merge", "gh is read-only"]),
     );
-    expect(t?.ariaLabel).toBe("OMI-074: current step Work");
+    expect(t?.ariaLabel).toBe("OMI-074: Workflow: Development, current step Work");
     expect(t?.nodes.find((n) => n.state === "current")?.id).toBe("Work");
   });
 
@@ -400,7 +535,7 @@ describe("buildTasks", () => {
       step: "Architect",
       role: "Architect",
       rework: 2,
-      architect: "called",
+      cycle: { phase: "architect", architectCalled: true },
       worker: null,
     });
   });
@@ -415,7 +550,11 @@ describe("buildTasks", () => {
       workers: available([]),
     });
     if (view.state !== "ok") throw new Error("expected ok");
-    expect(view.items[0]).toMatchObject({ step: "Review", role: "Reviewer", architect: "warn" });
+    expect(view.items[0]).toMatchObject({
+      step: "Review",
+      role: "Reviewer",
+      cycle: { phase: "architect", architectCalled: false },
+    });
   });
 
   it("uses '-' with a reason when data is missing", () => {
@@ -470,12 +609,266 @@ describe("buildTasks", () => {
 });
 
 describe("taskLine", () => {
-  it("prints OMI-NNN step role tool/profile rework:N on one line", () => {
+  const first = () => {
     const view = buildTasks({ tasks: read(), workers: available([worker]) });
     if (view.state !== "ok" || !view.items[0]) throw new Error("expected ok");
-    expect(taskLine(view.items[0])).toBe("OMI-074 Work Developer claude/minibox rework:0");
-    expect(taskLine({ ...view.items[0], worker: null, step: "Review", role: "Reviewer" })).toBe(
-      "OMI-074 Review Reviewer -/- rework:0",
+    return view.items[0];
+  };
+
+  it("prints OMI-NNN workflow step phase role tool/profile on one line", () => {
+    expect(taskLine(first())).toBe("OMI-074 Development Work rework:0/2 Developer claude/minibox");
+    expect(taskLine({ ...first(), worker: null, step: "Review", role: "Reviewer" })).toBe(
+      "OMI-074 Development Review rework:0/2 Reviewer -/-",
     );
+  });
+
+  it("names the phase: rework k/2, architect needed or called, after-architect k/2, ask-po", () => {
+    const line = (comments: { author: string | null; body: string }[]) => {
+      const view = buildTasks({
+        tasks: read({ pulls: [openPull({ comments })] }),
+        workers: available([worker]),
+      });
+      if (view.state !== "ok" || !view.items[0]) throw new Error("expected ok");
+      return taskLine(view.items[0]);
+    };
+    const f = coord(verdict("FAIL"));
+    const a = coord("**ARCHITECT:** why");
+    expect(line([f])).toBe("OMI-074 Development Work rework:1/2 Developer claude/minibox");
+    expect(line([f, f])).toContain(" architect:needed ");
+    expect(line([f, f, a])).toContain(" architect:called ");
+    expect(line([f, f, a, f])).toContain(" after-architect:1/2 ");
+    expect(line([f, f, a, f, f])).toContain(" ask-po ");
+  });
+});
+
+describe("Blocked and Waiting PO (OMI-086)", () => {
+  const open = (n: number) => ({ number: n, state: "OPEN" });
+  const closed = (n: number) => ({ number: n, state: "CLOSED" });
+  const wait = (reason = "run the live check") => coord(`**WAITING-PO:** ${reason}`);
+
+  it("Blocked: an open blocker and no worker; the reason lists the open blockers only", () => {
+    expect(step({ blockers: [open(158), closed(9), open(160)] })).toMatchObject({
+      step: "Blocked",
+      reason: "blocked by #158, #160",
+      at: "Verify/PR",
+    });
+    expect(step({ dispatched: false, blockers: [open(1)] }).at).toBe("Start");
+  });
+
+  it("is not Blocked when every blocker is closed", () => {
+    expect(step({ blockers: [closed(158)] }).step).toBe("Verify/PR");
+  });
+
+  it("Work with a warning while a worker runs and a blocker is open", () => {
+    expect(step({ worker: { kind: "running" }, blockers: [open(158)] })).toEqual({
+      step: "Work",
+      reason: "worker runs but blocked by #158",
+    });
+    expect(step({ worker: { kind: "running" }, blockers: [closed(158)] }).reason).toBeNull();
+  });
+
+  it("Waiting PO: the newest Coordinator comment on the Issue starts with the marker", () => {
+    expect(step({ issueComments: [wait()] })).toMatchObject({
+      step: "Waiting PO",
+      reason: "run the live check",
+      at: "Verify/PR",
+    });
+  });
+
+  it("Waiting PO on the PR comments too; a newer Coordinator comment clears it", () => {
+    expect(step({ status: "In Review", pull: pull([wait("why")]) }).step).toBe("Waiting PO");
+    expect(step({ pull: pull([wait(), coord("PO answered, continue")]) }).step).toBe("Verify/PR");
+    expect(step({ issueComments: [wait()], pull: pull([coord("back to work")]) }).step).toBe(
+      "Verify/PR",
+    );
+    expect(step({ issueComments: [wait(), coord("continuing")] }).step).toBe("Verify/PR");
+  });
+
+  it("ignores the marker from another account and a newer comment from another account", () => {
+    expect(step({ issueComments: [by("someone-else", "**WAITING-PO:** x")] }).step).toBe(
+      "Verify/PR",
+    );
+    expect(step({ issueComments: [wait(), by("someone-else", "ok go")] }).step).toBe("Waiting PO");
+  });
+
+  it("requires a reason after the marker", () => {
+    expect(step({ issueComments: [coord("**WAITING-PO:**")] }).step).toBe("Verify/PR");
+  });
+
+  it("a running worker stays Work even with the marker", () => {
+    expect(step({ worker: { kind: "running" }, issueComments: [wait()] }).step).toBe("Work");
+  });
+
+  it("Waiting PO wins over Blocked", () => {
+    expect(step({ blockers: [open(1)], issueComments: [wait()] }).step).toBe("Waiting PO");
+  });
+
+  it("draws the node the task stands at as blocked, with a sub-label", () => {
+    const blocked = diagramNodes("Blocked", cyclePhase([]), {
+      at: "Verify/PR",
+      sub: "blocked by #158",
+    });
+    expect(blocked.find((n) => n.id === "Verify/PR")).toMatchObject({
+      state: "blocked",
+      sub: "blocked by #158",
+    });
+    expect(blocked.find((n) => n.id === "Work")?.state).toBe("done");
+    expect(blocked.find((n) => n.id === "Review")?.state).toBe("todo");
+    const po = diagramNodes("Waiting PO", cyclePhase([]), { at: "Start", sub: "waiting PO" });
+    expect(po.find((n) => n.id === "Start")).toMatchObject({ state: "blocked", sub: "waiting PO" });
+  });
+
+  it("taskLine prints blocked:#N,#M or waiting-po", () => {
+    const first = (it_: ProjectItem) => {
+      const view = buildTasks({ tasks: read({ items: [it_] }), workers: available([]) });
+      if (view.state !== "ok" || !view.items[0]) throw new Error("expected ok");
+      return view.items[0];
+    };
+    const b = first(item({ blockers: [open(158), closed(2), open(160)] }));
+    expect(taskLine(b)).toContain(" blocked:#158,#160");
+    expect(b.step).toBe("Blocked");
+    expect(b.blockers).toEqual([open(158), closed(2), open(160)]);
+    const w = first(item({ comments: [wait()] }));
+    expect(taskLine(w)).toContain(" waiting-po");
+    expect(w.step).toBe("Waiting PO");
+    expect(taskLine(first(item()))).not.toMatch(/blocked:|waiting-po/);
+  });
+});
+
+describe("template diagram (OMI-088)", () => {
+  const open = (n: number) => ({ number: n, state: "OPEN" });
+  const wait = () => coord("**WAITING-PO:** run the live check");
+  const card = async (
+    workflow: string | null,
+    over: Partial<ProjectItem> = {},
+    procs: WorkerProcess[] = [],
+    tasks: Partial<Extract<TasksRead, { available: true }>> = {},
+  ) => {
+    const templates = workflow === null ? {} : { [workflow]: await loadTemplate(workflow) };
+    const view = buildTasks({
+      tasks: read({
+        items: [item({ workflow, ...over })],
+        templates,
+        prompts: {
+          "OMI-074": {
+            skills: ["test-driven-development", "verification-before-completion"],
+            rules: ["AGENTS.md"],
+          },
+        },
+        ...tasks,
+      }),
+      workers: available(procs),
+    });
+    if (view.state !== "ok" || !view.items[0]) throw new Error("expected ok");
+    return view.items[0];
+  };
+
+  it("draws feature steps and gates from the template, the running worker at implement", async () => {
+    const t = await card("feature", {}, [worker]);
+    expect(t.flow).toMatchObject({
+      source: "template",
+      reason: null,
+      to: "implement",
+      from: "review",
+    });
+    expect(t.nodes.map((n) => n.id)).toEqual([
+      "analyze",
+      "scope-approved",
+      "implement",
+      "verify",
+      "review",
+      "ready-to-merge",
+    ]);
+    expect(t.nodes.find((n) => n.id === "implement")?.state).toBe("current");
+    expect(t.templateStep).toBe("implement");
+    expect(t.role).toBe("developer");
+    expect(t.step).toBe("Work");
+    expect(t.workflow).toBe("feature");
+  });
+
+  it("draws bugfix and docs from their own templates", async () => {
+    expect((await card("bugfix", {}, [worker])).nodes.map((n) => n.id)).toContain("reproduce");
+    const docs = await card("docs", {}, [worker]);
+    expect(docs.nodes.map((n) => n.id)).toEqual([
+      "scope-approved",
+      "write",
+      "verify",
+      "accept",
+      "docs-acceptance",
+      "ready-to-merge",
+    ]);
+    expect(docs.nodes.find((n) => n.id === "write")?.state).toBe("current");
+  });
+
+  it("maps no-worker states: verify (qa), review, ready-to-merge on PASS, Done", async () => {
+    const verify = await card("feature");
+    expect(verify.templateStep).toBe("verify");
+    expect(verify.role).toBe("qa");
+    const inReview = { status: "In Review" };
+    const review = await card("feature", inReview, [], { pulls: [openPull()] });
+    expect(review.templateStep).toBe("review");
+    const pass = openPull({ comments: [coord(verdict("PASS"))] });
+    const merge = await card("feature", inReview, [], { pulls: [pass] });
+    expect(merge.templateStep).toBe("ready-to-merge");
+    expect(merge.nodes.find((n) => n.id === "review")?.state).toBe("done");
+  });
+
+  it("unknown carries the reason and highlights no step", async () => {
+    const t = await card("feature", { status: "In Review" });
+    expect(t.step).toBe("unknown");
+    expect(t.templateStep).toBe("unknown");
+    expect(t.stepReason).toContain("no open PR");
+    expect(t.nodes.some((n) => n.state === "current")).toBe(false);
+  });
+
+  it("rework goes back to the developer step with rework k/2; Architect joins the path", async () => {
+    const two = openPull({ comments: [coord(verdict("FAIL")), coord(verdict("FAIL"))] });
+    const t = await card("feature", { status: "In Review" }, [], { pulls: [two] });
+    expect(t.rework).toBe(2);
+    expect(t.flow.to).toBe("implement");
+    expect(t.nodes.map((n) => n.id)).toContain("Architect");
+    const one = openPull({ comments: [coord(verdict("FAIL"))] });
+    const r = await card("feature", {}, [worker], { pulls: [one] });
+    expect(r.nodes.find((n) => n.id === "implement")).toMatchObject({
+      state: "current",
+      sub: "rework 1/2",
+    });
+  });
+
+  it("Blocked and Waiting PO mark the node the task stands at", async () => {
+    const b = await card("feature", { blockers: [open(158)] });
+    expect(b.step).toBe("Blocked");
+    expect(b.nodes.find((n) => n.id === "verify")).toMatchObject({
+      state: "blocked",
+      sub: "blocked by #158",
+    });
+    const w = await card("feature", { comments: [wait()] });
+    expect(w.nodes.find((n) => n.id === "verify")).toMatchObject({
+      state: "blocked",
+      sub: "waiting PO",
+    });
+    expect(w.role).toBe("PO");
+  });
+
+  it("shows the loaded skills against the template step and marks the mismatch", async () => {
+    const t = await card("feature", {}, [worker]);
+    expect(t.skillCheck).toEqual({
+      expected: ["test-driven-development", "minimal-change"],
+      missing: ["minimal-change"],
+      extra: [{ name: "verification-before-completion", template: "verify" }],
+    });
+    expect(t.templateInfo).toMatchObject({ id: "implement", role: "developer" });
+    expect(t.skills).toEqual(["test-driven-development", "verification-before-completion"]);
+  });
+
+  it("falls back to the lifecycle diagram with the reason when the template cannot be read", async () => {
+    const t = await card("nonexistent");
+    expect(t.flow).toMatchObject({ source: "lifecycle", from: "Review", to: "Work" });
+    expect(t.flow.reason).toContain("nonexistent");
+    expect(t.nodes.map((n) => n.id)).toContain("Verify/PR");
+    expect(t.skillCheck).toBeNull();
+    expect((await card(null)).flow.reason).toContain("Workflow");
+    const unread = await card("feature", {}, [], { templates: undefined });
+    expect(unread.flow).toMatchObject({ source: "lifecycle", reason: "template not read" });
   });
 });

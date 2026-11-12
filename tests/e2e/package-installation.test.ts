@@ -40,13 +40,12 @@ const root = resolve(import.meta.dirname, "../..");
 let temp: string;
 let artifact: string;
 let archive: string;
-// Offline fake package provisioner, like fake executors elsewhere in the E2E suite.
-// Real archive bytes are used; only dependency resolution/native compilation is simulated.
+// Package sources stay read-only after preparation; share archive bytes instead of copying
+// the full runtime on every fake install. Project state and tool manifests remain independent.
 const provision: ProvisionPackage = async (source, tool) => {
   const destination = join(tool, "node_modules", "omi-squad");
   await mkdir(dirname(destination), { recursive: true });
-  await cp(source, destination, { recursive: true });
-  await symlink(join(root, "node_modules"), join(destination, "node_modules"), "dir");
+  await symlink(source, destination, "dir");
   await writeFile(
     join(tool, "package.json"),
     JSON.stringify({ private: true, dependencies: { "omi-squad": "file:./omi-squad.tgz" } }),
@@ -69,18 +68,97 @@ async function candidate(name: string) {
 }
 const statePath = (projectDir: string) => join(projectDir, ".omi-squad/local/state/state.sqlite");
 const textPath = "workflows/onboarding-empty-repo.yaml";
+// Five installation cases took 1.64–2.66 s unloaded and exceeded 5 s under ten-way load.
+// Their 30 s budgets cover real filesystem/hash/SQLite work remaining after sharing package bytes.
 
 beforeAll(async () => {
   temp = await mkdtemp(join(tmpdir(), "omi-packaging-"));
   archive = packAndCheck(root, temp);
   artifact = join(temp, "package");
   execFileSync("tar", ["-xzf", archive, "-C", temp]);
+  await symlink(join(root, "node_modules"), join(artifact, "node_modules"), "dir");
 }, 30_000);
 afterAll(async () => {
   await rm(temp, { recursive: true, force: true });
 });
 
 describe("project-local distribution", () => {
+  it("previews the bridge and merges marked instructions while preserving user text and edits", async () => {
+    const request = await input("bridge-project");
+    await writeFile(join(request.projectDir, "CLAUDE.md"), "# My Claude instructions\n");
+    await writeFile(join(request.projectDir, "AGENTS.md"), "# My agent rules\n");
+    const preview = await installProjectTool(store(), { ...request, apply: false });
+    expect(preview.changes).toContain("bridge/skill/SKILL.md");
+    expect(await readdir(request.projectDir)).toEqual(["AGENTS.md", "CLAUDE.md"]);
+    const installed = await installProjectTool(store(), request);
+    if (installed.status !== "installed") throw new Error("expected install");
+    expect(
+      await readFile(join(installed.backupDir, "bridge/CLAUDE.md"), "utf8").catch(() => undefined),
+    ).toBe("# My Claude instructions\n");
+    const skill = join(request.projectDir, ".claude/skills/omi-squad/SKILL.md");
+    expect(await readFile(skill, "utf8")).toContain("omi-squad bridge");
+    expect(
+      await readFile(join(request.projectDir, ".claude/skills/omi-squad/bridge.ts"), "utf8"),
+    ).toContain("callCli");
+    expect(
+      JSON.parse(
+        await readFile(
+          join(request.projectDir, ".claude/skills/omi-squad/bridge.config.json"),
+          "utf8",
+        ),
+      ),
+    ).toMatchObject({ distribution: request.distribution, repository: request.projectDir });
+    const claude = await readFile(join(request.projectDir, "CLAUDE.md"), "utf8");
+    expect(claude).toContain("# My Claude instructions");
+    expect(claude).toContain("<!-- omi-squad:start -->");
+    expect(await readFile(join(request.projectDir, "AGENTS.md"), "utf8")).toContain(
+      "# My agent rules",
+    );
+    await writeFile(join(request.projectDir, "CLAUDE.md"), `${claude}\nUser addition\n`);
+    await writeFile(skill, "# User bridge override\n");
+    await installProjectTool(store(), request);
+    expect(await readFile(join(request.projectDir, "CLAUDE.md"), "utf8")).toBe(
+      `${claude}\nUser addition\n`,
+    );
+    expect(await readFile(skill, "utf8")).toBe("# User bridge override\n");
+    const next = await candidate("bridge-update");
+    await writeFile(
+      join(next, "templates/bridges/CLAUDE.md"),
+      "Read AGENTS.md and use the omi-squad CLI bridge. Updated guidance.\n",
+    );
+    await installProjectTool(store(), { ...request, packageDir: next });
+    const updated = await readFile(join(request.projectDir, "CLAUDE.md"), "utf8");
+    expect(updated).toContain("Updated guidance.");
+    expect(updated).toContain("User addition");
+    expect(updated.match(/<!-- omi-squad:start -->/g)).toHaveLength(1);
+  }, 30_000);
+
+  it("refuses a symlinked bridge parent without writing outside the project", async () => {
+    const request = await input("bridge-symlink");
+    const outside = await project("bridge-outside");
+    await symlink(outside, join(request.projectDir, ".claude"));
+    await expect(installProjectTool(store(), request)).rejects.toThrow("SYMLINK_INSTALLATION_PATH");
+    expect(await readdir(outside)).toEqual([]);
+  }, 30_000);
+
+  it.each([
+    "<!-- omi-squad:start -->",
+    "<!-- omi-squad:end -->\n<!-- omi-squad:start -->",
+    "<!-- omi-squad:start --><!-- omi-squad:start --><!-- omi-squad:end -->",
+  ])(
+    "refuses ambiguous instruction markers without changing bytes: %s",
+    async (content) => {
+      const request = await input(`markers-${String(content.length)}`);
+      const target = join(request.projectDir, "AGENTS.md");
+      await writeFile(target, content);
+      await expect(installProjectTool(store(), request)).rejects.toThrow(
+        "INVALID_INSTRUCTION_MARKERS",
+      );
+      expect(await readFile(target, "utf8")).toBe(content);
+      expect(await readdir(request.projectDir)).toEqual(["AGENTS.md"]);
+    },
+    30_000,
+  );
   it("packs only runtime assets and npm metadata, rejecting accidental source/state", () => {
     const paths = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).trim().split("\n");
     expect(paths.some((path) => path.endsWith("/dist/bootstrap/cli.js"))).toBe(true);
@@ -181,7 +259,7 @@ describe("project-local distribution", () => {
     expect(lock).toMatchObject({
       base: { [textPath]: await readFile(join(artifact, "templates/project", textPath), "utf8") },
     });
-  });
+  }, 30_000);
 
   it("reports divergent edits and deletion conflicts before changing the install or backups", async () => {
     const request = await input("conflicts");
@@ -202,7 +280,7 @@ describe("project-local distribution", () => {
       before,
     );
     expect(await readdir(join(request.projectDir, ".omi-squad/local/backups"))).toEqual(backups);
-  });
+  }, 30_000);
 
   it("backs up WAL state and config before applying SQL and existing v1 config defaults", async () => {
     const request = await input("migration");
@@ -281,7 +359,7 @@ describe("project-local distribution", () => {
     }
     const backups = await readdir(join(request.projectDir, ".omi-squad/local/backups"));
     expect(backups).toHaveLength(2);
-  });
+  }, 30_000);
 
   it("refuses a running or unreconciled owner and a changed distro binding", async () => {
     const request = await input("live-owner");
@@ -301,7 +379,7 @@ describe("project-local distribution", () => {
     } finally {
       db.close();
     }
-  });
+  }, 30_000);
 
   it("refuses source targets and symlinked managed paths", async () => {
     await expect(
@@ -377,11 +455,12 @@ describe("packaged command wiring", () => {
         ],
         environment,
       ),
-    ).toBe(1);
+    ).toBe(6);
     expect(JSON.parse(stdout.join("")) as unknown).toMatchObject({
       schemaVersion: 1,
       ok: false,
-      exitCode: 1,
+      exitCode: 6,
+      error: { code: "DOCTOR_FAILED" },
     });
   });
 });
@@ -435,10 +514,60 @@ describe("installation failure boundaries", () => {
       "INSTALLATION_PREVIEW_STALE",
     );
     expect(await readFile(target, "utf8")).toBe("# changed during provisioning\n");
-  });
+  }, 30_000);
 });
 
 describe("WSL2 doctor", () => {
+  it("classifies a failed doctor probe without exposing exception text", async () => {
+    let output = "";
+    const code = await runCli(
+      ["--json", "doctor", "--project", "/home/user/project", "--distribution", "Ubuntu"],
+      {
+        sendCommand: () => Promise.reject(new Error("unexpected IPC")),
+        defaultSocketPath: "/unused",
+        timeoutMs: 100,
+        version: "1",
+        stdout: (text) => {
+          output += text;
+        },
+        stderr: () => undefined,
+        installation: {
+          install: () => Promise.reject(new Error("unexpected install")),
+          doctor: () => Promise.reject(new Error("synthetic-private-error")),
+        },
+      },
+    );
+    expect(code).toBe(6);
+    expect(JSON.parse(output)).toMatchObject({ error: { code: "DOCTOR_FAILED" } });
+    expect(output).not.toContain("synthetic-private-error");
+  }, 30_000);
+  it("returns a dedicated CLI failure code for unsupported installations", async () => {
+    let output = "";
+    const code = await runCli(
+      ["--json", "doctor", "--project", "/home/user/project", "--distribution", "Ubuntu"],
+      {
+        sendCommand: () => Promise.reject(new Error("unexpected IPC")),
+        defaultSocketPath: "/unused",
+        timeoutMs: 100,
+        version: "1",
+        stdout: (text) => {
+          output += text;
+        },
+        stderr: () => undefined,
+        installation: {
+          install: () => Promise.reject(new Error("unexpected install")),
+          doctor: () =>
+            Promise.resolve({
+              supported: false,
+              distribution: "Ubuntu",
+              checks: [{ name: "interop", ok: false, detail: "unavailable" }],
+            }),
+        },
+      },
+    );
+    expect(code).toBe(6);
+    expect(JSON.parse(output)).toMatchObject({ error: { code: "DOCTOR_FAILED" }, exitCode: 6 });
+  }, 30_000);
   function probe(overrides: Partial<WslProbe> = {}): WslProbe {
     return {
       kernel: () => Promise.resolve("6.6.87-microsoft-standard-WSL2"),

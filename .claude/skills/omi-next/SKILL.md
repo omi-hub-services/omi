@@ -22,7 +22,10 @@ matches; if it is in Backlog, run `node tools/coordinator/flow.ts promote N` fir
 Backlog → Ready only when every blocker is closed and the readiness gate passes). It must then be
 in `ready`; on `refused:` stop and say why. Without one, take `ready[0]`; if `ready` is empty, run
 `flow.ts promote` (no N: first entry under "Backlog, all blockers closed") and take that Issue.
-Unfinished work in flight (an open PR, a running worker) comes first. Read the Issue (`gh issue view N`) and the docs CLAUDE.md
+Unfinished work in flight (an open PR, a running worker) comes first. At most 3 tasks run in
+parallel (PO). A task that waits on the PO gets a Coordinator comment
+`**WAITING-PO:** <reason>` and a task waiting on an open blocker goes back to Backlog, so
+`/omi-watch` shows Waiting PO / Blocked instead of a stale step (OMI-086, ADR-0014). Read the Issue (`gh issue view N`) and the docs CLAUDE.md
 lists.
 
 **New Issues** are created only with `node tools/coordinator/flow.ts new-issue --file <spec.md>`
@@ -91,6 +94,19 @@ node tools/coordinator/flow.ts pick-profile N [--kind codex|claude+codex-live] -
   **stop and ask the PO**: wait until the printed earliest reset, or spend a Codex reset
   credit (the count is printed). Spending a credit is the PO's decision, never yours.
 
+**Scripted dispatch (OMI-077, preferred).** Write the prompt to a local file, then let the script
+copy it to WSL, append the curated skills and run the exact command below (run it with the Bash
+tool's `run_in_background`; `--dry-run` prints it; add `OMI_WSL_REPO_DIR` for a worktree):
+
+```
+node tools/coordinator/flow.ts dispatch N --profile <p> --kind claude|codex --prompt <file> [--resume <session|thread id>] [--dry-run]
+node tools/coordinator/flow.ts worker-report N        # final report, turns, denials, resume id
+node tools/coordinator/flow.ts commit-worker <branch> --message-file <local file>   # Codex output
+```
+
+Workers never run on the Coordinator profile (`ggtintran`), even when `pick-profile` ranks it
+first. The manual form follows for reference.
+
 Launch in the background with the chosen Claude profile as `<profile>`; it is also part of
 the log name, which is how `status.ts` attributes Claude quota to a profile. For
 `claude+codex-live` add `export CODEX_HOME=\$HOME/.codex-profiles/<codex-profile>;` after
@@ -141,8 +157,9 @@ dependency/ADR notes, approval needs, and any extra worker permissions used for 
 Start a fresh review subagent (not the worker, not you) pinned to `<sha>`: diff, AC, rules in
 AGENTS.md, evidence, and the worker's "Skills applied" claims against the diff (e.g. tests
 before or with the implementation, check output quoted; a claim without evidence is a
-finding, not a FAIL by itself). Post its verdict with `gh pr comment <pr> --body-file <f>` from the
-Coordinator account (`COORDINATOR_LOGIN` in `coordinator-settings.ts`); `VERDICT` comments by
+finding, not a FAIL by itself). Post its verdict with
+`node tools/coordinator/flow.ts review-comment <pr> --file <f>` (validates VERDICT, REVIEWED_HEAD =
+PR head and one AC line per criterion before posting; OMI-077) from the Coordinator account (`COORDINATOR_LOGIN` in `coordinator-settings.ts`); `VERDICT` comments by
 any other account are ignored by `merge`, `close` and `status.ts` (which flags them). The body
 must contain:
 
@@ -161,7 +178,10 @@ must contain:
   Every criterion gets exactly one line; PASS requires every line to be `met`.
 
 FAIL → resume the worker with the findings, then repeat 4–5 for the new SHA (limit: 2 rounds,
-then Architect, then 2 more; design-patterns.md; then ask the PO).
+then Architect, then 2 more; design-patterns.md; then ask the PO). When you call the Architect,
+first post `gh pr comment <pr> --body "**ARCHITECT:** <reason>"` from the Coordinator account
+(reason required; ADR-0014, OMI-074): `/omi-watch` lights the Architect node from it and warns
+at two FAILs without it.
 
 **Parallel tasks, one review each (OMI-069, ADR-0014).** Before step 4, merge `origin/develop`
 into a finished branch so the review sees the current base. A PR that goes `BEHIND` _after_ its

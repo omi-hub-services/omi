@@ -21,6 +21,7 @@
     "test:integration": "vitest run tests/integration",
     "test:contract": "vitest run tests/contract",
     "test:e2e": "vitest run tests/e2e",
+    "test:stress": "node tools/test-stress.ts",
     "test:live": "vitest run tests/live",
     "check": "npm run typecheck && npm run build && npm run lint && npm run format:check && npm run check:architecture && npm run check:backlog && npm run schemas:check && npm run test:unit && npm run test:integration && npm run test:contract && npm run test:e2e && npm run pack:check",
     "pack:check": "node tools/check-package.ts"

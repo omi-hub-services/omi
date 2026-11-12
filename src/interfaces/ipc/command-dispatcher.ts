@@ -28,6 +28,9 @@ export interface DispatchedUseCases {
   resumeRun?: RunUseCase;
   deliverRun?: RunUseCase;
   handoffCoordinator?: RunUseCase;
+  registerProfile?: RunUseCase;
+  listProfiles?: RunUseCase;
+  probeProfile?: RunUseCase;
 }
 
 /** The command minus the routing fields; each use case validates the rest itself. */
@@ -54,6 +57,12 @@ export function createCommandDispatcher(useCases: DispatchedUseCases): CommandHa
 
   return async (command) => {
     switch (command.command) {
+      case "profile.register":
+        return run(useCases.registerProfile, "profile registration", command);
+      case "profile.list":
+        return run(useCases.listProfiles, "profile listing", command);
+      case "profile.probe":
+        return run(useCases.probeProfile, "profile probe", command);
       case "approval.request": {
         if (useCases.requestApproval === undefined) return notImplemented("approval requests");
         const input = Object.fromEntries(

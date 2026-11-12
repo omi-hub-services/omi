@@ -1,5 +1,6 @@
 import { createRunMergeEvidenceReader } from "../application/services/build-run-merge-evidence.js";
 import { existsSync, mkdirSync } from "node:fs";
+import { createFileRuleSource } from "../infrastructure/config/load-resolution-catalog.js";
 import { createFileSkillSource } from "../infrastructure/config/file-skill-source.js";
 import { loadRuntimeConfig } from "../infrastructure/config/load-runtime-config.js";
 import { createDispatchPlanner } from "../application/services/plan-step-dispatch.js";
@@ -28,7 +29,12 @@ import { createSqlitePrMappingStore } from "../infrastructure/persistence/sqlite
 import { createLocalArtifactStore } from "../infrastructure/artifacts/local-artifact-store.js";
 import { createLocalCheckpointStore } from "../infrastructure/artifacts/local-checkpoint-store.js";
 import { sha256ContentHasher } from "../infrastructure/artifacts/sha256-content-hasher.js";
+import { createDirectoryWorkerLogStore } from "../infrastructure/artifacts/directory-worker-log-store.js";
+import { createCliBranchSync } from "../infrastructure/git/cli-branch-sync.js";
+import { logRetentionSettings } from "../application/contracts/log-retention.js";
+import { retainWorkerLogs } from "../application/use-cases/runs/retain-worker-logs.js";
 import { createCliGitWorkspace } from "../infrastructure/git/cli-git-workspace.js";
+import { createProcessCheckRunner } from "../infrastructure/processes/process-check-runner.js";
 import { createGithubRestClient } from "../infrastructure/github/github-rest-client.js";
 import { createGhApiTransport } from "../infrastructure/github/gh-api-transport.js";
 import type { GithubTransport } from "../infrastructure/github/github-transport.js";
@@ -38,6 +44,13 @@ import { ClaudeCodeExecutor } from "../infrastructure/executors/claude-code/clau
 import { CodexExecutor } from "../infrastructure/executors/codex/codex-executor.js";
 import type { startSupervisedProcess } from "../infrastructure/processes/supervised-process.js";
 import { installProjectTool } from "../application/use-cases/project/install-project-tool.js";
+import { initializeProject } from "../application/use-cases/project/initialize-project.js";
+import { createOnboardingProjectConfigStore } from "../infrastructure/config/project-config-store.js";
+import { createCodebaseReader } from "../infrastructure/config/codebase-reader.js";
+import { createOnboardingFileStore } from "../infrastructure/config/onboarding-file-store.js";
+import { createOnboardingTemplateSource } from "../infrastructure/config/onboarding-template-source.js";
+import { readOptional } from "../infrastructure/config/package-content.js";
+import { createGithubProjectReader } from "../infrastructure/github/github-project-reader.js";
 import { inspectInstallation } from "../application/use-cases/project/inspect-installation.js";
 import { createProjectInstallation } from "../infrastructure/config/install-project-package.js";
 import { createInstallationDoctor } from "../infrastructure/processes/installation-doctor.js";
@@ -79,8 +92,17 @@ import { recordApproval } from "../application/use-cases/approvals/record-approv
 import type { ApprovalSubjectReader } from "../application/ports/approval-store.js";
 import { createGitHubApprovalDecisionSource } from "../infrastructure/github/github-approval-decision-source.js";
 import { createInteractiveApprovalConfirmation } from "../infrastructure/processes/interactive-approval-decision.js";
-import { createSqliteApprovalStore } from "../infrastructure/persistence/sqlite/sqlite-approval-store.js";
+import {
+  createSqliteApprovalStore,
+  createSqliteTaskApprovalSubjects,
+} from "../infrastructure/persistence/sqlite/sqlite-approval-store.js";
 import { createSqliteProfileRegistry } from "../infrastructure/profiles/sqlite-profile-registry.js";
+import { createProfileQuotaReader } from "../infrastructure/profiles/profile-quota-reader.js";
+import { createClaudeQuotaReader } from "../infrastructure/executors/claude-code/claude-code-quota.js";
+import { createCodexQuotaReader } from "../infrastructure/executors/codex/codex-quota.js";
+import type { QuotaReader } from "../application/ports/quota-reader.js";
+import { registerProfile } from "../application/use-cases/profiles/register-profile.js";
+import { probeRegisteredProfile } from "../application/use-cases/profiles/probe-profile.js";
 import { createSqliteExecutorSelectionStore } from "../infrastructure/profiles/sqlite-executor-selection-store.js";
 import { createSqliteStateUnitOfWork } from "../infrastructure/persistence/sqlite/sqlite-state-unit-of-work.js";
 import type { StateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
@@ -89,6 +111,14 @@ import { join } from "node:path";
 import { inspectRuntime } from "../application/use-cases/project/inspect-runtime.js";
 import type { RuntimeIdentity } from "../application/use-cases/project/inspect-runtime.js";
 import type { CliEnvironment } from "../interfaces/cli/commands/create-program.js";
+import type { LogCommands } from "../interfaces/cli/commands/log-commands.js";
+import type { TaskCommands } from "../interfaces/cli/commands/task-commands.js";
+import { createIssueFromSpec } from "../application/use-cases/tasks/create-issue-from-spec.js";
+import { promoteTask } from "../application/use-cases/tasks/promote-task.js";
+import { setTaskStatus } from "../application/use-cases/tasks/set-task-status.js";
+import { createIssueSpecFile } from "../infrastructure/config/issue-spec-file.js";
+import { createGithubIntake } from "../infrastructure/github/github-intake.js";
+import { createGithubTaskBoard } from "../infrastructure/github/github-task-board.js";
 import type { DispatchedUseCases } from "../interfaces/ipc/command-dispatcher.js";
 import { createCommandDispatcher } from "../interfaces/ipc/command-dispatcher.js";
 import { sendCommand } from "../interfaces/ipc/ipc-client.js";
@@ -145,11 +175,100 @@ export interface CliWiringOptions {
   readonly timeoutMs?: number;
 }
 
+/** Intake and promote commands: GitHub is the project's own repository and Project (project.yaml). */
+export function createTaskCommands(
+  transport: GithubTransport = createGhApiTransport(),
+): TaskCommands {
+  async function github(projectDir: string) {
+    const config = await createOnboardingProjectConfigStore(projectDir).read();
+    if (config === undefined) throw new Error("PROJECT_NOT_CONFIGURED");
+    const client = createGithubRestClient({
+      transport,
+      now: Date.now,
+      random: Math.random,
+      sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+    });
+    const deps = {
+      client,
+      projects: createGithubProjectReader(client),
+      repository: config.repository,
+      project: { owner: config.project.owner, number: config.project.number },
+    };
+    return { intake: createGithubIntake(deps), board: createGithubTaskBoard(deps) };
+  }
+  return {
+    newIssue: async (input) =>
+      createIssueFromSpec(
+        { spec: createIssueSpecFile(input.file), intake: (await github(input.projectDir)).intake },
+        { prefix: input.prefix, apply: input.apply },
+      ),
+    promote: async (input) => promoteTask({ board: (await github(input.projectDir)).board }, input),
+    setStatus: async (input) =>
+      setTaskStatus({ board: (await github(input.projectDir)).board }, input),
+  };
+}
+
+/** Worker logs live in `.omi-squad/local/logs`, outside the immutable run artifacts. */
+const workerLogDirectory = (projectDir: string): string =>
+  join(projectDir, ".omi-squad", "local", "logs");
+
+/** Manual log retention: the same use case that runs after a task is closed. */
+export function createLogCommands(): LogCommands {
+  return {
+    pruneLogs: async (input) => {
+      const config = await createOnboardingProjectConfigStore(input.projectDir).read();
+      if (config === undefined) throw new Error("PROJECT_NOT_CONFIGURED");
+      return retainWorkerLogs(
+        {
+          logs: createDirectoryWorkerLogStore({ directory: workerLogDirectory(input.projectDir) }),
+          now: Date.now,
+        },
+        {
+          doneTasks: input.doneTasks,
+          settings: logRetentionSettings(config.log_retention),
+          dryRun: input.dryRun,
+        },
+      );
+    },
+  };
+}
+
 /** Wires the CLI to the real IPC client. Used by `cli.ts`; tests may pass their own environment. */
 export function createCliEnvironment(options: CliWiringOptions): CliEnvironment {
   return {
     sendCommand,
+    tasks: createTaskCommands(),
+    logs: createLogCommands(),
     installation: {
+      initialize: async (input) =>
+        initializeProject(
+          {
+            github: createGithubProjectReader(
+              createGithubRestClient({
+                transport: createGhApiTransport(),
+                now: Date.now,
+                random: Math.random,
+                sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+              }),
+            ),
+            config: createOnboardingProjectConfigStore(input.projectDir),
+            onboarding: {
+              codebase: await createCodebaseReader(
+                input.projectDir,
+                fileURLToPath(new URL("../..", import.meta.url)),
+              ),
+              files: await createOnboardingFileStore(input.projectDir),
+              templates: createOnboardingTemplateSource(
+                fileURLToPath(new URL("../../templates/project/workflows", import.meta.url)),
+              ),
+            },
+          },
+          {
+            config: JSON.parse((await readOptional(input.configFile)) ?? "null") as unknown,
+            source: { kind: "codebase", variant: input.variant },
+            apply: input.apply,
+          },
+        ),
       install: (input) =>
         installProjectTool(
           createProjectInstallation({
@@ -178,6 +297,7 @@ export function createRuntimeIpcServer(options: {
   readonly identity: RuntimeIdentity;
   readonly selections?: Pick<ExecutorSelectionStore, "listSettings">;
   readonly approvals?: Pick<DispatchedUseCases, "requestApproval" | "recordApproval">;
+  readonly profiles?: Pick<DispatchedUseCases, "registerProfile" | "listProfiles" | "probeProfile">;
   readonly runs?: RunCommandUseCases;
   /** Lets `status` list the unfinished runs. */
   readonly activeRuns?: ActiveRunReader;
@@ -189,10 +309,33 @@ export function createRuntimeIpcServer(options: {
       inspectRuntime: () =>
         inspectRuntime(options.identity, options.selections, options.activeRuns),
       ...options.approvals,
+      ...options.profiles,
       ...options.runs,
     }),
     ...(options.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: options.idleTimeoutMs }),
   });
+}
+
+export function createProfileUseCases(database: StateDatabase, canSave: () => boolean) {
+  const registry = createSqliteProfileRegistry(database);
+  const executors = { "claude-code": new ClaudeCodeExecutor(), codex: new CodexExecutor() };
+  return {
+    registerProfile: (input: unknown) =>
+      canSave()
+        ? registerProfile(registry, input, Date.now)
+        : { ok: false as const, reason: "SESSION_STOPPING" },
+    listProfiles: () => ({ ok: true as const, profiles: registry.list() }),
+    probeProfile: (input: unknown) =>
+      probeRegisteredProfile(
+        registry,
+        executors,
+        typeof input === "object" && input !== null && "profileId" in input
+          ? input.profileId
+          : undefined,
+        Date.now,
+        canSave,
+      ),
+  };
 }
 
 /** Wire only inside the runtime, using its already migrated database and authoritative subjects. */
@@ -201,8 +344,9 @@ export function createApprovalUseCases(options: {
   readonly subjects: ApprovalSubjectReader;
   readonly repository: string;
   readonly allowedGitHubActors: readonly string[];
+  readonly fence?: import("../application/ports/state-unit-of-work.js").LeaseFence;
 }): Pick<DispatchedUseCases, "requestApproval" | "recordApproval"> {
-  const unitOfWork = createSqliteStateUnitOfWork(options.database);
+  const unitOfWork = createSqliteStateUnitOfWork(options.database, options.fence);
   const source = createGitHubApprovalDecisionSource({
     repository: options.repository,
     confirmCli: createInteractiveApprovalConfirmation(),
@@ -361,6 +505,8 @@ export function createRunProcessRecovery(options: {
 export interface RuntimeCompositionOptions {
   readonly transport?: GithubTransport;
   readonly now?: () => number;
+  /** Test boundary for quota readings; production reads the profiles' own usage (ADR-0033). */
+  readonly quotaReader?: QuotaReader;
   /** Reversible test boundary: no fake mode or executable override is read from Issue text. */
   readonly executors?: (ports: {
     readonly attempts: AttemptStore;
@@ -398,6 +544,10 @@ export async function createProjectRunCommandUseCases(
       },
       drain: () => Promise.resolve(),
       resourceWakeup: undefined,
+      approvals: {
+        requestApproval: () => ({ ok: false as const, reason: "SUBJECT_NOT_FOUND" as const }),
+        recordApproval: () => Promise.resolve({ ok: false as const, reason: "NOT_FOUND" as const }),
+      },
     };
   }
   const config = await loadRuntimeConfig(join(projectDir, ".omi-squad"));
@@ -444,6 +594,20 @@ export async function createProjectRunCommandUseCases(
     now,
   );
   const planner = createDispatchPlanner({
+    // Real readers exist only when the project opted in with a `quota` block (ADR-0033); without
+    // it nothing here can reach the usage endpoint, `codex app-server` or a probe.
+    ...(config.project.quota === undefined
+      ? {}
+      : {
+          quota:
+            options.quotaReader ??
+            createProfileQuotaReader({
+              "claude-code": createClaudeQuotaReader({
+                probe: { executable: "claude", parentEnv: process.env },
+              }),
+              codex: createCodexQuotaReader({ executable: "codex", parentEnv: process.env }),
+            }),
+        }),
     config: config.project,
     models: config.models,
     plans,
@@ -487,6 +651,7 @@ export async function createProjectRunCommandUseCases(
   const dispatch: DispatchStepDependencies = {
     catalog: config.catalog,
     skills: createFileSkillSource(join(projectDir, ".omi-squad")),
+    rules: createFileRuleSource(join(projectDir, ".omi-squad")),
     steps: createSqliteStepRunReader(database),
     attempts,
     artifacts,
@@ -496,6 +661,13 @@ export async function createProjectRunCommandUseCases(
     leaseTtlMs: config.project.limits.step_timeout_seconds * 1000 + 60_000,
     now,
     nextId,
+    // The readiness gate reads the live Project before a task branch is created (OMI-079).
+    board: createGithubTaskBoard({
+      client,
+      projects: createGithubProjectReader(client),
+      repository: config.project.repository,
+      project: { owner: config.project.project.owner, number: config.project.project.number },
+    }),
     checkpoint: (event) => {
       const saved = writeCheckpoint(checkpointDeps, {
         ...snapshotRunContext(snapshotDeps, event.runId, event),
@@ -565,6 +737,22 @@ export async function createProjectRunCommandUseCases(
     },
   };
   const completion: CompletionRouting = {
+    // Only configured checks exist; with none, no id is runtime-owned and nothing is run.
+    ...(config.project.checks === undefined
+      ? {}
+      : {
+          checks: createProcessCheckRunner({
+            checks: Object.fromEntries(
+              Object.entries(config.project.checks).map(([id, check]) => [
+                id,
+                { command: check.command, timeoutMs: check.timeout_seconds * 1000 },
+              ]),
+            ),
+            artifacts,
+            now,
+            nextId,
+          }),
+        }),
     failoversMade: (stepRunId) => attempts.failoversForStep(stepRunId),
     failover,
     selections: profiles.selections,
@@ -619,6 +807,19 @@ export async function createProjectRunCommandUseCases(
     reader: createGithubMergeDelivery(client),
     mergeLockOwner: session.lease.owner,
     mergeLockTtlMs: 60_000,
+    carry: createCliBranchSync({
+      repositoryPath: projectDir,
+      baseBranch: config.project.branches.integration,
+    }),
+    afterDone: async (taskId) => {
+      await retainWorkerLogs(
+        { logs: createDirectoryWorkerLogStore({ directory: workerLogDirectory(projectDir) }), now },
+        {
+          doneTasks: [taskId],
+          settings: logRetentionSettings(config.project.log_retention),
+        },
+      );
+    },
   };
   const commands = createRunCommandUseCases({
     session,
@@ -638,6 +839,13 @@ export async function createProjectRunCommandUseCases(
   return {
     runs,
     commands,
+    approvals: createApprovalUseCases({
+      database,
+      subjects: createSqliteTaskApprovalSubjects(database),
+      repository: `${config.project.repository.owner}/${config.project.repository.name}`,
+      allowedGitHubActors: config.project.policies.github_approval_actors ?? [],
+      fence: session.lease,
+    }),
     resourceWakeup: (canDispatch: () => boolean) => ({
       timing: config.project.resource_wait,
       tick: () =>

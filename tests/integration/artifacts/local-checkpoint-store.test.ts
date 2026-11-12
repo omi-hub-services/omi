@@ -106,6 +106,14 @@ describe("atomic write", () => {
     expect(Buffer.from(latest?.bytes ?? []).equals(Buffer.from(bytes))).toBe(true);
   });
 
+  it("selects the last saved checkpoint after the wall clock steps back", () => {
+    store.save(save("before-rollback", T1));
+    store.save(save("after-rollback", T0));
+    // Resume must see the paused workspace, not an older before-dispatch Git snapshot.
+    const restarted = createLocalCheckpointStore(root, db);
+    expect(restarted.latestValid("run-1", T2)?.record.id).toBe("after-rollback");
+  });
+
   it("never overwrites: a second save of the same id fails and the first stays valid", () => {
     store.save(save("cp-1"));
     expect(() => store.save(save("cp-1", T1, manifestBytes("other")))).toThrow(
