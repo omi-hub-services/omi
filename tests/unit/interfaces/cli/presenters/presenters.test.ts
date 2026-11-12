@@ -29,6 +29,7 @@ describe("exit codes", () => {
       RUNTIME_UNAVAILABLE: 3,
       REQUEST_REJECTED: 4,
       PROTOCOL_ERROR: 5,
+      DOCTOR_FAILED: 6,
     });
   });
 

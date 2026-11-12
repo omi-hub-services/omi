@@ -4,6 +4,7 @@ import { join, relative } from "node:path";
 import { z } from "zod";
 import { templateFilesSchema } from "../../application/contracts/project-installation.js";
 import { assertCredentialFree } from "../../application/contracts/credential-input.js";
+import { wrapProjectInstruction } from "./project-bridge.js";
 
 export const packageMetadataSchema = z.object({
   name: z.literal("omi-squad"),
@@ -58,6 +59,21 @@ export async function readPackageContent(directory: string) {
         const target = name.slice("templates/project/".length).replace(/^\.omi-squad\//, "");
         if (templates[target] !== undefined) throw new Error("DUPLICATE_TEMPLATE_TARGET");
         templates[target] = text;
+      }
+      if (name === "templates/bridges/CLAUDE.md" || name === "templates/bridges/AGENTS.md") {
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+        assertCredentialFree(text);
+        templates[`bridge/${name.slice("templates/bridges/".length)}`] =
+          wrapProjectInstruction(text);
+      }
+      if (
+        name === "templates/bridges/claude-code/omi-squad/SKILL.md" ||
+        name === "templates/bridges/claude-code/omi-squad/bridge.ts"
+      ) {
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+        assertCredentialFree(text);
+        templates[`bridge/skill/${name.slice("templates/bridges/claude-code/omi-squad/".length)}`] =
+          text;
       }
     } else throw new Error("INVALID_PACKAGE_CONTENT");
   }

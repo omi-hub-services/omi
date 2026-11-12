@@ -38,6 +38,13 @@ import { ClaudeCodeExecutor } from "../infrastructure/executors/claude-code/clau
 import { CodexExecutor } from "../infrastructure/executors/codex/codex-executor.js";
 import type { startSupervisedProcess } from "../infrastructure/processes/supervised-process.js";
 import { installProjectTool } from "../application/use-cases/project/install-project-tool.js";
+import { initializeProject } from "../application/use-cases/project/initialize-project.js";
+import { createOnboardingProjectConfigStore } from "../infrastructure/config/project-config-store.js";
+import { createCodebaseReader } from "../infrastructure/config/codebase-reader.js";
+import { createOnboardingFileStore } from "../infrastructure/config/onboarding-file-store.js";
+import { createOnboardingTemplateSource } from "../infrastructure/config/onboarding-template-source.js";
+import { readOptional } from "../infrastructure/config/package-content.js";
+import { createGithubProjectReader } from "../infrastructure/github/github-project-reader.js";
 import { inspectInstallation } from "../application/use-cases/project/inspect-installation.js";
 import { createProjectInstallation } from "../infrastructure/config/install-project-package.js";
 import { createInstallationDoctor } from "../infrastructure/processes/installation-doctor.js";
@@ -79,8 +86,13 @@ import { recordApproval } from "../application/use-cases/approvals/record-approv
 import type { ApprovalSubjectReader } from "../application/ports/approval-store.js";
 import { createGitHubApprovalDecisionSource } from "../infrastructure/github/github-approval-decision-source.js";
 import { createInteractiveApprovalConfirmation } from "../infrastructure/processes/interactive-approval-decision.js";
-import { createSqliteApprovalStore } from "../infrastructure/persistence/sqlite/sqlite-approval-store.js";
+import {
+  createSqliteApprovalStore,
+  createSqliteTaskApprovalSubjects,
+} from "../infrastructure/persistence/sqlite/sqlite-approval-store.js";
 import { createSqliteProfileRegistry } from "../infrastructure/profiles/sqlite-profile-registry.js";
+import { registerProfile } from "../application/use-cases/profiles/register-profile.js";
+import { probeRegisteredProfile } from "../application/use-cases/profiles/probe-profile.js";
 import { createSqliteExecutorSelectionStore } from "../infrastructure/profiles/sqlite-executor-selection-store.js";
 import { createSqliteStateUnitOfWork } from "../infrastructure/persistence/sqlite/sqlite-state-unit-of-work.js";
 import type { StateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
@@ -150,6 +162,35 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
   return {
     sendCommand,
     installation: {
+      initialize: async (input) =>
+        initializeProject(
+          {
+            github: createGithubProjectReader(
+              createGithubRestClient({
+                transport: createGhApiTransport(),
+                now: Date.now,
+                random: Math.random,
+                sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+              }),
+            ),
+            config: createOnboardingProjectConfigStore(input.projectDir),
+            onboarding: {
+              codebase: await createCodebaseReader(
+                input.projectDir,
+                fileURLToPath(new URL("../..", import.meta.url)),
+              ),
+              files: await createOnboardingFileStore(input.projectDir),
+              templates: createOnboardingTemplateSource(
+                fileURLToPath(new URL("../../templates/project/workflows", import.meta.url)),
+              ),
+            },
+          },
+          {
+            config: JSON.parse((await readOptional(input.configFile)) ?? "null") as unknown,
+            source: { kind: "codebase", variant: input.variant },
+            apply: input.apply,
+          },
+        ),
       install: (input) =>
         installProjectTool(
           createProjectInstallation({
@@ -178,6 +219,7 @@ export function createRuntimeIpcServer(options: {
   readonly identity: RuntimeIdentity;
   readonly selections?: Pick<ExecutorSelectionStore, "listSettings">;
   readonly approvals?: Pick<DispatchedUseCases, "requestApproval" | "recordApproval">;
+  readonly profiles?: Pick<DispatchedUseCases, "registerProfile" | "listProfiles" | "probeProfile">;
   readonly runs?: RunCommandUseCases;
   /** Lets `status` list the unfinished runs. */
   readonly activeRuns?: ActiveRunReader;
@@ -189,10 +231,33 @@ export function createRuntimeIpcServer(options: {
       inspectRuntime: () =>
         inspectRuntime(options.identity, options.selections, options.activeRuns),
       ...options.approvals,
+      ...options.profiles,
       ...options.runs,
     }),
     ...(options.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: options.idleTimeoutMs }),
   });
+}
+
+export function createProfileUseCases(database: StateDatabase, canSave: () => boolean) {
+  const registry = createSqliteProfileRegistry(database);
+  const executors = { "claude-code": new ClaudeCodeExecutor(), codex: new CodexExecutor() };
+  return {
+    registerProfile: (input: unknown) =>
+      canSave()
+        ? registerProfile(registry, input, Date.now)
+        : { ok: false as const, reason: "SESSION_STOPPING" },
+    listProfiles: () => ({ ok: true as const, profiles: registry.list() }),
+    probeProfile: (input: unknown) =>
+      probeRegisteredProfile(
+        registry,
+        executors,
+        typeof input === "object" && input !== null && "profileId" in input
+          ? input.profileId
+          : undefined,
+        Date.now,
+        canSave,
+      ),
+  };
 }
 
 /** Wire only inside the runtime, using its already migrated database and authoritative subjects. */
@@ -201,8 +266,9 @@ export function createApprovalUseCases(options: {
   readonly subjects: ApprovalSubjectReader;
   readonly repository: string;
   readonly allowedGitHubActors: readonly string[];
+  readonly fence?: import("../application/ports/state-unit-of-work.js").LeaseFence;
 }): Pick<DispatchedUseCases, "requestApproval" | "recordApproval"> {
-  const unitOfWork = createSqliteStateUnitOfWork(options.database);
+  const unitOfWork = createSqliteStateUnitOfWork(options.database, options.fence);
   const source = createGitHubApprovalDecisionSource({
     repository: options.repository,
     confirmCli: createInteractiveApprovalConfirmation(),
@@ -398,6 +464,10 @@ export async function createProjectRunCommandUseCases(
       },
       drain: () => Promise.resolve(),
       resourceWakeup: undefined,
+      approvals: {
+        requestApproval: () => ({ ok: false as const, reason: "SUBJECT_NOT_FOUND" as const }),
+        recordApproval: () => Promise.resolve({ ok: false as const, reason: "NOT_FOUND" as const }),
+      },
     };
   }
   const config = await loadRuntimeConfig(join(projectDir, ".omi-squad"));
@@ -638,6 +708,13 @@ export async function createProjectRunCommandUseCases(
   return {
     runs,
     commands,
+    approvals: createApprovalUseCases({
+      database,
+      subjects: createSqliteTaskApprovalSubjects(database),
+      repository: `${config.project.repository.owner}/${config.project.repository.name}`,
+      allowedGitHubActors: config.project.policies.github_approval_actors ?? [],
+      fence: session.lease,
+    }),
     resourceWakeup: (canDispatch: () => boolean) => ({
       timing: config.project.resource_wait,
       tick: () =>

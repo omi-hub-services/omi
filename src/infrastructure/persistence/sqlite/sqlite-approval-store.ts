@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { approvalSubjectSchema } from "../../../application/contracts/approval.js";
 import { identifierSchema } from "../../../application/contracts/identifiers.js";
-import type { ApprovalStore } from "../../../application/ports/approval-store.js";
+import type {
+  ApprovalStore,
+  ApprovalSubjectReader,
+} from "../../../application/ports/approval-store.js";
 import { isApprovalSubjectCurrent } from "../../../domain/approvals/approval-policy.js";
 import { APPROVAL_STATUSES, approvalSubjectHash } from "../../../domain/approvals/approval.js";
 import type { StateDatabase } from "./sqlite-connection.js";
@@ -31,6 +34,21 @@ const storedRequestSchema = z.strictObject({
     })
     .optional(),
 });
+
+/** Current imported task revision; unsupported workflow subjects fail closed. */
+export function createSqliteTaskApprovalSubjects(db: StateDatabase): ApprovalSubjectReader {
+  return {
+    read(subjectId, kind) {
+      if (kind !== "business") return undefined;
+      const row = db.prepare("SELECT content_hash FROM task_snapshots WHERE id=?").get(subjectId);
+      if (row === undefined) return undefined;
+      const parsed = z.object({ content_hash: z.string().regex(/^[a-f0-9]{64}$/) }).safeParse(row);
+      return parsed.success
+        ? { kind: "business", baselineHash: parsed.data.content_hash, scopeIds: [subjectId] }
+        : undefined;
+    },
+  };
+}
 
 export function createSqliteApprovalStore(db: StateDatabase): ApprovalStore {
   return {

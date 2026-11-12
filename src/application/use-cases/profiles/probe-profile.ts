@@ -3,6 +3,33 @@ import { identifierSchema } from "../../contracts/identifiers.js";
 import type { AgentExecutor } from "../../ports/agent-executor.js";
 import type { ProfileRegistry } from "../../ports/profile-registry.js";
 
+export async function probeRegisteredProfile(
+  registry: ProfileRegistry,
+  executors: Readonly<Record<"claude-code" | "codex", Pick<AgentExecutor, "executor" | "probe">>>,
+  input: unknown,
+  now: () => number,
+  canSave: () => boolean,
+) {
+  const parsed = identifierSchema.safeParse(input);
+  if (!parsed.success) return { ok: false as const, reason: "INVALID_INPUT" };
+  const profile = registry.list().find((entry) => entry.metadata.profileId === parsed.data);
+  if (profile === undefined) return { ok: false as const, reason: "PROFILE_NOT_FOUND" };
+  try {
+    return {
+      ok: true as const,
+      ...(await probeProfile(
+        registry,
+        executors[profile.metadata.tool],
+        parsed.data,
+        now,
+        canSave,
+      )),
+    };
+  } catch {
+    return { ok: false as const, reason: "PROFILE_PROBE_FAILED" };
+  }
+}
+
 /** Clock is sampled after the awaited probe; network/process waits never hold a DB transaction. */
 export async function probeProfile(
   registry: ProfileRegistry,
