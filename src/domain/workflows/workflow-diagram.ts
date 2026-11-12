@@ -54,7 +54,8 @@ export function orderDiagramNodes(workflow: DiagramWorkflow): TemplateNode[] {
   return out;
 }
 
-export type NodeState = "done" | "current" | "todo" | "blocked" | "waiting-po" | "failed";
+export type NodeState =
+  "done" | "current" | "todo" | "blocked" | "waiting-po" | "failed" | "skipped";
 
 export interface DiagramNode {
   readonly id: string;
@@ -86,6 +87,8 @@ export interface DiagramInput {
   /** Failed quality cycles counted so far, across the Architect. */
   readonly failures: number;
   readonly hold?: Hold;
+  /** The gate (not a step) the task stands at: drawn current, or held when `hold` is set. */
+  readonly atGate?: string;
 }
 
 const CURRENT: readonly StepStatus[] = [
@@ -148,10 +151,12 @@ export function buildWorkflowDiagram(input: DiagramInput): WorkflowDiagram {
     ]),
   );
   // The held node is where the task stands: the step in progress, else the next one to run.
+  const gateAt = order.find((node) => node.kind === "gate" && node.id === input.atGate)?.id;
   const heldId =
     hold === undefined
       ? undefined
-      : (stepNodes.find((node) => ["current", "failed"].includes(states.get(node.id) ?? ""))?.id ??
+      : (gateAt ??
+        stepNodes.find((node) => ["current", "failed"].includes(states.get(node.id) ?? ""))?.id ??
         stepNodes.find((node) => states.get(node.id) === "todo")?.id);
 
   const nodes: DiagramNode[] = order.map((node) => {
@@ -161,6 +166,9 @@ export function buildWorkflowDiagram(input: DiagramInput): WorkflowDiagram {
     if (hold !== undefined && node.id === heldId) {
       state = hold.kind;
       sub = holdLabel(hold);
+    } else if (node.id === gateAt) {
+      state = "current";
+      sub = "waiting";
     } else if (node.kind === "step" && status !== undefined && STATUS_LABEL[status] !== undefined) {
       sub = STATUS_LABEL[status];
     } else if (state === "current" && node.id === developer?.id && cycle.rework > 0) {

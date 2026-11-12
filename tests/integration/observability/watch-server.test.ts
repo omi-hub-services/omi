@@ -15,6 +15,7 @@ const snapshot = (generatedAt = "2026-11-12T10:00:00.000Z"): WatchSnapshot => ({
   generatedAt,
   board: "ok",
   tasks: [],
+  quota: { state: "not-configured", reason: null, rows: [] },
 });
 
 const open: WatchServer[] = [];

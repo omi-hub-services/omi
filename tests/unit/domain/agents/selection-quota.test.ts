@@ -39,6 +39,7 @@ const verdict = (profileId: string, over: Partial<QuotaVerdict> = {}): QuotaVerd
   freshness: "fresh",
   fiveHourLeft: 80,
   sevenDayLeft: 80,
+  fiveHourResetsAt: null,
   score: 80,
   blocked: [],
   blockedUntil: null,

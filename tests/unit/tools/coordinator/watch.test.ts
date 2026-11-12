@@ -457,8 +457,8 @@ it.each([9999, 10000])("shares reset display between terminal and web at %s", (r
   expect(resetText(resetsAt, screen.now, true)).toBeNull();
   expect(renderWatch({ ...screen, quota })).toContain("100% / 80%  reset ?");
   expect(
-    buildSnapshot({ ...screen, quota, probing: false }).quota.profiles[0]?.reading?.fiveHour,
-  ).toMatchObject({ left: 100, resetText: null });
+    buildSnapshot({ ...screen, quota }).quota.rows.find((row) => row.fiveHourLeft !== null),
+  ).toMatchObject({ fiveHourLeft: 100, resetText: null });
 });
 
 it("catches onChange exceptions, releases busy flags and continues polling", async () => {

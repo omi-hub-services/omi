@@ -37,6 +37,26 @@ const ids = (nodes: readonly { id: string }[]) => nodes.map((n) => n.id);
 const stateOf = (nodes: readonly { id: string; state: string }[], id: string) =>
   nodes.find((n) => n.id === id)?.state;
 
+describe("hold with several failed steps", () => {
+  it("sits on the earliest failed step: a later failed review is an old verdict still to re-run", () => {
+    const diagram = buildWorkflowDiagram({
+      workflow: FEATURE,
+      steps: statuses({
+        analyze: "succeeded",
+        implement: "succeeded",
+        verify: "failed",
+        review: "failed",
+      }),
+      cycle: NO_REWORK,
+      failures: 1,
+      hold: { kind: "waiting-po" },
+    });
+    expect(stateOf(diagram.nodes, "verify")).toBe("waiting-po");
+    expect(stateOf(diagram.nodes, "review")).toBe("failed");
+    expect(diagram.nodes.filter((n) => n.state === "waiting-po")).toHaveLength(1);
+  });
+});
+
 describe("orderDiagramNodes", () => {
   it("orders steps by needs and puts each gate before or after its step", () => {
     const reversed: DiagramWorkflow = { ...FEATURE, steps: [...FEATURE.steps].reverse() };
