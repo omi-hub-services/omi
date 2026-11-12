@@ -1,4 +1,4 @@
-// Terminal worker/quota watch (OMI-064, ADR-0014). No automatic paid probes.
+// Terminal task/worker/quota watch (OMI-064, OMI-074, ADR-0014). No automatic paid probes.
 import { emitKeypressEvents } from "node:readline";
 import { parseArgs } from "node:util";
 import {
@@ -16,9 +16,11 @@ import {
   resetText,
   createWatchPoller,
   STALE_AFTER_SECONDS,
+  TASKS_INTERVAL_MS,
   windowsLow,
   workerTone,
 } from "./watch-core.ts";
+import { buildTasks, readTasks, taskLine, type TasksRead } from "./watch-tasks.ts";
 import type { Workers } from "./wsl-workers.ts";
 
 export const ANSI = {
@@ -50,6 +52,8 @@ function duration(seconds: number): string {
 
 export interface WatchScreen {
   readonly workers: Workers | null;
+  /** null before the first GitHub read: no Tasks section yet. */
+  readonly tasks: TasksRead | null;
   readonly quota: QuotaReport | null;
   readonly now: number;
   readonly settings: QuotaSettings;
@@ -63,7 +67,19 @@ export interface WatchScreen {
 export function renderWatch(screen: WatchScreen): string {
   const width = Math.max(1, screen.columns ?? 160);
   const fit = (s: string) => (s.length > width ? `${s.slice(0, width - 1)}…` : s);
-  const out = [fit("Workers")];
+  const out: string[] = [];
+  if (screen.tasks) {
+    out.push(fit("Tasks"));
+    const tasks = buildTasks({ tasks: screen.tasks, workers: screen.workers });
+    if (tasks.state === "unavailable")
+      out.push(paint(fit(`  GitHub unavailable: ${tasks.reason} (retrying)`), ANSI.red));
+    else if (tasks.state === "ok") {
+      if (tasks.items.length === 0) out.push(fit("  (none In Progress or In Review)"));
+      for (const t of tasks.items) out.push(fit(`  ${taskLine(t)}`));
+    }
+    out.push("");
+  }
+  out.push(fit("Workers"));
   const workers = screen.workers;
   if (!workers) out.push(fit("  Loading…"));
   else if (!workers.available)
@@ -180,6 +196,7 @@ export function runWatch(options: WatchOptions): Promise<void> {
           terminal.write(
             renderWatch({
               workers: poller.workers,
+              tasks: poller.tasks,
               quota: poller.quota,
               confirming,
               probing: poller.probing,
@@ -199,6 +216,7 @@ export function runWatch(options: WatchOptions): Promise<void> {
       profiles,
       settings,
       workerIntervalMs: options.intervalMs,
+      tasks: { intervalMs: TASKS_INTERVAL_MS, read: (run) => readTasks(run, target) },
       onChange: draw,
       onError: fail,
     });

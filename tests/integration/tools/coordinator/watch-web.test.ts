@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { request, type IncomingHttpHeaders } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  COORDINATOR_LOGIN,
   QUOTA_SETTINGS,
   WORKER_PROFILES,
 } from "../../../../tools/coordinator/coordinator-settings.ts";
@@ -274,7 +275,7 @@ describe("watch-web SSE", () => {
     });
     await vi.waitFor(() => {
       const last = first.snapshots.at(-1);
-      expect(last?.workers).toMatchObject({ state: "unavailable" });
+      expect(last?.tasks).toMatchObject({ state: "unavailable" });
       expect(last?.quota.state).toBe("unavailable");
       expect(last?.probing).toBe(false);
     });
@@ -285,6 +286,116 @@ describe("watch-web SSE", () => {
   it("rejects /events from a foreign Host", async () => {
     const { port } = await start();
     expect((await http(port, "GET", "/events", { Host: "evil.example" })).status).toBe(403);
+  });
+});
+
+describe("watch-web tasks", () => {
+  const HEAD = "abc1234def5678abc1234def5678abc1234def56";
+  const hostile = "[OMI-074] <img src=x onerror=alert(1)>";
+  const graphql = {
+    data: {
+      organization: {
+        projectV2: {
+          title: "p",
+          items: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              {
+                status: { name: "In Review" },
+                priority: { name: "P1" },
+                workType: { name: "Task" },
+                workflow: { name: "Development" },
+                role: { name: "Developer" },
+                area: null,
+                planKey: { text: "OMI-074" },
+                content: {
+                  __typename: "Issue",
+                  number: 152,
+                  title: hostile,
+                  state: "OPEN",
+                  body: "",
+                  milestone: null,
+                  blockedBy: { totalCount: 0, nodes: [] },
+                },
+              },
+            ],
+          },
+        },
+      },
+      repository: {
+        pullRequests: {
+          nodes: [
+            {
+              number: 160,
+              title: "t",
+              isDraft: false,
+              headRefName: "task/omi-074-watch-tasks",
+              headRefOid: HEAD,
+              baseRefName: "develop",
+              body: "Issue: #152",
+              reviewDecision: null,
+              mergeStateStatus: "CLEAN",
+              comments: {
+                nodes: [
+                  {
+                    author: { login: "someone-else" },
+                    body: "**VERDICT:** PASS\n**REVIEWED_HEAD:** abc1234",
+                  },
+                  {
+                    author: { login: COORDINATOR_LOGIN },
+                    body: "**VERDICT:** FAIL\n**REVIEWED_HEAD:** abc1234",
+                  },
+                ],
+              },
+              commits: { nodes: [] },
+            },
+          ],
+        },
+      },
+    },
+  };
+
+  it("streams Tasks built from the GitHub, worker and prompt reads", async () => {
+    const out = (stdout: string) => Promise.resolve({ code: 0, stdout, stderr: "" });
+    const server = createWatchServer({
+      run: (c) => {
+        const payload = c.args.at(-1) ?? "";
+        if (c.file === "gh") return out(JSON.stringify(graphql));
+        if (isQuota(c)) return out("");
+        if (payload.includes("-prompt.md"))
+          return out("@@prompt 074\n## Skill: minimal-change\nAGENTS.md\n");
+        return out("@@ps\n@@log\n");
+      },
+      target,
+      profiles: WORKER_PROFILES,
+      settings: QUOTA_SETTINGS,
+      port: 0,
+      clock: () => 1_700_000_000_000,
+    });
+    servers.push(server);
+    const port = await server.listen();
+    const client = await sse(port);
+    try {
+      await vi.waitFor(() => {
+        expect(client.snapshots.at(-1)?.tasks.state).toBe("ok");
+      });
+      const tasks = client.snapshots.at(-1)?.tasks;
+      if (tasks?.state !== "ok") throw new Error("expected ok");
+      // the foreign-account PASS is ignored; the Coordinator FAIL on the head means Rework
+      expect(tasks.items[0]).toMatchObject({
+        planKey: "OMI-074",
+        issue: 152,
+        title: hostile,
+        step: "Rework",
+        rework: 1,
+        pr: { number: 160, head: "abc1234" },
+        skills: ["minimal-change"],
+      });
+      // a foreign Host still gets nothing, including the snapshot stream
+      expect((await http(port, "GET", "/events", { Host: "evil.example" })).status).toBe(403);
+    } finally {
+      client.close();
+    }
   });
 });
 

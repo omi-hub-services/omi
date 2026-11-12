@@ -1,37 +1,12 @@
-// Pure conversion of the worker and quota reads into the JSON the web watch page shows
+// Pure conversion of the tasks (GitHub + workers) and quota reads into the JSON the web watch page shows
 // (OMI-067, ADR-0014). Colour rules and thresholds come from watch-core.ts, shared with the
 // terminal watch. Strings from outside are stripped of control characters here and rendered only
 // through `textContent` by the page.
 import type { QuotaSettings, WorkerProfile } from "./coordinator-settings.ts";
 import { windowLeft, type QuotaReport, type QuotaWindow } from "./quota.ts";
-import {
-  clean,
-  resetText,
-  STALE_AFTER_SECONDS,
-  windowsLow,
-  workerTone,
-  type Tone,
-} from "./watch-core.ts";
+import { clean, resetText, STALE_AFTER_SECONDS, windowsLow } from "./watch-core.ts";
+import { buildTasks, type TasksRead, type TasksView } from "./watch-tasks.ts";
 import type { Workers } from "./wsl-workers.ts";
-
-export interface WorkerView {
-  readonly pid: number;
-  readonly task: string;
-  readonly tool: "claude" | "codex";
-  readonly profile: string;
-  readonly model: string;
-  readonly effort: string;
-  readonly elapsedSeconds: number;
-  /** null when the worker log could not be read. */
-  readonly turns: number | null;
-  readonly lastAction: string;
-  readonly tone: Tone;
-}
-
-export type WorkersView =
-  | { readonly state: "loading" }
-  | { readonly state: "unavailable"; readonly reason: string }
-  | { readonly state: "ok"; readonly items: readonly WorkerView[] };
 
 export interface WindowView {
   /** Share (%) left; null when unknown. */
@@ -81,12 +56,13 @@ export interface WatchSnapshot {
   /** A reading older than this is shown dim. */
   readonly staleAfterSeconds: number;
   readonly probing: boolean;
-  readonly workers: WorkersView;
+  readonly tasks: TasksView;
   readonly quota: QuotaView;
 }
 
 export interface SnapshotInput {
   readonly workers: Workers | null;
+  readonly tasks: TasksRead | null;
   readonly quota: QuotaReport | null;
   readonly probing: boolean;
   /** Unix seconds. */
@@ -114,26 +90,6 @@ function windowView(
 
 export function buildSnapshot(input: SnapshotInput): WatchSnapshot {
   const { workers, quota, now, settings } = input;
-  const workersView: WorkersView = !workers
-    ? { state: "loading" }
-    : !workers.available
-      ? { state: "unavailable", reason: orDash(workers.reason) }
-      : {
-          state: "ok",
-          items: workers.processes.map((p) => ({
-            pid: p.pid,
-            task: orDash(p.task),
-            tool: p.tool,
-            profile: orDash(p.profile),
-            model: orDash(p.model),
-            effort: orDash(p.effort),
-            elapsedSeconds: Math.max(0, Math.floor(p.elapsedSeconds)),
-            turns: p.log ? p.log.numTurns : null,
-            lastAction: orDash(p.log?.lastAction),
-            tone: workerTone(p.log),
-          })),
-        };
-
   const profiles = input.profiles.map((profile): ProfileView => {
     const base = { tool: profile.tool, profile: clean(profile.profile) };
     const entry = quota?.available
@@ -174,7 +130,7 @@ export function buildSnapshot(input: SnapshotInput): WatchSnapshot {
     generatedAt: now,
     staleAfterSeconds: STALE_AFTER_SECONDS,
     probing: input.probing,
-    workers: workersView,
+    tasks: buildTasks({ tasks: input.tasks, workers }),
     quota: !quota
       ? { state: "loading", reason: null, profiles }
       : !quota.available
