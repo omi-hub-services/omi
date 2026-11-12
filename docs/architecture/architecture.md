@@ -163,6 +163,7 @@ Tài liệu đặt ở `docs/product/product-overview.md`, `docs/architecture/ar
 | `.omi-squad/tool/node_modules/` | Không | Package runtime đã cài |
 | `.omi-squad/local/state/state.sqlite` | Không | Runtime state, WAL/SHM cùng vị trí |
 | `.omi-squad/local/runs/<run-id>/` | Không | Context, checkpoints, reports, logs |
+| `.omi-squad/local/logs/`, `archive/` | Không | Log worker `<taskId>--<profile>--<ts>.jsonl`; log task Done được nén vào `archive/` (ADR-0035) |
 | `.omi-squad/local/profiles/registry.json` | Không | Metadata/profile path, không đưa vào prompt |
 | `.omi-squad/local/credentials/<profile-id>/` | Không | Nơi profile lưu auth khi adapter hỗ trợ |
 | `.omi-squad/local/ipc/`, `locks/`, `tmp/` | Không | Socket, lock, dữ liệu tạm |
