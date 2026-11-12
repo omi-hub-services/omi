@@ -72,8 +72,8 @@ export function createSqliteLeaseStore(db: StateDatabase): LeaseStore {
         if (row === undefined) {
           insert.run(request.resourceKey, request.owner, request.now, request.expiresAt);
         } else if (
-          row.expires_at > request.now ||
-          (request.reclaimExpired === false && row.expires_at !== row.acquired_at)
+          row.expires_at !== row.acquired_at &&
+          (row.expires_at > request.now || request.reclaimExpired === false)
         ) {
           return {
             ok: false,
@@ -97,7 +97,8 @@ export function createSqliteLeaseStore(db: StateDatabase): LeaseStore {
       return runInTransaction(db, (): RenewLeaseResult => {
         const row = read(request.resourceKey);
         if (!isCurrent(row, request)) return { ok: false, reason: "STALE_LEASE" };
-        if (row.expires_at <= request.now) return { ok: false, reason: "LEASE_EXPIRED" };
+        if (row.expires_at === row.acquired_at || row.expires_at <= request.now)
+          return { ok: false, reason: "LEASE_EXPIRED" };
         extend.run(request.expiresAt, request.resourceKey);
         return { ok: true, lease: { ...toLease(row), expiresAt: request.expiresAt } };
       });

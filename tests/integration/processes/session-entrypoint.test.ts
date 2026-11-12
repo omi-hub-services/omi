@@ -5,7 +5,6 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openStateDatabase } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
 import { sendCommand } from "../../../src/interfaces/ipc/ipc-client.ts";
-import { waitForClockPastLease } from "../../fixtures/runtime/wait-for-clock-past-lease.ts";
 let dir: string;
 const children: ChildProcess[] = [];
 beforeEach(() => {
@@ -71,7 +70,6 @@ describe("runtime executable composition", () => {
       expect(
         db.prepare("SELECT generation, acquired_at = expires_at AS released FROM leases").get(),
       ).toEqual({ generation: 1, released: 1 });
-      await waitForClockPastLease(db);
     } finally {
       db.close();
     }
