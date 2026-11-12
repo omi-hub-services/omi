@@ -59,6 +59,7 @@ Repository này chứa mã nguồn **omi-squad**, khác với project sẽ cài 
 | `src/bootstrap/` | Composition root, khởi tạo dependency và lifecycle | Nghiệp vụ, adapter implementation |
 | `templates/project/` | Bộ cấu hình/workflow/role/skill/rule được cài vào project | Runtime state, secret, mã nghiệp vụ framework |
 | `templates/bridges/` | Mẫu tích hợp Claude Code/Codex, hướng dẫn Coordinator | Bản sao logic điều phối |
+| `templates/prompts/` | Packaged prompt skeletons read by tooling/runtime; never installed as project-managed files | Project-editable configuration, runtime state |
 | `migrations/` | Migration SQLite đánh số thứ tự | Migration database của project đích |
 | `schemas/` | JSON Schema sinh từ contract, phục vụ CLI/agent | Schema viết tay trùng nguồn contract |
 | `tests/` | Unit, integration, contract, E2E, fixtures | Mã production |

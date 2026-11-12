@@ -68,9 +68,21 @@ const list = (ns: readonly number[]) => ns.map((n) => `AC-${String(n)}`).join(",
 
 /** Uses the same top-level counting convention as closing evidence. */
 export function countAcceptanceCriteria(body: string): number {
+  return extractAcceptanceCriteria(body).length;
+}
+
+/** Criterion text in verdict-number order, using the same parser as ticking and counting. */
+export function extractAcceptanceCriteria(body: string): string[] {
   const lines = body.split(/(?<=\n)/);
   const start = lines.findIndex((line) => HEADING.test(line));
-  return start === -1 ? 0 : criterionLines(lines, start).length;
+  return start === -1
+    ? []
+    : criterionLines(lines, start).map((i) =>
+        (lines[i] ?? "")
+          .replace(CHECKBOX, "")
+          .replace(/^\s+/, "")
+          .replace(/\r?\n$/, ""),
+      );
 }
 
 /** Ticks every criterion when the review has a `met` line for each and nothing else. */

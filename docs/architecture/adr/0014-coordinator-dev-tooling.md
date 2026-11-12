@@ -96,8 +96,9 @@ pure; AC counts reuse `acceptance-criteria.ts`'s top-level counting convention. 
   zero AC does not establish a small task. Remaining work defaults to `medium`.
 
 `coordinator-settings.ts` owns the mapping: Claude uses `claude-sonnet-5-5` at low/medium and
-`claude-opus-5-5` at high; Codex uses `gpt-6.1-sol` throughout; the Claude reviewer subagent uses
-`sonnet` at low/medium and `opus` at high. Effort matches complexity for all three. This reserves
+`claude-opus-5-5` at high; Codex uses `gpt-6.1-sol` throughout. Fresh reviewer workers
+use the same dispatch policy for their selected tool. The legacy reviewer advice in pick-profile
+remains for output compatibility; dispatch owns the actual launch model/effort. This reserves
 Opus for high complexity while keeping Codex's model stable. Output includes model, effort,
 complexity and reason for each chosen tool and the reviewer; `--json` adds the same fields to
 `chosen` and `reviewer`, with the decision also at the top level. Refusals remain refusals.
@@ -107,7 +108,7 @@ provides the product policy in `src/domain/agents/complexity-policy.ts` (ADR-001
 
 **Scoped exception to AGENTS.md §1.4 / architecture §14.3 (one implementation):** until OMI-030
 switches Coordinator dispatch to the product CLI, `tools/coordinator/effort-policy.ts` mirrors
-only the pure complexity inference. Tools and product do not import each other. A parity test
+only the pure complexity inference. The effort tooling does not import the product complexity implementation. A parity test
 covers all branches, conflicting labels, manual fields, missing metadata and the default effort
 mapping. The product domain is authoritative; a rule change updates both and the test. The
 reason is to preserve the independent, Node-run Windows Coordinator tooling without adding a
@@ -549,7 +550,7 @@ reads one listing and applies the result with one bash script, both through the 
 ## Worker commands (OMI-077)
 
 The omi-next skill used to make the LLM compose five deterministic things in every task: the
-worker launch command, the curated skills in the prompt, the report out of the worker log, the
+worker launch command, the skills in the prompt, the report out of the worker log, the
 commit of a Codex worker's output and the format of the review comment. They are now
 `flow.ts` subcommands (script-first, AGENTS.md §9; the same principle ships to projects as the
 rule `script-first`, architecture.md §2). Each takes `--dry-run`. `flow-workers.ts` does the I/O
@@ -566,12 +567,10 @@ node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
 
 - **`dispatch`** reads the Issue (Plan Key, Role, Workflow and the complexity of the effort
   policy above), refuses a profile that is not a `WORKER_PROFILES` entry of that tool, then:
-  1. reads the role's curated skills from the worker's checkout (Developer:
-     `test-driven-development`, `minimal-change`, `verification-before-completion`; the `docs`
-     Workflow leaves out `test-driven-development`; other roles get none) and writes the prompt
-     file plus one `## Skill: <name> (follow it; report it under Skills applied)` section per
-     skill to WSL `~/omi-runs/omi-NNN-prompt.md`. With `--resume` the file is the follow-up text
-     only and no skill is appended again;
+  1. writes the rendered prompt file **unchanged**, for fresh and resumed workers, to WSL
+     `~/omi-runs/omi-NNN-prompt.md`. Step skills/rules are owned by `prompt` below; no role-based
+     curated skills are inserted. A findings-only packet requires `--resume`; a fresh worker
+     requires a full packet;
   2. launches the worker **in the foreground** (an 8-hour limit instead of the runner's 2
      minutes; the Coordinator backgrounds the command) in the checkout of `OMI_WSL_REPO_DIR`.
      Claude: `CLAUDE_CONFIG_DIR` of the profile, `ANTHROPIC_*` credentials unset,
@@ -585,7 +584,7 @@ node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
      (the tool in the name keeps a Codex log out of a Claude profile's quota reading). Model and
      effort are the `EFFORT_POLICY` entry of the tool for the complexity; they are not options.
      It prints the worker's `exit=N` and returns 1 for a non-zero exit.
-  `--dry-run` reads the skills (read-only) and prints the write and the launch command.
+  `--dry-run` prints the write and launch commands without writing or launching.
 - **`worker-report`** takes the newest `omi-NNN-*.jsonl` and prints the report, the turns, the
   permission denials and the id to resume with. Claude: the longest `result` among the result
   events, with turns, denials and `session_id` of the last one. Codex (a `-codex-` log): the
@@ -606,6 +605,60 @@ node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
 Boundaries and known limits: `dispatch` does not check whether a worker already runs for the task;
 the Claude `exit=` is the shell's view of the worker; `codex exec resume` takes the same `exec`
 options before the subcommand, which this tooling has not run against a live Codex.
+
+## Worker prompt packets (OMI-090)
+
+`node tools/coordinator/flow.ts prompt N --step <id> [--worktree <dir>] [--branch <b>]
+[--notes <f> | --findings <f>] [--out <f>] [--dry-run]` renders the deterministic worker packet.
+The LLM supplies only task-specific judgement in notes/findings. Required --step is the actual
+step ID of the Issue's Workflow template, with no aliases; absent steps are refused. All steps
+(feature: analyze, implement, verify, review; docs: write/accept; bugfix: reproduce, etc.) resolve
+their own role, exactly their step skills and rules, in template order, verbatim. Rule headings
+do not invent mandatory status: the file's front matter is authoritative. Runtime role+step
+union semantics remain unchanged pending #186.
+
+The shared skeleton is the packaged asset templates/prompts/worker-prompt.md, read
+from the configured worker checkout, never a project-editable override. The pure application
+service src/application/services/render-worker-prompt.ts validates explicit slots and substitutes
+once, so placeholders inside task data stay literal. Tooling may import this application service;
+application never imports tools or performs I/O. No new layer/module/dependency is introduced.
+Repo-specific restrictions and report content are supplied as slots. Runtime buildPrompt wiring
+and JSON/artifact contracts remain #186; broader framework Coordinator dispatch remains #165.
+
+`templates/prompts/` holds package-only assets (architecture §3). Unlike `templates/project/`,
+it is never copied into the project's managed files or recorded in the framework lock. Putting
+the skeleton under `.omi-squad/` in the installed project templates caused lock-schema rejection
+of `worker-prompt.md`. The package's existing `files: ["templates/", ...]` includes the new path;
+`tools/check-package.ts` requires the skeleton in the actual archive listing.
+
+The tooling reads the complete Issue body/title, all comments with author/URL provenance and all
+Project-item pages for Workflow. Chronological comments are delimited task data; scope-note
+candidates are identified without trusting text as approval. extractAcceptanceCriteria reuses
+the authoritative acceptance-criteria.ts parser, preserving verdict count/numbering. The full
+packet includes workspace/branch, AGENTS.md's design read-first list, notes, exact step content,
+restrictions and the Skills applied / Rules applied report contract. The worktree defaults to
+OMI_WSL_REPO_DIR, branch to its current branch; detached HEAD requires --branch. Use the same
+configured checkout for dispatch. Missing/invalid workflow, step, skeleton or content is refused.
+
+Notes/findings/out paths belong to the calling Coordinator process. Without --out only the packet
+is printed to stdout; --out writes only that file. --dry-run renders/previews without writing,
+including with --out, and never dispatches a worker. --notes and --findings together are refused.
+Findings mode emits only findings, workspace/identity, restrictions and report contract, marked
+native-resume-only; dispatch refuses that packet without --resume. A fresh session always gets
+the full step packet through --notes.
+
+/omi-next dispatches analyze, QA and review as **fresh independent worker runs**, not review
+subagents or a resumed author thread, with no shared author context. A different tool/profile
+is not required (PO correction 2026-11-12). Analysis is passed forward as task data; the Coordinator
+records the scope-approved decision before implementation, escalating business/cost changes to
+the PO. The Coordinator runs flow.ts check on the exact revision; fresh QA judges that recorded
+evidence before delivery proceeds. A fresh reviewer judges the same fixed revision, AC and scope
+additions, diff and evidence. The Coordinator only posts validated verdicts via review-comment.
+Findings return to the implementer's native session (or a full packet for a fresh implementer),
+then the new revision needs another script check and fresh QA/review. The 2 + Architect + 2,
+exact-head/base, approval, carried-PASS and merge/close gates are unchanged. The developer supplies
+the proposed /omi-next edit in .tmp/omi-next-SKILL.proposed.md; the Coordinator applies the protected
+native skill edit and verifies it separately.
 
 ## Boundaries
 

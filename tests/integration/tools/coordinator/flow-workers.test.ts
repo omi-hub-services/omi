@@ -59,7 +59,26 @@ const skillRunner = (c: Command) => {
 };
 
 describe("dispatchCommand", () => {
-  it("writes the prompt with the Developer skills, then launches Claude in the worktree, once", async () => {
+  it("refuses a findings-only packet for a fresh worker", async () => {
+    const f = fake(() => undefined);
+    expect(
+      await dispatchCommand(f.ctx, { ...dispatchInput, prompt: "# Native resume only\nfindings" }),
+    ).toBe(1);
+    expect(f.seen).toHaveLength(0);
+    expect(err.join("\n")).toContain("--resume");
+  });
+
+  it.each([null, "sess-123"])(
+    "preserves rendered skill/rule bytes on dispatch (resume=%s)",
+    async (resume) => {
+      const prompt =
+        "# Packet\r\n\n## Skill: minimal-change\nBODY\r\n## Rule: evidence-and-tests\nmandatory: false\n\n";
+      const f = fake(() => ({ stdout: "exit=0\n" }));
+      expect(await dispatchCommand(f.ctx, { ...dispatchInput, resume, prompt })).toBe(0);
+      expect(f.seen.find((c) => payload(c).includes("cat > "))?.input).toBe(prompt);
+    },
+  );
+  it("transports the rendered prompt unchanged, then launches Claude in the worktree, once", async () => {
     const f = fake(
       (c) =>
         skillRunner(c) ?? (payload(c).includes("claude -p") ? { stdout: "exit=0\n" } : undefined),
@@ -67,12 +86,8 @@ describe("dispatchCommand", () => {
     expect(await dispatchCommand(f.ctx, dispatchInput)).toBe(0);
 
     const write = f.seen.find((c) => payload(c).includes("cat > $HOME/omi-runs/omi-077-prompt.md"));
-    expect(write?.input).toBe(
-      "## Task\nBuild it.\n" +
-        "\n\n## Skill: test-driven-development (follow it; report it under Skills applied)\n\nBODY(test-driven-development)\n" +
-        "\n\n## Skill: minimal-change (follow it; report it under Skills applied)\n\nBODY(minimal-change)\n" +
-        "\n\n## Skill: verification-before-completion (follow it; report it under Skills applied)\n\nBODY(verification-before-completion)\n",
-    );
+    expect(write?.input).toBe(dispatchInput.prompt);
+    expect(f.seen.some((c) => /cat templates/.test(payload(c)))).toBe(false);
     const launches = f.seen.filter((c) => payload(c).includes("claude -p"));
     expect(launches).toHaveLength(1);
     expect(payload(launches[0] as Command)).toContain("--model claude-sonnet-5-5 --effort medium");
@@ -90,12 +105,12 @@ describe("dispatchCommand", () => {
     expect(payload(launch as Command)).toContain("--model claude-opus-5-5 --effort high");
   });
 
-  it("leaves test-driven-development out of the docs workflow prompt", async () => {
+  it("does not add skills based on the docs workflow", async () => {
     const f = fake((c) => skillRunner(c) ?? { stdout: "exit=0\n" });
     await dispatchCommand(f.ctx, { ...dispatchInput, workflow: "docs" });
     const write = f.seen.find((c) => payload(c).includes("cat > "));
     expect(write?.input).not.toContain("test-driven-development");
-    expect(write?.input).toContain("## Skill: minimal-change");
+    expect(write?.input).toBe(dispatchInput.prompt);
   });
 
   it("launches Codex with codex exec --json and the Codex policy model", async () => {

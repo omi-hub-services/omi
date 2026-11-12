@@ -26,10 +26,8 @@ import { judgeCommit, STAGE_PATHS } from "./worker-commit.ts";
 import {
   claudeLaunchPayload,
   codexLaunchPayload,
-  curatedSkills,
-  promptWithSkills,
+  NATIVE_RESUME_HEADER,
   runsPath,
-  skillPath,
 } from "./worker-launch.ts";
 import {
   formatReport,
@@ -70,7 +68,7 @@ export interface DispatchInput {
 }
 
 /**
- * Writes the prompt (plus the role's curated skills, not again on resume) to WSL
+ * Writes the rendered prompt unchanged to WSL
  * `~/omi-runs/omi-NNN-prompt.md`, then runs the worker in the foreground; the Coordinator's
  * harness backgrounds this command.
  */
@@ -90,6 +88,12 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
     );
   }
   if (input.prompt.trim() === "") return refuse(label, "the prompt file is empty");
+  if (input.resume === null && input.prompt.startsWith(NATIVE_RESUME_HEADER)) {
+    return refuse(
+      label,
+      "findings-only packets require --resume; render a full packet for a fresh worker",
+    );
+  }
 
   const { model, effort } = EFFORT_POLICY[kind][input.complexity];
   const spec = { task, profile: input.profile, model, effort, resume: input.resume };
@@ -98,24 +102,15 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
     ctx.target,
     WORKER_TIMEOUT_MS,
   );
-  const skills = input.resume === null ? curatedSkills(input.role, input.workflow) : [];
-  const bodies = [];
-  for (const name of skills) {
-    const body = await runChecked(
-      ctx.run,
-      wslCommand(`cat ${skillPath(name)}`, ctx.target, 30_000),
-    );
-    bodies.push({ name, body });
-  }
   const write: Command = {
     ...wslCommand(
       `mkdir -p $HOME/omi-runs; cat > ${runsPath(task, "prompt.md")}`,
       ctx.target,
       30_000,
     ),
-    input: promptWithSkills(input.prompt, bodies),
+    input: input.prompt,
   };
-  const note = `${kind} ${input.profile} ${model} ${effort}${input.resume === null ? "" : ` resume ${input.resume}`}; skills: ${skills.join(", ") || "none"}`;
+  const note = `${kind} ${input.profile} ${model} ${effort}${input.resume === null ? "" : ` resume ${input.resume}`}`;
 
   if (input.dryRun) {
     console.log(`${label}: ${note}`);
