@@ -692,6 +692,52 @@ describe("watch page: security (OMI-067)", () => {
   });
 });
 
+describe("watch page: small windows (verify round 1)", () => {
+  const css = /<style>([\s\S]*?)<\/style>/.exec(PAGE_HTML)?.[1] ?? "";
+  const narrow = (query: string) => {
+    const start = css.indexOf(`@media(max-width:${query}){`);
+    if (start < 0) throw new Error(`no ${query} rule`);
+    return css.slice(start, css.indexOf("}}", start) + 2);
+  };
+
+  it("gives the diagram its natural size, in a focusable scroll region, instead of shrinking it", () => {
+    const page = browser();
+    page.send(frame(snapshot([card({ analyze: "succeeded", implement: "running" })])));
+    const body = page.tasks.children[0]?.children[1];
+    expect(body?.attributes["tabindex"]).toBe("0");
+    expect(body?.attributes["role"]).toBe("region");
+    expect(body?.attributes["aria-label"]).toContain("scroll");
+    const svg = body?.children[0];
+    expect(svg?.attributes["width"]).toBe("600");
+    expect(svg?.attributes["height"]).toBe("94");
+    const small = narrow("699px");
+    expect(small).toContain(".card-body{overflow-x:auto}");
+    expect(small).toContain(".flow{width:auto;max-width:none}");
+  });
+
+  it("lets the card footer wrap instead of scrolling or clipping worker facts", () => {
+    const footer = /\.card-footer\{[^}]*\}/.exec(css)?.[0] ?? "";
+    expect(footer).toContain("overflow-wrap:anywhere");
+    expect(footer).not.toContain("nowrap");
+    expect(footer).not.toContain("overflow-x");
+  });
+
+  it("stacks the quota bar and values under the name so 5h and 7d show at 320px", () => {
+    expect(/\.quota-row\{[^}]*\}/.exec(css)?.[0]).toContain("min-width:710px");
+    const small = narrow("749px");
+    expect(small).toContain(".quota-row{min-width:0;grid-template-columns:70px 1fr 1fr");
+    expect(small).toContain("grid-column:1/-1");
+  });
+
+  it("allows two title lines, keeps each total whole and trims the toggle on phones", () => {
+    const phone = narrow("899px");
+    expect(phone).toContain("h3{white-space:normal");
+    expect(phone).toContain("-webkit-line-clamp:2");
+    expect(css).toContain(".totals span{white-space:nowrap}");
+    expect(phone).toContain(".context-toggle summary{display:flex;align-items:center");
+  });
+});
+
 describe("watch page: accessibility and theme", () => {
   it("has a skip link, landmarks, a labelled focusable quota region and both colour schemes", () => {
     expect(PAGE_HTML).toContain('<a class="skip" href="#tasks">');

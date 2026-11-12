@@ -16,7 +16,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-app
 h1{font-size:24px;margin:0;letter-spacing:-.04em}h2{font-size:16px;margin:0}
 h3{font-size:15px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .live{color:var(--done)}.live.stale{color:var(--waiting)}
-.totals{display:flex;gap:16px;margin-left:auto}
+.totals{display:flex;gap:4px 16px;margin-left:auto}.totals span{white-space:nowrap}
 .notice{flex-basis:100%;font-size:12px;color:var(--muted);margin:0}.notice.warn{color:var(--waiting);font-weight:650}
 main{padding-top:0}
 .quota-panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px 12px;margin-bottom:10px}
@@ -51,7 +51,7 @@ main{padding-top:0}
 .node.escalation{--node:var(--architect);--fill:var(--architectTint)}.node.ask{--node:var(--ask);--fill:var(--askTint)}
 .flow .loop-label{fill:var(--rework);font-weight:750}.flow .template-label{fill:var(--muted);font-size:12px;text-anchor:start}
 .flow .gate-label{font-size:12px}.flow .loop-plate{fill:var(--surface);stroke:var(--line);stroke-width:1}
-.card-footer{padding:4px 10px;border-top:1px solid var(--line);font-size:12px;white-space:nowrap;overflow-x:auto;font-variant-numeric:tabular-nums}
+.card-footer{padding:4px 10px;border-top:1px solid var(--line);font-size:12px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .context-toggle{padding:0 10px;border-top:1px solid var(--line);background:var(--workTint);border-radius:0 0 5px 5px}
 .context-toggle summary{font-size:12px;color:var(--work);font-weight:650;cursor:pointer;min-height:24px;padding:4px 0}
 .context-toggle h4{font-size:12px;margin:4px 0;color:var(--ink)}
@@ -67,7 +67,9 @@ main{padding-top:0}
 .skip{position:absolute;top:8px;left:8px;transform:translateY(-200%);background:var(--surface);color:var(--ink);padding:12px;z-index:1}.skip:focus{transform:none}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media(max-width:1359px){.board{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:899px){.board{grid-template-columns:minmax(0,1fr)}.page-header,main,.page-footer{padding-left:12px;padding-right:12px}.totals{margin-left:0;flex-wrap:wrap}.context-toggle summary{min-height:44px;font-size:14px}.card-footer{font-size:14px}.quota-row{font-size:14px}.chip,.context-toggle p,.context-toggle h4{font-size:14px}.notice,.meta{font-size:14px}.flow text{font-size:16px}}
+@media(max-width:749px){.quota-row{min-width:0;grid-template-columns:70px 1fr 1fr;row-gap:2px;padding:4px 0}.quota-row>:nth-child(2){grid-column:span 2}.quota-row>:nth-child(3){grid-column:1/-1}}
+@media(max-width:699px){.card-body{overflow-x:auto}.flow{width:auto;max-width:none}}
+@media(max-width:899px){h3{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.context-toggle summary{display:flex;align-items:center;padding:0}.board{grid-template-columns:minmax(0,1fr)}.page-header,main,.page-footer{padding-left:12px;padding-right:12px}.totals{margin-left:0;flex-wrap:wrap}.context-toggle summary{min-height:44px;font-size:14px}.card-footer{font-size:14px}.quota-row{font-size:14px}.chip,.context-toggle p,.context-toggle h4{font-size:14px}.notice,.meta{font-size:14px}.flow text{font-size:16px}}
 @media(prefers-reduced-motion:reduce){*{animation:none;transition:none;scroll-behavior:auto}}
 `;
 
@@ -114,7 +116,7 @@ function caption(parent,item,cls){
 function points(items){return (Array.isArray(items)?items:[]).map(function(p){return num(p[0])+','+num(p[1]);}).join(' ');}
 function drawFlow(parent,layout){
  if(!layout||!Array.isArray(layout.nodes)||layout.nodes.length===0){add(parent,'p','Template unavailable','empty');return;}
- var svg=shape(parent,'svg',{'class':'flow',viewBox:'0 0 '+num(layout.width)+' '+num(layout.height),role:'img','aria-label':text(layout.description,'Workflow diagram')});
+ var svg=shape(parent,'svg',{'class':'flow',width:num(layout.width),height:num(layout.height),viewBox:'0 0 '+num(layout.width)+' '+num(layout.height),role:'img','aria-label':text(layout.description,'Workflow diagram')});
  caption(svg,layout.template,'template-label');
  (layout.connectors||[]).forEach(function(c){
   var kind=pick(EDGES,c.kind,'forward');
@@ -195,7 +197,9 @@ function drawTask(parent,task,index){
  var head=add(card,'header',null,'card-header');
  add(head,'span',text(task.planKey,'#'+num(task.issueNumber)),'key');
  var h3=add(head,'h3',title);h3.setAttribute('id','task-'+index);
- drawFlow(add(card,'div',null,'card-body'),layout);
+ var body=add(card,'div',null,'card-body');
+ body.setAttribute('tabindex','0');body.setAttribute('role','region');body.setAttribute('aria-label','Workflow diagram of '+text(task.planKey,'task '+num(task.issueNumber))+'; scroll horizontally on narrow screens');
+ drawFlow(body,layout);
  add(card,'footer',footerText(task,tone),'card-footer');
  return drawContext(card,task,key,title);
 }
