@@ -1,14 +1,17 @@
-// Tasks view of the watch (OMI-074, ADR-0014): Project items In Progress / In Review with the
-// lifecycle step derived from what is observable (Project Status, worker processes, the PR and
-// the Coordinator's VERDICT / ARCHITECT comments). Everything here is pure except `readPrompts`
-// and `readTasks`, which only use the injected runner. Strings from outside are cleaned of
-// control characters and rendered by the page through `textContent` / SVG attributes only.
+// Tasks view of the watch (OMI-074, OMI-092, ADR-0014): Project items In Progress / In Review with
+// the lifecycle step derived from what is observable (Project Status, worker processes, the PR and
+// the Coordinator's VERDICT / ARCHITECT comments), and the template position of each. Everything
+// here is pure except `readPrompts` and `readTasks`, which only use the injected runner. Drawing
+// is the framework page's job (watch-snapshot.ts maps this view into its snapshot contract).
+// Strings from outside are cleaned of control characters here.
 import {
   COORDINATOR_LOGIN,
   PRIORITY_ORDER,
   RUNS_DIR_FROM_HOME,
   type WslTarget,
 } from "./coordinator-settings.ts";
+import type { Workflow } from "../../src/application/contracts/workflow.ts";
+import type { Hold } from "../../src/domain/workflows/workflow-diagram.ts";
 import { readProject } from "./github-reads.ts";
 import {
   agentReviewOn,
@@ -22,13 +25,8 @@ import type { AuthoredComment } from "./json-shape.ts";
 import { wslCommand, type Runner } from "./process-runner.ts";
 import { clean, workerTone, type Tone } from "./watch-core.ts";
 import {
-  compareLoaded,
   loadTemplate,
   mapTemplatePos,
-  orderNodes,
-  templateNodes,
-  workStepId,
-  type SkillCheck,
   type TemplatePos,
   type TemplateRead,
 } from "./watch-workflow.ts";
@@ -267,104 +265,66 @@ function lifecycleStep(input: StepInput): StepResult {
   return result(input.dispatched ? "Verify/PR" : "Start");
 }
 
-// ── diagram ──────────────────────────────────────────────────────────────────
-
-export type NodeState = "done" | "current" | "todo" | "lit" | "warn" | "idle" | "blocked";
-
-export interface DiagramNode {
-  readonly id: string;
-  readonly label: string;
-  readonly state: NodeState;
-  /** Second line inside the node, e.g. `rework 1/2` on Work. */
-  readonly sub?: string;
-  /** Template diagram only: a workflow step or gate, and the step's role. */
-  readonly kind?: "step" | "gate";
-  readonly role?: string;
-  /** What the template gives the step; the page shows it when the node is selected. */
-  readonly skills?: readonly string[];
-  readonly rules?: readonly string[];
-}
-
-const MAIN = ["Start", "Work", "Verify/PR", "Review", "Merge", "Done"] as const;
-
-/**
- * Pure: nodes of the lifecycle diagram, main row first. Rework is not a node: it is the edge
- * Review -> Work, drawn by the page when there is a FAIL; while the task is in rework Work is the
- * current node with `rework k/2`. Architect (on the return path) exists from the 2nd FAIL or a
- * marker, Ask PO once the cycle escalates.
- */
-export function diagramNodes(
-  shown: Step,
-  cycle: CyclePhase,
-  hold?: { readonly at: Step; readonly sub: string },
-): DiagramNode[] {
-  // Blocked / Waiting PO: the node the task stands at is drawn `blocked`, the rest as at that step
-  const step = hold ? hold.at : shown;
-  const rework = step === "Rework";
-  // Architect is the step after Review failed: everything up to Review is done
-  const lit = step === "Architect" ? "Review" : rework ? "Work" : step;
-  const at = (MAIN as readonly string[]).indexOf(lit);
-  const main = MAIN.map((id, i): DiagramNode => {
-    let state: NodeState = "todo";
-    if (at !== -1 && (i < at || (step === "Architect" && i === at))) state = "done";
-    else if (at !== -1 && i === at) state = "current";
-    if (hold && at !== -1 && i === at) return { id, label: id, state: "blocked", sub: hold.sub };
-    return id === "Work" && rework
-      ? { id, label: id, state, sub: `rework ${kOfMax(cycle.k)}` }
-      : { id, label: id, state };
-  });
-  return [...main, ...extraNodes(step, cycle)];
-}
-
-/** Architect and Ask PO, shared by the lifecycle and the template diagram. */
-export function extraNodes(step: Step, cycle: CyclePhase): DiagramNode[] {
-  const extra: DiagramNode[] = [];
-  if (cycle.phase !== "before-architect") {
-    const state: NodeState =
-      step === "Architect" ? "current" : cycle.architectCalled ? "lit" : "warn";
-    extra.push({ id: "Architect", label: "Architect", state });
-  }
-  if (cycle.phase === "escalate-po") extra.push({ id: "Ask PO", label: "Ask PO", state: "warn" });
-  return extra;
-}
-
 // ── prompt parsing ───────────────────────────────────────────────────────────
+
+export interface PromptHeader {
+  readonly workflow: string;
+  readonly step: string;
+  readonly role: string;
+}
 
 export interface PromptInfo {
   readonly skills: readonly string[];
+  /** Ids of the rules the prompt carries (`## Rule: <id>` headings). */
   readonly rules: readonly string[];
+  /** The rules marked `(mandatory)` in their heading. */
+  readonly mandatoryRules: readonly string[];
+  /** The step this prompt was written for; null when the file has no valid header. */
+  readonly header: PromptHeader | null;
 }
 
 const SKILL_HEADING = /^## Skill:[ \t]+(\S+)/gm;
+const RULE_HEADING = /^## Rule:[ \t]+(\S+)([^\n]*)$/gm;
+const ID = "[a-z0-9][a-z0-9-]{0,39}";
+// `flow.ts prompt` writes `# Workflow <id> · step <step> · role <role>` first; the first one wins,
+// so a header-like line in the Issue text further down cannot take its place.
+const HEADER = new RegExp(`^# Workflow (${ID}) \\S+ step (${ID}) \\S+ role (${ID})[ \\t]*$`, "m");
 const SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,59}$/;
-const RULE_FILE = /\b(?:AGENTS|CLAUDE)\.md\b|\bdocs\/[A-Za-z0-9_./-]+\.md\b/g;
 const MAX_LISTED = 20;
 
-/** Worker restrictions every dispatch prompt carries (omi-next §3); shown beside the rule files. */
-export const WORKER_RESTRICTIONS = ["no push, PR or merge", "gh is read-only"] as const;
-
 /**
- * Pure: skills from `## Skill: <name>` headings (OMI-073) and the rule files a prompt mentions
- * (`AGENTS.md`, `CLAUDE.md`, `docs/**.md`). Works on the whole prompt or on the filtered lines the
- * WSL probe prints.
+ * Pure: skills from `## Skill: <name>` headings (OMI-073), rules from `## Rule: <id> (mandatory)`
+ * headings and the worker's own step from the header line. Works on the whole prompt or on the
+ * heading lines the WSL probe prints.
  */
 export function parsePromptText(text: string): PromptInfo {
   const skills = [...text.matchAll(SKILL_HEADING)]
     .map((m) => m[1] ?? "")
     .filter((s) => SKILL_NAME.test(s));
-  const rules = [...text.matchAll(RULE_FILE)].map((m) => m[0]);
+  const rules = [...text.matchAll(RULE_HEADING)]
+    .map((m) => ({ id: m[1] ?? "", mandatory: (m[2] ?? "").includes("(mandatory)") }))
+    .filter((rule) => SKILL_NAME.test(rule.id));
   const uniq = (list: string[]) => [...new Set(list)].slice(0, MAX_LISTED);
-  return { skills: uniq(skills), rules: uniq(rules.sort()) };
+  const found = HEADER.exec(text);
+  return {
+    skills: uniq(skills),
+    rules: uniq(rules.map((rule) => rule.id)),
+    mandatoryRules: uniq(rules.filter((rule) => rule.mandatory).map((rule) => rule.id)),
+    header:
+      found?.[1] && found[2] && found[3]
+        ? { workflow: found[1], step: found[2], role: found[3] }
+        : null,
+  };
 }
 
 const PLAN_KEY = /^OMI-(\d{1,4})$/;
 
 /** One bash payload: per task, the matching lines of its prompt, never the prompt itself. */
 function promptPayload(numbers: readonly string[]): string {
-  const grep = `grep -oE '^## Skill: [^ ]+|CLAUDE[.]md|AGENTS[.]md|docs/[A-Za-z0-9_./-]+[.]md'`;
+  const grep = `grep -E '^(# Workflow |## Skill: |## Rule: )'`;
   return (
     `for n in ${numbers.join(" ")}; do f=$HOME/${RUNS_DIR_FROM_HOME}/omi-$n-prompt.md; ` +
-    `if [ -f $f ]; then echo @@prompt $n; ${grep} $f; else echo @@missing $n; fi; done`
+    `if [ -f $f ]; then echo @@prompt $n; ${grep} $f | head -n 80; else echo @@missing $n; fi; done`
   );
 }
 
@@ -483,40 +443,29 @@ export interface TaskView {
   readonly pr: TaskPull | null;
   readonly step: Step;
   readonly stepReason: string | null;
-  /** Blocked-by of the Issue, open and closed; the page lists them. */
+  /** Blocked-by of the Issue, open and closed. */
   readonly blockers: readonly Blocker[];
   readonly role: string;
   readonly worker: TaskWorker | null;
-  /** Coordinator FAILs in total; the page draws the Review -> Work edge when above 0. */
+  /** Coordinator FAILs in total. */
   readonly rework: number;
   readonly cycle: CyclePhase;
   readonly cycleNote: string | null;
   readonly architectReason: string | null;
   readonly skills: readonly string[];
-  /** Why there are no skills ("-"); null when some were read. */
-  readonly skillsNote: string | null;
   readonly rules: readonly string[];
-  readonly nodes: readonly DiagramNode[];
-  /** Where the diagram came from and the ends of the rework edge (node ids). */
-  readonly flow: {
-    readonly source: "template" | "lifecycle";
-    /** Why the lifecycle fallback is drawn; null for a template. */
-    readonly reason: string | null;
-    readonly from: string;
-    readonly to: string;
-  };
-  /** Template step id the task stands at, `Done`, or `unknown`; null in the lifecycle fallback. */
-  readonly templateStep: string | null;
-  /** The current template step's role, skills and rules; null when it is not a step. */
-  readonly templateInfo: {
-    readonly id: string;
-    readonly role: string;
-    readonly skills: readonly string[];
-    readonly rules: readonly string[];
-  } | null;
-  /** Loaded skills against the current template step; null when not comparable. */
-  readonly skillCheck: SkillCheck | null;
-  readonly ariaLabel: string;
+  /** The workflow template of the Issue's Workflow field; null when it could not be read. */
+  readonly template: Workflow | null;
+  /** Why there is no template; null when there is one. */
+  readonly templateReason: string | null;
+  /** Where the task stands in the template (a running worker's own step wins over the lifecycle). */
+  readonly pos: TemplatePos;
+  /** The step and role a running worker's prompt header names, validated against the template. */
+  readonly workerStep: { readonly step: string; readonly role: string } | null;
+  /** Open blockers, or a decision only the PO makes; null while the task can move. */
+  readonly hold: Hold | null;
+  /** The worker prompt's skills, rules and header; null when the file does not exist or was not read. */
+  readonly prompt: PromptInfo | null;
 }
 
 export type TasksView =
@@ -591,70 +540,50 @@ function taskView(
     issueComments: item.comments ?? [],
   });
   const open = openBlockers(item.blockers);
-  const hold =
-    derived.at === undefined
-      ? undefined
-      : {
-          at: derived.at,
-          sub:
-            derived.step === "Waiting PO"
-              ? "waiting PO"
-              : `blocked by #${String(open[0])}${open.length > 1 ? ` +${String(open.length - 1)}` : ""}`,
-        };
+  const hold: Hold | null =
+    derived.step === "Waiting PO"
+      ? { kind: "waiting-po" }
+      : derived.step === "Blocked"
+        ? { kind: "blocked", by: open }
+        : null;
   const cycle = cyclePhase(comments);
   const architect = detectArchitect(comments);
-  const label = planKey ?? `#${String(item.number)}`;
-  // Rework is not a step of its own: it is Work again, with the rework label
-  const shown = derived.step === "Rework" ? "Work" : derived.step;
   const tpl = item.workflow ? read.templates?.[item.workflow] : undefined;
-  const workflow = tpl?.ok ? tpl.workflow : null;
+  const template = tpl?.ok ? tpl.workflow : null;
+  const templateReason = template
+    ? null
+    : clean(
+        tpl && !tpl.ok
+          ? tpl.reason
+          : item.workflow
+            ? "template not read"
+            : "Workflow field is empty",
+      );
   const stands = derived.at ?? derived.step;
-  let pos: TemplatePos = { kind: "unknown", reason: "no template" };
-  let nodes: DiagramNode[];
-  let flow: TaskView["flow"];
-  if (workflow) {
+  let pos: TemplatePos = { kind: "unknown", reason: templateReason ?? "no template" };
+  let workerStep: TaskView["workerStep"] = null;
+  if (template) {
     pos =
       stands === "unknown"
         ? { kind: "unknown", reason: derived.reason ?? "step unknown" }
-        : mapTemplatePos(workflow, stands);
-    const reviewer = mapTemplatePos(workflow, "Review");
-    nodes = templateNodes(
-      workflow,
-      pos,
-      cycle,
-      hold?.sub,
-      stands === "Rework" ? `rework ${kOfMax(cycle.k)}` : undefined,
-      stands === "Architect",
-    );
-    flow = {
-      source: "template",
-      reason: null,
-      from: reviewer.kind === "node" ? reviewer.id : (orderNodes(workflow).at(-1)?.id ?? ""),
-      to: workStepId(workflow),
-    };
-  } else {
-    nodes = diagramNodes(derived.step, cycle, hold);
-    const why =
-      tpl && !tpl.ok ? tpl.reason : item.workflow ? "template not read" : "Workflow field is empty";
-    flow = { source: "lifecycle", reason: clean(why), from: "Review", to: "Work" };
+        : mapTemplatePos(template, stands);
+    // The prompt file is overwritten at every dispatch, so it names the running worker's step; with
+    // no worker running it may belong to an older step and is ignored. Nothing is guessed.
+    const header = process !== null && prompt ? prompt.header : null;
+    const named =
+      header !== null && header.workflow === template.id
+        ? template.steps.find((candidate) => candidate.id === header.step)
+        : undefined;
+    if (named !== undefined) {
+      workerStep = { step: named.id, role: named.role };
+      pos = { kind: "node", id: named.id };
+    }
   }
-  const current = workflow && pos.kind === "node" ? pos.id : null;
-  const info = workflow ? orderNodes(workflow).find((n) => n.id === current) : undefined;
-  const templateInfo =
-    info?.kind === "step" && info.role !== undefined
-      ? { id: info.id, role: info.role, skills: info.skills, rules: info.rules }
-      : null;
+  const templateRole =
+    template && pos.kind === "node" ? template.steps.find((s) => s.id === pos.id)?.role : undefined;
   // The template role applies to the steps a worker or the Coordinator runs, not to holds
   const roleStep = ["Work", "Rework", "Verify/PR", "Review"].includes(derived.step);
-  const stepReason = derived.reason ?? (pos.kind === "unknown" && workflow ? pos.reason : null);
-  const skillsNote =
-    prompt === undefined
-      ? "no prompt read (WSL unavailable or task has no Plan Key)"
-      : prompt === null
-        ? `no prompt file in ~/${RUNS_DIR_FROM_HOME}`
-        : prompt.skills.length === 0
-          ? "prompt has no ## Skill: headings"
-          : null;
+  const stepReason = derived.reason ?? (pos.kind === "unknown" && template ? pos.reason : null);
 
   return {
     planKey: orDash(planKey),
@@ -669,10 +598,15 @@ function taskView(
       checks: summarizeChecks(pull.checks, []).overall,
       draft: pull.isDraft,
     },
-    step: shown,
+    // Rework is not a step of its own: it is Work again
+    step: derived.step === "Rework" ? "Work" : derived.step,
     stepReason: stepReason === null ? null : clean(stepReason),
     blockers: item.blockers.map((b) => ({ number: b.number, state: clean(b.state) })),
-    role: roleStep && templateInfo ? clean(templateInfo.role) : roleFor(derived.step, item.role),
+    role: workerStep
+      ? clean(workerStep.role)
+      : roleStep && templateRole
+        ? clean(templateRole)
+        : roleFor(derived.step, item.role),
     worker: process && {
       pid: process.pid,
       tool: process.tool,
@@ -689,27 +623,13 @@ function taskView(
     cycleNote: cycleNote(cycle),
     architectReason: architect.reason,
     skills: prompt?.skills ?? [],
-    skillsNote,
-    rules: prompt ? [...prompt.rules, ...WORKER_RESTRICTIONS] : [],
-    nodes,
-    flow,
-    templateStep: !workflow
-      ? null
-      : pos.kind === "node"
-        ? pos.id
-        : pos.kind === "done"
-          ? "Done"
-          : pos.kind === "before"
-            ? "Start"
-            : "unknown",
-    templateInfo,
-    skillCheck:
-      workflow && current && prompt ? compareLoaded(workflow, current, prompt.skills) : null,
-    ariaLabel:
-      `${orDash(label)}: Workflow: ${orDash(item.workflow)}, current step ${shown}` +
-      (workflow && current ? ` (${current})` : "") +
-      (derived.step === "Rework" ? `, rework ${kOfMax(cycle.k)}` : "") +
-      (derived.reason === null ? "" : ` (${clean(derived.reason)})`),
+    rules: prompt?.rules ?? [],
+    template,
+    templateReason,
+    pos,
+    workerStep,
+    hold,
+    prompt: prompt ?? null,
   };
 }
 

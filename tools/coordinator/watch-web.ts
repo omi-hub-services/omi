@@ -1,17 +1,15 @@
-// Web watch (OMI-067, ADR-0014): a localhost page with live workers and quota, opened as a small
-// Edge --app window by /omi-watch. Binds 127.0.0.1 only, rejects a foreign Host or Origin (DNS
-// rebinding) and runs a paid probe only for POST /probe with `X-Omi-Watch: 1`. Exits after
-// 60 s with no SSE client. Data comes from the same reads as the terminal watch.
+// Web watch (OMI-067, OMI-092, ADR-0014): /omi-watch serves the framework's one watch page
+// (src/infrastructure/observability) from a localhost server, opened as a small Edge --app window.
+// The framework server owns the guards (127.0.0.1 only, Host/Origin checks against DNS rebinding,
+// CSP, GET-only /, /health and /events, no control endpoint); this file only reads the repo's
+// sources (GitHub board, WSL workers and prompts, quota) and maps them into the shared snapshot.
+// Exits after 60 s with no SSE client. Data comes from the same reads as the terminal watch.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import {
-  createServer,
-  request as httpRequest,
-  type IncomingMessage,
-  type ServerResponse,
-} from "node:http";
-import type { AddressInfo } from "node:net";
+import { request as httpRequest } from "node:http";
 import { parseArgs } from "node:util";
+import type { WatchSnapshot } from "../../src/application/contracts/watch-snapshot.ts";
+import "../register-ts-imports.ts";
 import {
   QUOTA_SETTINGS,
   WORKER_PROFILES,
@@ -22,29 +20,19 @@ import {
 } from "./coordinator-settings.ts";
 import { createProcessRunner, type Runner } from "./process-runner.ts";
 import { clean, createWatchPoller, TASKS_INTERVAL_MS } from "./watch-core.ts";
-import { PAGE_CSP, PAGE_HTML } from "./watch-page.ts";
 import { buildSnapshot } from "./watch-snapshot.ts";
-import { readTasks } from "./watch-tasks.ts";
+import { readTasks, type TasksRead } from "./watch-tasks.ts";
+
+// dynamic: the register hook above must run before src/ (`.js` specifiers) is resolved
+const { createWatchServer: createSharedServer, HEALTH_BODY: SHARED_HEALTH_BODY } =
+  await import("../../src/infrastructure/observability/watch-server.ts");
 
 export const DEFAULT_PORT = 4317;
 export const IDLE_MS = 60_000;
 /** Wide and tall enough for the lifecycle diagram of two or three task cards (OMI-074). */
 export const WINDOW_SIZE = "560,760";
 /** `GET /health` answers this so a second launch can reuse the running server. */
-export const HEALTH_BODY = "omi-watch";
-export const PROBE_HEADER = "x-omi-watch";
-
-export interface Scheduler {
-  set(fn: () => void, ms: number): unknown;
-  clear(handle: unknown): void;
-}
-
-const realScheduler: Scheduler = {
-  set: (fn, ms) => setTimeout(fn, ms),
-  clear: (handle) => {
-    clearTimeout(handle as NodeJS.Timeout);
-  },
-};
+export const HEALTH_BODY: string = SHARED_HEALTH_BODY;
 
 export interface WatchServerOptions {
   readonly run: Runner;
@@ -56,10 +44,10 @@ export interface WatchServerOptions {
   readonly workerIntervalMs?: number;
   readonly quotaIntervalMs?: number;
   readonly tasksIntervalMs?: number;
+  /** How often connected pages get a fresh snapshot; the sources are polled on their own timers. */
+  readonly pushIntervalMs?: number;
   /** No SSE client for this long (from the last disconnect, or from start) stops the server. */
   readonly idleMs?: number;
-  /** Injected in tests to fire the idle timeout without waiting. */
-  readonly scheduler?: Scheduler;
   /** Unix milliseconds. */
   readonly clock?: () => number;
   /** Called once after an idle shutdown has closed the server. */
@@ -73,30 +61,23 @@ export interface WatchServer {
 }
 
 export function createWatchServer(options: WatchServerOptions): WatchServer {
-  const scheduler = options.scheduler ?? realScheduler;
   const clock = options.clock ?? Date.now;
-  const clients = new Set<ServerResponse>();
-  let port = options.port;
-  let idleHandle: unknown = null;
-  let closing: Promise<void> | null = null;
-  let keepAlive: NodeJS.Timeout | null = null;
+  let lastGood: Extract<TasksRead, { available: true }> | null = null;
 
-  const snapshotJson = () =>
-    JSON.stringify(
-      buildSnapshot({
-        workers: poller.workers,
-        tasks: poller.tasks,
-        quota: poller.quota,
-        probing: poller.probing,
-        now: clock() / 1000,
-        settings: options.settings,
-        profiles: options.profiles,
-      }),
-    );
-  const broadcast = () => {
-    if (clients.size === 0) return;
-    const frame = `data: ${snapshotJson()}\n\n`;
-    for (const res of clients) res.write(frame);
+  // GitHub trouble keeps the last good cards and flags the board, instead of emptying the page.
+  const readSnapshot = (): Promise<WatchSnapshot> => {
+    const tasks = poller.tasks;
+    if (tasks?.available) lastGood = tasks;
+    const retained = tasks?.available === false && lastGood !== null;
+    const snapshot = buildSnapshot({
+      workers: poller.workers,
+      tasks: retained ? lastGood : tasks,
+      quota: poller.quota,
+      now: clock() / 1000,
+      settings: options.settings,
+      profiles: options.profiles,
+    });
+    return Promise.resolve(retained ? { ...snapshot, board: "unavailable" } : snapshot);
   };
   const poller = createWatchPoller({
     run: options.run,
@@ -109,136 +90,31 @@ export function createWatchServer(options: WatchServerOptions): WatchServer {
       intervalMs: options.tasksIntervalMs ?? TASKS_INTERVAL_MS,
       read: (run) => readTasks(run, options.target),
     },
-    onChange: broadcast,
+    onChange: () => {},
     onError: (error) => {
       console.error(`watch-web: ${clean(error instanceof Error ? error.message : String(error))}`);
     },
   });
-
-  const armIdle = () => {
-    if (idleHandle !== null) scheduler.clear(idleHandle);
-    idleHandle = scheduler.set(() => {
-      idleHandle = null;
-      void close().then(() => options.onIdle?.());
-    }, options.idleMs ?? IDLE_MS);
-  };
-  const disarmIdle = () => {
-    if (idleHandle !== null) scheduler.clear(idleHandle);
-    idleHandle = null;
-  };
-
-  const reply = (res: ServerResponse, status: number, body: string, type = "text/plain") => {
-    res.writeHead(status, {
-      "Content-Type": `${type}; charset=utf-8`,
-      "Cache-Control": "no-store",
-      "X-Content-Type-Options": "nosniff",
-    });
-    res.end(body);
-  };
-
-  const events = (req: IncomingMessage, res: ServerResponse) => {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-store",
-      Connection: "keep-alive",
-      "X-Content-Type-Options": "nosniff",
-    });
-    res.write(`retry: 2000\n\ndata: ${snapshotJson()}\n\n`);
-    clients.add(res);
-    disarmIdle();
-    req.on("close", () => {
-      clients.delete(res);
-      if (clients.size === 0 && !closing) armIdle();
-    });
-  };
-
-  const handle = (req: IncomingMessage, res: ServerResponse) => {
-    const allowed = [`127.0.0.1:${String(port)}`, `localhost:${String(port)}`];
-    const host = req.headers.host?.toLowerCase();
-    if (host === undefined || !allowed.includes(host)) {
-      reply(res, 403, "forbidden host");
-      return;
-    }
-    const origin = req.headers.origin;
-    if (origin !== undefined && !allowed.some((h) => origin.toLowerCase() === `http://${h}`)) {
-      reply(res, 403, "forbidden origin");
-      return;
-    }
-
-    const path = new URL(req.url ?? "/", "http://localhost").pathname;
-    const methods: Record<string, string> = {
-      "/": "GET",
-      "/health": "GET",
-      "/events": "GET",
-      "/probe": "POST",
-    };
-    const method = methods[path];
-    if (method === undefined) {
-      reply(res, 404, "not found");
-      return;
-    }
-    if (req.method !== method) {
-      res.setHeader("Allow", method);
-      reply(res, 405, "method not allowed");
-      return;
-    }
-    if (path === "/") {
-      res.setHeader("Content-Security-Policy", PAGE_CSP);
-      res.setHeader("Referrer-Policy", "no-referrer");
-      reply(res, 200, PAGE_HTML, "text/html");
-    } else if (path === "/health") {
-      reply(res, 200, HEALTH_BODY);
-    } else if (path === "/events") {
-      events(req, res);
-    } else if (req.headers[PROBE_HEADER] !== "1") {
-      req.resume();
-      reply(res, 403, "missing X-Omi-Watch header");
-    } else {
-      req.resume();
-      poller.probe();
-      reply(res, 202, "probe started");
-    }
-  };
-
-  const server = createServer(handle);
-
-  function close(): Promise<void> {
-    closing ??= new Promise<void>((resolve) => {
-      disarmIdle();
-      if (keepAlive) clearInterval(keepAlive);
+  const shared = createSharedServer({
+    readSnapshot,
+    port: options.port,
+    intervalMs: options.pushIntervalMs ?? 2000,
+    idleMs: options.idleMs ?? IDLE_MS,
+    onIdle: () => {
       poller.stop();
-      for (const res of clients) res.end();
-      clients.clear();
-      if (!server.listening) {
-        resolve();
-        return;
-      }
-      server.close(() => {
-        resolve();
-      });
-      server.closeAllConnections();
-    });
-    return closing;
-  }
-
-  return {
-    listen() {
-      return new Promise<number>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(options.port, "127.0.0.1", () => {
-          server.off("error", reject);
-          port = (server.address() as AddressInfo).port;
-          poller.start();
-          armIdle();
-          keepAlive = setInterval(() => {
-            for (const res of clients) res.write(": ping\n\n");
-          }, 15_000);
-          keepAlive.unref();
-          resolve(port);
-        });
-      });
+      options.onIdle?.();
     },
-    close,
+  });
+  return {
+    async listen() {
+      const { port } = await shared.listen();
+      poller.start();
+      return port;
+    },
+    async close() {
+      poller.stop();
+      await shared.close();
+    },
   };
 }
 

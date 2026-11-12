@@ -8,7 +8,6 @@ import {
   cyclePhase,
   deriveStep,
   detectArchitect,
-  diagramNodes,
   parsePromptProbe,
   parsePromptText,
   readPrompts,
@@ -256,113 +255,59 @@ describe("cyclePhase (2 + Architect + 2)", () => {
   });
 });
 
-describe("diagramNodes", () => {
-  // "F" = Coordinator FAIL, "A" = Coordinator **ARCHITECT:** marker, oldest first
-  const ph = (seq: string) =>
-    cyclePhase(Array.from(seq, (ch) => coord(ch === "F" ? verdict("FAIL") : "**ARCHITECT:** why")));
-  const states = (s: Parameters<typeof diagramNodes>[0], cycle = ph("")) =>
-    Object.fromEntries(diagramNodes(s, cycle).map((n) => [n.id, n.state]));
-
-  it("has a text label for every node, in lifecycle order, and no separate Rework node", () => {
-    const nodes = diagramNodes("Start", ph(""));
-    expect(nodes.map((n) => n.id)).toEqual([
-      "Start",
-      "Work",
-      "Verify/PR",
-      "Review",
-      "Merge",
-      "Done",
-    ]);
-    expect(nodes.every((n) => n.label.length > 0)).toBe(true);
-    expect(diagramNodes("Rework", ph("F")).some((n) => n.id === "Rework")).toBe(false);
-  });
-
-  it("marks past nodes done and the current one current", () => {
-    expect(states("Verify/PR")).toMatchObject({
-      Start: "done",
-      Work: "done",
-      "Verify/PR": "current",
-      Review: "todo",
-      Merge: "todo",
-      Done: "todo",
-    });
-    expect(states("Done")).toMatchObject({ Merge: "done", Done: "current" });
-  });
-
-  it("rework makes Work current with a rework k/2 sub-label", () => {
-    const nodes = diagramNodes("Rework", ph("F"));
-    expect(Object.fromEntries(nodes.map((n) => [n.id, n.state]))).toMatchObject({
-      Start: "done",
-      Work: "current",
-      "Verify/PR": "todo",
-      Review: "todo",
-      Merge: "todo",
-    });
-    expect(nodes.find((n) => n.id === "Work")?.sub).toBe("rework 1/2");
-    expect(diagramNodes("Work", ph("")).find((n) => n.id === "Work")?.sub).toBeUndefined();
-    expect(diagramNodes("Review", ph("F")).find((n) => n.id === "Work")?.sub).toBeUndefined();
-  });
-
-  it("shows the Architect node only from the 2nd FAIL or a marker", () => {
-    const ids = (s: Parameters<typeof diagramNodes>[0], c: ReturnType<typeof ph>) =>
-      diagramNodes(s, c).map((n) => n.id);
-    expect(ids("Review", ph(""))).not.toContain("Architect");
-    expect(ids("Rework", ph("F"))).not.toContain("Architect");
-    expect(ids("Review", ph("FF"))).toContain("Architect");
-    expect(ids("Review", ph("A"))).toContain("Architect");
-  });
-
-  it("Architect warns without a marker, is lit with one, current when it is the step", () => {
-    expect(states("Review", ph("FF")).Architect).toBe("warn");
-    expect(states("Rework", ph("FFF")).Architect).toBe("warn");
-    expect(states("Rework", ph("FFA")).Architect).toBe("lit");
-    expect(states("Architect", ph("FFA"))).toMatchObject({
-      Review: "done",
-      Work: "done",
-      Architect: "current",
-    });
-  });
-
-  it("after the Architect, Work is rework k/2 and Ask PO appears only at the 2nd FAIL after it", () => {
-    const after = diagramNodes("Rework", ph("FFAF"));
-    expect(after.find((n) => n.id === "Work")?.sub).toBe("rework 1/2");
-    expect(after.some((n) => n.id === "Ask PO")).toBe(false);
-    const esc = diagramNodes("Rework", ph("FFAFF"));
-    expect(esc.find((n) => n.id === "Ask PO")?.state).toBe("warn");
-    expect(esc.find((n) => n.id === "Work")?.sub).toBe("rework 2/2");
-    expect(esc.find((n) => n.id === "Architect")?.state).toBe("lit");
-  });
-
-  it("unknown highlights nothing", () => {
-    expect(Object.values(states("unknown")).includes("current")).toBe(false);
-  });
-});
-
 describe("parsePromptText", () => {
   const prompt = [
-    "# Task",
-    "Read `AGENTS.md`, docs/architecture/architecture.md and docs/architecture/adr/0014-coordinator.md.",
-    "See also docs/architecture/architecture.md and CLAUDE.md. Not docs/arch/*.md.",
+    "# Workflow feature · step implement · role developer",
+    "",
+    "# Step implement (developer)",
+    "Read `AGENTS.md` and docs/architecture/architecture.md.",
     "## Skill: test-driven-development (follow it; report it under Skills applied)",
     "body mentioning ## Skill: not-a-heading",
     "## Skill: minimal-change (follow it)",
     "## Skill: ../../evil\u001b[2J",
+    "## Rule: project-baseline (mandatory)",
+    "## Rule: evidence-and-tests (applies to this step)",
+    "## Rule: ../bad (mandatory)",
+    "# Workflow bugfix · step verify · role qa",
   ].join("\n");
 
-  it("reads skills from `## Skill:` headings and rule files the prompt mentions", () => {
+  it("reads skills, rules, which rules are mandatory and the worker's own step header", () => {
     expect(parsePromptText(prompt)).toEqual({
       skills: ["test-driven-development", "minimal-change"],
-      rules: [
-        "AGENTS.md",
-        "CLAUDE.md",
-        "docs/architecture/adr/0014-coordinator.md",
-        "docs/architecture/architecture.md",
-      ],
+      rules: ["project-baseline", "evidence-and-tests"],
+      mandatoryRules: ["project-baseline"],
+      header: { workflow: "feature", step: "implement", role: "developer" },
     });
   });
 
-  it("returns empty lists for a prompt with neither", () => {
-    expect(parsePromptText("hello")).toEqual({ skills: [], rules: [] });
+  it("returns empty lists and no header for a prompt with none", () => {
+    expect(parsePromptText("hello")).toEqual({
+      skills: [],
+      rules: [],
+      mandatoryRules: [],
+      header: null,
+    });
+  });
+
+  it("takes the header only from a line that starts with it, with plain ids", () => {
+    const quoted = "- the header `# Workflow <id> · step <step> · role <role>` names the step";
+    expect(parsePromptText(quoted).header).toBeNull();
+    expect(parsePromptText("# Workflow <id> · step <step> · role <role>").header).toBeNull();
+    expect(parsePromptText("# Workflow feature · step ../x · role developer").header).toBeNull();
+    const resumed = "# Native resume\n\n# Workflow feature · step review · role reviewer\n";
+    expect(parsePromptText(resumed).header).toEqual({
+      workflow: "feature",
+      step: "review",
+      role: "reviewer",
+    });
+  });
+
+  it("does not let a header-like line further down override the first one", () => {
+    const text = [
+      "# Workflow feature · step review · role reviewer",
+      "# Workflow feature · step implement · role developer",
+    ];
+    expect(parsePromptText(text.join("\n")).header?.step).toBe("review");
   });
 });
 
@@ -370,15 +315,21 @@ describe("parsePromptProbe / readPrompts", () => {
   it("maps each requested task to its prompt info, null for a missing file", () => {
     const out = [
       "@@prompt 074",
-      "## Skill: minimal-change",
-      "AGENTS.md",
+      "# Workflow feature · step verify · role qa",
+      "## Skill: minimal-change (follow it)",
+      "## Rule: project-baseline (mandatory)",
       "@@missing 073",
       "@@prompt 075",
     ].join("\n");
     expect(parsePromptProbe(out)).toEqual({
-      "OMI-074": { skills: ["minimal-change"], rules: ["AGENTS.md"] },
+      "OMI-074": {
+        skills: ["minimal-change"],
+        rules: ["project-baseline"],
+        mandatoryRules: ["project-baseline"],
+        header: { workflow: "feature", step: "verify", role: "qa" },
+      },
       "OMI-073": null,
-      "OMI-075": { skills: [], rules: [] },
+      "OMI-075": { skills: [], rules: [], mandatoryRules: [], header: null },
     });
   });
 
@@ -397,6 +348,8 @@ describe("parsePromptProbe / readPrompts", () => {
     const payload = seen[0]?.args.at(-1) ?? "";
     expect(payload).toContain("omi-$n-prompt.md");
     expect(payload).toContain("074");
+    expect(payload).toContain("# Workflow ");
+    expect(payload).toContain("## Rule: ");
     expect(payload).not.toContain("rm -rf");
     const none = await readPrompts(
       () => Promise.resolve({ code: 1, stdout: "", stderr: "x" }),
@@ -471,7 +424,14 @@ const read = (over: Partial<Extract<TasksRead, { available: true }>> = {}): Task
   available: true,
   items: [item()],
   pulls: [],
-  prompts: { "OMI-074": { skills: ["minimal-change"], rules: ["AGENTS.md"] } },
+  prompts: {
+    "OMI-074": {
+      skills: ["minimal-change"],
+      rules: ["AGENTS.md"],
+      mandatoryRules: [],
+      header: null,
+    },
+  },
   ...over,
 });
 
@@ -501,7 +461,6 @@ describe("buildTasks", () => {
       cycle: { phase: "before-architect", fails: 0, k: 0, architectCalled: false },
       pr: null,
       skills: ["minimal-change"],
-      skillsNote: null,
       worker: {
         tool: "claude",
         profile: "minibox",
@@ -512,11 +471,8 @@ describe("buildTasks", () => {
         lastAction: "Bash [2J npm test",
       },
     });
-    expect(t?.rules).toEqual(
-      expect.arrayContaining(["AGENTS.md", "no push, PR or merge", "gh is read-only"]),
-    );
-    expect(t?.ariaLabel).toBe("OMI-074: Workflow: Development, current step Work");
-    expect(t?.nodes.find((n) => n.state === "current")?.id).toBe("Work");
+    expect(t?.rules).toEqual(["AGENTS.md"]);
+    expect(t?.template).toBeNull(); // no template named "Development"
   });
 
   it("shows the PR number, short head and checks, rework count and the Architect", () => {
@@ -572,7 +528,7 @@ describe("buildTasks", () => {
       rules: [],
       worker: null,
     });
-    expect(view.items[0]?.skillsNote).toContain("no prompt");
+    expect(view.items[0]?.prompt).toBeNull();
     expect(view.items[0]?.stepReason).toBeTruthy();
   });
 
@@ -703,21 +659,6 @@ describe("Blocked and Waiting PO (OMI-086)", () => {
     expect(step({ blockers: [open(1)], issueComments: [wait()] }).step).toBe("Waiting PO");
   });
 
-  it("draws the node the task stands at as blocked, with a sub-label", () => {
-    const blocked = diagramNodes("Blocked", cyclePhase([]), {
-      at: "Verify/PR",
-      sub: "blocked by #158",
-    });
-    expect(blocked.find((n) => n.id === "Verify/PR")).toMatchObject({
-      state: "blocked",
-      sub: "blocked by #158",
-    });
-    expect(blocked.find((n) => n.id === "Work")?.state).toBe("done");
-    expect(blocked.find((n) => n.id === "Review")?.state).toBe("todo");
-    const po = diagramNodes("Waiting PO", cyclePhase([]), { at: "Start", sub: "waiting PO" });
-    expect(po.find((n) => n.id === "Start")).toMatchObject({ state: "blocked", sub: "waiting PO" });
-  });
-
   it("taskLine prints blocked:#N,#M or waiting-po", () => {
     const first = (it_: ProjectItem) => {
       const view = buildTasks({ tasks: read({ items: [it_] }), workers: available([]) });
@@ -735,9 +676,15 @@ describe("Blocked and Waiting PO (OMI-086)", () => {
   });
 });
 
-describe("template diagram (OMI-088)", () => {
+describe("template position, worker step and hold of a task view", () => {
   const open = (n: number) => ({ number: n, state: "OPEN" });
   const wait = () => coord("**WAITING-PO:** run the live check");
+  const header = (step: string, role: string, workflow = "feature") => ({
+    skills: ["minimal-change"],
+    rules: ["project-baseline"],
+    mandatoryRules: ["project-baseline"],
+    header: { workflow, step, role },
+  });
   const card = async (
     workflow: string | null,
     over: Partial<ProjectItem> = {},
@@ -749,12 +696,7 @@ describe("template diagram (OMI-088)", () => {
       tasks: read({
         items: [item({ workflow, ...over })],
         templates,
-        prompts: {
-          "OMI-074": {
-            skills: ["test-driven-development", "verification-before-completion"],
-            rules: ["AGENTS.md"],
-          },
-        },
+        prompts: { "OMI-074": header("implement", "developer") },
         ...tasks,
       }),
       workers: available(procs),
@@ -763,112 +705,118 @@ describe("template diagram (OMI-088)", () => {
     return view.items[0];
   };
 
-  it("draws feature steps and gates from the template, the running worker at implement", async () => {
+  it("keeps the feature template and puts the running worker at implement when its header says so", async () => {
     const t = await card("feature", {}, [worker]);
-    expect(t.flow).toMatchObject({
-      source: "template",
-      reason: null,
-      to: "implement",
-      from: "review",
-    });
-    expect(t.nodes.map((n) => n.id)).toEqual([
-      "analyze",
-      "scope-approved",
-      "implement",
-      "verify",
-      "review",
-      "ready-to-merge",
-    ]);
-    expect(t.nodes.find((n) => n.id === "implement")?.state).toBe("current");
-    expect(t.templateStep).toBe("implement");
+    expect(t.template?.id).toBe("feature");
+    expect(t.pos).toEqual({ kind: "node", id: "implement" });
+    expect(t.workerStep).toEqual({ step: "implement", role: "developer" });
     expect(t.role).toBe("developer");
     expect(t.step).toBe("Work");
-    expect(t.workflow).toBe("feature");
   });
 
-  it("draws bugfix and docs from their own templates", async () => {
-    expect((await card("bugfix", {}, [worker])).nodes.map((n) => n.id)).toContain("reproduce");
-    const docs = await card("docs", {}, [worker]);
-    expect(docs.nodes.map((n) => n.id)).toEqual([
-      "scope-approved",
-      "write",
-      "verify",
-      "accept",
-      "docs-acceptance",
-      "ready-to-merge",
-    ]);
-    expect(docs.nodes.find((n) => n.id === "write")?.state).toBe("current");
+  it("takes the step of a running worker from its prompt header, not from the lifecycle", async () => {
+    const qa = await card("feature", {}, [worker], {
+      prompts: { "OMI-074": header("verify", "qa") },
+    });
+    expect(qa.pos).toEqual({ kind: "node", id: "verify" });
+    expect(qa.workerStep).toEqual({ step: "verify", role: "qa" });
+    expect(qa.role).toBe("qa");
+    const reviewer = await card("feature", { status: "In Review" }, [worker], {
+      prompts: { "OMI-074": header("review", "reviewer") },
+      pulls: [openPull()],
+    });
+    expect(reviewer.pos).toEqual({ kind: "node", id: "review" });
+    expect(reviewer.role).toBe("reviewer");
   });
 
-  it("maps no-worker states: verify (qa), review, ready-to-merge on PASS, Done", async () => {
+  it("does not guess the step of a running worker whose prompt has no header", async () => {
+    const t = await card("feature", {}, [worker], {
+      prompts: { "OMI-074": { skills: [], rules: [], mandatoryRules: [], header: null } },
+    });
+    expect(t.workerStep).toBeNull();
+    expect(t.pos).toEqual({ kind: "node", id: "implement" }); // the lifecycle's own position
+  });
+
+  it("ignores a header for another workflow or a step the template does not have", async () => {
+    const other = await card("feature", {}, [worker], {
+      prompts: { "OMI-074": header("verify", "qa", "ui-ux") },
+    });
+    expect(other.workerStep).toBeNull();
+    const unknownStep = await card("feature", {}, [worker], {
+      prompts: { "OMI-074": header("deploy", "devops") },
+    });
+    expect(unknownStep.workerStep).toBeNull();
+    const gate = await card("feature", {}, [worker], {
+      prompts: { "OMI-074": header("ready-to-merge", "qa") },
+    });
+    expect(gate.workerStep).toBeNull();
+  });
+
+  it("ignores the header when no worker runs, because the prompt file may be an old step's", async () => {
+    const t = await card("feature", {}, [], {
+      prompts: { "OMI-074": header("review", "reviewer") },
+    });
+    expect(t.workerStep).toBeNull();
+    expect(t.pos).toEqual({ kind: "node", id: "verify" });
+    expect(t.role).toBe("qa");
+  });
+
+  it("maps no-worker states: verify (qa), review, ready-to-merge on PASS", async () => {
     const verify = await card("feature");
-    expect(verify.templateStep).toBe("verify");
-    expect(verify.role).toBe("qa");
+    expect(verify.pos).toEqual({ kind: "node", id: "verify" });
     const inReview = { status: "In Review" };
     const review = await card("feature", inReview, [], { pulls: [openPull()] });
-    expect(review.templateStep).toBe("review");
+    expect(review.pos).toEqual({ kind: "node", id: "review" });
     const pass = openPull({ comments: [coord(verdict("PASS"))] });
     const merge = await card("feature", inReview, [], { pulls: [pass] });
-    expect(merge.templateStep).toBe("ready-to-merge");
-    expect(merge.nodes.find((n) => n.id === "review")?.state).toBe("done");
+    expect(merge.pos).toEqual({ kind: "node", id: "ready-to-merge" });
   });
 
-  it("unknown carries the reason and highlights no step", async () => {
+  it("is unknown, with the reason, when the observed state does not say where the task stands", async () => {
     const t = await card("feature", { status: "In Review" });
     expect(t.step).toBe("unknown");
-    expect(t.templateStep).toBe("unknown");
+    expect(t.pos.kind).toBe("unknown");
     expect(t.stepReason).toContain("no open PR");
-    expect(t.nodes.some((n) => n.state === "current")).toBe(false);
   });
 
-  it("rework goes back to the developer step with rework k/2; Architect joins the path", async () => {
+  it("counts rework and reaches the Architect from the Coordinator's FAIL comments", async () => {
     const two = openPull({ comments: [coord(verdict("FAIL")), coord(verdict("FAIL"))] });
     const t = await card("feature", { status: "In Review" }, [], { pulls: [two] });
     expect(t.rework).toBe(2);
-    expect(t.flow.to).toBe("implement");
-    expect(t.nodes.map((n) => n.id)).toContain("Architect");
+    expect(t.cycle.phase).toBe("architect");
     const one = openPull({ comments: [coord(verdict("FAIL"))] });
     const r = await card("feature", {}, [worker], { pulls: [one] });
-    expect(r.nodes.find((n) => n.id === "implement")).toMatchObject({
-      state: "current",
-      sub: "rework 1/2",
-    });
+    expect(r.rework).toBe(1);
+    expect(r.step).toBe("Work"); // rework is Work again, with the count beside it
   });
 
-  it("Blocked and Waiting PO mark the node the task stands at", async () => {
+  it("Blocked and Waiting PO keep the node the task stands at and carry the hold", async () => {
     const b = await card("feature", { blockers: [open(158)] });
     expect(b.step).toBe("Blocked");
-    expect(b.nodes.find((n) => n.id === "verify")).toMatchObject({
-      state: "blocked",
-      sub: "blocked by #158",
-    });
+    expect(b.pos).toEqual({ kind: "node", id: "verify" });
+    expect(b.hold).toEqual({ kind: "blocked", by: [158] });
     const w = await card("feature", { comments: [wait()] });
-    expect(w.nodes.find((n) => n.id === "verify")).toMatchObject({
-      state: "blocked",
-      sub: "waiting PO",
-    });
+    expect(w.pos).toEqual({ kind: "node", id: "verify" });
+    expect(w.hold).toEqual({ kind: "waiting-po" });
     expect(w.role).toBe("PO");
+    expect((await card("feature")).hold).toBeNull();
   });
 
-  it("shows the loaded skills against the template step and marks the mismatch", async () => {
+  it("carries the loaded skills, rules and the prompt for the snapshot", async () => {
     const t = await card("feature", {}, [worker]);
-    expect(t.skillCheck).toEqual({
-      expected: ["test-driven-development", "minimal-change"],
-      missing: ["minimal-change"],
-      extra: [{ name: "verification-before-completion", template: "verify" }],
-    });
-    expect(t.templateInfo).toMatchObject({ id: "implement", role: "developer" });
-    expect(t.skills).toEqual(["test-driven-development", "verification-before-completion"]);
+    expect(t.skills).toEqual(["minimal-change"]);
+    expect(t.rules).toEqual(["project-baseline"]);
+    expect(t.prompt?.mandatoryRules).toEqual(["project-baseline"]);
   });
 
-  it("falls back to the lifecycle diagram with the reason when the template cannot be read", async () => {
+  it("has no template, and says why, when the Workflow cannot be read", async () => {
     const t = await card("nonexistent");
-    expect(t.flow).toMatchObject({ source: "lifecycle", from: "Review", to: "Work" });
-    expect(t.flow.reason).toContain("nonexistent");
-    expect(t.nodes.map((n) => n.id)).toContain("Verify/PR");
-    expect(t.skillCheck).toBeNull();
-    expect((await card(null)).flow.reason).toContain("Workflow");
+    expect(t.template).toBeNull();
+    expect(t.pos.kind).toBe("unknown");
+    expect(t.templateReason).toContain("nonexistent");
+    expect((await card(null)).templateReason).toContain("Workflow");
     const unread = await card("feature", {}, [], { templates: undefined });
-    expect(unread.flow).toMatchObject({ source: "lifecycle", reason: "template not read" });
+    expect(unread.templateReason).toBe("template not read");
+    expect(unread.template).toBeNull();
   });
 });

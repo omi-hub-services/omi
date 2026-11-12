@@ -289,8 +289,8 @@ answers `omi-watch`, it only opens another window and exits. The server uses `no
 `localhost:<port>` (DNS rebinding). `GET /events` is SSE, one snapshot per data change (workers
 every 5 seconds, quota every five minutes). The snapshot is built by a pure function and the page shows
 external strings only through `textContent`, under a CSP that allows its two inline blocks by
-hash. `POST /probe` runs the paid Haiku probe only with the header `X-Omi-Watch: 1`, which the
-page sends after the user confirms in the UI; nothing probes automatically. The server exits 60
+hash. (Until OMI-092 `POST /probe` ran the paid Haiku probe from a page button; it is gone, see
+the OMI-092 section below. The terminal watch's `p` key still asks first.) The server exits 60
 seconds after the last SSE client disconnects, or after start if none ever connects. Polling,
 colour rules and text cleaning are shared with `watch.ts` in `watch-core.ts`; the terminal watch
 stays as the fallback. No dependency is added.
@@ -736,3 +736,37 @@ and poller. Expired reset times use one pure display function and are omitted; w
 return to 100. Poller failures go to `onError`: terminal cleanup/rejection via `fail`, or one-line
 web logging with the server kept alive. Worker parsing includes parent PIDs and collapses a Codex
 wrapper/binary pair to its root process; matching stdout JSONL paths also collapse duplicate rows.
+
+## One watch page for the framework and the repo (OMI-092)
+
+The repo no longer has a page of its own (`tools/coordinator/watch-page.ts` is deleted). `/omi-watch`
+serves the framework's page (`src/infrastructure/observability/watch-page.ts`, design in
+`docs/design/watch`) through the framework's server (`watch-server.ts`), which keeps every OMI-067
+guard: 127.0.0.1 only, Host/Origin checks, hashed CSP without an inline style attribute, `textContent`
+and SVG `setAttribute` only, GET-only `/`, `/health`, `/events`. There is no control endpoint: the
+page has no probe button and `POST /probe` is a 404. `watch-web.ts` only reads the repo's sources
+and `watch-snapshot.ts` maps them into the framework's `WatchSnapshot` contract (source never imports
+tools; tools import `src/` through the register hook).
+
+The diagram and its geometry are the framework's: `workflow-diagram.ts` decides node states,
+`workflow-diagram-layout.ts` (pure, tested) places nodes, connectors and labels, so a source cannot
+draw something different. The repo's own node builders (`diagramNodes`, `templateNodes`,
+`compareLoaded`, `orderNodes`) are deleted; `watch-workflow.ts` keeps only the repo-specific part,
+mapping what it observes (Project Status, worker, PR verdict) to a template position
+(`mapTemplatePos`, `standingOf`). The Issue's template is the only diagram: with no template the
+card says "Template unavailable" instead of drawing a lifecycle guess.
+
+**The step of a running worker comes from its prompt header**, `# Workflow <id> · step <step> ·
+role <role>`, which `flow.ts prompt` and the interim step script write as the first heading.
+`readPrompts` greps that line with the `## Skill:` and `## Rule: <id> (mandatory)` headings (never the
+prompt body); `parsePromptText` takes the first valid header only, and a header for another workflow
+or a step the template lacks is ignored, as is any header when no worker runs (the prompt file is
+overwritten at every dispatch, so it can belong to an older step). With no valid header the step and
+role are shown as unknown; nothing is guessed from the lifecycle. A running worker is therefore no
+longer drawn as implement when it is the QA or review worker.
+
+Quota is one row per profile in the snapshot (Claude first, then Codex): share left of each window,
+the five-hour reset, a severity (`critical` when the limit is reached or a window is under half its
+pick-profile threshold, `low` under the threshold) and freshness. A window not read is null and the
+page writes "unknown", never 0% or an empty bar. If GitHub fails after a good read the server keeps
+the last good cards and flags the board as unavailable.
