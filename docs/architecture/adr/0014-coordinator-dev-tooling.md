@@ -245,10 +245,11 @@ execution environment. Refusing every repository with hooks is rejected because 
 configured without executing at this boundary. Worker prohibitions on `--no-verify` and all approval
 requirements remain unchanged.
 
-Coordinator scope extension for this fix: the legacy `flow-workers.ts` `commitWorkerCommand` also
-passes command-local `-c core.hooksPath=/dev/null` for its commit. This is the only legacy execution
-change; the product's reconciliation/recovery logic is not copied there. Retiring or delegating the
-legacy path remains #186.
+Coordinator scope extension for this fix: every Git invocation in the legacy `flow-workers.ts`
+`commitWorkerCommand` is hook- and fsmonitor-isolated through command-local
+`-c core.hooksPath=/dev/null -c core.fsmonitor=false`, including staging, reads and commit.
+Repository configuration is not modified. The product's reconciliation/recovery logic is not
+copied there. Retiring or delegating the legacy path remains #186.
 
 ## Framework port of intake (OMI-079)
 

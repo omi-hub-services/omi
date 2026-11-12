@@ -179,12 +179,13 @@ export async function commitWorkerCommand(
   const label = `commit-worker ${input.branch}`;
   assertTaskBranch(input.branch);
   if (input.message.trim() === "") return refuse(label, "the commit message is empty");
-  const git = wslGit(ctx.target);
+  const git = (args: readonly string[]): Command =>
+    wslGit(ctx.target)(["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args]);
   const current = (await runChecked(ctx.run, git(["rev-parse", "--abbrev-ref", "HEAD"]))).trim();
   const add = git(["add", "-A", "--", ...STAGE_PATHS]);
   const staged = git(["diff", "--cached", "--name-only"]);
   const commit: Command = {
-    ...git(["-c", "core.hooksPath=/dev/null", "commit", "-F", "-"]),
+    ...git(["commit", "-F", "-"]),
     input: input.message,
   };
   // The branch is checked before anything is staged; the staged paths are judged after.
