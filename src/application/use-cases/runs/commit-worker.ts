@@ -66,7 +66,11 @@ export function commitWorker(deps: CommitWorkerDeps, input: unknown) {
     deps.committer.stage(attempt.workspace.path, paths);
     const staged = deps.committer.stagedPaths(attempt.workspace.path);
     if (staged.length === 0) return refuse("NOTHING_TO_COMMIT");
-    if (!staged.every(allowed)) return refuse("UNSAFE_INDEX");
+    const unsafe = staged.filter((path) => !allowed(path));
+    if (unsafe.length > 0) {
+      deps.committer.unstage(attempt.workspace.path, unsafe);
+      return refuse("UNSAFE_INDEX");
+    }
     return {
       ok: true as const,
       attemptId: attempt.id,

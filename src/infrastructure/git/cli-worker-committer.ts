@@ -10,6 +10,16 @@ export function createCliWorkerCommitter(): WorkerCommitter {
     stage: (cwd, paths) => {
       gitCommand(cwd, ["--literal-pathspecs", "add", "--all", "--", ...paths]);
     },
+    unstage: (cwd, paths) => {
+      gitCommand(cwd, [
+        "--literal-pathspecs",
+        "restore",
+        "--staged",
+        "--source=HEAD",
+        "--",
+        ...paths,
+      ]);
+    },
     commit: (cwd, message) => {
       gitCommand(cwd, ["commit", "-m", message], { runHooks: true });
       return gitCommand(cwd, ["rev-parse", "HEAD"]).stdout.trim();

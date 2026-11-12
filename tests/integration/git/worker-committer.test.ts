@@ -31,3 +31,22 @@ it("stages literal paths and preserves normal commit hooks", () => {
   expect(git("show", "HEAD:src/[literal].ts")).toBe("fixture");
   expect(readFileSync(join(cwd, "src/l.ts"), "utf8")).toBe("outside\n");
 });
+
+it("unstages rejected credential additions without changing files or other index entries", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "omi-worker-unstage-"));
+  temporary.push(cwd);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  git("init", "--initial-branch=task/omi-082-fixture");
+  git("config", "user.name", "Fixture");
+  git("config", "user.email", "fixture@example.invalid");
+  git("-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-m", "seed");
+  mkdirSync(join(cwd, "src"));
+  writeFileSync(join(cwd, "src/keep.ts"), "kept\n");
+  writeFileSync(join(cwd, "src/.env"), "fixture only\n");
+  const adapter = createCliWorkerCommitter();
+  adapter.stage(cwd, ["src"]);
+  expect(adapter.stagedPaths(cwd)).toEqual(["src/.env", "src/keep.ts"]);
+  adapter.unstage(cwd, ["src/.env"]);
+  expect(adapter.stagedPaths(cwd)).toEqual(["src/keep.ts"]);
+  expect(readFileSync(join(cwd, "src/.env"), "utf8")).toBe("fixture only\n");
+});

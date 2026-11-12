@@ -4,12 +4,21 @@ import { stepResultSchema } from "../../contracts/result.js";
 import type { AttemptStore } from "../../ports/attempt-store.js";
 import type { WorkerReportReader } from "../../ports/worker-report-reader.js";
 
-const reportSchema = z.object({
+const completedReportSchema = z.object({
   outcome: z.string(),
   exitCode: z.number().int().nullable(),
   failure: z.string().optional(),
   result: stepResultSchema.optional(),
 });
+
+const reportSchema = z.union([
+  completedReportSchema,
+  z.object({ attemptId: identifierSchema, reason: z.string().min(1) }).transform(({ reason }) => ({
+    outcome: "failed",
+    exitCode: null,
+    failure: reason,
+  })),
+]);
 
 export function readWorkerReport(
   deps: { attempts: AttemptStore; reports: WorkerReportReader },
