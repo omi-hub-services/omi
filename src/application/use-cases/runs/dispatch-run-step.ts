@@ -80,7 +80,13 @@ export async function dispatchRunStep(
       taskId: deps.plans.forRun(run.id)?.taskId ?? "",
     });
   } catch (error) {
-    if (error instanceof DispatchPlanningError) return { ok: false, reason: error.reason };
+    if (error instanceof DispatchPlanningError) {
+      return {
+        ok: false,
+        reason: error.reason,
+        ...(error.detail === undefined ? {} : { detail: error.detail }),
+      };
+    }
     throw error;
   }
   if (request === undefined) return { ok: false, reason: "NOT_PLANNABLE" };
