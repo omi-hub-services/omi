@@ -428,7 +428,13 @@ For an initialized project with its Issue imported, approvals recorded and a ses
 5. If a stopped worker could not commit, `commit-worker --attempt ATTEMPT --message-file .tmp/message.md`.
    It takes the task's writer lease, checks the branch, stages only the pinned context scope and
    rejects an empty/unsafe index, credentials, temporary state and native agent configuration.
-   Normal Git hooks run; it neither pushes nor rewrites history. It returns the new full head SHA.
+   Hooks run only when every file under the effective hooks directory matches HEAD, including the
+   index; changed, untracked or unprovable hooks refuse `UNTRUSTED_HOOKS` (including untracked files
+   in `.git/hooks`). The resulting commit is checked against the pinned scope. An out-of-scope
+   commit is undone locally with a soft reset to the pre-commit head and the index cleared;
+   worktree files are preserved and the command refuses `UNSAFE_COMMIT`. It never pushes.
+   Writer release failures are reported as `WRITER_RELEASE_FAILED`, even after a commit succeeds.
+   Successful completion returns the new full head SHA.
    A second unchanged request refuses `NOTHING_TO_COMMIT`. An active/interrupted writer or held
    lease is a gate. Committing does not change the old report's revision or mark the step passed:
    use the workflow's recovery/rework path and obtain fresh verification at the new head.

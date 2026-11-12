@@ -51,16 +51,18 @@ export function commitWorker(deps: CommitWorkerDeps, input: unknown) {
   const at = deps.now();
   const owner = deps.nextId();
   const lease = deps.workspaces.acquireWriter({
-    ...attempt.workspace,
+    taskId: attempt.workspace.taskId,
+    slug: attempt.workspace.slug,
     owner,
     now: new Date(at).toISOString(),
     expiresAt: new Date(at + 120_000).toISOString(),
   });
   if (!lease.ok) return refuse(lease.error.code);
-  try {
+  const execute = () => {
     const state = deps.workspaces.inspect(attempt.workspace.path);
     if (!state.ok) return refuse(state.error.code);
     if (state.value.branch !== attempt.workspace.branch) return refuse("BRANCH_MISMATCH");
+    if (!deps.committer.hooksTrusted(attempt.workspace.path)) return refuse("UNTRUSTED_HOOKS");
     if (!deps.committer.stagedPaths(attempt.workspace.path).every(allowed))
       return refuse("UNSAFE_INDEX");
     deps.committer.stage(attempt.workspace.path, paths);
@@ -71,19 +73,45 @@ export function commitWorker(deps: CommitWorkerDeps, input: unknown) {
       deps.committer.unstage(attempt.workspace.path, unsafe);
       return refuse("UNSAFE_INDEX");
     }
+    if (!deps.committer.hooksTrusted(attempt.workspace.path)) return refuse("UNTRUSTED_HOOKS");
+    const committed = deps.committer.commit(attempt.workspace.path, parsed.data.message);
+    let headSha: string;
+    let safe: boolean;
+    try {
+      headSha = gitShaSchema.parse(committed);
+      safe = deps.committer
+        .committedPaths(attempt.workspace.path, state.value.headSha, headSha)
+        .every(allowed);
+    } catch (error) {
+      deps.committer.undoCommit(attempt.workspace.path, state.value.headSha);
+      throw error;
+    }
+    if (!safe) {
+      deps.committer.undoCommit(attempt.workspace.path, state.value.headSha);
+      return refuse("UNSAFE_COMMIT");
+    }
     return {
       ok: true as const,
       attemptId: attempt.id,
-      headSha: gitShaSchema.parse(
-        deps.committer.commit(attempt.workspace.path, parsed.data.message),
-      ),
+      headSha,
     };
-  } finally {
+  };
+  const release = () =>
     deps.workspaces.releaseWriter({
-      ...attempt.workspace,
+      taskId: attempt.workspace.taskId,
+      slug: attempt.workspace.slug,
       owner,
       generation: lease.value.generation,
       now: new Date(deps.now()).toISOString(),
     });
+  let result: ReturnType<typeof execute>;
+  try {
+    result = execute();
+  } catch (error) {
+    const released = release();
+    if (!released.ok) return { ...refuse("WRITER_RELEASE_FAILED"), detail: released.error.code };
+    throw error;
   }
+  const released = release();
+  return released.ok ? result : { ...refuse("WRITER_RELEASE_FAILED"), detail: released.error.code };
 }

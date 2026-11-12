@@ -29,6 +29,11 @@ async function setup() {
     ...r.deps,
     reports: { read: () => ({ outcome: "succeeded", exitCode: 0, failure: "REVISION_MISSING" }) },
     committer: {
+      hooksTrusted: () => true,
+      committedPaths: () => ["src/file.ts"],
+      undoCommit: () => {
+        committed = false;
+      },
       stagedPaths: () => staged,
       stage: () => {
         stageCalls++;
@@ -79,6 +84,54 @@ async function commitCommand(s: Awaited<ReturnType<typeof setup>>) {
   return { code, body: JSON.parse(output) as unknown };
 }
 describe("worker commands", () => {
+  it("sends only contract fields when acquiring and releasing a writer", async () => {
+    const s = await setup();
+    const acquire = s.r.workspaces.acquireWriter.bind(s.r.workspaces);
+    const release = s.r.workspaces.releaseWriter.bind(s.r.workspaces);
+    s.r.workspaces.acquireWriter = (request) => {
+      expect(Object.keys(request).sort()).toEqual(["expiresAt", "now", "owner", "slug", "taskId"]);
+      return acquire(request);
+    };
+    s.r.workspaces.releaseWriter = (request) => {
+      expect(Object.keys(request).sort()).toEqual(["generation", "now", "owner", "slug", "taskId"]);
+      return release(request);
+    };
+    expect(await commitCommand(s)).toMatchObject({ code: 0 });
+  });
+
+  it("reports a failed writer release instead of claiming commit success", async () => {
+    const s = await setup();
+    s.r.workspaces.releaseWriter = () => ({
+      ok: false,
+      error: new GitWorkspaceError("STALE_LEASE"),
+    });
+    expect(await commitCommand(s)).toMatchObject({
+      code: 4,
+      body: { error: { message: "WRITER_RELEASE_FAILED: STALE_LEASE" } },
+    });
+  });
+
+  it("refuses worker-controlled hooks before staging", async () => {
+    const s = await setup();
+    s.deps.committer.hooksTrusted = () => false;
+    expect(await commitCommand(s)).toMatchObject({
+      code: 4,
+      body: { error: { message: "UNTRUSTED_HOOKS" } },
+    });
+    expect(s.stageCalls()).toBe(0);
+    expect(s.committed()).toBe(false);
+  });
+
+  it("undoes a commit whose hook added an out-of-scope file", async () => {
+    const s = await setup();
+    s.deps.committer.committedPaths = () => ["src/file.ts", "outside.txt"];
+    expect(await commitCommand(s)).toMatchObject({
+      code: 4,
+      body: { error: { message: "UNSAFE_COMMIT" } },
+    });
+    expect(s.committed()).toBe(false);
+    expect(s.r.workspaces.released).toEqual([2]);
+  });
   it.each(["writer held", "branch mismatch", "unsafe scope", "empty after staging"] as const)(
     "commit-worker refuses %s through the CLI",
     async (scenario) => {
