@@ -197,10 +197,82 @@ export class FakeGithub implements GithubTransport {
     return this.respond(status, JSON.stringify(value), headers);
   }
 
+  /**
+   * The readiness gate reads the Project through GraphQL. Every Issue of this fake counts as a
+   * complete task In Progress on one Project, its Plan Key taken from the body marker, so runtime
+   * sandboxes pass the gate. The gate itself is tested with `FakeGithubBoard`.
+   */
+  private handleBoardQuery(request: HttpRequest): HttpResponse | undefined {
+    if (request.method !== "POST" || request.path !== "graphql") return undefined;
+    const { query, variables } = request.body as {
+      query: string;
+      variables: Record<string, unknown>;
+    };
+    if (query.includes("repositoryOwner")) {
+      const login = String(variables["login"]);
+      return this.json(200, {
+        data: {
+          repositoryOwner: {
+            id: "O_fake",
+            login,
+            __typename: "Organization",
+            projectV2: {
+              id: "PVT_fake",
+              number: Number(variables["number"]),
+              title: "fake",
+              fields: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+            },
+          },
+        },
+      });
+    }
+    if (!query.includes("query BoardIssue")) return undefined;
+    const issue = this.issues.find(
+      (candidate) =>
+        candidate.repo === `${String(variables["owner"])}/${String(variables["name"])}` &&
+        candidate.number === variables["number"],
+    );
+    if (issue === undefined) return this.json(200, { data: { repository: { issue: null } } });
+    const select = (name: string) => ({ name });
+    return this.json(200, {
+      data: {
+        repository: {
+          issue: {
+            number: issue.number,
+            state: "OPEN",
+            body: issue.body,
+            milestone: null,
+            blockedBy: { totalCount: 0, nodes: [] },
+            projectItems: {
+              nodes: [
+                {
+                  id: `PVTI_${String(issue.number)}`,
+                  project: { id: "PVT_fake" },
+                  status: select("In Progress"),
+                  priority: select("P1"),
+                  workType: select("Task"),
+                  workflow: select("feature"),
+                  role: select("Developer"),
+                  area: select("runtime"),
+                  planKey: {
+                    text: /omi-squad:plan-key=([A-Z]+-\d+)/.exec(issue.body)?.[1] ?? undefined,
+                  },
+                },
+              ],
+              pageInfo: { hasNextPage: false },
+            },
+          },
+        },
+      },
+    });
+  }
+
   private handle(request: HttpRequest): HttpResponse {
     const url = new URL(request.path, "https://api.github.com/");
     const route = url.pathname;
 
+    const board = this.handleBoardQuery(request);
+    if (board !== undefined) return board;
     const deployed = this.handleDeployRoutes(request, url);
     if (deployed !== undefined) return deployed;
     const merged = this.handleMergeRoutes(request, url);

@@ -27,12 +27,13 @@ SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<d
 
 **What the v0.1 CLI really has.** `--help` lists: `init`, `install`, `update`, `doctor`, `profiles {register,list,probe}`, `status`,
 `session {new,start}`, `approvals decide`, `plan`, `dispatch`, `wait`, `pause`, `resume`, `deliver`,
-`coordinator switch`.
+`coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9).
 
 | Job            | v0.1 command                                      | Notes                                                              |
 | -------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
 | init           | `install`, `init`, `doctor`                       | Preview first; `--apply` creates files (§1)                       |
 | login/profiles | `profiles register/list/probe`                    | Login with the native tool (§2)                                   |
+| intake         | `new-issue`, `promote`, `set-status`              | Preview first; readiness gate (§9)                                |
 | run            | `plan` → `dispatch` → `wait` → `status` → `deliver` | `run` **not available in v0.1** (see §3)                         |
 | pause / resume | `pause`, `resume`                                 | §4, §5                                                             |
 | retry          | none                                              | `retry` **not available in v0.1** (see §6)                         |
@@ -182,7 +183,8 @@ a configured project (§1).
 Refusals print `error[COMMAND_REFUSED]: <REASON>[: detail]` (exit 4). Reasons seen in the code
 (not all reproduced live, see the record): `PROJECT_NOT_CONFIGURED`, `INVALID_INPUT`, `WORKFLOW_REQUIRED`,
 `WORKFLOW_UNKNOWN`, `TASK_NOT_FOUND`, `WORKFLOW_CYCLIC`, `RUN_NOT_FOUND`, `RUN_NOT_RUNNING`,
-`STEP_NOT_READY`, `NOT_PLANNABLE`, `STATE_REJECTED`. A usage error (exit 2) means a missing/invalid
+`STEP_NOT_READY`, `NOT_PLANNABLE`, `STATE_REJECTED`, `TASK_NOT_READY` (the Issue fails the readiness
+gate, §9: `dispatch` creates no branch, attempt or worker). A usage error (exit 2) means a missing/invalid
 flag; numbers must be whole (`--issue 1`, not `1e3`). Exit 3: no runtime, start the session.
 Merge and PO-approval gates are in [ADR-0034](../architecture/adr/0034-task-pr-merge-gates.md); an
 `approvals decide` uses the runtime approval composition:
@@ -295,6 +297,67 @@ Safety rules: never delete `.omi-squad/local/state/` or the worktrees to "reset"
 native modules from Windows; backups are local, not disaster recovery. The runtime backs up SQLite
 before pending migrations.
 
+## 9. Intake: new Issue, readiness gate, promote
+
+Three commands put work on the GitHub Project and move it into the queue. They talk to GitHub
+directly (the `gh` login of the machine), not to the runtime, so no session is needed. All take
+`--project <path>` and read the repository and Project from `<path>/.omi-squad/config/project.yaml`
+(`PROJECT_NOT_CONFIGURED` otherwise). Preview and refusals write nothing.
+
+**The readiness gate** (pure, one implementation for all three commands and for `dispatch`). A task
+is ready only when: its Project `Plan Key` is `PREFIX-NNN` and matches **exactly one**
+`<!-- omi-squad:plan-key=… -->` marker in the Issue body; Priority, Work Type, Workflow, Role and
+Area are all set; and `## Acceptance criteria` has at least one **top-level** checkbox (nested
+checkboxes, checkboxes in a code fence and anything under a `###` sub-heading do not count; this
+is the same parser that ticks the criteria at delivery). A refusal lists every failed condition at once.
+The gate runs on a move to Ready or In Progress (`promote`, `set-status`) and before `dispatch`
+creates a task branch.
+
+```sh
+<cli> new-issue --project <path> --file spec.md [--prefix OMI]          # preview
+<cli> new-issue --project <path> --file spec.md [--prefix OMI] --apply  # create
+<cli> promote [<issue>] --project <path> [--dry-run]
+<cli> set-status <issue> "Ready"|"In Progress" --project <path>
+```
+
+- **`new-issue`** reads a Markdown spec that starts with YAML frontmatter (all keys required,
+  unknown keys refused): `title`, `priority`, `workType`, `workflow`, `role`, `area`, `milestone`
+  (exact title), `epic` (number of an existing Epic) and `blockedBy` (list of Issue numbers, may be
+  empty). The body needs `## Mục tiêu`, `## Phạm vi`, `## Acceptance criteria` (one top-level
+  checkbox at least) and `## Dependencies`. Without `--apply` it prints the allocated key
+  (largest existing `PREFIX-NNN` over Issue markers, title prefixes and Project values, closed
+  Issues included, plus one; pull requests and Epic keys do not count), title, milestone, epic,
+  blockers and field values, and writes nothing. `--prefix` is the project's Plan Key prefix
+  (default `OMI`; `project.yaml` does not carry it yet). Values must match the live Project options.
+  With `--apply` it first **saves the marker into the spec file**, then creates the Issue with its
+  milestone, adds it to the Project, sets Priority, Work Type, Workflow, Role, Area, Status
+  `Backlog` and Plan Key, and attaches the epic (sub-issue) and the native blocked-by Issues.
+  Creating an Epic is refused. Keep the spec for a retry: when its marker is already on an Issue
+  the command prints `done: … exists on #N` and creates nothing. The writes are **not atomic**: if a
+  later write fails the Issue exists, the command exits 1, and you finish the Project fields or
+  relationships by hand. Do not delete the marker and retry. Run one creation at a time (the key is
+  read, then written; there is no lock).
+- **`promote [<issue>]`** moves a Backlog task to Ready only when every native blocker is closed
+  (more blockers than were read counts as blocked) and the gate passes; an Epic, a closed Issue or a
+  task not in Backlog is refused, an already Ready one prints `done:`. Without `<issue>` it takes the
+  first eligible Backlog task by Priority, then milestone title (no milestone last), then Issue
+  number; when none qualifies it prints `none: …` and exits 0. `--dry-run` prints the pick and writes
+  nothing.
+- **`set-status <issue> Ready|"In Progress"`** applies the gate and then sets the Project Status. A
+  task already at that status still has to pass the gate. Other statuses are refused as a usage
+  error: this command is not a way around the gates of the rest of the delivery flow.
+
+Exit codes: `0` success (including `done:`/`none:`/preview), `4` refused (`error[COMMAND_REFUSED]:`
+followed by all reasons), `2` usage (bad number, status or prefix, missing flag), `1` GitHub or
+configuration failure (`error[INTERNAL_ERROR]: Issue intake failed: <CODE>` or `Task board
+operation failed: <CODE>`, for example `HTTP_403`, `INVALID_RESPONSE`, `STATUS_OPTION_MISSING`).
+`--json` gives the result document with `kind` (`preview`, `created`, `exists`, `promoted`, …).
+
+Limits: these commands were exercised against an in-memory fake GitHub (contract tests), **not**
+against live GitHub, so the first live run should start with a preview / `--dry-run`. The Coordinator's
+`tools/coordinator/` scripts keep doing the same job for this repository until `omi` replaces them
+(ADR-0014); the framework does not import them.
+
 ## Compatibility matrix
 
 Versions, auth modes and their evidence are in [compatibility.md](compatibility.md); a version not
@@ -366,6 +429,9 @@ Integration tests additionally cover init byte preservation and source-path refu
 registration/probes for both tools with fake executables and unchanged synthetic auth bytes, and
 approval rejection for bot, unallowlisted, edited or unauthenticated sources. Packaging e2e tests
 cover instruction backups, local overrides, update merging, malformed markers, symlinks and previews.
+
+The intake commands of §9 are not in this record: they were checked by unit, integration and
+contract tests with a fake GitHub only.
 
 Not run live: native login/probes, GitHub approval, runtime TTY confirmation, Windows `session start`,
 full-dependency clean npm installation, and successful worker/delivery flows. These remain opt-in

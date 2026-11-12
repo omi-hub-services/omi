@@ -14,6 +14,7 @@ import { registerApprovalCommands } from "./approval-commands.js";
 import { registerRunCommands } from "./run-commands.js";
 import { registerStatusCommand } from "./status-command.js";
 import { registerProfileCommands } from "./profile-commands.js";
+import { registerTaskCommands, type TaskCommands } from "./task-commands.js";
 
 export interface CliEnvironment extends CliOutput {
   readonly sendCommand: CliContext["sendCommand"];
@@ -23,6 +24,7 @@ export interface CliEnvironment extends CliOutput {
   readonly launchSession?: SessionLauncher;
   readonly readStdin?: CliContext["readStdin"] | undefined;
   readonly installation?: InstallationCommands;
+  readonly tasks?: TaskCommands;
 }
 
 /** Builds the Commander program. Every command is registered here and nowhere else. */
@@ -49,6 +51,7 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
   registerApprovalCommands(program, context);
   registerRunCommands(program, context);
   registerProfileCommands(program, context);
+  registerTaskCommands(program, context, environment.tasks);
   return program;
 }
 
