@@ -81,6 +81,10 @@ import { createGitHubApprovalDecisionSource } from "../infrastructure/github/git
 import { createInteractiveApprovalConfirmation } from "../infrastructure/processes/interactive-approval-decision.js";
 import { createSqliteApprovalStore } from "../infrastructure/persistence/sqlite/sqlite-approval-store.js";
 import { createSqliteProfileRegistry } from "../infrastructure/profiles/sqlite-profile-registry.js";
+import { createProfileQuotaReader } from "../infrastructure/profiles/profile-quota-reader.js";
+import { createClaudeQuotaReader } from "../infrastructure/executors/claude-code/claude-code-quota.js";
+import { createCodexQuotaReader } from "../infrastructure/executors/codex/codex-quota.js";
+import type { QuotaReader } from "../application/ports/quota-reader.js";
 import { createSqliteExecutorSelectionStore } from "../infrastructure/profiles/sqlite-executor-selection-store.js";
 import { createSqliteStateUnitOfWork } from "../infrastructure/persistence/sqlite/sqlite-state-unit-of-work.js";
 import type { StateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
@@ -361,6 +365,8 @@ export function createRunProcessRecovery(options: {
 export interface RuntimeCompositionOptions {
   readonly transport?: GithubTransport;
   readonly now?: () => number;
+  /** Test boundary for quota readings; production reads the profiles' own usage (ADR-0033). */
+  readonly quotaReader?: QuotaReader;
   /** Reversible test boundary: no fake mode or executable override is read from Issue text. */
   readonly executors?: (ports: {
     readonly attempts: AttemptStore;
@@ -444,6 +450,14 @@ export async function createProjectRunCommandUseCases(
     now,
   );
   const planner = createDispatchPlanner({
+    quota:
+      options.quotaReader ??
+      createProfileQuotaReader({
+        "claude-code": createClaudeQuotaReader({
+          probe: { executable: "claude", parentEnv: process.env },
+        }),
+        codex: createCodexQuotaReader({ executable: "codex", parentEnv: process.env }),
+      }),
     config: config.project,
     models: config.models,
     plans,

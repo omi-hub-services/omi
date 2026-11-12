@@ -3,6 +3,7 @@ import { taskComplexitySchema, effortPolicySchema } from "../../contracts/task-c
 import { z } from "zod";
 import { selectExecutor as selectByPolicy } from "../../../domain/agents/selection-policy.js";
 import { observedProfile } from "../../../domain/profiles/profile-metadata.js";
+import type { QuotaVerdict } from "../../../domain/profiles/quota-policy.js";
 import { identifierSchema, slugSchema } from "../../contracts/identifiers.js";
 import { executorSchema, modelsConfigSchema } from "../../contracts/model-capability.js";
 import type { ExecutorSelectionStore } from "../../ports/executor-selection-store.js";
@@ -17,6 +18,8 @@ const requestSchema = z.strictObject({
   models: modelsConfigSchema,
   task: taskComplexitySchema,
   effortPolicy: effortPolicySchema,
+  /** Trusted verdicts the caller computed from quota readings; never worker or Issue text. */
+  quota: z.custom<ReadonlyMap<string, QuotaVerdict>>((value) => value instanceof Map).optional(),
 });
 
 export function selectExecutor(store: ExecutorSelectionStore, input: unknown) {
@@ -58,6 +61,7 @@ export function selectExecutor(store: ExecutorSelectionStore, input: unknown) {
         probeTtlMs: 1, // Every candidate supplies its own configured TTL.
         ...(requiredExecutor === undefined ? {} : { requiredExecutor }),
         cooldownAccountGroups: cooldownGroups,
+        ...(request.quota === undefined ? {} : { quota: request.quota }),
         candidates: profiles.flatMap((profile) => {
           const metadata = profile.metadata;
           const group = profiles.filter(

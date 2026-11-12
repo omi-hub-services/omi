@@ -83,6 +83,19 @@ worker out. An expired token is expected for an idle profile; the cache/log fall
 - Model windows are visible, which closes ADR-0031 decision 4's "invisible until rejected" for
   Claude; whether the product scheduler uses them is left to OMI-018.
 
+## Framework port (OMI-078, 2026-11-12)
+
+The framework now reads this endpoint itself, so the sentence above that nothing in `src/` uses it
+no longer holds. `src/infrastructure/executors/claude-code/claude-code-quota.ts` ports decisions 1,
+3 and 4 and the token rules (in memory, never stored, printed or refreshed; redirects are errors).
+The `QuotaReader` port, the Codex `app-server` reader and the pure policy
+(`src/domain/profiles/quota-policy.ts`) sit beside it. Differences from the Coordinator tooling:
+the fallback is the last good reading kept in memory per process (no `.quota-cache.json`, no
+worker-log fallback); a profile with no reading at all stays usable and ranks last, where
+`pick-profile` refuses it without `--probe`; selection is gated by an optional `quota` block in
+`project.yaml`, and a Coordinator-shared profile is listed there and penalised or forbidden. The
+mid-run limit failover (`failover-step.ts`) is unchanged and does not read quota.
+
 ## Token investigation (OMI-068, 2026-11-11)
 
 Read-only inspection found both the WSL `ggtintran` credential and the readable Windows default

@@ -1,5 +1,7 @@
 import { evaluateProfileAvailability } from "../profiles/availability-policy.js";
 import type { ProfileObservation, UnavailableReason } from "../profiles/availability-policy.js";
+import type { QuotaVerdict } from "../profiles/quota-policy.js";
+import { compareQuotaStanding } from "../profiles/quota-policy.js";
 import { effortRank, lowestSatisfyingEffort } from "./capability.js";
 import type { CapabilityRequirement, Effort } from "./capability.js";
 
@@ -31,7 +33,10 @@ export type CandidateRejection =
   | "EFFORT_BELOW_MINIMUM"
   | "MODEL_NOT_ALLOWLISTED"
   | "ACCOUNT_GROUP_AT_CONCURRENCY_LIMIT"
-  | "REQUIRED_EXECUTOR_MISMATCH";
+  | "REQUIRED_EXECUTOR_MISMATCH"
+  | "QUOTA_BELOW_THRESHOLD"
+  | "MODEL_WEEKLY_QUOTA_BELOW_THRESHOLD"
+  | "SHARES_COORDINATOR_ACCOUNT";
 
 export interface SelectionInput {
   readonly requirement: CapabilityRequirement;
@@ -41,6 +46,11 @@ export interface SelectionInput {
   readonly now: number;
   readonly probeTtlMs: number;
   readonly requiredExecutor?: string;
+  /**
+   * Quota verdict per profile id (quota-policy.ts), read before selection. A profile without a
+   * verdict is not blocked; absent quota data never stops a dispatch.
+   */
+  readonly quota?: ReadonlyMap<string, QuotaVerdict>;
 }
 
 export type SelectionResult =
@@ -84,6 +94,21 @@ export function selectExecutor(input: SelectionInput): SelectionResult {
     if (input.requiredExecutor !== undefined && input.requiredExecutor !== candidate.executor) {
       reasons.push("REQUIRED_EXECUTOR_MISMATCH");
     }
+    const verdict = input.quota?.get(candidate.profileId);
+    if (verdict !== undefined) {
+      if (verdict.blocked.includes("SHARES_COORDINATOR_ACCOUNT")) {
+        reasons.push("SHARES_COORDINATOR_ACCOUNT");
+      }
+      if (verdict.blocked.some((block) => block !== "SHARES_COORDINATOR_ACCOUNT")) {
+        reasons.push("QUOTA_BELOW_THRESHOLD");
+      }
+      const names = [candidate.modelAlias, candidate.model].map((name) =>
+        name.trim().toLowerCase(),
+      );
+      if (verdict.modelWindows.some((w) => w.blocked && names.includes(w.model))) {
+        reasons.push("MODEL_WEEKLY_QUOTA_BELOW_THRESHOLD");
+      }
+    }
     const effort = lowestSatisfyingEffort(input.requirement, candidate.supportedEfforts);
     if (effort === undefined) reasons.push("EFFORT_BELOW_MINIMUM");
     if (candidate.accountGroupActiveWorkers >= candidate.accountGroupMaxConcurrency) {
@@ -97,9 +122,15 @@ export function selectExecutor(input: SelectionInput): SelectionResult {
     }
   }
 
+  const quotaOrder = (a: ExecutorCandidate, b: ExecutorCandidate) => {
+    const x = input.quota?.get(a.profileId);
+    const y = input.quota?.get(b.profileId);
+    return x === undefined || y === undefined ? 0 : compareQuotaStanding(x, y);
+  };
   const best = [...qualifying].sort(
     (a, b) =>
       a.candidate.preference - b.candidate.preference ||
+      quotaOrder(a.candidate, b.candidate) ||
       a.candidate.profile.activeWorkers - b.candidate.profile.activeWorkers ||
       effortRank(a.effort) - effortRank(b.effort) ||
       a.candidate.candidateId.localeCompare(b.candidate.candidateId),
