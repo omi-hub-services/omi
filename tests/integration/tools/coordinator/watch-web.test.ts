@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { request, type IncomingHttpHeaders } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WatchSnapshot } from "../../../../src/application/contracts/watch-snapshot.ts";
+import { PAGE_CSP, PAGE_HTML } from "../../../../src/infrastructure/observability/watch-page.ts";
 import {
   COORDINATOR_LOGIN,
   QUOTA_SETTINGS,
@@ -10,10 +12,8 @@ import type { Command } from "../../../../tools/coordinator/process-runner.ts";
 import {
   createWatchServer,
   isWatchRunning,
-  type Scheduler,
   type WatchServer,
 } from "../../../../tools/coordinator/watch-web.ts";
-import type { WatchSnapshot } from "../../../../tools/coordinator/watch-snapshot.ts";
 
 const target = { viaWslExe: true, distro: "test", repoDir: "/test" };
 const isQuota = (c: Command) => c.input?.includes("account/rateLimits/read") === true;
@@ -27,26 +27,12 @@ afterEach(async () => {
 interface Started {
   readonly port: number;
   readonly commands: Command[];
-  readonly idle: { fn: (() => void) | null; ms: number; sets: number; clears: number };
   readonly onIdle: ReturnType<typeof vi.fn>;
 }
 
-/** A server on a random port with a fake runner (WSL "offline") and a manual idle timer. */
-async function start(extra: { idleMs?: number; realTimer?: boolean } = {}): Promise<Started> {
+/** A server on a random port with a fake runner (WSL "offline"). */
+async function start(extra: { idleMs?: number } = {}): Promise<Started> {
   const commands: Command[] = [];
-  const idle: Started["idle"] = { fn: null, ms: 0, sets: 0, clears: 0 };
-  const scheduler: Scheduler = {
-    set: (fn, ms) => {
-      idle.fn = fn;
-      idle.ms = ms;
-      idle.sets++;
-      return idle.sets;
-    },
-    clear: () => {
-      idle.fn = null;
-      idle.clears++;
-    },
-  };
   const onIdle = vi.fn();
   const server = createWatchServer({
     run: (c) => {
@@ -59,14 +45,14 @@ async function start(extra: { idleMs?: number; realTimer?: boolean } = {}): Prom
     port: 0,
     workerIntervalMs: 60_000,
     quotaIntervalMs: 60_000,
+    pushIntervalMs: 30,
     ...(extra.idleMs === undefined ? {} : { idleMs: extra.idleMs }),
-    ...(extra.realTimer ? {} : { scheduler }),
     clock: () => 1_700_000_000_000,
     onIdle,
   });
   servers.push(server);
   const port = await server.listen();
-  return { port, commands, idle, onIdle };
+  return { port, commands, onIdle };
 }
 
 interface Reply {
@@ -95,29 +81,37 @@ function http(
   });
 }
 
+interface Frame {
+  readonly state: string;
+  readonly snapshot?: WatchSnapshot;
+}
+
 /** Opens /events and resolves once `frames` data frames arrived; the connection stays open. */
 function sse(port: number, frames = 1) {
-  return new Promise<{ snapshots: WatchSnapshot[]; headers: IncomingHttpHeaders; close(): void }>(
+  return new Promise<{ frames: Frame[]; headers: IncomingHttpHeaders; close(): void }>(
     (resolve, reject) => {
       const req = request({ host: "127.0.0.1", port, path: "/events" }, (res) => {
         let buf = "";
-        const snapshots: WatchSnapshot[] = [];
+        const seen: Frame[] = [];
+        let resolved = false;
         res.setEncoding("utf8");
         res.on("data", (d: string) => {
           buf += d;
           for (const part of buf.split("\n\n").slice(0, -1)) {
             const line = part.split("\n").find((l) => l.startsWith("data: "));
-            if (line) snapshots.push(JSON.parse(line.slice(6)) as WatchSnapshot);
+            if (line) seen.push(JSON.parse(line.slice(6)) as Frame);
           }
           buf = buf.slice(buf.lastIndexOf("\n\n") + 2);
-          if (snapshots.length >= frames)
+          if (!resolved && seen.length >= frames) {
+            resolved = true;
             resolve({
-              snapshots,
+              frames: seen,
               headers: res.headers,
               close: () => {
                 req.destroy();
               },
             });
+          }
         });
       });
       req.on("error", (e) => {
@@ -127,74 +121,17 @@ function sse(port: number, frames = 1) {
     },
   );
 }
+const lastSnapshot = (frames: readonly Frame[]) => frames.at(-1)?.snapshot;
 
-describe("watch-web HTTP", () => {
-  it("logs a broadcast failure on one line, keeps serving and recovers", async () => {
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    let broken = false;
-    let finishWorker:
-      ((value: { code: number; stdout: string; stderr: string }) => void) | undefined;
-    const server = createWatchServer({
-      run: (command) =>
-        isQuota(command)
-          ? Promise.resolve({ code: 0, stdout: "", stderr: "" })
-          : new Promise((resolve) => {
-              finishWorker = resolve;
-            }),
-      target,
-      profiles: WORKER_PROFILES,
-      settings: QUOTA_SETTINGS,
-      port: 0,
-      clock: () => {
-        if (broken) throw new Error("snapshot\nfailed");
-        return 1_700_000_000_000;
-      },
-    });
-    servers.push(server);
-    const port = await server.listen();
-    const client = await sse(port);
-    try {
-      broken = true;
-      finishWorker?.({ code: 0, stdout: "@@ps\n@@log\n", stderr: "" });
-      await vi.waitFor(() => {
-        expect(error).toHaveBeenCalledWith("watch-web: snapshot failed");
-      });
-      expect((await http(port, "GET", "/health")).status).toBe(200);
-      broken = false;
-      expect((await http(port, "POST", "/probe", { "X-Omi-Watch": "1" })).status).toBe(202);
-      await vi.waitFor(() => {
-        expect(client.snapshots.length).toBeGreaterThan(1);
-      });
-    } finally {
-      client.close();
-      error.mockRestore();
-    }
-  });
-
-  it("shares one poller among several open web windows", async () => {
-    const { port, commands } = await start();
-    const a = await sse(port);
-    const count = commands.filter(isQuota).length;
-    const b = await sse(port);
-    try {
-      expect(await isWatchRunning(port)).toBe(true);
-      expect(commands.filter(isQuota)).toHaveLength(count);
-      expect(count).toBe(1);
-    } finally {
-      a.close();
-      b.close();
-    }
-  });
-
-  it("serves the page, health and 404/405 on 127.0.0.1", async () => {
+describe("watch-web serves the framework's one page", () => {
+  it("answers / with exactly the framework page and its hashed CSP", async () => {
     const { port } = await start();
     const page = await http(port, "GET", "/");
     expect(page.status).toBe(200);
     expect(page.headers["content-type"]).toContain("text/html");
-    expect(page.headers["content-security-policy"]).toContain("default-src 'none'");
-    expect(page.body).toContain("EventSource");
+    expect(page.body).toBe(PAGE_HTML);
+    expect(page.headers["content-security-policy"]).toBe(PAGE_CSP);
     expect(page.body).not.toContain("innerHTML");
-    // the CSP allows exactly the two inline blocks, by hash
     for (const tag of ["style", "script"]) {
       const block = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(page.body)?.[1] ?? "";
       const hash = createHash("sha256").update(block).digest("base64");
@@ -202,10 +139,26 @@ describe("watch-web HTTP", () => {
     }
     expect(page.body).not.toMatch(/(?:src|href)=["']https?:/);
     expect(await http(port, "GET", "/health")).toMatchObject({ status: 200, body: "omi-watch" });
-    expect((await http(port, "GET", "/nope")).status).toBe(404);
-    expect((await http(port, "POST", "/")).status).toBe(405);
-    expect((await http(port, "GET", "/probe")).status).toBe(405);
     expect(await isWatchRunning(port)).toBe(true);
+  });
+
+  it("has no control endpoint: no probe button, no POST /probe, no mutating method", async () => {
+    const { port, commands } = await start();
+    expect(PAGE_HTML).not.toMatch(/probe|<button|<form/i);
+    await vi.waitFor(() => {
+      expect(commands.filter(isQuota)).toHaveLength(1);
+    });
+    const used = commands.length;
+    expect((await http(port, "POST", "/probe", { "X-Omi-Watch": "1" })).status).toBe(404);
+    expect((await http(port, "GET", "/probe")).status).toBe(404);
+    for (const method of ["POST", "PUT", "DELETE"])
+      expect((await http(port, method, "/")).status).toBe(405);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(commands).toHaveLength(used);
+    // the free quota read never probes
+    expect(commands.filter(isQuota).every((c) => c.args.at(-1)?.includes("omi-runs 0 "))).toBe(
+      true,
+    );
   });
 
   it("accepts localhost:<port> and rejects a foreign Host or Origin on every route", async () => {
@@ -222,65 +175,81 @@ describe("watch-web HTTP", () => {
       expect((await http(port, "GET", "/health", { Origin: origin })).status, origin).toBe(403);
   });
 
-  it("refuses POST /probe without X-Omi-Watch: 1 and never reads quota for it", async () => {
+  it("shares one poller among several open web windows", async () => {
     const { port, commands } = await start();
-    await vi.waitFor(() => {
-      expect(commands.filter(isQuota)).toHaveLength(1);
-    });
-    const free = commands.length;
-    expect((await http(port, "POST", "/probe")).status).toBe(403);
-    expect((await http(port, "POST", "/probe", { "X-Omi-Watch": "0" })).status).toBe(403);
-    expect(
-      (await http(port, "POST", "/probe", { "X-Omi-Watch": "1", Origin: "http://evil.example" }))
-        .status,
-    ).toBe(403);
-    expect(
-      (await http(port, "POST", "/probe", { "X-Omi-Watch": "1", Host: "evil.example" })).status,
-    ).toBe(403);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(commands).toHaveLength(free);
-    // the free quota read never probes
-    expect(commands.filter(isQuota).every((c) => c.args.at(-1)?.includes("omi-runs 0 "))).toBe(
-      true,
-    );
-  });
-
-  it("runs a probe for POST /probe with the header", async () => {
-    const { port, commands } = await start();
-    await vi.waitFor(() => {
-      expect(commands.filter(isQuota)).toHaveLength(1);
-    });
-    const res = await http(port, "POST", "/probe", { "X-Omi-Watch": "1" });
-    expect(res.status).toBe(202);
-    await vi.waitFor(() => {
-      expect(commands.filter(isQuota).at(-1)?.args.at(-1)).toContain("omi-runs 1 ");
-    });
+    const a = await sse(port);
+    const count = commands.filter(isQuota).length;
+    const b = await sse(port);
+    try {
+      expect(commands.filter(isQuota)).toHaveLength(count);
+      expect(count).toBe(1);
+    } finally {
+      a.close();
+      b.close();
+    }
   });
 });
 
-describe("watch-web SSE", () => {
-  it("sends a snapshot on connect and another when data changes", async () => {
+describe("watch-web streams the shared snapshot", () => {
+  it("sends the framework snapshot shape, loading before any read, with every configured profile", async () => {
     const { port } = await start();
     const first = await sse(port);
     expect(first.headers["content-type"]).toContain("text/event-stream");
-    const s = first.snapshots[0];
-    expect(s?.generatedAt).toBe(1_700_000_000);
-    expect(s?.quota.profiles.map((p) => p.profile)).toEqual(WORKER_PROFILES.map((p) => p.profile));
-    // starting a probe changes the data, which is pushed to the open stream (the fake runner
-    // answers "offline")
-    const seen = first.snapshots.length;
-    await http(port, "POST", "/probe", { "X-Omi-Watch": "1" });
-    await vi.waitFor(() => {
-      expect(first.snapshots.length).toBeGreaterThan(seen);
-    });
-    await vi.waitFor(() => {
-      const last = first.snapshots.at(-1);
-      expect(last?.tasks).toMatchObject({ state: "unavailable" });
-      expect(last?.quota.state).toBe("unavailable");
-      expect(last?.probing).toBe(false);
-    });
-    expect(first.snapshots.some((x) => x.probing)).toBe(true);
+    const s = lastSnapshot(first.frames);
+    expect(first.frames[0]?.state).toBe("ok");
+    expect(s?.generatedAt).toBe(new Date(1_700_000_000_000).toISOString());
+    expect(s?.quota.rows.map((r) => r.profile).sort()).toEqual(
+      WORKER_PROFILES.map((p) => p.profile).sort(),
+    );
     first.close();
+  });
+
+  it("marks the board and quota unavailable when the sources are offline, never as zero", async () => {
+    const { port } = await start();
+    const client = await sse(port);
+    try {
+      await vi.waitFor(() => {
+        const last = lastSnapshot(client.frames);
+        expect(last?.board).toBe("unavailable");
+        expect(last?.quota.state).toBe("unavailable");
+      });
+      const rows = lastSnapshot(client.frames)?.quota.rows ?? [];
+      expect(rows.every((r) => r.fiveHourLeft === null && r.severity === "unknown")).toBe(true);
+    } finally {
+      client.close();
+    }
+  });
+
+  it("keeps serving and recovers when a snapshot cannot be built", async () => {
+    let broken = false;
+    const server = createWatchServer({
+      run: () => Promise.resolve({ code: 127, stdout: "", stderr: "offline" }),
+      target,
+      profiles: WORKER_PROFILES,
+      settings: QUOTA_SETTINGS,
+      port: 0,
+      pushIntervalMs: 20,
+      clock: () => {
+        if (broken) throw new Error("snapshot\nfailed");
+        return 1_700_000_000_000 + (Date.now() % 1000);
+      },
+    });
+    servers.push(server);
+    const port = await server.listen();
+    const client = await sse(port);
+    try {
+      broken = true;
+      await vi.waitFor(() => {
+        expect(client.frames.some((f) => f.state === "unavailable")).toBe(true);
+      });
+      expect((await http(port, "GET", "/health")).status).toBe(200);
+      broken = false;
+      await vi.waitFor(() => {
+        expect(client.frames.at(-1)?.state).toBe("ok");
+      });
+    } finally {
+      client.close();
+    }
   });
 
   it("rejects /events from a foreign Host", async () => {
@@ -289,36 +258,35 @@ describe("watch-web SSE", () => {
   });
 });
 
-describe("watch-web tasks", () => {
+describe("watch-web cards from the GitHub, worker and prompt reads", () => {
   const HEAD = "abc1234def5678abc1234def5678abc1234def56";
   const hostile = "[OMI-074] <img src=x onerror=alert(1)>";
-  const graphql = {
+  const item = (workflow: string, number = 152, planKey = "OMI-074") => ({
+    status: { name: "In Review" },
+    priority: { name: "P1" },
+    workType: { name: "Task" },
+    workflow: { name: workflow },
+    role: { name: "Developer" },
+    area: null,
+    planKey: { text: planKey },
+    content: {
+      __typename: "Issue",
+      number,
+      title: hostile,
+      state: "OPEN",
+      body: "",
+      milestone: null,
+      blockedBy: { totalCount: 0, nodes: [] },
+    },
+  });
+  const graphql = (workflow = "feature") => ({
     data: {
       organization: {
         projectV2: {
           title: "p",
           items: {
             pageInfo: { hasNextPage: false, endCursor: null },
-            nodes: [
-              {
-                status: { name: "In Review" },
-                priority: { name: "P1" },
-                workType: { name: "Task" },
-                workflow: { name: "Development" },
-                role: { name: "Developer" },
-                area: null,
-                planKey: { text: "OMI-074" },
-                content: {
-                  __typename: "Issue",
-                  number: 152,
-                  title: hostile,
-                  state: "OPEN",
-                  body: "",
-                  milestone: null,
-                  blockedBy: { totalCount: 0, nodes: [] },
-                },
-              },
-            ],
+            nodes: [item(workflow)],
           },
         },
       },
@@ -353,23 +321,33 @@ describe("watch-web tasks", () => {
         },
       },
     },
-  };
+  });
+  const out = (stdout: string) => Promise.resolve({ code: 0, stdout, stderr: "" });
+  const workerList = "@@ps\n 77 1500 1 claude -p x --model opus-5-5 --effort high OMI-074\n@@log\n";
 
-  it("streams Tasks built from the GitHub, worker and prompt reads", async () => {
-    const out = (stdout: string) => Promise.resolve({ code: 0, stdout, stderr: "" });
+  it("streams a card whose worker is at the step its prompt header names, with a shared layout", async () => {
     const server = createWatchServer({
       run: (c) => {
         const payload = c.args.at(-1) ?? "";
-        if (c.file === "gh") return out(JSON.stringify(graphql));
+        if (c.file === "gh") return out(JSON.stringify(graphql()));
         if (isQuota(c)) return out("");
         if (payload.includes("-prompt.md"))
-          return out("@@prompt 074\n## Skill: minimal-change\nAGENTS.md\n");
-        return out("@@ps\n@@log\n");
+          return out(
+            [
+              "@@prompt 074",
+              "# Workflow feature · step review · role reviewer",
+              "## Skill: independent-review (follow it)",
+              "## Rule: project-baseline (mandatory)",
+              "",
+            ].join("\n"),
+          );
+        return out(workerList);
       },
       target,
       profiles: WORKER_PROFILES,
       settings: QUOTA_SETTINGS,
       port: 0,
+      pushIntervalMs: 30,
       clock: () => 1_700_000_000_000,
     });
     servers.push(server);
@@ -377,24 +355,62 @@ describe("watch-web tasks", () => {
     const client = await sse(port);
     try {
       await vi.waitFor(() => {
-        expect(client.snapshots.at(-1)?.tasks.state).toBe("ok");
+        expect(lastSnapshot(client.frames)?.board).toBe("ok");
       });
-      const tasks = client.snapshots.at(-1)?.tasks;
-      if (tasks?.state !== "ok") throw new Error("expected ok");
-      // the foreign-account PASS is ignored; the Coordinator FAIL on the head means rework,
-      // which is shown as Work with rework 1/2 (OMI-075)
-      expect(tasks.items[0]).toMatchObject({
+      const card = lastSnapshot(client.frames)?.tasks[0];
+      expect(card).toMatchObject({
         planKey: "OMI-074",
-        issue: 152,
+        issueNumber: 152,
         title: hostile,
-        step: "Work",
-        rework: 1,
-        cycle: { phase: "before-architect", k: 1 },
-        pr: { number: 160, head: "abc1234" },
-        skills: ["minimal-change"],
+        workflow: "feature",
+        cycle: { failures: 1 },
+        loaded: {
+          skills: ["independent-review"],
+          rules: ["project-baseline"],
+          mandatoryRules: ["project-baseline"],
+        },
       });
+      expect(card?.layout.nodes.map((n) => n.id)).toContain("review");
       // a foreign Host still gets nothing, including the snapshot stream
       expect((await http(port, "GET", "/events", { Host: "evil.example" })).status).toBe(403);
+    } finally {
+      client.close();
+    }
+  });
+
+  it("keeps the last good cards and flags the board when GitHub fails later", async () => {
+    let githubDown = false;
+    const server = createWatchServer({
+      run: (c) => {
+        const payload = c.args.at(-1) ?? "";
+        if (c.file === "gh")
+          return githubDown
+            ? Promise.resolve({ code: 1, stdout: "", stderr: "HTTP 502" })
+            : out(JSON.stringify(graphql()));
+        if (isQuota(c)) return out("");
+        if (payload.includes("-prompt.md")) return out("@@missing 074\n");
+        return out("@@ps\n@@log\n");
+      },
+      target,
+      profiles: WORKER_PROFILES,
+      settings: QUOTA_SETTINGS,
+      port: 0,
+      pushIntervalMs: 20,
+      tasksIntervalMs: 40,
+      clock: () => 1_700_000_000_000,
+    });
+    servers.push(server);
+    const port = await server.listen();
+    const client = await sse(port);
+    try {
+      await vi.waitFor(() => {
+        expect(lastSnapshot(client.frames)?.tasks).toHaveLength(1);
+      });
+      githubDown = true;
+      await vi.waitFor(() => {
+        expect(lastSnapshot(client.frames)?.board).toBe("unavailable");
+      });
+      expect(lastSnapshot(client.frames)?.tasks).toHaveLength(1);
     } finally {
       client.close();
     }
@@ -402,39 +418,8 @@ describe("watch-web tasks", () => {
 });
 
 describe("watch-web idle shutdown", () => {
-  it("starts a 60 s timer at launch, cancels it while a client is connected, re-arms on disconnect", async () => {
-    const { port, idle } = await start();
-    expect(idle.ms).toBe(60_000);
-    expect(idle.fn).not.toBeNull();
-    const client = await sse(port);
-    expect(idle.fn).toBeNull();
-    const second = await sse(port);
-    client.close();
-    await new Promise((r) => setTimeout(r, 50));
-    expect(idle.fn).toBeNull(); // one client left
-    second.close();
-    await vi.waitFor(() => {
-      expect(idle.fn).not.toBeNull();
-    });
-    expect(idle.ms).toBe(60_000);
-  });
-
-  it("closes the server and calls onIdle when the timer fires with no client", async () => {
-    const { port, idle, onIdle } = await start();
-    const client = await sse(port);
-    client.close();
-    await vi.waitFor(() => {
-      expect(idle.fn).not.toBeNull();
-    });
-    idle.fn?.();
-    await vi.waitFor(() => {
-      expect(onIdle).toHaveBeenCalledTimes(1);
-    });
-    await expect(http(port, "GET", "/health")).rejects.toThrow();
-  });
-
-  it("also exits from startup when nobody ever connects (real timer, short)", async () => {
-    const { port, onIdle } = await start({ idleMs: 80, realTimer: true });
+  it("exits from startup when nobody ever connects, calls onIdle and frees the port", async () => {
+    const { port, onIdle } = await start({ idleMs: 80 });
     await vi.waitFor(
       () => {
         expect(onIdle).toHaveBeenCalledTimes(1);
@@ -444,13 +429,29 @@ describe("watch-web idle shutdown", () => {
     await expect(http(port, "GET", "/health")).rejects.toThrow();
   });
 
+  it("does not exit while a window is connected and exits after the last one closes", async () => {
+    const { port, onIdle } = await start({ idleMs: 150 });
+    const client = await sse(port);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(onIdle).not.toHaveBeenCalled();
+    client.close();
+    await vi.waitFor(
+      () => {
+        expect(onIdle).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 2000 },
+    );
+  });
+
   it("stops polling after shutdown", async () => {
-    const { idle, commands } = await start();
-    await vi.waitFor(() => {
-      expect(commands.length).toBeGreaterThan(0);
-    });
-    idle.fn?.();
-    await new Promise((r) => setTimeout(r, 50));
+    const { commands, onIdle } = await start({ idleMs: 80 });
+    await vi.waitFor(
+      () => {
+        expect(onIdle).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 2000 },
+    );
+    expect(commands.length).toBeGreaterThan(0);
     expect(commands.every((c) => c.signal?.aborted)).toBe(true);
   });
 });

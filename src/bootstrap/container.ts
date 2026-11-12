@@ -126,7 +126,12 @@ import { sendCommand } from "../interfaces/ipc/ipc-client.js";
 import { createIpcServer } from "../interfaces/ipc/ipc-server.js";
 import type { IpcServer } from "../interfaces/ipc/ipc-server.js";
 import { reportStatus } from "../application/use-cases/project/report-status.js";
-import { createWatchSnapshotReader } from "../application/use-cases/project/read-watch-snapshot.js";
+import {
+  createWatchSnapshotReader,
+  type QuotaInput,
+} from "../application/use-cases/project/read-watch-snapshot.js";
+import type { ProjectConfig } from "../application/contracts/project-config.js";
+import type { QuotaVerdict } from "../domain/profiles/quota-policy.js";
 import { createQuotaVerdictReader } from "../application/services/read-quota-verdicts.js";
 import { openReadOnlyStateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
 import { createSqliteRunOverviewReader } from "../infrastructure/persistence/sqlite/sqlite-run-overview-reader.js";
@@ -177,20 +182,7 @@ export function createOverviewCommands(
           now: Date.now,
           ...(deps.config.quota === undefined
             ? {}
-            : {
-                quota: createQuotaVerdictReader({
-                  policy: deps.config.quota,
-                  profiles: createSqliteProfileRegistry(deps.database),
-                  reader: createProfileQuotaReader({
-                    "claude-code": createClaudeQuotaReader({
-                      probe: { executable: "claude", parentEnv: process.env },
-                    }),
-                    codex: createCodexQuotaReader({ executable: "codex", parentEnv: process.env }),
-                  }),
-                  now: Date.now,
-                  probe: false,
-                }),
-              }),
+            : { quota: freeQuotaVerdicts(deps.config.quota, deps.database) }),
         });
       } finally {
         deps.database.close();
@@ -222,6 +214,9 @@ export function createOverviewCommands(
           runs: deps.runs,
           workflows,
           board: deps.board,
+          ...(deps.config.quota === undefined
+            ? {}
+            : { quota: watchedQuota(deps.config.quota, deps.database) }),
           now: Date.now,
         }),
         onIdle: () => {
@@ -244,6 +239,43 @@ export function createOverviewCommands(
         deps.database.close();
       }
     },
+  };
+}
+
+/** Quota verdicts from the tools' free reads; this never spends a subscription call. */
+function freeQuotaVerdicts(
+  policy: NonNullable<ProjectConfig["quota"]>,
+  database: StateDatabase,
+): () => Promise<ReadonlyMap<string, QuotaVerdict>> {
+  return createQuotaVerdictReader({
+    policy,
+    profiles: createSqliteProfileRegistry(database),
+    reader: createProfileQuotaReader({
+      "claude-code": createClaudeQuotaReader({
+        probe: { executable: "claude", parentEnv: process.env },
+      }),
+      codex: createCodexQuotaReader({ executable: "codex", parentEnv: process.env }),
+    }),
+    now: Date.now,
+    probe: false,
+  });
+}
+
+/** The watch page's quota rows: the same free verdicts, each with the tool of its profile. */
+function watchedQuota(
+  policy: NonNullable<ProjectConfig["quota"]>,
+  database: StateDatabase,
+): () => Promise<readonly QuotaInput[]> {
+  const verdicts = freeQuotaVerdicts(policy, database);
+  const registry = createSqliteProfileRegistry(database);
+  return async () => {
+    const tools = new Map(registry.list().map((p) => [p.metadata.profileId, p.metadata.tool]));
+    return [...(await verdicts()).values()].flatMap((verdict) => {
+      const tool = tools.get(verdict.profileId);
+      return tool === undefined
+        ? []
+        : [{ tool: tool === "codex" ? ("codex" as const) : ("claude" as const), verdict }];
+    });
   };
 }
 

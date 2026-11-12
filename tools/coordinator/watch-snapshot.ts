@@ -1,96 +1,165 @@
-// Pure conversion of the tasks (GitHub + workers) and quota reads into the JSON the web watch page shows
-// (OMI-067, ADR-0014). Colour rules and thresholds come from watch-core.ts, shared with the
-// terminal watch. Strings from outside are stripped of control characters here and rendered only
-// through `textContent` by the page.
+// Pure mapping of the repo's reads (GitHub board, WSL workers and worker prompts, quota) into the
+// framework's WatchSnapshot contract (OMI-092, ADR-0014), so /omi-watch serves the one framework
+// page. The diagram decisions and geometry are the framework's (src/domain/workflows); this file
+// only says where each task stands. Strings from outside are stripped of control characters here
+// and rendered only through `textContent` by the page.
+import type {
+  QuotaPanel,
+  QuotaRow,
+  QuotaSeverity,
+  TaskCard,
+  WatchSnapshot,
+} from "../../src/application/contracts/watch-snapshot.ts";
+import type { ReworkCycle } from "../../src/domain/runs/rework-cycle.ts";
+import type { RunStatus } from "../../src/domain/runs/workflow-run.ts";
+import "../register-ts-imports.ts";
 import type { QuotaSettings, WorkerProfile } from "./coordinator-settings.ts";
 import { windowLeft, type QuotaReport, type QuotaWindow } from "./quota.ts";
 import { clean, resetText, STALE_AFTER_SECONDS, windowsLow } from "./watch-core.ts";
-import { buildTasks, type TasksRead, type TasksView } from "./watch-tasks.ts";
+import { buildTasks, type CyclePhase, type TasksRead, type TaskView } from "./watch-tasks.ts";
+import { standingOf } from "./watch-workflow.ts";
 import type { Workers } from "./wsl-workers.ts";
 
-export interface WindowView {
-  /** Share (%) left; null when unknown. */
-  readonly left: number | null;
-  /** Below the pick-profile threshold: shown yellow. */
-  readonly low: boolean;
-  /** Local reset time (5h: `HH:MM`, otherwise `MM-DD HH:MM`); null when unknown or already past. */
-  readonly resetText: string | null;
-}
-
-export interface ModelView {
-  readonly model: string;
-  readonly left: number;
-  readonly resetText: string | null;
-}
-
-export interface ReadingView {
-  readonly source: string;
-  readonly observedAt: number;
-  /** Age at `generatedAt`; the page adds the time since it received the snapshot. */
-  readonly ageSeconds: number;
-  readonly fiveHour: WindowView | null;
-  readonly sevenDay: WindowView | null;
-  readonly models: readonly ModelView[];
-  readonly limited: boolean;
-  /** Either window is below its threshold. */
-  readonly low: boolean;
-}
-
-export interface ProfileView {
-  readonly tool: "claude" | "codex";
-  readonly profile: string;
-  readonly reading: ReadingView | null;
-  /** Why there is no reading, or the usage-endpoint fallback note. */
-  readonly note: string | null;
-}
-
-export interface QuotaView {
-  readonly state: "loading" | "unavailable" | "ok";
-  readonly reason: string | null;
-  readonly profiles: readonly ProfileView[];
-}
-
-export interface WatchSnapshot {
-  /** Unix seconds. */
-  readonly generatedAt: number;
-  /** A reading older than this is shown dim. */
-  readonly staleAfterSeconds: number;
-  readonly probing: boolean;
-  readonly tasks: TasksView;
-  readonly quota: QuotaView;
-}
+// dynamic: the register hook above must run before src/ (`.js` specifiers) is resolved
+const { buildWorkflowDiagram, compareLoadedSkills } =
+  await import("../../src/domain/workflows/workflow-diagram.ts");
+const { layoutWorkflowDiagram } =
+  await import("../../src/domain/workflows/workflow-diagram-layout.ts");
+const { CONTRACT_SCHEMA_VERSION } =
+  await import("../../src/application/contracts/schema-version.ts");
 
 export interface SnapshotInput {
   readonly workers: Workers | null;
   readonly tasks: TasksRead | null;
   readonly quota: QuotaReport | null;
-  readonly probing: boolean;
   /** Unix seconds. */
   readonly now: number;
   readonly settings: QuotaSettings;
   readonly profiles: readonly WorkerProfile[];
 }
 
-const orDash = (s: string | null | undefined) => clean(s ?? "") || "-";
+const MAX_FAILURES_PER_SEGMENT = 2;
+const unknownIfDash = (value: string) => (value === "-" ? "unknown" : value);
 
-function windowView(
-  w: QuotaWindow | null,
-  now: number,
-  clockOnly: boolean,
-  minLeft: number,
-): WindowView | null {
-  if (w === null) return null;
-  const left = windowLeft(w, now);
+function reworkCycle(c: CyclePhase): ReworkCycle & { readonly failures: number } {
+  const of = MAX_FAILURES_PER_SEGMENT;
+  switch (c.phase) {
+    case "before-architect":
+      return { phase: c.phase, rework: c.k, of, architect: "none", failures: c.fails };
+    case "architect":
+      return {
+        phase: c.phase,
+        rework: c.k,
+        of,
+        architect: c.architectCalled ? "called" : "needed",
+        failures: c.fails,
+      };
+    case "after-architect":
+      return { phase: c.phase, rework: c.k, of, architect: "called", failures: c.fails };
+    case "escalate-po":
+      return { phase: c.phase, rework: of, of, architect: "called", failures: c.fails };
+  }
+}
+
+function runStatusOf(view: TaskView): RunStatus {
+  if (view.worker !== null) return "running";
+  if (view.hold?.kind === "waiting-po") return "waiting_approval";
+  if (view.hold?.kind === "blocked") return "blocked";
+  return view.step === "Done" ? "succeeded" : "pending";
+}
+
+function cardOf(view: TaskView): TaskCard {
+  const cycle = reworkCycle(view.cycle);
+  const template = view.template;
+  const standing =
+    template === null
+      ? undefined
+      : standingOf({
+          workflow: template,
+          pos: view.pos,
+          running: view.worker !== null,
+          fails: view.cycle.fails,
+          architect: view.step === "Architect",
+        });
+  const diagram =
+    template === null || standing === undefined
+      ? { nodes: [] }
+      : buildWorkflowDiagram({
+          workflow: template,
+          steps: standing.steps,
+          cycle,
+          failures: cycle.failures,
+          ...(view.hold === null ? {} : { hold: view.hold }),
+          ...(standing.atGate === undefined ? {} : { atGate: standing.atGate }),
+        });
+  const prompt = view.prompt;
+  const notes = [view.stepReason, template === null ? view.templateReason : null].flatMap((note) =>
+    note === null ? [] : [note],
+  );
+  const worker = view.worker;
   return {
-    left,
-    low: left !== null && left < minLeft,
-    resetText: resetText(w.resetsAt, now, clockOnly),
+    runId: view.planKey === "-" ? `issue-${String(view.issue ?? 0)}` : view.planKey,
+    issueNumber: view.issue ?? 0,
+    planKey: view.planKey === "-" ? null : view.planKey,
+    title: view.title === "-" ? null : view.title,
+    workflow: template?.id ?? null,
+    runStatus: runStatusOf(view),
+    step: view.pos.kind === "node" ? view.pos.id : null,
+    role: view.role === "-" ? null : view.role,
+    who:
+      worker === null
+        ? null
+        : {
+            executor: worker.tool,
+            profileId: unknownIfDash(worker.profile),
+            model: unknownIfDash(worker.model),
+            effort: worker.effort === "-" ? null : worker.effort,
+            startedAt: null,
+            step: view.workerStep?.step ?? null,
+            role: view.workerStep?.role ?? null,
+            elapsedSeconds: worker.elapsedSeconds,
+          },
+    loaded:
+      prompt === null
+        ? null
+        : { skills: prompt.skills, rules: prompt.rules, mandatoryRules: prompt.mandatoryRules },
+    skillCheck:
+      template === null || view.workerStep === null || prompt === null
+        ? null
+        : (compareLoadedSkills(template, view.workerStep.step, prompt.skills) ?? null),
+    cycle,
+    hold: view.hold,
+    diagram,
+    layout: layoutWorkflowDiagram(diagram, template?.id ?? null),
+    notes,
   };
 }
 
-export function buildSnapshot(input: SnapshotInput): WatchSnapshot {
-  const { workers, quota, now, settings } = input;
-  const profiles = input.profiles.map((profile): ProfileView => {
+function windowView(w: QuotaWindow | null, now: number, clockOnly: boolean) {
+  if (w === null) return null;
+  return { left: windowLeft(w, now), resetText: resetText(w.resetsAt, now, clockOnly) };
+}
+
+/** The pick-profile policy's own thresholds: below one is low, below half of one is critical. */
+function severityOf(
+  left5: number | null,
+  left7: number | null,
+  limited: boolean,
+  settings: QuotaSettings,
+): QuotaSeverity {
+  if (left5 === null && left7 === null) return "unknown";
+  if (
+    limited ||
+    (left5 !== null && left5 < settings.minFiveHourLeftPercent / 2) ||
+    (left7 !== null && left7 < settings.minSevenDayLeftPercent / 2)
+  )
+    return "critical";
+  return windowsLow(left5, left7, settings) ? "low" : "ok";
+}
+
+function quotaPanel(input: SnapshotInput): QuotaPanel {
+  const { quota, now, settings } = input;
+  const rows = input.profiles.map((profile): QuotaRow => {
     const base = { tool: profile.tool, profile: clean(profile.profile) };
     const entry = quota?.available
       ? quota.profiles.find((p) => p.tool === profile.tool && p.profile === profile.profile)
@@ -99,42 +168,42 @@ export function buildSnapshot(input: SnapshotInput): WatchSnapshot {
     if (!r) {
       return {
         ...base,
-        reading: null,
+        fiveHourLeft: null,
+        sevenDayLeft: null,
+        resetText: null,
+        severity: "unknown",
+        freshness: "unknown",
         note: clean(entry?.note ?? (quota ? "unavailable" : "loading")),
       };
     }
-    const fiveHour = windowView(r.fiveHour, now, true, settings.minFiveHourLeftPercent);
-    const sevenDay = windowView(r.sevenDay, now, false, settings.minSevenDayLeftPercent);
+    const five = windowView(r.fiveHour, now, true);
+    const seven = windowView(r.sevenDay, now, false);
     return {
       ...base,
+      fiveHourLeft: five?.left ?? null,
+      sevenDayLeft: seven?.left ?? null,
+      resetText: five?.resetText ?? null,
+      severity: severityOf(five?.left ?? null, seven?.left ?? null, r.limited, settings),
+      freshness: Math.max(0, now - r.observedAt) > STALE_AFTER_SECONDS ? "stale" : "fresh",
       note: entry.note === null ? null : clean(entry.note),
-      reading: {
-        source: r.source,
-        observedAt: r.observedAt,
-        ageSeconds: Math.max(0, now - r.observedAt),
-        fiveHour,
-        sevenDay,
-        models: r.modelWindows.flatMap((w): ModelView[] => {
-          const left = windowLeft(w, now);
-          return left === null
-            ? []
-            : [{ model: clean(w.model), left, resetText: resetText(w.resetsAt, now, false) }];
-        }),
-        limited: r.limited,
-        low: windowsLow(fiveHour?.left ?? null, sevenDay?.left ?? null, settings),
-      },
     };
   });
+  rows.sort(
+    (a, b) =>
+      Number(a.tool === "codex") - Number(b.tool === "codex") || a.profile.localeCompare(b.profile),
+  );
+  if (!quota) return { state: "loading", reason: null, rows };
+  if (!quota.available) return { state: "unavailable", reason: clean(quota.reason) || "-", rows };
+  return { state: "ok", reason: null, rows };
+}
 
+export function buildSnapshot(input: SnapshotInput): WatchSnapshot {
+  const tasks = buildTasks({ tasks: input.tasks, workers: input.workers });
   return {
-    generatedAt: now,
-    staleAfterSeconds: STALE_AFTER_SECONDS,
-    probing: input.probing,
-    tasks: buildTasks({ tasks: input.tasks, workers }),
-    quota: !quota
-      ? { state: "loading", reason: null, profiles }
-      : !quota.available
-        ? { state: "unavailable", reason: orDash(quota.reason), profiles }
-        : { state: "ok", reason: null, profiles },
+    schemaVersion: CONTRACT_SCHEMA_VERSION,
+    generatedAt: new Date(input.now * 1000).toISOString(),
+    board: tasks.state === "loading" ? "loading" : tasks.state === "ok" ? "ok" : "unavailable",
+    tasks: tasks.state === "ok" ? tasks.items.map(cardOf) : [],
+    quota: quotaPanel(input),
   };
 }

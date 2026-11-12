@@ -4,7 +4,9 @@ import {
   buildWorkflowDiagram,
   compareLoadedSkills,
 } from "../../../domain/workflows/workflow-diagram.js";
+import type { QuotaVerdict } from "../../../domain/profiles/quota-policy.js";
 import type { Hold } from "../../../domain/workflows/workflow-diagram.js";
+import { layoutWorkflowDiagram } from "../../../domain/workflows/workflow-diagram-layout.js";
 import { CONTRACT_SCHEMA_VERSION } from "../../contracts/schema-version.js";
 import type { Workflow } from "../../contracts/workflow.js";
 import type { BoardTask, GithubTaskList } from "../../ports/github-task-list.js";
@@ -12,14 +14,28 @@ import type { RunOverview, RunOverviewReader } from "../../ports/run-overview-re
 import type { WorkflowCatalog } from "../../ports/workflow-catalog.js";
 
 export type { TaskCard, WatchSnapshot } from "../../contracts/watch-snapshot.js";
-import type { TaskCard, WatchSnapshot } from "../../contracts/watch-snapshot.js";
+import type {
+  QuotaPanel,
+  QuotaRow,
+  TaskCard,
+  WatchSnapshot,
+} from "../../contracts/watch-snapshot.js";
 
 export interface WatchDeps {
   readonly runs: RunOverviewReader;
   readonly workflows: Pick<WorkflowCatalog, "byHash">;
   /** Optional: failed reads keep the last good board data; runtime cards remain available. */
   readonly board?: GithubTaskList | undefined;
+  /** Subscription quota per profile, without spending a call; absent when the project has none. */
+  readonly quota?: (() => Promise<readonly QuotaInput[]>) | undefined;
+  /** Ids of the rules every worker gets; absent when the catalog is not at hand. */
+  readonly mandatoryRules?: readonly string[] | undefined;
   readonly now: () => number;
+}
+
+export interface QuotaInput {
+  readonly tool: "claude" | "codex";
+  readonly verdict: QuotaVerdict;
 }
 
 const ATTENTION = ["current", "failed", "blocked", "waiting-po"];
@@ -28,6 +44,8 @@ function cardOf(
   run: RunOverview,
   workflow: Workflow | undefined,
   task: BoardTask | undefined,
+  now: number,
+  mandatoryRules: readonly string[] | undefined,
 ): TaskCard {
   const cycle = { ...describeReworkCycle(run.rework), failures: run.rework.countedCycleIds.length };
   const running = run.attempts.filter((attempt) => attempt.status === "running");
@@ -84,7 +102,14 @@ function cardOf(
   const loaded =
     loadedAttempt === undefined
       ? null
-      : { skills: loadedAttempt.skills, rules: loadedAttempt.rules };
+      : {
+          skills: loadedAttempt.skills,
+          rules: loadedAttempt.rules,
+          mandatoryRules:
+            mandatoryRules === undefined
+              ? null
+              : loadedAttempt.rules.filter((rule) => mandatoryRules.includes(rule)),
+        };
   return {
     runId: run.runId,
     issueNumber: run.issueNumber,
@@ -103,6 +128,9 @@ function cardOf(
             model: attempt.model,
             effort: attempt.effort ?? null,
             startedAt: attempt.startedAt,
+            step: attempt.stepId,
+            role: attempt.role ?? null,
+            elapsedSeconds: elapsedSeconds(attempt.startedAt, now),
           },
     loaded,
     skillCheck:
@@ -112,8 +140,36 @@ function cardOf(
     cycle,
     hold,
     diagram,
+    layout: layoutWorkflowDiagram(diagram, workflow?.id ?? null),
     notes,
   };
+}
+
+function elapsedSeconds(startedAt: string, now: number): number | null {
+  const started = Date.parse(startedAt);
+  return Number.isNaN(started) ? null : Math.max(0, Math.floor((now - started) / 1000));
+}
+
+function quotaRows(inputs: readonly QuotaInput[]): QuotaRow[] {
+  return inputs
+    .map(({ tool, verdict }): QuotaRow => {
+      const unknown = verdict.fiveHourLeft === null && verdict.sevenDayLeft === null;
+      return {
+        tool,
+        profile: verdict.profileId,
+        fiveHourLeft: verdict.fiveHourLeft,
+        sevenDayLeft: verdict.sevenDayLeft,
+        resetText: null,
+        severity: unknown ? "unknown" : verdict.blocked.length > 0 ? "critical" : "ok",
+        freshness: verdict.freshness,
+        note: null,
+      };
+    })
+    .sort(
+      (a, b) =>
+        Number(a.tool === "codex") - Number(b.tool === "codex") ||
+        a.profile.localeCompare(b.profile),
+    );
 }
 
 /**
@@ -127,6 +183,22 @@ export function createWatchSnapshotReader(deps: WatchDeps): () => Promise<WatchS
   let board: WatchSnapshot["board"] = "not-configured";
   let nextBoardReadAt = -Infinity;
   let refresh: Promise<void> | undefined;
+  let quota: QuotaPanel =
+    deps.quota === undefined
+      ? { state: "not-configured", reason: null, rows: [] }
+      : { state: "loading", reason: null, rows: [] };
+  let nextQuotaReadAt = -Infinity;
+  let quotaRefresh: Promise<void> | undefined;
+  const refreshQuota = async (read: () => Promise<readonly QuotaInput[]>) => {
+    try {
+      quota = { state: "ok", reason: null, rows: quotaRows(await read()) };
+    } catch {
+      // never the error text: it may carry a token or a response body
+      quota = { state: "unavailable", reason: "QUOTA_READ_FAILED", rows: [] };
+    } finally {
+      nextQuotaReadAt = deps.now() + 60_000;
+    }
+  };
   const refreshBoard = async (reader: GithubTaskList) => {
     try {
       tasks = await reader.listTasks();
@@ -143,6 +215,11 @@ export function createWatchSnapshotReader(deps: WatchDeps): () => Promise<WatchS
       await refresh;
       refresh = undefined;
     }
+    if (deps.quota !== undefined && deps.now() >= nextQuotaReadAt) {
+      quotaRefresh ??= refreshQuota(deps.quota);
+      await quotaRefresh;
+      quotaRefresh = undefined;
+    }
     const cards = deps.runs
       .listActive()
       .map((run) =>
@@ -150,6 +227,8 @@ export function createWatchSnapshotReader(deps: WatchDeps): () => Promise<WatchS
           run,
           deps.workflows.byHash(run.templateHash)?.workflow,
           tasks.find((task) => task.number === run.issueNumber),
+          deps.now(),
+          deps.mandatoryRules,
         ),
       )
       .sort(
@@ -160,6 +239,7 @@ export function createWatchSnapshotReader(deps: WatchDeps): () => Promise<WatchS
       generatedAt: new Date(deps.now()).toISOString(),
       board,
       tasks: cards,
+      quota,
     };
   };
 }

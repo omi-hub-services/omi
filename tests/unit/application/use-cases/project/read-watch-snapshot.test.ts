@@ -13,6 +13,7 @@ import {
   INITIAL_REWORK_STATE,
   type ReworkState,
 } from "../../../../../src/domain/runs/rework-policy.ts";
+import type { QuotaVerdict } from "../../../../../src/domain/profiles/quota-policy.ts";
 import type { StepStatus } from "../../../../../src/domain/runs/step-run.ts";
 
 const NOW = Date.parse("2026-11-12T10:00:00Z");
@@ -215,7 +216,11 @@ describe("readWatchSnapshot", () => {
         effort: "medium",
         startedAt: "2026-11-12T09:00:00.000Z",
       },
-      loaded: { skills: ["test-driven-development"], rules: ["project-baseline"] },
+      loaded: {
+        skills: ["test-driven-development"],
+        rules: ["project-baseline"],
+        mandatoryRules: null,
+      },
     });
   });
 
@@ -270,7 +275,11 @@ describe("readWatchSnapshot", () => {
     });
     expect(card.step).toBe("verify");
     expect(card.role).toBe("qa");
-    expect(card.loaded).toEqual({ skills: ["verification-before-completion"], rules: [] });
+    expect(card.loaded).toEqual({
+      skills: ["verification-before-completion"],
+      rules: [],
+      mandatoryRules: null,
+    });
     expect(card.skillCheck).toEqual({
       expected: [],
       missing: [],
@@ -458,5 +467,210 @@ describe("readWatchSnapshot", () => {
 
   it("has no cards when no run is active", async () => {
     expect((await readWatchSnapshot(deps({ runs: { listActive: () => [] } }))).tasks).toEqual([]);
+  });
+});
+
+describe("readWatchSnapshot: worker per step", () => {
+  const verifyRun = () =>
+    run({
+      steps: steps({ implement: "succeeded", verify: "running" }),
+      attempts: [
+        attempt({ stepId: "implement", status: "succeeded", attemptId: "att-1" }),
+        attempt({
+          stepId: "verify",
+          attemptId: "att-2",
+          executor: "claude",
+          profileId: "claude-a",
+          model: "sample-model",
+          effort: "high",
+          role: "qa",
+          skills: [],
+          rules: ["project-baseline"],
+          startedAt: "2026-11-12T09:30:00.000Z",
+        }),
+      ],
+    });
+
+  it("names the role, step and elapsed time of the worker that is running, not the developer's", async () => {
+    const card = await first({ runs: { listActive: () => [verifyRun()] } });
+    expect(card.who).toEqual({
+      executor: "claude",
+      profileId: "claude-a",
+      model: "sample-model",
+      effort: "high",
+      startedAt: "2026-11-12T09:30:00.000Z",
+      step: "verify",
+      role: "qa",
+      elapsedSeconds: 1800,
+    });
+  });
+
+  it("attaches the worker to the step it was dispatched for when two steps have attempts", async () => {
+    const card = await first({
+      runs: {
+        listActive: () => [
+          run({
+            steps: steps({ implement: "running", verify: "succeeded" }),
+            attempts: [
+              attempt({ stepId: "verify", status: "succeeded", attemptId: "old" }),
+              attempt({ stepId: "implement", attemptId: "new" }),
+            ],
+          }),
+        ],
+      },
+    });
+    expect(card.who?.step).toBe("implement");
+    expect(card.who?.role).toBe("developer");
+  });
+
+  it("says which loaded rules are mandatory when the catalog says, and nothing otherwise", async () => {
+    const withCatalog = await first({
+      mandatoryRules: ["project-baseline"],
+      runs: {
+        listActive: () => [run({ attempts: [attempt({ rules: ["project-baseline", "x"] })] })],
+      },
+    });
+    expect(withCatalog.loaded?.mandatoryRules).toEqual(["project-baseline"]);
+    const without = await first();
+    expect(without.loaded?.mandatoryRules).toBeNull();
+  });
+
+  it("clamps an attempt that appears to start in the future to zero elapsed seconds", async () => {
+    const card = await first({
+      runs: {
+        listActive: () => [run({ attempts: [attempt({ startedAt: "2026-11-12T11:00:00Z" })] })],
+      },
+    });
+    expect(card.who?.elapsedSeconds).toBe(0);
+  });
+
+  it("carries the drawn layout of the template with the current node marked", async () => {
+    const card = await first();
+    expect(card.layout.nodes.map((node) => node.id)).toEqual([
+      "implement",
+      "verify",
+      "review",
+      "ready-to-merge",
+    ]);
+    expect(card.layout.nodes.filter((node) => node.current).map((node) => node.id)).toEqual([
+      "implement",
+    ]);
+    expect(card.layout.template.text).toBe("feature");
+    expect(card.layout.tone).toBe("work");
+  });
+
+  it("has an empty layout, not an invented one, when the template is unavailable", async () => {
+    const card = await first({ workflows: { byHash: () => undefined } });
+    expect(card.layout.nodes).toEqual([]);
+  });
+});
+
+describe("readWatchSnapshot: quota panel", () => {
+  const verdict = (overrides: Partial<QuotaVerdict> = {}): QuotaVerdict => ({
+    profileId: "p",
+    freshness: "fresh",
+    fiveHourLeft: 70,
+    sevenDayLeft: 40,
+    score: 40,
+    blocked: [],
+    blockedUntil: null,
+    resetCredits: null,
+    modelWindows: [],
+    ...overrides,
+  });
+
+  it("is not configured when the project has no quota source", async () => {
+    const snapshot = await readWatchSnapshot(deps());
+    expect(snapshot.quota).toEqual({ state: "not-configured", reason: null, rows: [] });
+  });
+
+  it("makes one row per profile, Claude first then Codex, each by profile name", async () => {
+    const snapshot = await readWatchSnapshot(
+      deps({
+        quota: () =>
+          Promise.resolve([
+            { tool: "codex", verdict: verdict({ profileId: "codex-b" }) },
+            {
+              tool: "claude",
+              verdict: verdict({
+                profileId: "claude-b",
+                fiveHourLeft: 8,
+                blocked: ["FIVE_HOUR_BELOW_THRESHOLD"],
+              }),
+            },
+            { tool: "claude", verdict: verdict({ profileId: "claude-a" }) },
+            { tool: "codex", verdict: verdict({ profileId: "codex-a" }) },
+          ]),
+      }),
+    );
+    expect(snapshot.quota.state).toBe("ok");
+    expect(snapshot.quota.rows.map((row) => `${row.tool}/${row.profile}`)).toEqual([
+      "claude/claude-a",
+      "claude/claude-b",
+      "codex/codex-a",
+      "codex/codex-b",
+    ]);
+    expect(snapshot.quota.rows[1]).toMatchObject({ fiveHourLeft: 8, severity: "critical" });
+    expect(snapshot.quota.rows[0]).toMatchObject({
+      fiveHourLeft: 70,
+      sevenDayLeft: 40,
+      severity: "ok",
+      freshness: "fresh",
+    });
+  });
+
+  it("shows a profile with no reading as unknown, never as 0 or as fine", async () => {
+    const snapshot = await readWatchSnapshot(
+      deps({
+        quota: () =>
+          Promise.resolve([
+            {
+              tool: "claude",
+              verdict: verdict({
+                fiveHourLeft: null,
+                sevenDayLeft: null,
+                freshness: "unknown",
+                score: null,
+              }),
+            },
+          ]),
+      }),
+    );
+    expect(snapshot.quota.rows[0]).toMatchObject({
+      fiveHourLeft: null,
+      sevenDayLeft: null,
+      severity: "unknown",
+    });
+  });
+
+  it("keeps the runtime cards and marks the quota unavailable when the read fails", async () => {
+    const snapshot = await readWatchSnapshot(
+      deps({ quota: () => Promise.reject(new Error("token sk-secret expired")) }),
+    );
+    expect(snapshot.tasks).toHaveLength(1);
+    expect(snapshot.quota).toEqual({ state: "unavailable", reason: "QUOTA_READ_FAILED", rows: [] });
+    expect(JSON.stringify(snapshot)).not.toContain("sk-secret");
+  });
+
+  it("reads quota at most once a minute across polls", async () => {
+    let now = NOW;
+    let reads = 0;
+    const read = createWatchSnapshotReader(
+      deps({
+        now: () => now,
+        quota: () => {
+          reads += 1;
+          return Promise.resolve([{ tool: "codex" as const, verdict: verdict() }]);
+        },
+      }),
+    );
+    for (let poll = 0; poll < 12; poll += 1) {
+      await read();
+      now += 4_000;
+    }
+    expect(reads).toBe(1);
+    now += 60_000;
+    await read();
+    expect(reads).toBe(2);
   });
 });
