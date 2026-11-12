@@ -1,5 +1,6 @@
 import { createRunMergeEvidenceReader } from "../application/services/build-run-merge-evidence.js";
 import { existsSync, mkdirSync } from "node:fs";
+import { createFileRuleSource } from "../infrastructure/config/load-resolution-catalog.js";
 import { createFileSkillSource } from "../infrastructure/config/file-skill-source.js";
 import { loadRuntimeConfig } from "../infrastructure/config/load-runtime-config.js";
 import { createDispatchPlanner } from "../application/services/plan-step-dispatch.js";
@@ -619,6 +620,7 @@ export async function createProjectRunCommandUseCases(
   const dispatch: DispatchStepDependencies = {
     catalog: config.catalog,
     skills: createFileSkillSource(join(projectDir, ".omi-squad")),
+    rules: createFileRuleSource(join(projectDir, ".omi-squad")),
     steps: createSqliteStepRunReader(database),
     attempts,
     artifacts,

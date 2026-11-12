@@ -11,7 +11,6 @@ import {
   type BridgeRequest,
 } from "../../templates/bridges/claude-code/omi-squad/bridge.ts";
 import { createFakeWsl } from "../unit/templates/wsl-fakes.ts";
-import { waitForClockPastLease } from "../fixtures/runtime/wait-for-clock-past-lease.ts";
 import {
   openStateDatabase,
   type StateDatabase,
@@ -225,7 +224,6 @@ async function setup(mode = "good", approval = true, body = issueBody) {
   const restart = async () => {
     active.child.stdin.end("stop\n");
     expect(await active.exit).toBe(0);
-    await waitForClockPastLease(db);
     active = launchRuntime(project, mode);
     resource.child = active.child;
     resource.exit = active.exit;
@@ -264,7 +262,6 @@ async function setup(mode = "good", approval = true, body = issueBody) {
   const plan = await ok({ command: "plan", issueNumber: 142, workflowId: "minimal-delivery" });
   const runId = z.string().parse(plan["runId"]);
   const dispatch = async (stepId: string) => {
-    await waitForClockPastLease(db);
     await ok({ command: "dispatch", runId, stepId });
     return ok({ command: "wait", runId, timeoutSeconds: 5 });
   };

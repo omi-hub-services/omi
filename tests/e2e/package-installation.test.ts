@@ -40,13 +40,12 @@ const root = resolve(import.meta.dirname, "../..");
 let temp: string;
 let artifact: string;
 let archive: string;
-// Offline fake package provisioner, like fake executors elsewhere in the E2E suite.
-// Real archive bytes are used; only dependency resolution/native compilation is simulated.
+// Package sources stay read-only after preparation; share archive bytes instead of copying
+// the full runtime on every fake install. Project state and tool manifests remain independent.
 const provision: ProvisionPackage = async (source, tool) => {
   const destination = join(tool, "node_modules", "omi-squad");
   await mkdir(dirname(destination), { recursive: true });
-  await cp(source, destination, { recursive: true });
-  await symlink(join(root, "node_modules"), join(destination, "node_modules"), "dir");
+  await symlink(source, destination, "dir");
   await writeFile(
     join(tool, "package.json"),
     JSON.stringify({ private: true, dependencies: { "omi-squad": "file:./omi-squad.tgz" } }),
@@ -69,12 +68,15 @@ async function candidate(name: string) {
 }
 const statePath = (projectDir: string) => join(projectDir, ".omi-squad/local/state/state.sqlite");
 const textPath = "workflows/onboarding-empty-repo.yaml";
+// Five installation cases took 1.64–2.66 s unloaded and exceeded 5 s under ten-way load.
+// Their 30 s budgets cover real filesystem/hash/SQLite work remaining after sharing package bytes.
 
 beforeAll(async () => {
   temp = await mkdtemp(join(tmpdir(), "omi-packaging-"));
   archive = packAndCheck(root, temp);
   artifact = join(temp, "package");
   execFileSync("tar", ["-xzf", archive, "-C", temp]);
+  await symlink(join(root, "node_modules"), join(artifact, "node_modules"), "dir");
 }, 30_000);
 afterAll(async () => {
   await rm(temp, { recursive: true, force: true });
@@ -257,7 +259,7 @@ describe("project-local distribution", () => {
     expect(lock).toMatchObject({
       base: { [textPath]: await readFile(join(artifact, "templates/project", textPath), "utf8") },
     });
-  });
+  }, 30_000);
 
   it("reports divergent edits and deletion conflicts before changing the install or backups", async () => {
     const request = await input("conflicts");
@@ -278,7 +280,7 @@ describe("project-local distribution", () => {
       before,
     );
     expect(await readdir(join(request.projectDir, ".omi-squad/local/backups"))).toEqual(backups);
-  });
+  }, 30_000);
 
   it("backs up WAL state and config before applying SQL and existing v1 config defaults", async () => {
     const request = await input("migration");
@@ -357,7 +359,7 @@ describe("project-local distribution", () => {
     }
     const backups = await readdir(join(request.projectDir, ".omi-squad/local/backups"));
     expect(backups).toHaveLength(2);
-  });
+  }, 30_000);
 
   it("refuses a running or unreconciled owner and a changed distro binding", async () => {
     const request = await input("live-owner");
@@ -377,7 +379,7 @@ describe("project-local distribution", () => {
     } finally {
       db.close();
     }
-  });
+  }, 30_000);
 
   it("refuses source targets and symlinked managed paths", async () => {
     await expect(
@@ -512,7 +514,7 @@ describe("installation failure boundaries", () => {
       "INSTALLATION_PREVIEW_STALE",
     );
     expect(await readFile(target, "utf8")).toBe("# changed during provisioning\n");
-  });
+  }, 30_000);
 });
 
 describe("WSL2 doctor", () => {
