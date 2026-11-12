@@ -27,7 +27,7 @@ SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<d
 
 **What the v0.1 CLI really has.** `--help` lists: `init`, `install`, `update`, `doctor`, `profiles {register,list,probe}`, `status`,
 `session {new,start}`, `approvals decide`, `plan`, `dispatch`, `wait`, `pause`, `resume`, `deliver`,
-`coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9).
+`coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9), and `watch`.
 
 | Job            | v0.1 command                                      | Notes                                                              |
 | -------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
@@ -48,8 +48,40 @@ error (nothing sent), `3` no runtime on the socket or timeout, `4` the runtime r
 (`COMMAND_REFUSED`, `NOT_IMPLEMENTED`, …), `5` malformed runtime answer, `6` `DOCTOR_FAILED` (installation checks failed or could not run). Text mode prints errors on
 stderr as `error[CODE]: message`.
 
-**First thing to try when anything fails:** `<cli> status`. Exit 3 means no runtime is running
+**First thing to try when anything fails:** `<cli> status --runtime`. Exit 3 means no runtime is running
 (start a session, §3). Exit 0 prints `runtime: ready`, `version: …`, `started: …`.
+
+### Status and watch
+
+`<cli> status [--project <path>] [--json]` reads the existing
+`.omi-squad/local/state/state.sqlite` in read-only mode alongside live GitHub Project and PR
+reads. It groups open non-Epic tasks by Status, lists PR checks and the latest runtime-recorded
+review (a review of another head is `stale`), running attempts, profile quota and the next
+unblocked Ready task in priority/milestone/Issue order. JSON follows the envelope above; the
+report is in `result`. Without quota configuration it reports `null`; missing readings are
+`unknown`, never zero. These views never request a paid quota probe.
+
+`<cli> watch [--project <path>] [--port 4381] [--interval 5]` prints a URL to open in the
+browser. Port `0` chooses an available port; interval is positive seconds. It binds only
+`127.0.0.1`, validates Host and Origin against its own port, and streams updates over SSE.
+It exits 60 seconds after the last SSE client leaves (also if none connects), or on Ctrl-C.
+It has no control or probe endpoint. An occupied port fails; choose another with `--port`.
+
+Each active run has a diagram from its pinned workflow hash and latest runtime steps, attempts
+and quality controller: template steps/gates, Review → Developer rework, Architect after two
+quality failures and Ask PO after the assisted budget is spent. Blocked dependencies/runtime
+blocks and Waiting PO approvals are shown at the held step when no worker runs. Template
+skills/rules and the worker's recorded loaded skills/rules are shown separately. Gate colours
+indicate progress of their adjacent step; they are not approval evidence or authority to merge.
+An unavailable GitHub read leaves runtime cards visible without titles/blockers. If the pinned
+template is no longer in the catalog, the card says so and has no diagram; no fixed lifecycle is
+substituted. Failed snapshot reads display a fixed unavailable message and retry.
+
+Both commands default to the current project directory and need an initialized project and an
+existing migrated state DB; they never create or migrate one. `status` fails if GitHub cannot
+be read, rather than reporting an empty board. To inspect runtime connectivity without project
+configuration, use `status --runtime [--socket <path>]`; `status --run <id>` retains the IPC run
+view. Watch displays recorded runtime state; it does not scan processes to prove OS liveness.
 
 ## 1. Init
 
@@ -175,7 +207,7 @@ a configured project (§1).
 3. `<cli> dispatch --run <id> --step <id>` sends one **ready** step to a worker.
 4. `<cli> wait --run <id> [--timeout <1-3600>]` blocks until no worker of the run is running
    (default 300 s). Use it instead of polling.
-5. `<cli> status --run <id>` shows the run and its steps; `status` alone shows the runtime.
+5. `<cli> status --run <id>` shows the run and its steps; `status --runtime` shows the runtime.
 6. `<cli> deliver --run <id> --pr <n> --head-sha <sha> --check <name> [--check …] [--min-approvals <n>]`
    merges the reviewed head into `develop` and closes the task. `--head-sha` must be the head the
    independent review examined; at least one `--check` is required.

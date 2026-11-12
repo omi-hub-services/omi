@@ -3,6 +3,41 @@ import type { RuntimeStatus } from "../../../application/contracts/runtime-statu
 import type { IpcOutcome } from "../../ipc/protocol.js";
 import { presentFailure, presentSuccess } from "./result-presenter.js";
 import type { OutputFormat, Presented } from "./result-presenter.js";
+import type {
+  StatusReport,
+  TaskLine,
+} from "../../../application/use-cases/project/report-status.js";
+
+export function renderReportText(report: StatusReport): string {
+  const task = (line: TaskLine) => `#${String(line.number)} ${line.planKey ?? ""} ${line.title}`;
+  return [
+    `status: ${report.generatedAt}`,
+    ...report.statuses.flatMap((group) => [
+      `${group.status}: ${String(group.tasks.length)}`,
+      ...group.tasks.map((line) => `  ${task(line)}`),
+    ]),
+    `next: ${report.next === null ? "none" : task(report.next)}`,
+    `PRs: ${String(report.pulls.length)}`,
+    ...report.pulls.map(
+      (pull) =>
+        `  #${String(pull.number)} ${pull.title} | checks ${pull.checks.summary} | review ${pull.review}${pull.draft ? " | draft" : ""}`,
+    ),
+    `workers: ${String(report.workers.length)}`,
+    ...report.workers.map(
+      (worker) =>
+        `  #${String(worker.issueNumber)} ${worker.stepId} ${worker.role ?? "unknown"} ${worker.executor} ${worker.profileId} ${worker.model} since ${worker.startedAt}`,
+    ),
+    ...(report.quota === null
+      ? ["quota: not configured"]
+      : [
+          "quota:",
+          ...report.quota.map(
+            (quota) =>
+              `  ${quota.profileId} 5h ${String(quota.fiveHourLeft ?? "unknown")} / 7d ${String(quota.sevenDayLeft ?? "unknown")} (${quota.freshness}) ${quota.blocked.join(", ")}${quota.blockedUntil === null ? "" : ` until ${quota.blockedUntil}`}`,
+          ),
+        ]),
+  ].join("\n");
+}
 
 export function renderStatusText(status: RuntimeStatus): string {
   return [

@@ -248,6 +248,7 @@ export class FakeGithubBoard implements GithubTransport {
     return {
       __typename: "Issue",
       number: issue.number,
+      title: issue.title,
       state: issue.state,
       body: issue.body,
       milestone: issue.milestone === null ? null : { title: issue.milestone },

@@ -1,4 +1,5 @@
 import { parseAcReviewLines } from "../../../domain/delivery/acceptance-review.js";
+import { linkedIssueNumber } from "../../../domain/delivery/pull-issue-link.js";
 import {
   evaluateIssueClose,
   evaluateMerge,
@@ -414,12 +415,8 @@ function reviewObservation(evidence: MergeEvidence): ReviewObservation | undefin
   };
 }
 
-/** `preparePr` writes exactly one `Issue: #N` line; any other Issue reference breaks the link. */
 function linksOnlyIssue(body: string, issueNumber: number): boolean {
-  const linked = new Set(
-    [...body.matchAll(/^Issue: #(\d+)\s*$/gm)].map((match) => Number(match[1])),
-  );
-  return linked.size === 1 && linked.has(issueNumber);
+  return linkedIssueNumber(body) === issueNumber;
 }
 
 function shaOf(value: string): string {

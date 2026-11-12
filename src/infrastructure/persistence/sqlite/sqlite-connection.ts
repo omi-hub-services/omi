@@ -45,6 +45,18 @@ export function openStateDatabase(
   return db;
 }
 
+/**
+ * Opens an existing state database for reading only, for views (`status`, `watch`) that run beside
+ * the runtime. It sets no journal mode (the runtime owns WAL), cannot write, and never creates a
+ * file, so a mistyped path is an error and not an empty database.
+ */
+export function openReadOnlyStateDatabase(
+  filePath: string,
+  busyTimeoutMs: number = DEFAULT_BUSY_TIMEOUT_MS,
+): StateDatabase {
+  return new Database(filePath, { readonly: true, fileMustExist: true, timeout: busyTimeoutMs });
+}
+
 /** PRAGMA synchronous reports FULL as 2. */
 const SYNCHRONOUS_FULL = 2;
 

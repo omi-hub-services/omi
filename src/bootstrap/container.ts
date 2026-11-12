@@ -1,5 +1,6 @@
 import { createRunMergeEvidenceReader } from "../application/services/build-run-merge-evidence.js";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { loadWorkflowCatalog } from "../infrastructure/config/load-workflow-catalog.js";
 import { createFileRuleSource } from "../infrastructure/config/load-resolution-catalog.js";
 import { createFileSkillSource } from "../infrastructure/config/file-skill-source.js";
 import { loadRuntimeConfig } from "../infrastructure/config/load-runtime-config.js";
@@ -119,6 +120,123 @@ import { createCommandDispatcher } from "../interfaces/ipc/command-dispatcher.js
 import { sendCommand } from "../interfaces/ipc/ipc-client.js";
 import { createIpcServer } from "../interfaces/ipc/ipc-server.js";
 import type { IpcServer } from "../interfaces/ipc/ipc-server.js";
+import { reportStatus } from "../application/use-cases/project/report-status.js";
+import { readWatchSnapshot } from "../application/use-cases/project/read-watch-snapshot.js";
+import { createQuotaVerdictReader } from "../application/services/read-quota-verdicts.js";
+import { openReadOnlyStateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
+import { createSqliteRunOverviewReader } from "../infrastructure/persistence/sqlite/sqlite-run-overview-reader.js";
+import { createSqlitePullReviewReader } from "../infrastructure/persistence/sqlite/sqlite-pull-review-reader.js";
+import { createGithubOpenPulls } from "../infrastructure/github/github-open-pulls.js";
+import { createWatchServer } from "../infrastructure/observability/watch-server.js";
+import type { OverviewCommands } from "../interfaces/cli/commands/status-command.js";
+
+/** Views use an existing read-only DB, including while the session runtime is stopped. */
+export function createOverviewCommands(
+  transport: GithubTransport = createGhApiTransport(),
+): OverviewCommands {
+  async function open(projectDir: string) {
+    const config = await createOnboardingProjectConfigStore(projectDir).read();
+    if (config === undefined) throw new Error("PROJECT_NOT_CONFIGURED");
+    const database = openReadOnlyStateDatabase(
+      join(projectDir, ".omi-squad", "local", "state", "state.sqlite"),
+    );
+    try {
+      const client = createGithubRestClient({
+        transport,
+        now: Date.now,
+        random: Math.random,
+        sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+      });
+      const board = createGithubTaskBoard({
+        client,
+        projects: createGithubProjectReader(client),
+        repository: config.repository,
+        project: { owner: config.project.owner, number: config.project.number },
+      });
+      return { config, database, client, board, runs: createSqliteRunOverviewReader(database) };
+    } catch (error) {
+      database.close();
+      throw error;
+    }
+  }
+  return {
+    async status(projectDir) {
+      const deps = await open(projectDir);
+      try {
+        return await reportStatus({
+          ...deps,
+          pulls: createGithubOpenPulls(deps.client),
+          checks: createGithubMergeDelivery(deps.client),
+          reviews: createSqlitePullReviewReader(deps.database),
+          repository: `${deps.config.repository.owner}/${deps.config.repository.name}`,
+          now: Date.now,
+          ...(deps.config.quota === undefined
+            ? {}
+            : {
+                quota: createQuotaVerdictReader({
+                  policy: deps.config.quota,
+                  profiles: createSqliteProfileRegistry(deps.database),
+                  reader: createProfileQuotaReader({
+                    "claude-code": createClaudeQuotaReader({
+                      probe: { executable: "claude", parentEnv: process.env },
+                    }),
+                    codex: createCodexQuotaReader({ executable: "codex", parentEnv: process.env }),
+                  }),
+                  now: Date.now,
+                  probe: false,
+                }),
+              }),
+        });
+      } finally {
+        deps.database.close();
+      }
+    },
+    async watch(input) {
+      const deps = await open(input.projectDir);
+      let workflows: WorkflowCatalog;
+      try {
+        const directory = join(input.projectDir, ".omi-squad", "workflows");
+        workflows = await loadWorkflowCatalog(
+          directory,
+          readdirSync(directory, { withFileTypes: true })
+            .filter((entry) => entry.isFile() && entry.name.endsWith(".yaml"))
+            .map((entry) => entry.name.slice(0, -5)),
+        );
+      } catch (error) {
+        deps.database.close();
+        throw error;
+      }
+      let finish = () => {};
+      const ended = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const server = createWatchServer({
+        port: input.port,
+        intervalMs: input.intervalMs,
+        readSnapshot: () =>
+          readWatchSnapshot({ runs: deps.runs, workflows, board: deps.board, now: Date.now }),
+        onIdle: () => {
+          finish();
+        },
+      });
+      const stop = () => {
+        void server.close().then(finish);
+      };
+      process.on("SIGINT", stop);
+      process.on("SIGTERM", stop);
+      try {
+        const { port } = await server.listen();
+        input.onListening(`http://127.0.0.1:${String(port)}`);
+        await ended;
+      } finally {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+        await server.close();
+        deps.database.close();
+      }
+    },
+  };
+}
 
 /** Both stores share one migrated connection for atomic profile/account capacity reservations. */
 export function createProfileStores(
@@ -208,6 +326,7 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
   return {
     sendCommand,
     tasks: createTaskCommands(),
+    overview: createOverviewCommands(),
     installation: {
       initialize: async (input) =>
         initializeProject(

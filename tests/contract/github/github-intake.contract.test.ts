@@ -219,6 +219,30 @@ describe("GithubTaskBoard with promote and status (fake GitHub)", () => {
     expect((await board.listBacklog()).map((t) => t.number).sort()).toEqual([23, 24]);
   });
 
+  it("lists every Issue on the Project with title, status and blockers, across pages", async () => {
+    github.pageSize = 1;
+    backlog(25);
+    github.addIssue(
+      { number: 26, title: "Closed task", state: "CLOSED", body: readyBody("OMI-026") },
+      { ...READY_FIELDS, Status: "Done", "Plan Key": "OMI-026" },
+    );
+    backlog(27, { blockedBy: [25] });
+    github.addIssue({ number: 28 }); // an Issue that is not on the Project is not listed
+    const tasks = await adapters().board.listTasks();
+    // Issues 1 and 2 are the fixture's own Project items.
+    expect(tasks.map((t) => t.number).filter((n) => n >= 25)).toEqual([25, 26, 27]);
+    expect(tasks.find((t) => t.number === 26)).toMatchObject({
+      title: "Closed task",
+      state: "CLOSED",
+      status: "Done",
+    });
+    expect(tasks.find((t) => t.number === 27)).toMatchObject({
+      title: "Issue 27",
+      status: "Backlog",
+      blockers: [{ number: 25, state: "OPEN" }],
+    });
+  });
+
   it("promotes the first eligible Backlog Issue and changes only its Status", async () => {
     github.pageSize = 1;
     backlog(30, { blockedBy: [31] });
