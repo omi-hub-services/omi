@@ -80,3 +80,48 @@ writes evidence under `.tmp/live/omi-041-deploy-evidence.json`. It waits up to t
 the PO's native approval. If dispatch is still unconfirmed, retain state and rerun to reconcile.
 Default checks do not run it. The PO chooses sandbox repository, workflow/tag/SHA, protected
 environment, image/digest, PO/report Issue and the time to run the probe.
+
+## Preparing the sandbox for the live run (OMI-089)
+
+`tools/sandbox-setup/` prepares `omi-hub-services/omi-sandbox` and the local state. It never
+creates or decides an approval, and it refuses any repository whose name lacks `sandbox` and the
+production repository. Run it as the dispatch account (`minibox-claude-code`, repository admin)
+after the PO has confirmed the admin changes. The PO supplies the reviewed image repository and
+its immutable digest (`sha256:<64 hex>`); the script does not choose or pull one.
+
+```sh
+node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts github --image <repo> --digest sha256:<hex> --dry-run
+node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts github --image <repo> --digest sha256:<hex>
+node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts github --image <repo> --digest sha256:<hex> --verify
+```
+
+`--dry-run` reads (GET only) and prints every call it would make: method, path, body summary.
+The real run executes exactly that list in dependency order and re-reads; a second run plans
+nothing. `--verify` reads every object back and exits 1 if one is missing or weaker. A workflow
+file or tag that exists but differs is a blocker, never overwritten or moved.
+
+Created, in order: branch `develop`; the deploy workflow (fixture `sandbox-deploy.yml`) and a
+lightweight tag `sandbox-deploy-r1` at its commit; the `sandbox-check` workflow (the named
+check); repository variables `OMI_SANDBOX_IMAGE` and `OMI_SANDBOX_IMAGE_DIGEST`; environment
+`sandbox` (required User reviewer `ttin-omihub`, `prevent_self_review`, `can_admins_bypass:
+false`); rulesets `omi-sandbox-main` (1 native approval, stale approvals dismissed, check
+`sandbox-check`), `omi-sandbox-develop` (PR, 0 approvals, same check) and `omi-sandbox-tags`
+(`sandbox-deploy-*` cannot be deleted or moved), all without bypass actors; and the pipeline/report
+Issue (found again by its marker). The PO reviews the workflow commit before the live run.
+
+Local state, outside this repository:
+
+```sh
+node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts local-state --state-dir <dir> --image <repo> --digest sha256:<hex>
+```
+
+creates `state.db` (migrated), the project row, `project.yaml`, `artifacts/` and is repeatable.
+Add `--deploy-approval-id <id>` once the deploy approval exists to write `deploy-config.json`
+(`request`, `pipeline`, `stateDirectory`; no credential, no decision) for
+`OMI_LIVE_DEPLOY_CONFIG`.
+
+**Approvals are the PO's.** A workflow requests the business, release and deploy approvals
+(`requestApproval`); the PO records the decision through the runtime (`recordApproval`) with
+`approvals decide <request-id> --expected-version 0 --decision approved --github-comment <id>`
+(handbook, approvals). `approvals decide` is implemented in the v0.1 CLI; commands whose use case
+is missing answer `NOT_IMPLEMENTED`. Nothing here, and no agent, fills in a decision.
