@@ -83,6 +83,7 @@ function setup(
   profiles: readonly RegisteredProfile[] = [profile],
   readTask = () => Promise.resolve(task),
   registryProfiles = profiles,
+  overrides: { config?: typeof config; workflow?: typeof workflow } = {},
 ) {
   const reservations: string[] = [];
   const cancelled: string[] = [];
@@ -109,10 +110,13 @@ function setup(
     createRun: () => ({ ok: true as const }),
   };
   const planner = createDispatchPlanner({
-    config,
+    config: overrides.config ?? config,
     models,
     plans,
-    workflows: { byId: () => ({ workflow, hash }), byHash: () => ({ workflow, hash }) },
+    workflows: {
+      byId: () => ({ workflow: overrides.workflow ?? workflow, hash }),
+      byHash: () => ({ workflow: overrides.workflow ?? workflow, hash }),
+    },
     profiles: { list: () => registryProfiles, save: () => true },
     selections,
     task: readTask,
@@ -178,5 +182,37 @@ describe("dispatch planning from a trusted task boundary", () => {
     });
     await r.planner.plan(request);
     expect(reads).toBe(1);
+  });
+});
+
+describe("required checks of a workflow step", () => {
+  const verifyWorkflow = workflowSchema.parse({
+    ...workflow,
+    steps: [{ ...workflow.steps[0], required_checks: ["project-check"] }],
+  });
+  const configured = projectConfigSchema.parse({
+    ...config,
+    checks: { "project-check": { command: ["npm", "run", "check"] } },
+  });
+
+  it("passes the step's required checks into the dispatch request", async () => {
+    const r = setup([profile], () => Promise.resolve(task), [profile], {
+      config: configured,
+      workflow: verifyWorkflow,
+    });
+    expect(await r.planner.plan(request)).toMatchObject({ requiredChecks: ["project-check"] });
+  });
+
+  it("adds none for a step that lists none", async () => {
+    const r = setup();
+    expect(await r.planner.plan(request)).toMatchObject({ requiredChecks: [] });
+  });
+
+  it("refuses to dispatch a step whose check has no configured command, and frees the slot", async () => {
+    const r = setup([profile], () => Promise.resolve(task), [profile], {
+      workflow: verifyWorkflow,
+    });
+    await expect(r.planner.plan(request)).rejects.toThrow("CHECK_UNCONFIGURED");
+    expect(r.cancelled).toEqual(["id-1"]);
   });
 });
