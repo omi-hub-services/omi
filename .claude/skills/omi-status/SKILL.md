@@ -3,6 +3,8 @@ name: omi-status
 description: Show the omi-squad delivery status (Project items by Status, unblocked Ready tasks, open PRs with checks/review, WSL workers, worker quota) and recommend the next task. Use at the start of a Coordinator session or when asked "what's the status / what's next".
 ---
 
+Installed from `templates/bridges/repository/omi-status/SKILL.md`; edit the template only (ADR-0036).
+
 # /omi-status
 
 Data collection is a script; do not re-derive it with `gh`/`git` calls (AGENTS.md §9).

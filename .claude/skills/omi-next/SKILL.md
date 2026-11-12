@@ -6,6 +6,11 @@ argument-hint: "[OMI-xxx]"
 
 # /omi-next [OMI-xxx]
 
+Installed from `templates/bridges/repository/omi-next/SKILL.md`; edit that template only.
+ADR-0036 defines the pinned external CLI migration and each interim adapter. Until runtime
+run/attempt state can be migrated, use the compatible repository commands below. Do not
+install an unfinished runtime into this framework source repository.
+
 The process proven in OMI-002 (ADR-0012, ADR-0014). Mechanical steps are
 `node tools/coordinator/flow.ts …` (idempotent; add `--dry-run` to preview). `done:` means the
 step already happened; `refused:` is a gate — fix the cause or ask the PO, never bypass it with
@@ -33,7 +38,9 @@ lists.
 (`--dry-run` first; spec format in ADR-0014). Never `gh issue create` by hand: `set-status`
 Ready/In Progress and `start-branch` refuse an Issue that fails the readiness gate (Plan Key
 matching the marker, Priority/Work Type/Workflow/Role/Area, at least one top-level AC), and
-`status.ts` lists such Issues under Attention.
+`status.ts` lists such Issues under Attention. Area tooling or declared tools/coordinator/
+or .claude/skills/ paths also require a nonempty ## Framework counterpart section naming the
+framework module/template or the reason none applies.
 
 ## 2. Start
 
@@ -77,8 +84,7 @@ and rules are read from the worker checkout.
 The script owns Issue/body/comment pagination, scope-note provenance, AC numbering, the read-first
 list, restrictions, report contract and exact step skills/rules. Do not append role-based curated
 skills or label rules mandatory; preserve their front matter. dispatch transports the file unchanged.
-The packaged worker-prompt.md and pure renderer are shared assets; runtime buildPrompt alignment
-is #186, not a reason to install the framework in this source repository.
+The packaged worker-prompt.md and pure renderer are shared assets; runtime buildPrompt uses generated packaged prompt assets checked by prompts:check.
 
 Pick the worker profile by quota immediately before each launch. --probe spends one minimal Haiku
 call per Claude profile; Codex limits are read free. Keep the effort policy's model/effort choices;
@@ -88,6 +94,9 @@ profile. Run dispatch in the foreground through the script, backgrounding the Co
 when needed. Keep the existing allowed/denied tool defaults in worker-launch.ts; extra permissions
 need task scope and PR evidence. Native skills/configuration are not edited by workers.
 
+Workers finish with one JSON document matching the framework step-result-v1 contract;
+all workflow output-contract aliases use that shape. The packet supplies script-only ids.
+worker-report refuses unstructured or invalid reports; a valid report is a claim, never approval.
 Workers do not commit, push, open PRs, merge or post verdicts. The Coordinator validates the report
 and commits authorized changes via commit-worker, then runs the fixed-head check in step 4:
 

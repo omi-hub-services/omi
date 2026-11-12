@@ -3,6 +3,8 @@ name: omi-watch
 description: Open the small omi-squad watch window (running WSL workers and live profile quota) in an Edge app window. Use when the PO asks to watch workers/quota, open the monitor, or types /omi-watch.
 ---
 
+Installed from `templates/bridges/repository/omi-watch/SKILL.md`; edit the template only (ADR-0036).
+
 # /omi-watch
 
 Launch only; do not read or summarise worker or quota data yourself (the window shows it).
