@@ -1,5 +1,7 @@
 # Compatibility
 
+Operational use of the CLI (commands, failures, folder rules) is in [handbook.md](handbook.md).
+
 Versions listed here are only what has actually been checked; nothing else is promised
 (tech-stack.md §3). Status values: `supported` (checked with evidence), `untested`,
 `unsupported`. A version not listed is `untested`.
