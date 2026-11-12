@@ -1,4 +1,5 @@
-import { resolveTaskEffort } from "../../../domain/agents/complexity-policy.js";
+import { resolveWorkflowEffort } from "../../../domain/workflows/workflow-policy.js";
+import { stepQualitySchema } from "../../contracts/workflow.js";
 import { taskComplexitySchema, effortPolicySchema } from "../../contracts/task-complexity.js";
 import { z } from "zod";
 import { selectExecutor as selectByPolicy } from "../../../domain/agents/selection-policy.js";
@@ -9,6 +10,7 @@ import { executorSchema, modelsConfigSchema } from "../../contracts/model-capabi
 import type { ExecutorSelectionStore } from "../../ports/executor-selection-store.js";
 
 const requestSchema = z.strictObject({
+  quality: stepQualitySchema.optional(),
   attemptId: identifierSchema,
   stepRunId: identifierSchema,
   attemptNumber: z.number().int().positive(),
@@ -33,7 +35,12 @@ export function selectExecutor(store: ExecutorSelectionStore, input: unknown) {
   ) {
     throw new Error("Executor requirement conflicts with capability profile");
   }
-  const decision = resolveTaskEffort(request.task, request.effortPolicy, capability.min_effort);
+  const decision = resolveWorkflowEffort(
+    request.task,
+    request.effortPolicy,
+    capability.min_effort,
+    request.quality,
+  );
   const requiredExecutor = capability.required_executor ?? request.requiredExecutor;
   const verified = request.models.verified_models[request.capabilityProfile] ?? [];
   const result = store.reserve(
@@ -62,6 +69,7 @@ export function selectExecutor(store: ExecutorSelectionStore, input: unknown) {
         ...(requiredExecutor === undefined ? {} : { requiredExecutor }),
         cooldownAccountGroups: cooldownGroups,
         ...(request.quota === undefined ? {} : { quota: request.quota }),
+        preferQuota: request.quality?.step === "verify" || request.quality?.step === "review",
         candidates: profiles.flatMap((profile) => {
           const metadata = profile.metadata;
           const group = profiles.filter(

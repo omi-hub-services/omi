@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 const body =
-  "{{rules}}\n## Acceptance criteria\n- [ ] first\n  - [ ] nested\n~~~\n- [ ] fenced\n~~~\n* [X] second\n### Detail\n- [ ] ignored\n";
+  "{{rules}}\n## Acceptance criteria\n- [ ] first\n  - [ ] nested\n~~~\n- [ ] fenced\n~~~\n* [X] second\n### Detail\n- [ ] ignored\n## Implementation map\n- src/interfaces/cli/task.ts\n";
 function fake(
   options: {
     workflow?: string;
@@ -298,4 +298,84 @@ it.each([
 ])("refuses invalid packet input: $reason", async ({ args, options, reason }) => {
   expect(await main(["prompt", "185", ...args], fake(options).ctx)).toBe(1);
   expect(output.join("\n")).toMatch(reason);
+});
+
+it("renders a policy-approved combined packet with verbatim contents of both steps", async () => {
+  expect(await main(["prompt", "185", "--step", "verify,review"], fake().ctx)).toBe(0);
+  const text = output.join("\n");
+  expect(text).toContain("verify + review");
+  expect(text).toContain("role reviewer");
+  expect(text).toContain(
+    readFileSync(
+      "templates/project/.omi-squad/skills/verification-before-completion/SKILL.md",
+      "utf8",
+    ),
+  );
+  expect(text).toContain(
+    readFileSync("templates/project/.omi-squad/skills/independent-review/SKILL.md", "utf8"),
+  );
+  expect(text).toContain("QA judges the supplied script-run check evidence; do not rerun tests.");
+  expect(text).toContain("omi-quality");
+});
+it("passes fixed revision check logs and previous verdict into delta QA/review", async () => {
+  const log = join(dir, "check.md");
+  const previous = join(dir, "previous.md");
+  const delta = join(dir, "delta.md");
+  writeFileSync(log, "script check passed");
+  writeFileSync(previous, "FAIL at old SHA");
+  writeFileSync(delta, "diff since old SHA");
+  expect(
+    await main(
+      [
+        "prompt",
+        "185",
+        "--step",
+        "verify,review",
+        "--round",
+        "2",
+        "--head",
+        "a".repeat(40),
+        "--check-log",
+        log,
+        "--previous-verdict",
+        previous,
+        "--delta",
+        delta,
+      ],
+      fake().ctx,
+    ),
+  ).toBe(0);
+  const text = output.join("\n");
+  for (const evidence of [
+    "script check passed",
+    "FAIL at old SHA",
+    "diff since old SHA",
+    "a".repeat(40),
+    "Judge only the delta",
+  ])
+    expect(text).toContain(evidence);
+});
+it("refuses to combine a risky change", async () => {
+  expect(
+    await main(["prompt", "185", "--step", "verify,review", "--risk", "gates"], fake().ctx),
+  ).toBe(1);
+  expect(output.join("\n")).toContain("separate");
+});
+
+it.each([
+  ["feature", 0],
+  ["unmapped", 1],
+] as const)("checks live Project Workflow option %s against templates", async (name, exit) => {
+  const f = fake();
+  const run: Runner = (c) =>
+    Promise.resolve({
+      code: 0,
+      stderr: "",
+      stdout:
+        c.file === "gh"
+          ? JSON.stringify({ fields: [{ name: "Workflow", options: [{ name }] }], totalCount: 1 })
+          : "feature.yaml\ndocs.yaml\n",
+    });
+  expect(await main(["workflow-options"], { ...f.ctx, run })).toBe(exit);
+  expect(output.join("\n")).toContain(exit === 0 ? "Workflow options match" : "missing template");
 });

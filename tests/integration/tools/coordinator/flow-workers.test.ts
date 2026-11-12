@@ -441,3 +441,30 @@ describe("reviewCommentCommand", () => {
     expect(out.join("\n")).toContain("would run: gh pr comment 160");
   });
 });
+
+it("dispatches first review at medium and delta review at low automatically", async () => {
+  for (const [round, effort] of [
+    [1, "medium"],
+    [2, "low"],
+  ] as const) {
+    const f = fake(() => ({ stdout: "exit=0\n" }));
+    const prompt = `<!-- omi-quality ${JSON.stringify({ policy: "task-default", step: "review", steps: ["review"], round })} -->\nfull packet`;
+    expect(await dispatchCommand(f.ctx, { ...dispatchInput, complexity: "high", prompt })).toBe(0);
+    expect(f.seen.at(-1)?.args.at(-1)).toContain(`--effort ${effort}`);
+  }
+});
+
+it("refuses a combined packet if the current Issue complexity is high", async () => {
+  const f = fake(() => ({ stdout: "exit=0\n" }));
+  const prompt = `<!-- omi-quality ${JSON.stringify({ policy: "lean", step: "review", steps: ["verify", "review"], round: 1 })} -->\nfull packet`;
+  expect(await dispatchCommand(f.ctx, { ...dispatchInput, complexity: "high", prompt })).toBe(1);
+  expect(f.seen).toHaveLength(0);
+});
+it("refuses native resume for an independent review packet", async () => {
+  const f = fake(() => ({ stdout: "exit=0\n" }));
+  const prompt = `<!-- omi-quality ${JSON.stringify({ policy: "strict", step: "review", steps: ["review"], round: 1 })} -->\nfull packet`;
+  expect(await dispatchCommand(f.ctx, { ...dispatchInput, resume: "author-thread", prompt })).toBe(
+    1,
+  );
+  expect(f.seen).toHaveLength(0);
+});

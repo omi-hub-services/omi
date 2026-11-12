@@ -16,11 +16,13 @@ import { PROJECT_OWNER_LEASE_KEY } from "../../services/claim-project-session.js
 import { quiesceRunWorkers, type QuiesceRefusal } from "../../services/quiesce-run-workers.js";
 import { resumeRun, type ResumeRunDependencies, type ResumeRunResult } from "../runs/resume-run.js";
 import { selectExecutor } from "./select-executor.js";
+import { stepQualitySchema } from "../../contracts/workflow.js";
 
 type SelectedCandidate = Extract<SelectionResult, { outcome: "selected" }>;
 
 /** What the dispatcher is told to start: the profile that selection chose and reserved. */
 export interface FailoverSelection {
+  readonly quality?: z.infer<typeof stepQualitySchema>;
   /** Reserved by selection; the dispatcher must reuse it (`dispatchStep.reservedAttemptId`). */
   readonly attemptId: string;
   readonly attemptNumber: number;
@@ -51,6 +53,7 @@ export interface FailoverStepDependencies extends Omit<ResumeRunDependencies, "d
 }
 
 const failoverStepSchema = z.strictObject({
+  quality: stepQualitySchema.optional(),
   runId: identifierSchema,
   stepRunId: identifierSchema,
   capabilityProfile: slugSchema,
@@ -223,6 +226,7 @@ export async function failoverStep(
   const reservedAttemptId = deps.nextId();
   const attemptNumber = latest.attemptNumber + 1;
   const selection = selectExecutor(deps.selections, {
+    ...(request.quality === undefined ? {} : { quality: request.quality }),
     attemptId: reservedAttemptId,
     stepRunId,
     attemptNumber,
@@ -288,6 +292,7 @@ export async function failoverStep(
 
   // 5. Reconcile and start the new attempt from the latest valid checkpoint (resumeRun).
   const chosenSelection: FailoverSelection = {
+    ...(request.quality === undefined ? {} : { quality: request.quality }),
     attemptId: reservedAttemptId,
     attemptNumber,
     candidate: selection.candidate,

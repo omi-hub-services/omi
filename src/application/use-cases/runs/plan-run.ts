@@ -5,6 +5,9 @@ import { transitionStep } from "../../../domain/runs/step-run.js";
 import { slugSchema } from "../../contracts/identifiers.js";
 import type { PlannedStep, RunPlanStore } from "../../ports/run-plan-store.js";
 import type { WorkflowCatalog } from "../../ports/workflow-catalog.js";
+import type { DispatchTask } from "../../services/plan-step-dispatch.js";
+import { planWorkflowQuality, taskQualityFacts } from "../../services/plan-workflow-quality.js";
+import { DispatchPlanningError } from "../../services/dispatch-planning-error.js";
 
 const planRunSchema = z.strictObject({
   issueNumber: z.number().int().positive(),
@@ -12,6 +15,7 @@ const planRunSchema = z.strictObject({
 });
 
 export interface PlanRunDependencies {
+  readonly qualityTask?: DispatchTask;
   readonly tasks: RunPlanStore;
   readonly workflows: WorkflowCatalog;
   /** Used when the command names no workflow; absent means the Coordinator must name one. */
@@ -55,7 +59,15 @@ export function planRun(deps: PlanRunDependencies, input: unknown): PlanRunResul
   const task = deps.tasks.findTask(parsed.data.issueNumber);
   if (task === undefined) return { ok: false, reason: "TASK_NOT_FOUND" };
 
-  const graph = new Map(pinned.workflow.steps.map((step) => [step.id, step.needs]));
+  const qualityPlan =
+    deps.qualityTask === undefined
+      ? undefined
+      : planWorkflowQuality(
+          pinned.workflow,
+          taskQualityFacts(pinned.workflow, deps.qualityTask, "analyze", 1),
+        );
+  const workflow = qualityPlan?.workflow ?? pinned.workflow;
+  const graph = new Map(workflow.steps.map((step) => [step.id, step.needs]));
   if (findDependencyCycle(graph) !== undefined) return { ok: false, reason: "WORKFLOW_CYCLIC" };
 
   const started = transitionRun("pending", {
@@ -64,7 +76,7 @@ export function planRun(deps: PlanRunDependencies, input: unknown): PlanRunResul
     otherActiveRunForTask: false,
   });
   if (!started.ok) return { ok: false, reason: "WORKFLOW_UNKNOWN" };
-  const steps: PlannedStep[] = pinned.workflow.steps.map((step) => ({
+  const steps: PlannedStep[] = workflow.steps.map((step) => ({
     stepRunId: deps.nextId(),
     stepId: step.id,
     status:
@@ -75,6 +87,7 @@ export function planRun(deps: PlanRunDependencies, input: unknown): PlanRunResul
   }));
   const runId = deps.nextId();
   const created = deps.tasks.createRun({
+    ...(qualityPlan === undefined ? {} : { qualityPlan }),
     runId,
     taskId: task.taskId,
     templateHash: pinned.hash,
@@ -84,4 +97,30 @@ export function planRun(deps: PlanRunDependencies, input: unknown): PlanRunResul
   });
   if (!created.ok) return { ok: false, reason: created.reason };
   return { ok: true, runId, taskId: task.taskId, workflowId, steps };
+}
+
+/** Runtime entry reads the approved baseline; the synchronous core also supports offline planning. */
+export async function planRunWithTask(
+  deps: PlanRunDependencies & {
+    readonly readTask: (taskId: string) => Promise<DispatchTask>;
+  },
+  input: unknown,
+): Promise<PlanRunResult> {
+  const parsed = planRunSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, reason: "INVALID_INPUT" };
+  const task = deps.tasks.findTask(parsed.data.issueNumber);
+  if (task === undefined) return { ok: false, reason: "TASK_NOT_FOUND" };
+  try {
+    return planRun({ ...deps, qualityTask: await deps.readTask(task.taskId) }, input);
+  } catch (error) {
+    // Planning stays available before analysis establishes the approved baseline; dispatch gates remain.
+    if (
+      error instanceof DispatchPlanningError &&
+      ["BUSINESS_APPROVAL_REQUIRED", "IMPLEMENTATION_MAP_EMPTY", "PLAN_KEY_REQUIRED"].includes(
+        error.reason,
+      )
+    )
+      return planRun(deps, input);
+    throw error;
+  }
 }

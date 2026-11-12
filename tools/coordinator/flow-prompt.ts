@@ -1,7 +1,18 @@
 // Repository tooling I/O; the packaged skeleton and application renderer are shared with #186.
 import { readFile, writeFile } from "node:fs/promises";
 import "../register-ts-imports.ts";
-import { renderWorkerPrompt } from "../../src/application/services/render-worker-prompt.ts";
+import {
+  renderWorkerPrompt,
+  renderQualityInstructions,
+} from "../../src/application/services/render-worker-prompt.ts";
+import {
+  planWorkflowQuality,
+  taskQualityFacts,
+  qualityStepId,
+} from "../../src/application/services/plan-workflow-quality.ts";
+import { implementationPaths } from "../../src/application/services/resolve-dispatch-task.ts";
+import { taskComplexitySchema } from "../../src/application/contracts/task-complexity.ts";
+import { resolveWorkflowRoute } from "../../src/domain/workflows/workflow-policy.ts";
 import { extractAcceptanceCriteria } from "./acceptance-criteria.ts";
 import { OWNER, PROJECT_NUMBER, REPO } from "./coordinator-settings.ts";
 import type { WorkerCtx } from "./flow-workers.ts";
@@ -22,11 +33,16 @@ import { NATIVE_RESUME_HEADER } from "./worker-launch.ts";
 const ISSUE_PACKET_QUERY = `
 query($owner: String!, $repo: String!, $number: Int!, $after: String, $itemsAfter: String) {
   repository(owner: $owner, name: $repo) { issue(number: $number) { title body url
+    labels(first: 100) { nodes { name } }
     projectItems(first: 100, after: $itemsAfter) { nodes { project { number owner {
       ... on Organization { login } ... on User { login }
     } }
       workflow: fieldValueByName(name: "Workflow") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       planKey: fieldValueByName(name: "Plan Key") { ... on ProjectV2ItemFieldTextValue { text } }
+      complexity: fieldValueByName(name: "Complexity") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      area: fieldValueByName(name: "Area") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      priority: fieldValueByName(name: "Priority") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      workType: fieldValueByName(name: "Work Type") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
     } pageInfo { hasNextPage endCursor } }
     comments(first: 100, after: $after) { nodes { body url author { login } }
       pageInfo { hasNextPage endCursor } }
@@ -39,6 +55,7 @@ interface PacketComment {
   readonly url: string;
 }
 export interface PromptIssue {
+  readonly complexity: ReturnType<typeof taskComplexitySchema.parse>;
   readonly title: string;
   readonly body: string;
   readonly url: string;
@@ -58,6 +75,7 @@ export async function readPromptIssue(ctx: WorkerCtx, number: number): Promise<P
   const comments: PacketComment[] = [];
   const seenComments = new Set<string>();
   const seenItems = new Set<string>();
+  let complexity = taskComplexitySchema.parse({});
   let title: string;
   let body: string;
   let url: string;
@@ -74,6 +92,12 @@ export async function readPromptIssue(ctx: WorkerCtx, number: number): Promise<P
     title = asString(issue.title, "issue.title");
     body = asString(issue.body, "issue.body");
     url = asString(issue.url, "issue.url");
+    const labels =
+      issue.labels === undefined
+        ? []
+        : nodes(issue, "labels", "issue").map((raw) =>
+            asString(asObject(raw, "label").name, "label.name"),
+          );
     const next = (key: string, seen: Set<string>): string | null => {
       const info = asObject(asObject(issue[key], key).pageInfo, `${key}.pageInfo`);
       if (!asBoolean(info.hasNextPage, `${key}.hasNextPage`)) return null;
@@ -109,6 +133,16 @@ export async function readPromptIssue(ctx: WorkerCtx, number: number): Promise<P
           planKey = optString(optObject(item.planKey, "planKey")?.text, "planKey.text");
           if (planKey !== null && !/^OMI-\d+$/.test(planKey))
             throw new Error("invalid Issue Plan Key");
+          const field = (key: string) => optString(optObject(item[key], key)?.name, `${key}.name`);
+          const explicit = field("complexity");
+          complexity = taskComplexitySchema.parse({
+            workflow,
+            labels,
+            area: field("area"),
+            priority: field("priority"),
+            workType: field("workType"),
+            ...(explicit === null ? {} : { complexity: explicit.toLowerCase() }),
+          });
         }
       }
       itemsAfter = next("projectItems", seenItems);
@@ -116,7 +150,7 @@ export async function readPromptIssue(ctx: WorkerCtx, number: number): Promise<P
     }
   } while (!commentsDone || !itemsDone);
   if (!workflow) throw new Error("Issue has no Workflow on the configured Project");
-  return { title, body, url, workflow, planKey, comments };
+  return { title, body, url, workflow, planKey, comments, complexity };
 }
 
 const READ_FIRST = `## Read first
@@ -155,6 +189,13 @@ const REPORT = `## Report contract
 - QA/reviewer: fixed revision, verdict and one AC-n: met|not met — evidence line per top-level AC. Coordinator posts verdicts through review-comment.`;
 
 export interface PromptInput {
+  readonly round?: string | undefined;
+  readonly risk?: string | undefined;
+  readonly scopeApproved?: string | undefined;
+  readonly checkLog?: string | undefined;
+  readonly head?: string | undefined;
+  readonly previousVerdict?: string | undefined;
+  readonly delta?: string | undefined;
   readonly number: number;
   readonly step: string | undefined;
   readonly worktree: string | undefined;
@@ -177,10 +218,74 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
     const read = (path: string) =>
       runChecked(ctx.run, wslCommand(`cat -- ${shellQuote(path)}`, target));
     const issue = await readPromptIssue(ctx, input.number);
-    const template = await loadTemplate(issue.workflow, "templates/project/workflows", read);
+    const route = resolveWorkflowRoute(issue.workflow);
+    if (route.kind === "delivery")
+      throw new Error(
+        `Workflow ${issue.workflow} uses the gated ${route.id} delivery use case, not worker dispatch`,
+      );
+    const template = await loadTemplate(route.id, "templates/project/workflows", read);
     if (!template.ok) throw new Error(template.reason);
-    const step = template.workflow.steps.find((s) => s.id === input.step);
+    const requested = input.step.split(",");
+    const round = Number(input.round ?? "1");
+    if (!Number.isSafeInteger(round) || round < 1)
+      throw new Error("--round must be a positive integer");
+    const risks = input.risk?.split(",") ?? [];
+    if (risks.some((r) => !["security", "gates", "data"].includes(r)))
+      throw new Error("--risk must name security,gates,data");
+    const task = {
+      complexity: issue.complexity,
+      context: {
+        taskSnapshot: { issueNumber: input.number, title: issue.title, body: issue.body },
+        acceptanceCriteria: extractAcceptanceCriteria(issue.body),
+        allowedScope: { paths: [...implementationPaths(issue.body)] },
+        approvalRefs: input.scopeApproved === undefined ? [] : [input.scopeApproved],
+      },
+    };
+    const facts = taskQualityFacts(template.workflow, task, requested.at(-1) ?? "", round);
+    const plan = planWorkflowQuality(template.workflow, {
+      ...facts,
+      risks: {
+        security: facts.risks.security || risks.includes("security"),
+        gates: facts.risks.gates || risks.includes("gates"),
+        data: facts.risks.data || risks.includes("data"),
+      },
+    });
+    const combined = requested.length === 2;
+    const primary = requested.at(-1) ?? "";
+    if (
+      requested.length > 1 &&
+      (!combined || plan.packets[primary]?.map((s) => s.id).join(",") !== input.step)
+    )
+      throw new Error("policy requires separate verify/review packets");
+    const step = template.workflow.steps.find((s) => s.id === (combined ? primary : input.step));
     if (!step) throw new Error(`workflow ${template.workflow.id} has no step ${input.step}`);
+    if (step.id === "analyze" && plan.scopeEvidence !== undefined)
+      throw new Error(
+        `analyze skipped; scope-approved from ${plan.scopeEvidence} (${input.scopeApproved ?? ""})`,
+      );
+    const packetSteps = combined ? (plan.packets[primary] ?? [step]) : [step];
+    const quality = {
+      policy: template.workflow.quality_policy,
+      step: qualityStepId(step),
+      steps: packetSteps.map((s) => s.id),
+      round,
+    };
+    const evidence: string[] = [renderQualityInstructions(quality)];
+    if (plan.scopeEvidence !== undefined)
+      evidence.push(
+        `scope-approved: ${plan.scopeEvidence}; recorded decision: ${input.scopeApproved ?? ""}`,
+      );
+    if (input.checkLog !== undefined) {
+      if (!/^[a-f0-9]{40}$/.test(input.head ?? ""))
+        throw new Error("--check-log requires --head <40-hex SHA>");
+      evidence.push(
+        `## Script-run check evidence on ${input.head ?? ""}\n${await readFile(input.checkLog, "utf8")}`,
+      );
+    }
+    if (input.previousVerdict !== undefined)
+      evidence.push(`## Previous verdict\n${await readFile(input.previousVerdict, "utf8")}`);
+    if (input.delta !== undefined)
+      evidence.push(`## Delta since previous verdict\n${await readFile(input.delta, "utf8")}`);
     const branch =
       input.branch ??
       (await runChecked(ctx.run, wslCommand("git rev-parse --abbrev-ref HEAD", target))).trim();
@@ -214,17 +319,36 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
         ),
       ].join("\n\n");
     const text = renderWorkerPrompt(await read("templates/prompts/worker-prompt.md"), {
-      identity: `${resume ? `${NATIVE_RESUME_HEADER}\n\n` : ""}# Workflow ${template.workflow.id} · step ${step.id} · role ${step.role}`,
+      identity: `${resume ? `${NATIVE_RESUME_HEADER}\n\n` : ""}<!-- omi-quality ${JSON.stringify(quality)} -->\n# Workflow ${template.workflow.id} · step ${packetSteps.map((s) => s.id).join(" + ")} · role ${step.role}`,
       workspace: `## Workspace\nWork only in ${target.repoDir}\nBranch: ${branch}`,
       read_first: resume ? "" : READ_FIRST,
       task_context: resume ? "" : taskContext(),
-      notes: resume
-        ? `## Review findings (native resume only)\n\n${await readFile(input.findings, "utf8")}`
-        : input.notes === undefined
-          ? ""
-          : `## Coordinator notes\n\n${await readFile(input.notes, "utf8")}`,
-      skills: resume ? "" : await sections("skills", step.skills),
-      rules: resume ? "" : await sections("rules", step.rules),
+      notes:
+        `${evidence.join("\n\n")}\n\n` +
+        (resume
+          ? `## Review findings (native resume only)\n\n${await readFile(input.findings, "utf8")}`
+          : input.notes === undefined
+            ? ""
+            : `## Coordinator notes\n\n${await readFile(input.notes, "utf8")}`),
+      skills: resume
+        ? ""
+        : (
+            await Promise.all(
+              packetSteps.map(
+                async (s) =>
+                  `## Step ${s.id} · role ${s.role}\n\n${await sections("skills", s.skills)}`,
+              ),
+            )
+          ).join("\n\n"),
+      rules: resume
+        ? ""
+        : (
+            await Promise.all(
+              packetSteps.map(
+                async (s) => `## Step ${s.id} rules\n\n${await sections("rules", s.rules)}`,
+              ),
+            )
+          ).join("\n\n"),
       restrictions: RESTRICTIONS,
       report_contract:
         issue.planKey === null ? REPORT : REPORT.replace("(OMI-NNN)", `(${issue.planKey})`),

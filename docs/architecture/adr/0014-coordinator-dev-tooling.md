@@ -737,6 +737,61 @@ return to 100. Poller failures go to `onError`: terminal cleanup/rejection via `
 web logging with the server kept alive. Worker parsing includes parent PIDs and collapses a Codex
 wrapper/binary pair to its root process; matching stdout JSONL paths also collapse duplicate rows.
 
+## Workflow cost policy (OMI-093)
+
+The authoritative decision is `resolveQualityPolicy` in `src/domain/workflows/workflow-policy.ts`.
+`task-default` and `lean` combine ordinary low/medium verify/review; `strict`, unknown policy ids,
+high complexity and security/gate/data risks keep them separate. `lean` does not weaken any gate.
+`planWorkflowQuality` retains the original step packets, unions their skills/rules/check ids, and
+keeps the reviewer as the combined worker's owner. An intermediate gate or another consumer of
+verify prevents grouping. Combined capability requirements are the intersection of verified model
+aliases, the higher effort floor and compatible executor requirements. No qualifying intersection
+means refusal, never a weaker model. No new dependency, layer or module is introduced.
+
+The runtime records its resolved execution graph and Issue scope evidence in the existing immutable
+`run.planned` event, alongside the original template hash. Recovery, advancement and dispatch read
+that graph; older runs without it retain their original graph. Removing analyze requires top-level
+AC, an implementation map and the trusted task reader's recorded business approval. The Issue is
+the scope evidence, not a comment containing an approval keyword; dispatch still validates the
+approved baseline. Scope or gate changes never gain approval through this policy.
+
+Selection and dispatch share step/round effort: analyst and first reviewer medium, QA and later
+quality verdicts low, developers use the project's complexity mapping, always respecting capability
+floors. Runtime quality rounds count recorded quality failures, not operational failovers. A repeat
+quality worker receives the prior recorded verdict and a bounded committed Git delta; unavailable,
+dirty, unrelated or oversized deltas block dispatch. The runtime runs required checks before a
+quality worker, passes their hashed logs, and reuses those records at completion. Their revision
+must still equal the reported head; a worker cannot mutate the head and retain passing evidence.
+Fresh review attempts and exact-head/base delivery gates remain unchanged.
+
+The initial grouping uses declared implementation paths conservatively (broad/unknown source scope
+is risky). Runtime rechecks actual committed PR paths before starting a combined packet. A newly
+found security/gate/data change refuses with `RISK_REQUIRES_SEPARATE_WORKERS`: the Coordinator must
+plan separate workers against the changed scope, never force the old combined plan. The repo
+Coordinator supplies `--risk security,gates,data` for its PR assessment in addition to automatic
+implementation-map risk detection.
+
+Repo `prompt --step verify,review` (or `verify,accept` for docs) uses the same projection and quality
+instruction renderer and includes each original step's skills/rules verbatim. `--round`,
+`--check-log --head`, `--previous-verdict` and `--delta` carry script evidence. `--scope-approved`
+is an explicit Coordinator decision reference, not parsed Issue/comment text. The anchored
+`omi-quality` packet header supplies step/round to dispatch; text inside the Issue cannot replace
+it. Metadata-free legacy packets retain complexity-based dispatch. `/omi-next` must stop appending
+skills or launching custom effort commands by hand; its protected edit belongs to the Coordinator.
+
+`pick-profile --step verify|review|verify,review --round N` compares eligible Claude and Codex
+profiles by quota. Runtime quality selection likewise ranks quota ahead of configured preference,
+after all capability, login, cooldown and concurrency requirements. Neither path spends Codex reset
+credits. Explicit tool requirements in runtime capability profiles remain mandatory.
+
+Project Workflow routes are shared domain data: canonical ids use their template; `init` maps to
+`onboarding-takeover` (explicit `onboarding-empty-repo` remains available), `research` to
+`idea-to-issues`, `release` to `prepare-release`, `deploy` to `deploy-release`. The latter two are
+existing approval-gated delivery use cases, never generic worker templates or task merge flows.
+`flow.ts workflow-options` reads live Project options and checks every route against the configured
+checkout's templates. CI also checks the documented field options. The frozen bootstrap seed is
+unchanged; no Project state mutation is part of this worker's implementation.
+
 ## One watch page for the framework and the repo (OMI-092)
 
 The repo no longer has a page of its own (`tools/coordinator/watch-page.ts` is deleted). `/omi-watch`

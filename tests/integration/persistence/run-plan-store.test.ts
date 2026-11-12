@@ -160,3 +160,53 @@ describe("SQLite run plan store", () => {
     expect(createSqliteRecoveryRunReader(db).listActive()).toMatchObject([{ status: "paused" }]);
   });
 });
+
+it("retains the resolved quality graph when the plan store is reopened", async () => {
+  const { workflowSchema } = await import("../../../src/application/contracts/workflow.ts");
+  const { planWorkflowQuality } =
+    await import("../../../src/application/services/plan-workflow-quality.ts");
+  const workflow = workflowSchema.parse({
+    schema_version: 1,
+    id: "feature",
+    version: 1,
+    selection: { task_types: ["feature"] },
+    quality_policy: "task-default",
+    steps: [
+      {
+        id: "verify",
+        role: "qa",
+        needs: [],
+        capability_profile: "testing",
+        output_contract: "step-result",
+      },
+      {
+        id: "review",
+        role: "reviewer",
+        needs: ["verify"],
+        capability_profile: "review",
+        output_contract: "step-result",
+      },
+    ],
+    gates: [{ id: "ready-to-merge", after: "review", policy: "develop-merge" }],
+  });
+  const qualityPlan = planWorkflowQuality(workflow, {
+    qualityPolicy: "task-default",
+    complexity: "low",
+    step: "review",
+    round: 1,
+    risks: { security: false, gates: false, data: false },
+  });
+  const db = setup();
+  const store = createSqliteRunPlanStore(db);
+  expect(
+    store.createRun({
+      ...plan("quality-run"),
+      qualityPlan,
+      steps: [{ stepRunId: "quality-review", stepId: "review", status: "ready" }],
+    }),
+  ).toEqual({ ok: true });
+  const reopened = createSqliteRunPlanStore(db).forRun("quality-run");
+  expect(reopened?.templateHash).toBe("f".repeat(64));
+  expect(reopened?.qualityPlan).toEqual(qualityPlan);
+  expect(reopened?.qualityPlan?.workflow.gates).toEqual(workflow.gates);
+});

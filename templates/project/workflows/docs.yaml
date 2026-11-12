@@ -3,7 +3,7 @@ id: docs
 version: 1
 selection:
   task_types: [docs]
-quality_policy: task-default
+quality_policy: lean
 # The existing Developer role owns documentation authoring; no tool/model is fixed.
 # QA checks examples, links and agreement with implementation. An independent
 # Reviewer accepts against the Issue criteria and publishes docs-acceptance sign-off

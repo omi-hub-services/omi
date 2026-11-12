@@ -9,6 +9,9 @@ import {
 import { capabilityProfileSchema } from "./model-capability.js";
 import { findingSchema } from "./result.js";
 import { schemaVersionV1 } from "./schema-version.js";
+import { stepQualitySchema, workflowSchema } from "./workflow.js";
+import { checkRunRecordSchema } from "./check-run.js";
+import { stepResultSchema } from "./result.js";
 
 const manifestEntrySchema = z.strictObject({
   id: slugSchema,
@@ -23,6 +26,21 @@ const manifestEntrySchema = z.strictObject({
 export const contextPacketSchema = z
   .strictObject({
     schemaVersion: schemaVersionV1,
+    quality: stepQualitySchema.optional(),
+    stepAssignments: z
+      .array(
+        workflowSchema.shape.steps.element.pick({
+          id: true,
+          role: true,
+          skills: true,
+          rules: true,
+        }),
+      )
+      .optional(),
+    checkEvidence: z.array(checkRunRecordSchema).optional(),
+    reviewDelta: z
+      .strictObject({ previousVerdict: stepResultSchema, diff: z.string().max(100_000) })
+      .optional(),
     runId: identifierSchema,
     stepId: slugSchema,
     attemptId: identifierSchema,

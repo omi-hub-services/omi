@@ -97,8 +97,21 @@ async function finish(
     skills: ReturnType<typeof skillEvidence>,
   ) => unknown = () => ({}),
   execution: Partial<ExecutionResult> = {},
+  quality = false,
 ) {
-  const input = dispatchInput({ requiredChecks: ["unit-tests"] });
+  const input = dispatchInput({
+    requiredChecks: ["unit-tests"],
+    ...(quality
+      ? {
+          quality: {
+            policy: "task-default",
+            step: "review",
+            steps: ["verify", "review"],
+            round: 1,
+          },
+        }
+      : {}),
+  });
   const dispatched = await dispatchStep(s.deps, input);
   if (!dispatched.ok) throw new Error(dispatched.reason);
   const attempt = dispatched.attempt;
@@ -212,5 +225,21 @@ describe("completeRunAttempt runs the step's required checks itself", () => {
     await finish(s);
     expect(stepStatus(s)).toBe("running");
     expect(s.sessionEvents).toContain("attempt.completion_refused");
+  });
+});
+
+it("reuses the pre-dispatch quality check instead of rerunning the suite", async () => {
+  const s = setup();
+  await finish(s, () => ({}), {}, true);
+  expect(s.run).toHaveBeenCalledTimes(1);
+  expect(stepStatus(s)).toBe("succeeded");
+});
+it("rejects a quality verdict whose SHA differs from its supplied check", async () => {
+  const s = setup({ checkRevision: "d".repeat(40) });
+  await finish(s, () => ({}), {}, true);
+  expect(s.run).toHaveBeenCalledTimes(1);
+  expect(stepStatus(s)).toBe("failed");
+  expect(JSON.parse(s.r.unitOfWork.commits.at(-1)?.event.payload ?? "{}")).toMatchObject({
+    failure: "CHECK_REVISION_MISMATCH",
   });
 });
