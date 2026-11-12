@@ -119,6 +119,10 @@ export function createWatchServer(options: {
     res.flushHeaders();
     clients.add(res);
     clearTimeout(idle);
+    if (timer === undefined)
+      timer = setInterval(() => {
+        void poll();
+      }, options.intervalMs ?? 5000);
     res.on("close", () => {
       clients.delete(res);
       armIdle();
@@ -141,9 +145,6 @@ export function createWatchServer(options: {
       const address = server.address();
       if (address === null || typeof address === "string") throw new Error("WATCH_NO_ADDRESS");
       port = address.port;
-      timer = setInterval(() => {
-        void poll();
-      }, options.intervalMs ?? 5000);
       armIdle();
       return { port };
     },

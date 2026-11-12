@@ -6,7 +6,7 @@ import type {
   RunOverview,
 } from "../../../../../src/application/ports/run-overview-reader.ts";
 import {
-  readWatchSnapshot,
+  createWatchSnapshotReader,
   type WatchDeps,
 } from "../../../../../src/application/use-cases/project/read-watch-snapshot.ts";
 import {
@@ -117,6 +117,7 @@ const first = async (overrides: Partial<WatchDeps> = {}) => {
   if (card === undefined) throw new Error("no card");
   return card;
 };
+const readWatchSnapshot = (input: WatchDeps) => createWatchSnapshotReader(input)();
 const nodeState = (card: Awaited<ReturnType<typeof first>>, id: string) =>
   card.diagram.nodes.find((node) => node.id === id)?.state;
 const reworkOf = (overrides: Partial<ReworkState>): ReworkState => ({
@@ -125,6 +126,64 @@ const reworkOf = (overrides: Partial<ReworkState>): ReworkState => ({
 });
 
 describe("readWatchSnapshot", () => {
+  it("reads the board once across twelve runtime polls within sixty seconds", async () => {
+    let now = NOW;
+    let boardReads = 0;
+    let runtimeReads = 0;
+    const shared = deps({
+      now: () => now,
+      board: {
+        listTasks: () => {
+          boardReads += 1;
+          return Promise.resolve([board()]);
+        },
+      },
+      runs: {
+        listActive: () => {
+          runtimeReads += 1;
+          return [run()];
+        },
+      },
+    });
+    const read = createWatchSnapshotReader(shared);
+    for (let poll = 0; poll < 12; poll += 1) {
+      now = NOW + poll * 5000;
+      expect((await read()).tasks[0]?.title).toBe("Framework status and watch");
+    }
+    expect(boardReads).toBe(1);
+    expect(runtimeReads).toBe(12);
+    now = NOW + 60_000;
+    await read();
+    expect(boardReads).toBe(2);
+  });
+
+  it("keeps the last good board tasks after a failed refresh and waits sixty seconds to retry", async () => {
+    let now = NOW;
+    let boardReads = 0;
+    const shared = deps({
+      now: () => now,
+      board: {
+        listTasks: () => {
+          boardReads += 1;
+          return boardReads === 2
+            ? Promise.reject(new Error("BOARD_DOWN"))
+            : Promise.resolve([board({ title: boardReads === 1 ? "Original" : "Updated" })]);
+        },
+      },
+    });
+    const read = createWatchSnapshotReader(shared);
+    await read();
+    now += 60_000;
+    const failed = await read();
+    expect(failed.board).toBe("unavailable");
+    expect(failed.tasks[0]?.title).toBe("Original");
+    now += 59_999;
+    expect((await read()).tasks[0]?.title).toBe("Original");
+    expect(boardReads).toBe(2);
+    now += 1;
+    expect((await read()).tasks[0]?.title).toBe("Updated");
+    expect(boardReads).toBe(3);
+  });
   it("shows a runtime-blocked run even without GitHub blockers", async () => {
     const card = await first({
       runs: { listActive: () => [run({ status: "blocked", attempts: [] })] },

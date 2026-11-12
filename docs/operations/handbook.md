@@ -64,6 +64,9 @@ report is in `result`. Without quota configuration it reports `null`; missing re
 `<cli> watch [--project <path>] [--port 4381] [--interval 5]` prints a URL to open in the
 browser. Port `0` chooses an available port; interval is positive seconds. It binds only
 `127.0.0.1`, validates Host and Origin against its own port, and streams updates over SSE.
+Polling starts with the first SSE client; loading the page or health endpoint does not start it.
+Runtime state refreshes at the requested interval. GitHub board reads are cached for at least
+60 seconds; a failed refresh keeps the last good titles and blockers and marks GitHub unavailable.
 It exits 60 seconds after the last SSE client leaves (also if none connects), or on Ctrl-C.
 It has no control or probe endpoint. An occupied port fails; choose another with `--port`.
 
@@ -73,7 +76,7 @@ quality failures and Ask PO after the assisted budget is spent. Blocked dependen
 blocks and Waiting PO approvals are shown at the held step when no worker runs. Template
 skills/rules and the worker's recorded loaded skills/rules are shown separately. Gate colours
 indicate progress of their adjacent step; they are not approval evidence or authority to merge.
-An unavailable GitHub read leaves runtime cards visible without titles/blockers. If the pinned
+Before the first successful GitHub read, cards remain visible without titles/blockers. If the pinned
 template is no longer in the catalog, the card says so and has no diagram; no fixed lifecycle is
 substituted. Failed snapshot reads display a fixed unavailable message and retry.
 

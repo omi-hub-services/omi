@@ -126,7 +126,7 @@ import { sendCommand } from "../interfaces/ipc/ipc-client.js";
 import { createIpcServer } from "../interfaces/ipc/ipc-server.js";
 import type { IpcServer } from "../interfaces/ipc/ipc-server.js";
 import { reportStatus } from "../application/use-cases/project/report-status.js";
-import { readWatchSnapshot } from "../application/use-cases/project/read-watch-snapshot.js";
+import { createWatchSnapshotReader } from "../application/use-cases/project/read-watch-snapshot.js";
 import { createQuotaVerdictReader } from "../application/services/read-quota-verdicts.js";
 import { openReadOnlyStateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
 import { createSqliteRunOverviewReader } from "../infrastructure/persistence/sqlite/sqlite-run-overview-reader.js";
@@ -218,8 +218,12 @@ export function createOverviewCommands(
       const server = createWatchServer({
         port: input.port,
         intervalMs: input.intervalMs,
-        readSnapshot: () =>
-          readWatchSnapshot({ runs: deps.runs, workflows, board: deps.board, now: Date.now }),
+        readSnapshot: createWatchSnapshotReader({
+          runs: deps.runs,
+          workflows,
+          board: deps.board,
+          now: Date.now,
+        }),
         onIdle: () => {
           finish();
         },

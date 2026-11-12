@@ -300,6 +300,27 @@ describe("watch server: server-sent events", () => {
 });
 
 describe("watch server: idle shutdown", () => {
+  it("does not read snapshots before the first SSE client connects", async () => {
+    let reads = 0;
+    const { port } = await start({
+      intervalMs: 5,
+      readSnapshot: () => {
+        reads += 1;
+        return Promise.resolve(snapshot());
+      },
+    });
+    await get(port, "/");
+    await get(port, "/health");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(reads).toBe(0);
+    const stream = events(port);
+    try {
+      await stream.next();
+      expect(reads).toBeGreaterThan(0);
+    } finally {
+      stream.close();
+    }
+  });
   it("shuts down when no client ever connects", async () => {
     let onIdle = () => {};
     const idle = new Promise<void>((resolve) => {

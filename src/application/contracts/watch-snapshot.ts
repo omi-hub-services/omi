@@ -6,7 +6,7 @@ import type { Hold, SkillCheck, WorkflowDiagram } from "../../domain/workflows/w
 export interface TaskCard {
   readonly runId: string;
   readonly issueNumber: number;
-  /** From the GitHub board; null when the board could not be read. */
+  /** From the last successful GitHub board read; null before any successful read. */
   readonly planKey: string | null;
   readonly title: string | null;
   /** The template the run pinned; null when the catalog no longer has it. */
@@ -35,7 +35,7 @@ export interface TaskCard {
 export interface WatchSnapshot {
   readonly schemaVersion: number;
   readonly generatedAt: string;
-  /** Whether titles and blockers came from the GitHub board. */
+  /** Latest board refresh outcome; an unavailable refresh may retain last-good task data. */
   readonly board: "ok" | "unavailable" | "not-configured";
   readonly tasks: readonly TaskCard[];
 }

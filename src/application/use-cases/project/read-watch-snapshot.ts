@@ -17,7 +17,7 @@ import type { TaskCard, WatchSnapshot } from "../../contracts/watch-snapshot.js"
 export interface WatchDeps {
   readonly runs: RunOverviewReader;
   readonly workflows: Pick<WorkflowCatalog, "byHash">;
-  /** Optional: without it, or when it fails, the cards still come from the runtime state alone. */
+  /** Optional: failed reads keep the last good board data; runtime cards remain available. */
   readonly board?: GithubTaskList | undefined;
   readonly now: () => number;
 }
@@ -119,36 +119,47 @@ function cardOf(
 /**
  * The cards of every run that is not closed, from the runtime's own state: the run's pinned
  * workflow template, its step and attempt rows and the rework controller. GitHub is asked only for
- * titles and blockers, and a failing board read leaves those out instead of hiding the cards.
- * No GitHub comment is read.
+ * titles and blockers at most once per minute; failed refreshes retain the last good data.
+ * Each watch owns its cache. Runtime state is read on every poll; no GitHub comment is read.
  */
-export async function readWatchSnapshot(deps: WatchDeps): Promise<WatchSnapshot> {
+export function createWatchSnapshotReader(deps: WatchDeps): () => Promise<WatchSnapshot> {
   let tasks: readonly BoardTask[] = [];
   let board: WatchSnapshot["board"] = "not-configured";
-  if (deps.board !== undefined) {
+  let nextBoardReadAt = -Infinity;
+  let refresh: Promise<void> | undefined;
+  const refreshBoard = async (reader: GithubTaskList) => {
     try {
-      tasks = await deps.board.listTasks();
+      tasks = await reader.listTasks();
       board = "ok";
     } catch {
       board = "unavailable";
+    } finally {
+      nextBoardReadAt = deps.now() + 60_000;
     }
-  }
-  const cards = deps.runs
-    .listActive()
-    .map((run) =>
-      cardOf(
-        run,
-        deps.workflows.byHash(run.templateHash)?.workflow,
-        tasks.find((task) => task.number === run.issueNumber),
-      ),
-    )
-    .sort(
-      (a, b) => Number(b.who !== null) - Number(a.who !== null) || a.issueNumber - b.issueNumber,
-    );
-  return {
-    schemaVersion: CONTRACT_SCHEMA_VERSION,
-    generatedAt: new Date(deps.now()).toISOString(),
-    board,
-    tasks: cards,
+  };
+  return async () => {
+    if (deps.board !== undefined && deps.now() >= nextBoardReadAt) {
+      refresh ??= refreshBoard(deps.board);
+      await refresh;
+      refresh = undefined;
+    }
+    const cards = deps.runs
+      .listActive()
+      .map((run) =>
+        cardOf(
+          run,
+          deps.workflows.byHash(run.templateHash)?.workflow,
+          tasks.find((task) => task.number === run.issueNumber),
+        ),
+      )
+      .sort(
+        (a, b) => Number(b.who !== null) - Number(a.who !== null) || a.issueNumber - b.issueNumber,
+      );
+    return {
+      schemaVersion: CONTRACT_SCHEMA_VERSION,
+      generatedAt: new Date(deps.now()).toISOString(),
+      board,
+      tasks: cards,
+    };
   };
 }
