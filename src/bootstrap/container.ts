@@ -450,14 +450,20 @@ export async function createProjectRunCommandUseCases(
     now,
   );
   const planner = createDispatchPlanner({
-    quota:
-      options.quotaReader ??
-      createProfileQuotaReader({
-        "claude-code": createClaudeQuotaReader({
-          probe: { executable: "claude", parentEnv: process.env },
+    // Real readers exist only when the project opted in with a `quota` block (ADR-0033); without
+    // it nothing here can reach the usage endpoint, `codex app-server` or a probe.
+    ...(config.project.quota === undefined
+      ? {}
+      : {
+          quota:
+            options.quotaReader ??
+            createProfileQuotaReader({
+              "claude-code": createClaudeQuotaReader({
+                probe: { executable: "claude", parentEnv: process.env },
+              }),
+              codex: createCodexQuotaReader({ executable: "codex", parentEnv: process.env }),
+            }),
         }),
-        codex: createCodexQuotaReader({ executable: "codex", parentEnv: process.env }),
-      }),
     config: config.project,
     models: config.models,
     plans,
