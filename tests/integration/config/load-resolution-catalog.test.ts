@@ -45,6 +45,21 @@ describe("shipped role and rule templates", () => {
     }
   });
 
+  it("ships the script-first rule to the developer, reviewer and qa roles (OMI-077)", () => {
+    expect(catalog.rules.map((r) => r.id)).toContain("script-first");
+    for (const role of ["developer", "reviewer", "qa"]) {
+      expect(resolveRoleContext(catalog, { role }).rules.map((r) => r.id)).toContain(
+        "script-first",
+      );
+    }
+    // Judgement-only roles are not given an operations rule they cannot act on.
+    for (const role of ["analyst", "designer"]) {
+      expect(resolveRoleContext(catalog, { role }).rules.map((r) => r.id)).not.toContain(
+        "script-first",
+      );
+    }
+  });
+
   it("does not hand every role the whole library", () => {
     const designer = resolveRoleContext(catalog, { role: "designer" });
     expect(designer.skills.length).toBeLessThan(catalog.skills.length);

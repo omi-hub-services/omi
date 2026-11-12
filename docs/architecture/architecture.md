@@ -40,6 +40,12 @@ Luồng dữ liệu: Coordinator gửi một quyết định có cấu trúc; ru
 
 Không dùng comment GitHub làm database runtime. Không dùng transcript Claude Code làm nguồn duy nhất để resume.
 
+### Nguyên tắc framework: script trước, LLM sau (OMI-077)
+
+Việc tất định (đọc trạng thái GitHub/Project, git/`gh` cơ học, parse log và report, chuyển trạng thái, kiểm tra gate, dựng lệnh launch hay comment theo định dạng cố định) do script, CLI hoặc runtime làm, không do LLM suy luận. LLM chỉ dùng cho việc cần phán đoán: chọn việc, viết prompt hay spec, review, quyết định khi một bước thất bại hoặc bị từ chối. Script từ chối một bước là gate, không phải vật cản. Bước nào phải làm tay lặp lại thì đưa vào script.
+
+Nguyên tắc áp dụng cho mọi project dùng omi-squad, không chỉ repository này: nó được ship là rule `.omi-squad/rules/script-first.md` (không bắt buộc), gắn vào role developer, reviewer và qa, và runtime nhắc nó trong prompt worker. Với repository này nguyên tắc nằm ở `AGENTS.md` §9. Danh sách rà soát `src/` theo nguyên tắc này: `docs/engineering/script-first-audit.md`.
+
 ## 3. Cấu trúc repository phát triển framework
 
 Repository này chứa mã nguồn **omi-squad**, khác với project sẽ cài framework. Mọi file mới phải thuộc một vùng dưới đây.
