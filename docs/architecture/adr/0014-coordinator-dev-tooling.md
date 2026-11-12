@@ -216,7 +216,7 @@ This extends the existing worker reader and runner; it adds no dependency or pro
 
 `node tools/coordinator/watch-web.ts [--port 4317] [--open]` serves the same workers and quota
 as the terminal watch on a small localhost page (`/omi-watch` opens it). `--open` starts an Edge
-`--app` window of 440×460 (default browser as fallback); if `GET /health` on the port already
+`--app` window of 560×760, see OMI-074 (default browser as fallback); if `GET /health` on the port already
 answers `omi-watch`, it only opens another window and exits. The server uses `node:http`, binds
 `127.0.0.1` only and rejects any `Host` or `Origin` other than `127.0.0.1:<port>` or
 `localhost:<port>` (DNS rebinding). `GET /events` is SSE, one snapshot per data change (workers
@@ -227,6 +227,79 @@ page sends after the user confirms in the UI; nothing probes automatically. The 
 seconds after the last SSE client disconnects, or after start if none ever connects. Polling,
 colour rules and text cleaning are shared with `watch.ts` in `watch-core.ts`; the terminal watch
 stays as the fallback. No dependency is added.
+
+## Tasks view and lifecycle diagram (OMI-074)
+
+The web watch replaces its Workers section with **Tasks**: one card per open Issue whose Project
+Status is `In Progress` or `In Review` (Epics and draft items excluded), In Progress first, then
+by Priority and Issue number. The terminal watch prints one line per task above its Workers
+section: `OMI-NNN step role tool/profile rework:N`. No collector was added: the Project items,
+open PRs and their comments come from `readProject` (`github-reads.ts`, read every 60 seconds,
+`TASKS_INTERVAL_MS`), the worker from `readWorkers` (every 5 seconds), both through the injected
+runner. Checks are summarised over the checks the PR reports (no required-check read), so
+`pass` means every reported check passed.
+
+**Card.** Plan Key, Issue, title, Workflow and Priority (Project fields), PR number, short head
+SHA and checks, the current step and who does it, the lifecycle diagram, the worker (tool,
+profile, model, effort, elapsed time, turns, last action; `-` when none runs for the task), the
+skills and the rules. A missing value is `-` and an underivable step is `unknown`, both with the
+reason on the card.
+
+**Step** (`deriveStep`, pure, `watch-tasks.ts`), in this order:
+
+| Step        | Observed state                                                                                 | Role                |
+| ----------- | ---------------------------------------------------------------------------------------------- | ------------------- |
+| `Done`      | Status `Done`                                                                                  | `-`                 |
+| `Work`      | a worker process runs for the Plan Key and the Coordinator has posted no FAIL                  | Project Role field  |
+| `Rework`    | the worker runs after a FAIL, or the newest Coordinator VERDICT on the head is FAIL            | Project Role field  |
+| `Architect` | the newest VERDICT on the head is FAIL and an `**ARCHITECT:**` comment came after that FAIL    | `Architect`         |
+| `Merge`     | the Coordinator posted PASS on the current head                                                | `Coordinator`       |
+| `Review`    | In Review, PR open, no VERDICT on the current head (a stale one does not count)                | `Reviewer`          |
+| `Verify/PR` | In Progress, no worker, and a PR without a VERDICT on the head, or the task was dispatched     | `Coordinator`       |
+| `Start`     | In Progress, no worker, no PR and no `omi-NNN-prompt.md` yet (never dispatched)                | `Coordinator`       |
+| `unknown`   | anything else, e.g. workers unreadable, Status not In Progress/In Review, In Review with no PR | `-`                 |
+
+A running worker or the VERDICT on the head can decide a step even when the other source is
+unreadable; otherwise unreadable workers give `unknown`. `Start` is told apart from `Verify/PR`
+by the worker prompt file because a branch cannot be observed without git; the prompt exists as
+soon as the Coordinator dispatches.
+
+**Rework and Architect.** Rework count = comments by `COORDINATOR_LOGIN` whose line starts with
+`**VERDICT:** FAIL`; any other account is ignored, as `status.ts` does. The Coordinator records
+that it called the Architect with a PR comment of its own account:
+
+```
+**ARCHITECT:** <reason>
+```
+
+(the reason is required; a marker alone does not count). This is the `2 + Architect + 2` cycle of
+design-patterns.md made visible: with two FAILs and no marker the Architect node gets a warning
+outline. The `omi-next` skill posts the marker (updated by the Coordinator, not by this task).
+
+**Skills and rules** are read from the worker's real prompt `~/omi-runs/omi-NNN-prompt.md` (one
+WSL call per read; only the lines that match, never the prompt body): skills from the
+`## Skill: <name>` headings that OMI-073 inlines, rules from the `AGENTS.md`, `CLAUDE.md` and
+`docs/**/*.md` paths the prompt mentions, plus the worker restrictions (no push, PR or merge;
+`gh` read-only). No prompt means `-` with the reason.
+
+**Diagram.** An inline SVG per card, built by the page with `createElementNS`, `setAttribute` and
+`textContent` (no `innerHTML`, nothing loaded from outside, CSP unchanged). Main row
+`Start → Work → Verify/PR → Review → Merge → Done`; below Review the `Rework` node with a
+down/up arrow pair (Review ⇄ Rework) and a badge `×N`; a dashed edge leads on to `Architect`.
+Node states come from the pure `diagramNodes`: past nodes are green (done), the current node is
+blue with a thick outline, later nodes are plain. `Architect` is green with a blue outline when
+called, has a dashed amber outline when two FAILs have no marker, and is dim otherwise. Every
+node carries its text label, so colour is never the only signal, and the SVG has an `aria-label`
+with the current step. Colours are the existing CSS variables (light and dark). The SVG scales
+to the card width (`viewBox`), so there is no horizontal scroll.
+
+The Edge app window is now **560×760** (was 440×460) to give the three-card case room
+(`WINDOW_SIZE` in `watch-web.ts`).
+
+Snapshot `workers` was replaced by `tasks` (`state: loading | unavailable | ok`). The Host/Origin
+checks, the 127.0.0.1 bind, the `X-Omi-Watch` probe guard and the idle exit are unchanged. Workers
+that belong to no In Progress/In Review task are no longer listed on the page (the terminal watch
+still lists all of them).
 
 ## Carrying a review PASS over a clean sync (OMI-069)
 

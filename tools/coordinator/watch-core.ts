@@ -8,7 +8,11 @@ import {
 } from "./coordinator-settings.ts";
 import type { Runner } from "./process-runner.ts";
 import { localTime, readQuota, type QuotaReport } from "./quota.ts";
+import type { TasksRead } from "./watch-tasks.ts";
 import { readWorkers, type WorkerLogSummary, type Workers } from "./wsl-workers.ts";
+
+/** GitHub (Project items, PRs, comments) is read this often; workers every 5 s (OMI-074). */
+export const TASKS_INTERVAL_MS = 60_000;
 
 /** A quota reading older than this is shown dim. */
 export const STALE_AFTER_SECONDS = 1800;
@@ -53,6 +57,11 @@ export interface WatchPollerOptions {
   readonly settings: QuotaSettings;
   readonly workerIntervalMs: number;
   readonly quotaIntervalMs?: number;
+  /** Opt-in GitHub/prompt read for the Tasks view (OMI-074); runs on the injected runner. */
+  readonly tasks?: {
+    readonly intervalMs: number;
+    readonly read: (run: Runner) => Promise<TasksRead>;
+  };
   /** Called after every refresh and when a probe starts; never after `stop`. */
   readonly onChange: () => void;
   readonly onError?: (error: unknown) => void;
@@ -60,6 +69,8 @@ export interface WatchPollerOptions {
 
 export interface WatchPoller {
   readonly workers: Workers | null;
+  /** null until the first Tasks read (always null when the poller has no `tasks` option). */
+  readonly tasks: TasksRead | null;
   readonly quota: QuotaReport | null;
   readonly probing: boolean;
   readonly probeQueued: boolean;
@@ -81,8 +92,10 @@ export function createWatchPoller(options: WatchPollerOptions): WatchPoller {
   let started = false;
   let workers: Workers | null = null;
   let quota: QuotaReport | null = null;
+  let tasks: TasksRead | null = null;
   let probing = false;
   let workerBusy = false;
+  let tasksBusy = false;
   let quotaBusy = false;
   let probeQueued = false;
   let timers: NodeJS.Timeout[] = [];
@@ -100,6 +113,16 @@ export function createWatchPoller(options: WatchPollerOptions): WatchPoller {
       notify();
     } finally {
       workerBusy = false;
+    }
+  };
+  const refreshTasks = async () => {
+    if (tasksBusy || stopped || !options.tasks) return;
+    tasksBusy = true;
+    try {
+      tasks = await options.tasks.read(run);
+      notify();
+    } finally {
+      tasksBusy = false;
     }
   };
   const refreshQuota = async (probe = false): Promise<void> => {
@@ -127,6 +150,9 @@ export function createWatchPoller(options: WatchPollerOptions): WatchPoller {
     get workers() {
       return workers;
     },
+    get tasks() {
+      return tasks;
+    },
     get quota() {
       return quota;
     },
@@ -150,6 +176,14 @@ export function createWatchPoller(options: WatchPollerOptions): WatchPoller {
           Math.max(options.quotaIntervalMs ?? QUOTA_MIN_INTERVAL_MS, QUOTA_MIN_INTERVAL_MS),
         ),
       ];
+      if (options.tasks) {
+        timers.push(
+          setInterval(() => {
+            void refreshTasks().catch(reportError);
+          }, options.tasks.intervalMs),
+        );
+        void refreshTasks().catch(reportError);
+      }
       void refreshWorkers().catch(reportError);
       void refreshQuota().catch(reportError);
     },
