@@ -199,6 +199,21 @@ Issues, Epics, PRs and drafts are excluded from readiness warnings.
   `--json`), produced by the same `promotableBacklog` function. It does not change Priority,
   move a task back to Backlog, or repair Issues that fail the gate (those stay Attention lines).
 
+## Framework port of intake (OMI-079)
+
+The Issue-creation, readiness-gate and promote rules above now also exist in the product, as the
+first replacement of `tools/coordinator/` by the `omi` CLI (this ADR's Boundaries): domain
+`readiness-gate.ts`, `promotion-policy.ts`, `plan-key.ts`, `issue-spec-policy.ts`; use cases
+`create-issue-from-spec.ts`, `promote-task.ts`, `set-task-status.ts`; ports `github-intake.ts`,
+`github-task-board.ts`, `issue-spec-file.ts` with adapters in `infrastructure/github/` and
+`infrastructure/config/`; CLI `new-issue`, `promote`, `set-status` (handbook §9). The gate counts
+acceptance criteria with the existing `domain/tasks/acceptance-criteria.ts` parser. `dispatchStep`
+refuses `TASK_NOT_READY` before it creates a branch when the runtime wires the live board reader.
+`tools/coordinator/` is unchanged and still runs this repository; it is deleted, not kept in
+parallel, once `omi` runs it (not part of OMI-079). Differences from the script: a missing
+milestone sorts last explicitly (the script's `"~"` sorts first under `localeCompare`), the Plan Key
+prefix is a `--prefix` option, and a closed Issue is refused by `promote`.
+
 ## Terminal watch (OMI-064)
 
 Run `node tools/coordinator/watch.ts [--interval <seconds>]` in a terminal pane (default 5

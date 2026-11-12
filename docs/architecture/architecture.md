@@ -75,7 +75,7 @@ Root chỉ có file entry/config chuẩn: `package.json`, `package-lock.json`, `
 
 | Thư mục | File tiêu biểu | Trách nhiệm |
 |---|---|---|
-| `src/domain/tasks/` | `task.ts`, `task-status.ts`, `dependency-policy.ts` | Task, phạm vi và dependency |
+| `src/domain/tasks/` | `task.ts`, `task-status.ts`, `dependency-policy.ts`, `readiness-gate.ts`, `promotion-policy.ts`, `plan-key.ts` | Task, phạm vi và dependency; readiness gate và promote (OMI-079) |
 | `src/domain/workflows/` | `workflow.ts`, `step.ts`, `workflow-policy.ts` | Đồ thị workflow và gate |
 | `src/domain/runs/` | `workflow-run.ts`, `step-run.ts`, `retry-policy.ts` | State machine, 2 + Architect + 2 |
 | `src/domain/agents/` | `role.ts`, `capability.ts`, `selection-policy.ts` | Năng lực và eligibility |
@@ -91,7 +91,7 @@ Không tạo `common/`, `helpers/`, `utils/`, `manager.ts` chung chung. Hàm ch�
 | Đường dẫn | Nội dung |
 |---|---|
 | `src/application/use-cases/project/` | `initialize-project.ts`, `inspect-project.ts` |
-| `src/application/use-cases/tasks/` | `import-task.ts`, `select-ready-tasks.ts` |
+| `src/application/use-cases/tasks/` | `import-task.ts`, `select-ready-tasks.ts`, `create-issue-from-spec.ts`, `promote-task.ts`, `set-task-status.ts` |
 | `src/application/use-cases/runs/` | `start-run.ts`, `dispatch-step.ts`, `record-step-result.ts`, `pause-run.ts`, `resume-run.ts` |
 | `src/application/use-cases/profiles/` | `probe-profile.ts`, `select-executor.ts`, `failover-step.ts` |
 | `src/application/use-cases/approvals/` | `request-approval.ts`, `record-approval.ts` |

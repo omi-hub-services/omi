@@ -107,6 +107,13 @@ import { join } from "node:path";
 import { inspectRuntime } from "../application/use-cases/project/inspect-runtime.js";
 import type { RuntimeIdentity } from "../application/use-cases/project/inspect-runtime.js";
 import type { CliEnvironment } from "../interfaces/cli/commands/create-program.js";
+import type { TaskCommands } from "../interfaces/cli/commands/task-commands.js";
+import { createIssueFromSpec } from "../application/use-cases/tasks/create-issue-from-spec.js";
+import { promoteTask } from "../application/use-cases/tasks/promote-task.js";
+import { setTaskStatus } from "../application/use-cases/tasks/set-task-status.js";
+import { createIssueSpecFile } from "../infrastructure/config/issue-spec-file.js";
+import { createGithubIntake } from "../infrastructure/github/github-intake.js";
+import { createGithubTaskBoard } from "../infrastructure/github/github-task-board.js";
 import type { DispatchedUseCases } from "../interfaces/ipc/command-dispatcher.js";
 import { createCommandDispatcher } from "../interfaces/ipc/command-dispatcher.js";
 import { sendCommand } from "../interfaces/ipc/ipc-client.js";
@@ -163,10 +170,44 @@ export interface CliWiringOptions {
   readonly timeoutMs?: number;
 }
 
+/** Intake and promote commands: GitHub is the project's own repository and Project (project.yaml). */
+export function createTaskCommands(
+  transport: GithubTransport = createGhApiTransport(),
+): TaskCommands {
+  async function github(projectDir: string) {
+    const config = await createOnboardingProjectConfigStore(projectDir).read();
+    if (config === undefined) throw new Error("PROJECT_NOT_CONFIGURED");
+    const client = createGithubRestClient({
+      transport,
+      now: Date.now,
+      random: Math.random,
+      sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+    });
+    const deps = {
+      client,
+      projects: createGithubProjectReader(client),
+      repository: config.repository,
+      project: { owner: config.project.owner, number: config.project.number },
+    };
+    return { intake: createGithubIntake(deps), board: createGithubTaskBoard(deps) };
+  }
+  return {
+    newIssue: async (input) =>
+      createIssueFromSpec(
+        { spec: createIssueSpecFile(input.file), intake: (await github(input.projectDir)).intake },
+        { prefix: input.prefix, apply: input.apply },
+      ),
+    promote: async (input) => promoteTask({ board: (await github(input.projectDir)).board }, input),
+    setStatus: async (input) =>
+      setTaskStatus({ board: (await github(input.projectDir)).board }, input),
+  };
+}
+
 /** Wires the CLI to the real IPC client. Used by `cli.ts`; tests may pass their own environment. */
 export function createCliEnvironment(options: CliWiringOptions): CliEnvironment {
   return {
     sendCommand,
+    tasks: createTaskCommands(),
     installation: {
       initialize: async (input) =>
         initializeProject(
@@ -589,6 +630,13 @@ export async function createProjectRunCommandUseCases(
     leaseTtlMs: config.project.limits.step_timeout_seconds * 1000 + 60_000,
     now,
     nextId,
+    // The readiness gate reads the live Project before a task branch is created (OMI-079).
+    board: createGithubTaskBoard({
+      client,
+      projects: createGithubProjectReader(client),
+      repository: config.project.repository,
+      project: { owner: config.project.project.owner, number: config.project.project.number },
+    }),
     checkpoint: (event) => {
       const saved = writeCheckpoint(checkpointDeps, {
         ...snapshotRunContext(snapshotDeps, event.runId, event),
