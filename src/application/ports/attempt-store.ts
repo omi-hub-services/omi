@@ -58,6 +58,8 @@ export interface AttemptRecord {
 
 /** Runtime-owned attempt rows. Implemented over SQLite `agent_attempts` by infrastructure. */
 export interface AttemptStore {
+  /** Latest reservation/attempt for a workflow step; a pending reservation must not expose older evidence. */
+  latestForRunStep?(runId: string, stepId: string): AttemptRecord | undefined;
   /** Quality rounds exclude operational failovers; verdicts come from recorded runtime events. */
   qualityHistory?(stepRunId: string): {
     readonly round: number;

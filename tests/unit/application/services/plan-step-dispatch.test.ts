@@ -233,3 +233,19 @@ it("uses first review effort rather than the developer's high complexity effort"
     execution: { effort: "medium" },
   });
 });
+
+it("forwards preceding QA evidence steps for a separate high-complexity review", async () => {
+  const separate = workflowSchema.parse({
+    ...workflow,
+    quality_policy: "strict",
+    steps: [
+      { ...workflow.steps[0], id: "verify", role: "qa", required_checks: ["project-check"] },
+      { ...workflow.steps[0], id: "review", role: "reviewer", needs: ["verify"] },
+    ],
+  });
+  const r = setup([profile], () => Promise.resolve(task), [profile], { workflow: separate });
+  expect(await r.planner.plan({ ...request, stepId: "review" })).toMatchObject({
+    checkEvidenceSteps: ["verify"],
+    requiredChecks: [],
+  });
+});

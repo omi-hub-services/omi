@@ -180,3 +180,38 @@ it("counts quality failures separately from failovers and supplies the previous 
   );
   expect(store().qualityHistory?.("step-1")).toEqual({ round: 2, previousVerdict: verdict });
 });
+
+it("excludes actual executor start-failure payloads from quality history", async () => {
+  const r = rig();
+  r.executor.failStart = true;
+  expect(await dispatchStep(r.deps, dispatchInput())).toMatchObject({
+    reason: "EXECUTOR_START_FAILED",
+  });
+  const failure = r.unitOfWork.commits.find((change) => change.event.kind === "step.failed");
+  if (failure === undefined) throw new Error("missing start-failure event");
+  expect(JSON.parse(failure.event.payload)).toEqual({ attemptId: "id-1", reason: "SPAWN_FAILED" });
+  db.prepare(
+    "INSERT INTO events (event_id, kind, subject, run_id, correlation_id, payload, occurred_at) VALUES ('start-failed', 'step.failed', 'step-1', 'run-1', 'id-1', ?, ?)",
+  ).run(failure.event.payload, at);
+  expect(store().qualityHistory?.("step-1")).toEqual({ round: 1 });
+});
+
+it("reads preceding QA attempts by run and step without falling back past a reservation", () => {
+  reserve(record.id, 1);
+  store().create(record);
+  store().setStatus(record.id, "succeeded");
+  expect(store().latestForRunStep?.("run-1", "implement")).toMatchObject({
+    id: record.id,
+    status: "succeeded",
+  });
+  expect(store().latestForRunStep?.("other-run", "implement")).toBeUndefined();
+  reserve("pending-retry", 2);
+  expect(store().latestForRunStep?.("run-1", "implement")).toBeUndefined();
+  store().create({ ...record, id: "pending-retry", attemptNumber: 2 });
+  store().setStatus("pending-retry", "succeeded");
+  expect(store().latestForRunStep?.("run-1", "implement")).toMatchObject({ id: "pending-retry" });
+  db.prepare(
+    "INSERT INTO step_runs (id, run_id, step_key, iteration, status, created_at, updated_at) VALUES ('qa-iteration-2', 'run-1', 'implement', 2, 'ready', ?, ?)",
+  ).run(at, at);
+  expect(store().latestForRunStep?.("run-1", "implement")).toBeUndefined();
+});

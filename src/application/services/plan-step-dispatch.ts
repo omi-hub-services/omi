@@ -120,6 +120,14 @@ export function createDispatchPlanner(deps: {
       throw new Error("CHECK_UNCONFIGURED");
     }
     return {
+      checkEvidenceSteps:
+        qualityStepId(step) === "review"
+          ? step.needs.filter((id) =>
+              workflow?.steps.some(
+                (candidate) => candidate.id === id && qualityStepId(candidate) === "verify",
+              ),
+            )
+          : [],
       quality: {
         policy: workflow?.quality_policy ?? "strict",
         step: qualityStepId(step),

@@ -48,6 +48,7 @@ export function attemptArtifactRoot(attemptId: string): string {
 }
 
 const dispatchStepSchema = z.strictObject({
+  checkEvidenceSteps: z.array(slugSchema).default([]),
   packetSteps: workflowSchema.shape.steps.optional(),
   quality: stepQualitySchema.optional(),
   models: modelsConfigSchema,
@@ -431,9 +432,65 @@ export async function dispatchStep(
       reviewDelta = { previousVerdict, diff: delta.value };
     }
     const checkEvidence: CheckRunRecord[] = [];
+    const qaInputs: ArtifactReference[] = [];
+    if (command.checkEvidenceSteps.length > 0) {
+      try {
+        const current = deps.workspaces.inspect(created.value.path);
+        if (!current.ok) throw new Error("QA_CHECK_EVIDENCE_INVALID");
+        for (const sourceStep of command.checkEvidenceSteps) {
+          const qa = deps.attempts.latestForRunStep?.(step.runId, sourceStep);
+          if (
+            qa?.status !== "succeeded" ||
+            qa.runId !== step.runId ||
+            qa.stepId !== sourceStep ||
+            deps.steps.get(qa.stepRunId)?.status !== "succeeded" ||
+            qa.workspace.path !== created.value.path
+          )
+            throw new Error("QA_CHECK_EVIDENCE_INVALID");
+          const packet = contextPacketSchema.parse(
+            JSON.parse(new TextDecoder().decode(deps.artifacts.read(qa.contextPacket))) as unknown,
+          );
+          const checks = packet.checkEvidence ?? [];
+          if (
+            packet.runId !== step.runId ||
+            packet.stepId !== sourceStep ||
+            packet.attemptId !== qa.id ||
+            packet.businessBaselineHash !== command.context.businessBaselineHash ||
+            !qa.requiredChecks
+              .filter((id) => deps.checks?.has(id))
+              .every((id) => checks.some((check) => check.checkId === id))
+          )
+            throw new Error("QA_CHECK_EVIDENCE_INVALID");
+          for (const check of checks) {
+            if (
+              check.status !== "passed" ||
+              check.exitCode !== 0 ||
+              check.revision !== current.value.headSha ||
+              !check.evidence.path.startsWith(`${qa.artifactRoot}/`)
+            )
+              throw new Error("QA_CHECK_EVIDENCE_INVALID");
+            const bytes = deps.artifacts.read(check.evidence);
+            if (bytes.length === 0) throw new Error("QA_CHECK_EVIDENCE_INVALID");
+            qaInputs.push(check.evidence);
+            // Retain the original hash while meeting the existing attempt-local evidence gate.
+            const evidence = deps.artifacts.write({
+              id: `${attemptId}-qa-${qa.id}-${check.checkId}`,
+              path: `${artifactRoot}/checks/qa-${qa.id}-${check.checkId}.json`,
+              bytes: new Uint8Array(bytes),
+              classification: "check-evidence",
+              createdAt: iso(deps.now()),
+            });
+            checkEvidence.push({ ...check, evidence });
+          }
+        }
+      } catch {
+        release();
+        return { ok: false, reason: "CONTEXT_REJECTED", detail: "QA_CHECK_EVIDENCE_INVALID" };
+      }
+    }
     if (qualityWorker) {
       for (const checkId of command.requiredChecks) {
-        if (deps.checks?.has(checkId))
+        if (!checkEvidence.some((check) => check.checkId === checkId) && deps.checks?.has(checkId))
           checkEvidence.push(
             await deps.checks.run({
               attemptId,
@@ -479,7 +536,7 @@ export async function dispatchStep(
         },
         skills: reference(resolved.skills),
         rules: reference(resolved.rules),
-        inputs: reference(inputArtifacts),
+        inputs: reference([...inputArtifacts, ...qaInputs]),
       });
     } catch (error) {
       if (
@@ -520,7 +577,9 @@ export async function dispatchStep(
       rules: packet.rulesManifest,
       contextPacket,
       artifactRoot,
-      requiredChecks: command.requiredChecks,
+      requiredChecks: [
+        ...new Set([...command.requiredChecks, ...checkEvidence.map((check) => check.checkId)]),
+      ],
       workspace: {
         taskId: command.taskId,
         slug: command.slug,

@@ -9,7 +9,8 @@ import {
   dispatchStep,
   type DispatchStepResult,
 } from "../../../../../src/application/use-cases/runs/dispatch-step.ts";
-import { dispatchInput, h, rig } from "./run-fakes.ts";
+import { dispatchInput, h, rig, role, HEAD, BASE, skillEvidence } from "./run-fakes.ts";
+import { recordStepResult } from "../../../../../src/application/use-cases/runs/record-step-result.ts";
 
 function dispatched(result: DispatchStepResult) {
   if (!result.ok) throw new Error(`refused: ${result.reason}`);
@@ -560,3 +561,150 @@ it("refuses a high-complexity combined packet even without a changed-path reader
   });
   expect(r.executor.started).toHaveLength(0);
 });
+
+async function verifiedQaForSeparateReview() {
+  const r = rig();
+  r.steps.rows.set("step-1", { ...r.steps.must("step-1"), stepId: "verify" });
+  let checksRun = 0;
+  const checks = {
+    has: () => true,
+    run: (request: { artifactRoot: string }) => {
+      checksRun += 1;
+      const evidence = r.artifacts.publish(
+        `${request.artifactRoot}/checks/project-check.json`,
+        "QA script log: passed",
+      );
+      return Promise.resolve({
+        checkId: "project-check",
+        status: "passed" as const,
+        exitCode: 0,
+        command: ["npm", "run", "check"],
+        startedAt: "2026-11-11T00:00:00.000Z",
+        endedAt: "2026-11-11T00:00:01.000Z",
+        revision: "a".repeat(40),
+        evidence,
+      });
+    },
+  };
+  const catalog = {
+    ...r.deps.catalog,
+    roles: [
+      ...r.deps.catalog.roles,
+      ...["qa", "reviewer"].map((id) => ({ definition: { ...role, id }, sha256: h("1") })),
+    ],
+  };
+  const qa = dispatched(
+    await dispatchStep(
+      { ...r.deps, catalog, checks },
+      dispatchInput({
+        role: "qa",
+        quality: { policy: "strict", step: "verify", steps: ["verify"], round: 1 },
+        requiredChecks: ["project-check"],
+      }),
+    ),
+  );
+  const qaProof = skillEvidence(qa.attempt, (path, bytes) => r.artifacts.publish(path, bytes));
+  expect(
+    recordStepResult(
+      { ...r.deps, checks },
+      {
+        attemptId: qa.attempt.id,
+        execution: await r.executor.collectResult(qa.handle),
+        checkRuns: qa.contextPacket.checkEvidence,
+        result: {
+          schemaVersion: 1,
+          runId: "run-1",
+          stepId: "verify",
+          attemptId: qa.attempt.id,
+          status: "succeeded",
+          summary: "QA accepted script evidence",
+          artifacts: qaProof.artifacts,
+          revision: { headSha: HEAD, baseSha: BASE },
+          checks: [],
+          skillsApplied: qaProof.skillsApplied,
+          findings: [],
+        },
+      },
+    ),
+  ).toMatchObject({ ok: true, stepStatus: "succeeded" });
+  r.steps.rows.set("review-step", {
+    id: "review-step",
+    runId: "run-1",
+    stepId: "review",
+    status: "ready",
+    version: 1,
+  });
+  const attempts = Object.assign(r.attempts, {
+    latestForRunStep: (runId: string, stepId: string) =>
+      runId === "run-1" && stepId === "verify" ? r.attempts.get(qa.attempt.id) : undefined,
+  });
+  const input = dispatchInput({
+    stepRunId: "review-step",
+    role: "reviewer",
+    quality: { policy: "strict", step: "review", steps: ["review"], round: 1 },
+    requiredChecks: [],
+    checkEvidenceSteps: ["verify"],
+  });
+  return {
+    r,
+    qa,
+    deps: { ...r.deps, catalog, attempts, checks },
+    input,
+    checksRun: () => checksRun,
+  };
+}
+
+it("forwards preceding QA hashed check evidence to a separate runtime reviewer without rerunning", async () => {
+  const s = await verifiedQaForSeparateReview();
+  const review = dispatched(await dispatchStep(s.deps, s.input));
+  expect(review.contextPacket.checkEvidence).toHaveLength(1);
+  expect(review.contextPacket.checkEvidence?.[0]?.evidence.sha256).toBe(
+    s.qa.contextPacket.checkEvidence?.[0]?.evidence.sha256,
+  );
+  expect(review.attempt.requiredChecks).toContain("project-check");
+  expect(s.r.executor.started.at(-1)?.prompt).toContain("QA script log: passed");
+  expect(review.contextPacket.role).toBe("reviewer");
+  const proof = skillEvidence(review.attempt, (path, bytes) => s.r.artifacts.publish(path, bytes));
+  expect(
+    recordStepResult(s.deps, {
+      attemptId: review.attempt.id,
+      execution: await s.r.executor.collectResult(review.handle),
+      checkRuns: review.contextPacket.checkEvidence,
+      result: {
+        schemaVersion: 1,
+        runId: "run-1",
+        stepId: "review",
+        attemptId: review.attempt.id,
+        status: "succeeded",
+        summary: "Independent review",
+        artifacts: proof.artifacts,
+        revision: { headSha: HEAD, baseSha: BASE },
+        checks: [],
+        skillsApplied: proof.skillsApplied,
+        findings: [],
+      },
+    }),
+  ).toMatchObject({ ok: true, stepStatus: "succeeded" });
+  expect(s.checksRun()).toBe(1);
+});
+
+it.each(["stale-sha", "corrupt-log", "failed-qa"])(
+  "rejects %s evidence before starting a separate reviewer",
+  async (mode) => {
+    const s = await verifiedQaForSeparateReview();
+    if (mode === "stale-sha") s.r.workspaces.headSha = "b".repeat(40);
+    if (mode === "failed-qa") s.r.attempts.setStatus(s.qa.attempt.id, "failed");
+    if (mode === "corrupt-log") {
+      const path = s.qa.contextPacket.checkEvidence?.[0]?.evidence.path;
+      if (path === undefined) throw new Error("missing check log");
+      s.r.artifacts.files.set(path, new TextEncoder().encode("tampered log"));
+    }
+    expect(await dispatchStep(s.deps, s.input)).toMatchObject({
+      ok: false,
+      reason: "CONTEXT_REJECTED",
+      detail: "QA_CHECK_EVIDENCE_INVALID",
+    });
+    expect(s.r.executor.started).toHaveLength(1);
+    expect(s.checksRun()).toBe(1);
+  },
+);
