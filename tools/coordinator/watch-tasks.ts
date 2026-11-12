@@ -21,6 +21,17 @@ import {
 import type { AuthoredComment } from "./json-shape.ts";
 import { wslCommand, type Runner } from "./process-runner.ts";
 import { clean, workerTone, type Tone } from "./watch-core.ts";
+import {
+  compareLoaded,
+  loadTemplate,
+  mapTemplatePos,
+  orderNodes,
+  templateNodes,
+  workStepId,
+  type SkillCheck,
+  type TemplatePos,
+  type TemplateRead,
+} from "./watch-workflow.ts";
 import type { WorkerProcess, Workers } from "./wsl-workers.ts";
 
 export type Step =
@@ -266,6 +277,12 @@ export interface DiagramNode {
   readonly state: NodeState;
   /** Second line inside the node, e.g. `rework 1/2` on Work. */
   readonly sub?: string;
+  /** Template diagram only: a workflow step or gate, and the step's role. */
+  readonly kind?: "step" | "gate";
+  readonly role?: string;
+  /** What the template gives the step; the page shows it when the node is selected. */
+  readonly skills?: readonly string[];
+  readonly rules?: readonly string[];
 }
 
 const MAIN = ["Start", "Work", "Verify/PR", "Review", "Merge", "Done"] as const;
@@ -296,6 +313,11 @@ export function diagramNodes(
       ? { id, label: id, state, sub: `rework ${kOfMax(cycle.k)}` }
       : { id, label: id, state };
   });
+  return [...main, ...extraNodes(step, cycle)];
+}
+
+/** Architect and Ask PO, shared by the lifecycle and the template diagram. */
+export function extraNodes(step: Step, cycle: CyclePhase): DiagramNode[] {
   const extra: DiagramNode[] = [];
   if (cycle.phase !== "before-architect") {
     const state: NodeState =
@@ -303,7 +325,7 @@ export function diagramNodes(
     extra.push({ id: "Architect", label: "Architect", state });
   }
   if (cycle.phase === "escalate-po") extra.push({ id: "Ask PO", label: "Ask PO", state: "warn" });
-  return [...main, ...extra];
+  return extra;
 }
 
 // ── prompt parsing ───────────────────────────────────────────────────────────
@@ -396,6 +418,8 @@ export type TasksRead =
       readonly items: readonly ProjectItem[];
       readonly pulls: readonly OpenPull[];
       readonly prompts: Readonly<Record<string, PromptInfo | null>>;
+      /** Workflow templates by the Issue's Workflow field; absent when none was read. */
+      readonly templates?: Readonly<Record<string, TemplateRead>> | undefined;
     }
   | { readonly available: false; readonly reason: string };
 
@@ -407,12 +431,21 @@ const isActive = (i: ProjectItem) =>
   ACTIVE.includes(i.status ?? "");
 
 /** Never throws: a failed GitHub read becomes `available: false` with its first line. */
-export async function readTasks(run: Runner, target: WslTarget): Promise<TasksRead> {
+export async function readTasks(
+  run: Runner,
+  target: WslTarget,
+  load: (id: string) => Promise<TemplateRead> = loadTemplate,
+): Promise<TasksRead> {
   try {
     const project = await readProject(run);
-    const keys = project.items.filter(isActive).flatMap((i) => (i.planKey ? [i.planKey] : []));
+    const active = project.items.filter(isActive);
+    const keys = active.flatMap((i) => (i.planKey ? [i.planKey] : []));
     const prompts = (await readPrompts(run, target, keys)) ?? {};
-    return { available: true, items: project.items, pulls: project.pulls, prompts };
+    const names = [...new Set(active.flatMap((i) => (i.workflow ? [i.workflow] : [])))];
+    const templates = Object.fromEntries(
+      await Promise.all(names.map(async (n) => [n, await load(n)] as const)),
+    );
+    return { available: true, items: project.items, pulls: project.pulls, prompts, templates };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return { available: false, reason: reason.split("\n")[0] ?? reason };
@@ -464,6 +497,25 @@ export interface TaskView {
   readonly skillsNote: string | null;
   readonly rules: readonly string[];
   readonly nodes: readonly DiagramNode[];
+  /** Where the diagram came from and the ends of the rework edge (node ids). */
+  readonly flow: {
+    readonly source: "template" | "lifecycle";
+    /** Why the lifecycle fallback is drawn; null for a template. */
+    readonly reason: string | null;
+    readonly from: string;
+    readonly to: string;
+  };
+  /** Template step id the task stands at, `Done`, or `unknown`; null in the lifecycle fallback. */
+  readonly templateStep: string | null;
+  /** The current template step's role, skills and rules; null when it is not a step. */
+  readonly templateInfo: {
+    readonly id: string;
+    readonly role: string;
+    readonly skills: readonly string[];
+    readonly rules: readonly string[];
+  } | null;
+  /** Loaded skills against the current template step; null when not comparable. */
+  readonly skillCheck: SkillCheck | null;
   readonly ariaLabel: string;
 }
 
@@ -554,6 +606,47 @@ function taskView(
   const label = planKey ?? `#${String(item.number)}`;
   // Rework is not a step of its own: it is Work again, with the rework label
   const shown = derived.step === "Rework" ? "Work" : derived.step;
+  const tpl = item.workflow ? read.templates?.[item.workflow] : undefined;
+  const workflow = tpl?.ok ? tpl.workflow : null;
+  const stands = derived.at ?? derived.step;
+  let pos: TemplatePos = { kind: "unknown", reason: "no template" };
+  let nodes: DiagramNode[];
+  let flow: TaskView["flow"];
+  if (workflow) {
+    pos =
+      stands === "unknown"
+        ? { kind: "unknown", reason: derived.reason ?? "step unknown" }
+        : mapTemplatePos(workflow, stands);
+    const reviewer = mapTemplatePos(workflow, "Review");
+    nodes = templateNodes(
+      workflow,
+      pos,
+      cycle,
+      hold?.sub,
+      stands === "Rework" ? `rework ${kOfMax(cycle.k)}` : undefined,
+      stands === "Architect",
+    );
+    flow = {
+      source: "template",
+      reason: null,
+      from: reviewer.kind === "node" ? reviewer.id : (orderNodes(workflow).at(-1)?.id ?? ""),
+      to: workStepId(workflow),
+    };
+  } else {
+    nodes = diagramNodes(derived.step, cycle, hold);
+    const why =
+      tpl && !tpl.ok ? tpl.reason : item.workflow ? "template not read" : "Workflow field is empty";
+    flow = { source: "lifecycle", reason: clean(why), from: "Review", to: "Work" };
+  }
+  const current = workflow && pos.kind === "node" ? pos.id : null;
+  const info = workflow ? orderNodes(workflow).find((n) => n.id === current) : undefined;
+  const templateInfo =
+    info?.kind === "step" && info.role !== undefined
+      ? { id: info.id, role: info.role, skills: info.skills, rules: info.rules }
+      : null;
+  // The template role applies to the steps a worker or the Coordinator runs, not to holds
+  const roleStep = ["Work", "Rework", "Verify/PR", "Review"].includes(derived.step);
+  const stepReason = derived.reason ?? (pos.kind === "unknown" && workflow ? pos.reason : null);
   const skillsNote =
     prompt === undefined
       ? "no prompt read (WSL unavailable or task has no Plan Key)"
@@ -577,9 +670,9 @@ function taskView(
       draft: pull.isDraft,
     },
     step: shown,
-    stepReason: derived.reason === null ? null : clean(derived.reason),
+    stepReason: stepReason === null ? null : clean(stepReason),
     blockers: item.blockers.map((b) => ({ number: b.number, state: clean(b.state) })),
-    role: roleFor(derived.step, item.role),
+    role: roleStep && templateInfo ? clean(templateInfo.role) : roleFor(derived.step, item.role),
     worker: process && {
       pid: process.pid,
       tool: process.tool,
@@ -598,9 +691,23 @@ function taskView(
     skills: prompt?.skills ?? [],
     skillsNote,
     rules: prompt ? [...prompt.rules, ...WORKER_RESTRICTIONS] : [],
-    nodes: diagramNodes(derived.step, cycle, hold),
+    nodes,
+    flow,
+    templateStep: !workflow
+      ? null
+      : pos.kind === "node"
+        ? pos.id
+        : pos.kind === "done"
+          ? "Done"
+          : pos.kind === "before"
+            ? "Start"
+            : "unknown",
+    templateInfo,
+    skillCheck:
+      workflow && current && prompt ? compareLoaded(workflow, current, prompt.skills) : null,
     ariaLabel:
       `${orDash(label)}: Workflow: ${orDash(item.workflow)}, current step ${shown}` +
+      (workflow && current ? ` (${current})` : "") +
       (derived.step === "Rework" ? `, rework ${kOfMax(cycle.k)}` : "") +
       (derived.reason === null ? "" : ` (${clean(derived.reason)})`),
   };
