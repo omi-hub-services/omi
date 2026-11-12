@@ -29,6 +29,7 @@ function omi(cwd: string, args: string[], env: Record<string, string> = {}): Pro
         join(repo, "tools/register-ts-imports.ts"),
         join(repo, "src/bootstrap/cli.ts"),
         ...args,
+        ...(args.includes("status") ? ["--runtime"] : []),
       ],
       { cwd, env: { PATH: process.env["PATH"] ?? "", ...env }, encoding: "utf8" },
       (error, stdout, stderr) => {
