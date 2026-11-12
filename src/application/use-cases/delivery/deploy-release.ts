@@ -35,7 +35,12 @@ export type DeployReleaseDeps = DeliverGithubOperationDeps & {
 };
 export type DeployReleaseResult =
   | { readonly status: "refused"; readonly reason: string }
-  | { readonly status: "pending"; readonly operationKey: string; readonly state: string }
+  | {
+      readonly status: "pending";
+      readonly operationKey: string;
+      readonly state: string;
+      readonly notification?: string;
+    }
   | { readonly status: "verified"; readonly evidence: DeployEvidence }
   | {
       readonly status: "failed";
@@ -105,7 +110,16 @@ export async function deployRelease(
       revisionHash: runbook.data.revisionHash,
     };
   }
-  const operationKey = `deploy:${deps.hasher.sha256(JSON.stringify([request.repository, request.environment, request.artifactDigest]))}`;
+  const operationKey = `deploy:${deps.hasher.sha256(
+    JSON.stringify([
+      request.repository,
+      request.environment,
+      request.artifactDigest,
+      request.approvalId,
+      request.rollback?.runbookRef,
+      request.rollback?.approvalId,
+    ]),
+  )}`;
   const operation: DeployOperation = {
     type: "deploy.dispatch",
     repo: request.repository,
@@ -160,10 +174,28 @@ export async function deployRelease(
         ? { status: "verified", evidence }
         : fail("DEPLOY_VERIFICATION_FAILED", evidence);
     }
+    const intent = deps.outbox.get(operationKey);
+    if (intent !== undefined && deps.now() - Date.parse(intent.createdAt) >= 10 * 60_000)
+      await notifyWaiting();
     if (poll + 1 < deps.maxPolls) await deps.sleep(deps.pollIntervalMs);
   }
-  // A polling budget expiring does not cancel or roll back a running deploy.
-  return { status: "pending", operationKey, state: "VERIFY_WAITING" };
+  // No scheduler resumes deploy verification, so exhaustion must bring the PO back to it.
+  const notification = await notifyWaiting();
+  return {
+    status: "pending",
+    operationKey,
+    state: "VERIFY_WAITING",
+    notification: notification.kind,
+  };
+
+  async function notifyWaiting() {
+    return deliverGithubOperation(deps, `${operationKey}:waiting:po`, {
+      type: "issue.comment",
+      repo: request.repository,
+      issueNumber: pipeline.issueNumber,
+      body: `${pipeline.allowedActors.map((actor) => `@${actor}`).join(" ")} Deploy verification waiting. Environment: ${request.environment}; artifact: ${request.artifactDigest}; run: ${String(runId)}. Waiting threshold or polling budget reached; please inspect the run and resume verification with the same request. No automatic rollback.`,
+    });
+  }
 
   async function fail(reason: string, evidence?: DeployEvidence): Promise<DeployReleaseResult> {
     const notification = await deliverGithubOperation(deps, `${operationKey}:po`, {

@@ -64,7 +64,7 @@ function setup() {
     },
     hasher: { sha256: (text: string) => createHash("sha256").update(text).digest("hex") },
     pipeline,
-    approvals: { get: () => approval },
+    approvals: { get: (id: string) => (approval?.id === id ? approval : undefined) },
     deployments: createGithubDeployReader(client),
     github: createGithubRemote(client),
     sleep: () => Promise.resolve(),
@@ -89,6 +89,26 @@ function setup() {
     },
     getApproval: () => approval,
   };
+}
+
+function approveDigest(h: ReturnType<typeof setup>, artifactDigest: string, approvalId: string) {
+  const previous = h.getApproval();
+  if (previous?.decision === undefined) throw new Error("fixture approval missing");
+  const subject = { kind: "deploy" as const, artifactDigest, environment: "sandbox" };
+  h.setApproval({
+    ...previous,
+    id: approvalId,
+    subject,
+    subjectHash: approvalSubjectHash(subject),
+    decision: { ...previous.decision, id: approvalId, subject },
+  });
+  return { ...request, artifactDigest, approvalId };
+}
+
+function expectVerified(result: Awaited<ReturnType<typeof deployRelease>>) {
+  expect(result.status).toBe("verified");
+  if (result.status !== "verified") throw new Error("verification missing");
+  return result.evidence;
 }
 
 describe("deploy release through fake GitHub", () => {
@@ -234,7 +254,11 @@ describe("deploy release through fake GitHub", () => {
       status: "pending",
       state: "VERIFY_WAITING",
     });
-    expect(h.fake.comments).toHaveLength(0);
+    expect(h.fake.comments).toHaveLength(1);
+    expect(h.fake.comments[0]?.body).toContain("@po");
+    expect(h.fake.comments[0]?.body).toContain("verification waiting");
+    await deployRelease(h.deps, request);
+    expect(h.fake.comments).toHaveLength(1);
     const run = h.fake.deployRuns[0];
     if (run === undefined) throw new Error("run missing");
     run["status"] = "completed";
@@ -247,72 +271,206 @@ describe("deploy release through fake GitHub", () => {
     h.fake.deployNativeApproved = false;
     expect(await deployRelease(h.deps, request)).toMatchObject({ status: "failed" });
   });
-  it.each([false, true])(
-    "binds rollback to its own approved intent (prior forward deploy: %s)",
-    async (priorForwardDeploy) => {
-      const h = setup();
-      const deployApproval = h.getApproval();
-      const subject = {
-        kind: "business" as const,
-        baselineHash: "c".repeat(64),
-        scopeIds: ["rollback-sandbox-r1"],
-      };
-      const approval: ApprovalRequest = {
+  it("requires a current approved runbook revision for rollback", async () => {
+    const h = setup();
+    const deployApproval = h.getApproval();
+    const subject = {
+      kind: "business" as const,
+      baselineHash: "c".repeat(64),
+      scopeIds: ["rollback-sandbox-r1"],
+    };
+    const approval: ApprovalRequest = {
+      id: "runbook-1",
+      subjectId: "runbook-1",
+      subjectHash: approvalSubjectHash(subject),
+      subject,
+      status: "approved",
+      version: 1,
+      requestedAt: h.clock.ms,
+      decision: {
         id: "runbook-1",
-        subjectId: "runbook-1",
-        subjectHash: approvalSubjectHash(subject),
         subject,
-        status: "approved",
-        version: 1,
-        requestedAt: h.clock.ms,
-        decision: {
-          id: "runbook-1",
-          subject,
-          decision: "approved",
-          actor: "po",
-          source: "github-actor",
-          decidedAt: h.clock.ms,
+        decision: "approved",
+        actor: "po",
+        source: "github-actor",
+        decidedAt: h.clock.ms,
+      },
+    };
+    const deps = {
+      ...h.deps,
+      approvals: { get: (id: string) => (id === "runbook-1" ? approval : deployApproval) },
+      runbooks: {
+        read: () => ({
+          reference: "rollback-sandbox-r1",
+          revisionHash: "c".repeat(64),
+          repository: request.repository,
+          environment: "sandbox",
+          previousDigest: digest,
+        }),
+      },
+    };
+    const rollback = { runbookRef: "rollback-sandbox-r1", approvalId: "runbook-1" };
+    expect(await deployRelease(deps, { ...request, rollback })).toMatchObject({
+      status: "verified",
+    });
+    expect(
+      await deployRelease(
+        {
+          ...deps,
+          runbooks: { read: () => ({ ...deps.runbooks.read(), revisionHash: "d".repeat(64) }) },
         },
-      };
-      const deps = {
-        ...h.deps,
-        approvals: { get: (id: string) => (id === "runbook-1" ? approval : deployApproval) },
-        runbooks: {
-          read: () => ({
-            reference: "rollback-sandbox-r1",
-            revisionHash: "c".repeat(64),
-            repository: request.repository,
-            environment: "sandbox",
-            previousDigest: digest,
-          }),
-        },
-      };
-      const rollback = { runbookRef: "rollback-sandbox-r1", approvalId: "runbook-1" };
-      if (priorForwardDeploy) {
-        await deployRelease(h.deps, request);
-        expect(await deployRelease(deps, { ...request, rollback })).toMatchObject({
-          status: "refused",
-          reason: "OPERATION_KEY_CONFLICT",
-        });
-        expect(
-          h.fake.requests.filter((r) => r.method === "POST" && r.path.includes("/dispatches")),
-        ).toHaveLength(1);
-        return;
-      }
-      expect(await deployRelease(deps, { ...request, rollback })).toMatchObject({
-        status: "verified",
-      });
-      expect(
-        await deployRelease(
-          {
-            ...deps,
-            runbooks: { read: () => ({ ...deps.runbooks.read(), revisionHash: "d".repeat(64) }) },
-          },
-          { ...request, rollback },
-        ),
-      ).toMatchObject({ status: "refused", reason: "RUNBOOK_NOT_APPROVED" });
-    },
-  );
+        { ...request, rollback },
+      ),
+    ).toMatchObject({ status: "refused", reason: "RUNBOOK_NOT_APPROVED" });
+  });
+
+  it("deploys A, B, then rolls back to A with a new approved run and deployment", async () => {
+    const h = setup();
+    const first = expectVerified(await deployRelease(h.deps, request));
+    const b = approveDigest(h, `sha256:${"b".repeat(64)}`, "deploy-b");
+    const second = expectVerified(await deployRelease(h.deps, b));
+    const a = approveDigest(h, digest, "rollback-a");
+    const deployApproval = h.getApproval();
+    const subject = {
+      kind: "business" as const,
+      baselineHash: "c".repeat(64),
+      scopeIds: ["rollback-sandbox-r1"],
+    };
+    const runbookApproval: ApprovalRequest = {
+      id: "runbook-1",
+      subjectId: "runbook-1",
+      subjectHash: approvalSubjectHash(subject),
+      subject,
+      status: "approved",
+      version: 1,
+      requestedAt: h.clock.ms,
+      decision: {
+        id: "runbook-1",
+        subject,
+        decision: "approved",
+        actor: "po",
+        source: "github-actor",
+        decidedAt: h.clock.ms,
+      },
+    };
+    const deps = {
+      ...h.deps,
+      approvals: {
+        get: (id: string) =>
+          id === "runbook-1" ? runbookApproval : id === a.approvalId ? deployApproval : undefined,
+      },
+      runbooks: {
+        read: () => ({
+          reference: "rollback-sandbox-r1",
+          revisionHash: "c".repeat(64),
+          repository: request.repository,
+          environment: "sandbox",
+          previousDigest: digest,
+        }),
+      },
+    };
+    const rollback = {
+      ...a,
+      rollback: { runbookRef: "rollback-sandbox-r1", approvalId: "runbook-1" },
+    };
+    const restored = expectVerified(await deployRelease(deps, rollback));
+    expect(restored.artifactDigest).toBe(digest);
+    expect(restored.runId).not.toBe(first.runId);
+    expect(restored.runId).not.toBe(second.runId);
+    expect(restored.deploymentId).not.toBe(first.deploymentId);
+    expect(expectVerified(await deployRelease(deps, rollback)).runId).toBe(restored.runId);
+    expect(
+      h.fake.requests.filter((r) => r.method === "POST" && r.path.includes("/dispatches")),
+    ).toHaveLength(3);
+  });
+  it("redeploys A after B with a fresh approval instead of reusing old evidence", async () => {
+    const h = setup();
+    const first = expectVerified(await deployRelease(h.deps, request));
+    const b = approveDigest(h, `sha256:${"b".repeat(64)}`, "deploy-b");
+    expectVerified(await deployRelease(h.deps, b));
+    const a = approveDigest(h, digest, "deploy-a-again");
+    const redeployed = expectVerified(await deployRelease(h.deps, a));
+    expect(redeployed.runId).not.toBe(first.runId);
+    expect(redeployed.deploymentId).not.toBe(first.deploymentId);
+    expect(expectVerified(await deployRelease(h.deps, a)).runId).toBe(redeployed.runId);
+    expect(
+      h.fake.requests.filter((r) => r.method === "POST" && r.path.includes("/dispatches")),
+    ).toHaveLength(3);
+  });
+  it("retries a failed digest only as a new approved intent", async () => {
+    const h = setup();
+    h.fake.deployConclusion = "failure";
+    expect(await deployRelease(h.deps, request)).toMatchObject({ status: "failed" });
+    expect(await deployRelease(h.deps, request)).toMatchObject({ status: "failed" });
+    h.fake.deployConclusion = "success";
+    const retry = approveDigest(h, digest, "deploy-retry");
+    await expect(deployRelease(h.deps, retry)).resolves.toMatchObject({ status: "verified" });
+    expect(
+      h.fake.requests.filter((r) => r.method === "POST" && r.path.includes("/dispatches")),
+    ).toHaveLength(2);
+  });
+  it("notifies the PO at ten minutes even before the polling budget expires", async () => {
+    const h = setup();
+    h.fake.deployStatus = "waiting";
+    h.fake.deployConclusion = null;
+    let sleeps = 0;
+    const deps = {
+      ...h.deps,
+      maxPolls: 4,
+      pollIntervalMs: 360000,
+      sleep: (ms: number) => {
+        h.clock.ms += ms;
+        sleeps += 1;
+        if (sleeps === 3) {
+          expect(h.fake.comments).toHaveLength(1);
+          const run = h.fake.deployRuns[0];
+          if (run === undefined) throw new Error("run missing");
+          run["status"] = "completed";
+          run["conclusion"] = "success";
+          h.fake.deployConclusion = "success";
+        }
+        return Promise.resolve();
+      },
+    };
+    expectVerified(await deployRelease(deps, request));
+    expect(h.fake.comments).toHaveLength(1);
+    expect(h.fake.comments[0]?.body).toContain("verification waiting");
+  });
+  it("reconciles a lost waiting-notice response after a restart without duplicate reports", async () => {
+    const h = setup();
+    h.fake.deployStatus = "waiting";
+    h.fake.deployConclusion = null;
+    h.fake.inject({
+      method: "POST",
+      pathIncludes: "/comments",
+      effect: { type: "apply_then_fail", failure: "timeout" },
+    });
+    expect(await deployRelease(h.deps, request)).toMatchObject({
+      status: "pending",
+      notification: "pending",
+    });
+    expect(await deployRelease({ ...h.deps }, request)).toMatchObject({
+      status: "pending",
+      notification: "succeeded",
+    });
+    expect(h.fake.comments).toHaveLength(1);
+    expect(
+      h.fake.requests.filter((r) => r.method === "POST" && r.path.includes("/dispatches")),
+    ).toHaveLength(1);
+  });
+  it("reports a later terminal failure separately from the waiting notice", async () => {
+    const h = setup();
+    h.fake.deployStatus = "waiting";
+    h.fake.deployConclusion = null;
+    await deployRelease(h.deps, request);
+    const run = h.fake.deployRuns[0];
+    if (run === undefined) throw new Error("run missing");
+    run["status"] = "completed";
+    run["conclusion"] = "timed_out";
+    h.fake.deployConclusion = "timed_out";
+    expect(await deployRelease(h.deps, request)).toMatchObject({ status: "failed" });
+    expect(h.fake.comments).toHaveLength(2);
+  });
   it("rejects mutable artifact labels at the boundary", async () => {
     const h = setup();
     await expect(deployRelease(h.deps, { ...request, artifactDigest: "latest" })).rejects.toThrow();
