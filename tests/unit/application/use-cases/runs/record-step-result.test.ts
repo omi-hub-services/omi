@@ -342,3 +342,143 @@ describe("recordStepResult", () => {
     expect(stepStatus(r)).toBe("running");
   });
 });
+
+describe("checks the runtime ran itself", () => {
+  const RUNTIME_CHECKS = { has: (id: string) => id === "unit-tests" };
+
+  function checkRun(r: Rig, attemptId: string, overrides: Record<string, unknown> = {}) {
+    const evidence = r.artifacts.publish(
+      `attempts/${attemptId}/checks/unit-tests.json`,
+      '{"log":"ran by the runtime"}',
+    );
+    return {
+      checkId: "unit-tests",
+      status: "passed",
+      exitCode: 0,
+      command: ["npm", "test"],
+      startedAt: "2026-11-11T00:00:00.000Z",
+      endedAt: "2026-11-11T00:00:05.000Z",
+      revision: HEAD,
+      evidence,
+      ...overrides,
+    };
+  }
+
+  /** The worker lists no checks at all: only the runtime's run can satisfy the gate. */
+  async function recordWith(
+    mutate: (r: Rig, attemptId: string) => Record<string, unknown>[] | undefined,
+    result: (r: Rig, attemptId: string) => unknown = (r, id) => goodResult(r, id, { checks: [] }),
+  ) {
+    const r = rig();
+    const { attempt, handle } = await started(r);
+    const execution = await r.executor.collectResult(handle);
+    const checkRuns = mutate(r, attempt.id);
+    const outcome = recordStepResult(
+      { ...r.deps, checks: RUNTIME_CHECKS },
+      {
+        attemptId: attempt.id,
+        execution,
+        result: result(r, attempt.id),
+        ...(checkRuns === undefined ? {} : { checkRuns }),
+      },
+    );
+    return { r, outcome, attempt };
+  }
+
+  it("accepts the step when the runtime's check passed on the revision the worker reported", async () => {
+    const { r, outcome, attempt } = await recordWith((r, id) => [checkRun(r, id)]);
+    expect(outcome).toEqual({ ok: true, stepStatus: "succeeded", attemptStatus: "succeeded" });
+    const event = r.unitOfWork.commits.at(-1)?.event;
+    expect(JSON.parse(event?.payload ?? "{}")).toMatchObject({
+      attemptId: attempt.id,
+      checkRuns: [{ checkId: "unit-tests", status: "passed", revision: HEAD }],
+    });
+  });
+
+  it("does not accept a worker's claim that it ran the check", async () => {
+    const { r, outcome } = await recordWith(
+      () => undefined,
+      (r, id) => goodResult(r, id), // reports "unit-tests" with real evidence
+    );
+    expect(outcome).toMatchObject({ ok: true, stepStatus: "failed", failure: "CHECK_NOT_RUN" });
+    expect(stepStatus(r)).toBe("failed");
+  });
+
+  it("fails the step when the runtime's check failed, whatever the worker claims", async () => {
+    const { r, outcome, attempt } = await recordWith(
+      (r, id) => [checkRun(r, id, { status: "failed", exitCode: 1 })],
+      (r, id) => goodResult(r, id),
+    );
+    expect(outcome).toMatchObject({ ok: true, stepStatus: "failed", failure: "CHECK_FAILED" });
+    expect(r.attempts.get(attempt.id)?.status).toBe("failed");
+  });
+
+  it("fails the step when the runtime's check timed out", async () => {
+    const { outcome } = await recordWith((r, id) => [
+      checkRun(r, id, { status: "timed-out", exitCode: null }),
+    ]);
+    expect(outcome).toMatchObject({ ok: true, stepStatus: "failed", failure: "CHECK_TIMED_OUT" });
+  });
+
+  it("fails the step when the check ran on another revision than the worker reported", async () => {
+    const { outcome } = await recordWith((r, id) => [
+      checkRun(r, id, { revision: "d".repeat(40) }),
+    ]);
+    expect(outcome).toMatchObject({
+      ok: true,
+      stepStatus: "failed",
+      failure: "CHECK_REVISION_MISMATCH",
+    });
+  });
+
+  it("fails the step when a required runtime check has no run among several", async () => {
+    const r = rig();
+    const input = dispatchInput();
+    const { attempt, handle } = await started(r, {
+      ...input,
+      requiredChecks: ["unit-tests", "lint"],
+    });
+    const execution = await r.executor.collectResult(handle);
+    const outcome = recordStepResult(
+      { ...r.deps, checks: { has: () => true } },
+      {
+        attemptId: attempt.id,
+        execution,
+        result: goodResult(r, attempt.id, { checks: [] }),
+        checkRuns: [checkRun(r, attempt.id)],
+      },
+    );
+    expect(outcome).toMatchObject({ stepStatus: "failed", failure: "CHECK_NOT_RUN" });
+  });
+
+  it("rejects check evidence that is not the bytes the runtime stored", async () => {
+    const { outcome } = await recordWith((r, id) => [
+      checkRun(r, id, {
+        evidence: { path: `attempts/${id}/checks/unit-tests.json`, sha256: "0".repeat(64) },
+      }),
+    ]);
+    // The stored file exists with another hash: the reference is not trusted.
+    expect(outcome).toMatchObject({ stepStatus: "failed", failure: "ARTIFACT_HASH_MISMATCH" });
+  });
+
+  it("rejects check evidence outside the attempt's artifact root", async () => {
+    const { outcome } = await recordWith((r) => [
+      {
+        ...checkRun(r, "x"),
+        evidence: r.artifacts.publish("attempts/someone-else/checks/unit-tests.json", "{}"),
+      },
+    ]);
+    expect(outcome).toMatchObject({ stepStatus: "failed", failure: "PATH_OUTSIDE_ROOT" });
+  });
+
+  it("still takes an id the runtime does not run from the worker's evidence", async () => {
+    const r = rig();
+    const { attempt, handle } = await started(r); // requires "unit-tests"; runtime runs nothing
+    const execution = await r.executor.collectResult(handle);
+    const outcome = recordStepResult(
+      { ...r.deps, checks: { has: () => false } },
+      { attemptId: attempt.id, execution, result: goodResult(r, attempt.id) },
+    );
+    expect(outcome).toMatchObject({ stepStatus: "succeeded" });
+  });
+});

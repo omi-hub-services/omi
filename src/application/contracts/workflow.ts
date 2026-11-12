@@ -11,6 +11,11 @@ const workflowStepSchema = z.strictObject({
   /** Id of a profile declared in models.yaml; it carries the minimum effort. */
   capability_profile: slugSchema,
   output_contract: slugSchema,
+  /**
+   * Check ids the runtime runs itself after the step's worker finishes; each needs a command under
+   * `checks` in project.yaml. The worker's own report never satisfies them (OMI-085).
+   */
+  required_checks: z.array(slugSchema).default([]),
 });
 
 const workflowGateSchema = z

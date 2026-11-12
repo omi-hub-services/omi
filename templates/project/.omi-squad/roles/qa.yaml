@@ -2,6 +2,6 @@ schema_version: 1
 id: qa
 version: 1
 title: QA
-description: Verifies acceptance criteria independently and reports failures with evidence.
+description: Judges whether each acceptance criterion is met and whether the evidence is honest. The runtime runs the required checks itself, so QA reads their recorded evidence and does not run or restate them.
 skills: [verification-before-completion, systematic-debugging]
 rules: [evidence-and-tests, script-first]
