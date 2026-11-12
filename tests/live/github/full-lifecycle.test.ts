@@ -33,6 +33,7 @@ import { createSqliteOutboxStore } from "../../../src/infrastructure/persistence
 import { createSqlitePrMappingStore } from "../../../src/infrastructure/persistence/sqlite/sqlite-pr-mapping-store.ts";
 import { createSqliteStateUnitOfWork } from "../../../src/infrastructure/persistence/sqlite/sqlite-state-unit-of-work.ts";
 import { openStateDatabase } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
+import { assertLifecycleApiCall } from "./lifecycle-api-guard.ts";
 import { assertSandboxTarget } from "./probe-model.ts";
 
 const config = process.env["OMI_LIVE_LIFECYCLE_CONFIG"];
@@ -99,21 +100,7 @@ it.skipIf(config === undefined)(
     const rest = createGithubRestClient({
       transport: {
         send(call) {
-          const read =
-            call.method === "GET" &&
-            (call.path === "user" || call.path === base || call.path.startsWith(`${base}/`));
-          const write =
-            call.path.startsWith(`${base}/`) &&
-            ((call.method === "POST" && /\/(issues|pulls|git\/refs|releases)$/.test(call.path)) ||
-              (call.method === "POST" &&
-                /^issues\/\d+\/comments$/.test(call.path.slice(base.length + 1))) ||
-              (call.method === "POST" &&
-                call.path ===
-                  `${base}/actions/workflows/${encodeURIComponent(c.pipeline.workflow)}/dispatches`) ||
-              (call.method === "PATCH" && /^issues\/\d+$/.test(call.path.slice(base.length + 1))) ||
-              (call.method === "PUT" &&
-                /^pulls\/\d+\/merge$/.test(call.path.slice(base.length + 1))));
-          if (!read && !write) throw new Error("sandbox guard refused API call");
+          assertLifecycleApiCall(call, c.repository, c.pipeline.workflow);
           return transport.send(call);
         },
       },

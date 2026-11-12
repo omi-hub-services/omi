@@ -25,9 +25,8 @@ import { createGithubRestClient } from "../../src/infrastructure/github/github-r
 import type { PrMapping } from "../../src/application/contracts/pr-delivery.ts";
 import { BASE, HEAD, ISSUE_BODY, REPO, request, sandbox } from "./merge-task-pr-sandbox.ts";
 
-it("retains evidence from the idea through two separate approval gates to deployment", async () => {
+it("runs the lifecycle from business approval through separate release and deploy gates", async () => {
   const s = sandbox();
-  const evidence: string[] = [];
   const client = createGithubRestClient({
     transport: s.github,
     now: s.deps.now,
@@ -115,7 +114,6 @@ it("retains evidence from the idea through two separate approval gates to deploy
       "omi-bot",
     ),
   ).toEqual({ allowed: true });
-  evidence.push("idea");
   const issue = await deliverGithubOperation(s.deps, "lifecycle:idea:task", {
     type: "issue.create",
     repo: REPO,
@@ -126,7 +124,6 @@ it("retains evidence from the idea through two separate approval gates to deploy
   const taskIssue = s.github.issues[0];
   if (taskIssue === undefined) throw new Error("Issue not created");
   expect(taskIssue.body).toContain(ISSUE_BODY);
-  evidence.push("issue");
   const workers = rig();
   const catalog = workers.deps.catalog;
   const developer = catalog.roles[0];
@@ -233,7 +230,6 @@ it("retains evidence from the idea through two separate approval gates to deploy
   expect(s.task.completions).toHaveLength(1);
   const develop = s.github.branches.get(`${REPO}:develop`);
   expect(develop).toBe(taskPull.mergeCommitSha);
-  evidence.push("develop");
   const releases = createGithubReleaseReader(client);
   const release = await prepareRelease(
     { ...s.deps, releases, pulls: createGithubPrDelivery(client) },
@@ -321,7 +317,6 @@ it("retains evidence from the idea through two separate approval gates to deploy
   expect(published).toMatchObject({ status: "published", commitSha: releasePull.mergeCommitSha });
   expect(s.github.tags.get(`${REPO}:lifecycle-r1`)).toBe(releasePull.mergeCommitSha);
   expect(s.github.releases[0]?.body).toContain(`Issue #${String(taskIssue.number)}`);
-  evidence.push("release");
   s.github.tags.set(`${REPO}:pipeline-1`, BASE);
   const deployDeps = {
     ...s.deps,
@@ -383,6 +378,4 @@ it("retains evidence from the idea through two separate approval gates to deploy
       (r) => r.method !== "GET" && /reviews|approvals|pending_deployments/.test(r.path),
     ),
   ).toBe(false);
-  evidence.push("deploy");
-  expect(evidence).toEqual(["idea", "issue", "develop", "release", "deploy"]);
 });
