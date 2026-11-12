@@ -1,0 +1,33 @@
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, expect, it } from "vitest";
+import { createCliWorkerCommitter } from "../../../src/infrastructure/git/cli-worker-committer.ts";
+
+const temporary: string[] = [];
+afterEach(() => {
+  for (const path of temporary.splice(0)) rmSync(path, { recursive: true, force: true });
+});
+it("stages literal paths and preserves normal commit hooks", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "omi-worker-commit-"));
+  temporary.push(cwd);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+  git("init", "--initial-branch=task/omi-082-fixture");
+  git("config", "user.name", "Fixture");
+  git("config", "user.email", "fixture@example.invalid");
+  mkdirSync(join(cwd, "src"));
+  writeFileSync(join(cwd, "src/[literal].ts"), "fixture\n");
+  writeFileSync(join(cwd, "src/l.ts"), "outside\n");
+  const adapter = createCliWorkerCommitter();
+  adapter.stage(cwd, ["src/[literal].ts"]);
+  expect(adapter.stagedPaths(cwd)).toEqual(["src/[literal].ts"]);
+  const hook = join(cwd, ".git/hooks/pre-commit");
+  writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+  chmodSync(hook, 0o700);
+  expect(() => adapter.commit(cwd, "Refused by hook")).toThrow("GIT_FAILED");
+  writeFileSync(hook, "#!/bin/sh\nexit 0\n");
+  expect(adapter.commit(cwd, "Implement fixture")).toBe(git("rev-parse", "HEAD"));
+  expect(git("show", "HEAD:src/[literal].ts")).toBe("fixture");
+  expect(readFileSync(join(cwd, "src/l.ts"), "utf8")).toBe("outside\n");
+});

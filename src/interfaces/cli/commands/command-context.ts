@@ -12,6 +12,7 @@ export function formatOf(options: GlobalOptions): OutputFormat {
 
 /** Everything a command handler may touch. Handlers hold no state of their own. */
 export interface CliContext {
+  readonly readText?: ((path: string) => Promise<string | undefined>) | undefined;
   readonly sendCommand: SendCommand;
   readonly defaultSocketPath: string;
   readonly timeoutMs: number;
@@ -28,7 +29,10 @@ export interface CliOutput {
 
 /** Collects what one CLI run printed and the exit code it ends with (the first non-zero wins). */
 export function createCliContext(
-  parts: Pick<CliContext, "sendCommand" | "defaultSocketPath" | "timeoutMs" | "readStdin">,
+  parts: Pick<
+    CliContext,
+    "sendCommand" | "defaultSocketPath" | "timeoutMs" | "readStdin" | "readText"
+  >,
   output: CliOutput,
 ): { context: CliContext; exitCode: () => ExitCode } {
   let exitCode: ExitCode = EXIT_CODES.OK;

@@ -199,6 +199,24 @@ Issues, Epics, PRs and drafts are excluded from readiness warnings.
   `--json`), produced by the same `promotableBacklog` function. It does not change Priority,
   move a task back to Backlog, or repair Issues that fail the gate (those stay Attention lines).
 
+## Framework worker commands and Coordinator skills (OMI-082)
+
+The product reuses `dispatch --run --step`, `dispatchRunStep`, policy selection and `buildPrompt`;
+it accepts only optional Coordinator notes and generates the worker instructions/report scaffold
+from the Issue context. `worker-report --attempt` reads the durable completion event; it does not
+duplicate native transcript parsing. `commit-worker --attempt --message-file` uses the existing
+workspace writer lease and the pinned task scope rather than this repository's fixed directories,
+and runs normal commit hooks. It cannot make the old report valid at a new revision.
+`review-comment --pr --file` reuses the AC parser and outbox, requires the full live PR head and
+publishes presentation only; recorded independent runtime review remains the merge authority.
+There is no product import from these development scripts and no hard-coded repository login.
+
+Bridge templates `templates/bridges/claude-code/omi-{status,next,watch}/SKILL.md` install as
+`.claude/skills/omi-{status,next,watch}/SKILL.md` via the existing three-way installer. They call
+only the installed CLI/Windows bound launcher. They stay outside worker skill provenance and
+role catalogs, preserving ADR-0019 native discovery isolation. The original development scripts
+and `.claude/` skills remain read-only sources until a separate migration switches this repo.
+
 ## Framework port of intake (OMI-079)
 
 The Issue-creation, readiness-gate and promote rules above now also exist in the product, as the

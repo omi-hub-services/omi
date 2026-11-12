@@ -267,6 +267,11 @@
         "stepId": {
           "type": "string",
           "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
         }
       },
       "required": [
@@ -274,6 +279,88 @@
         "command",
         "runId",
         "stepId"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "command": {
+          "type": "string",
+          "const": "worker-report"
+        },
+        "attemptId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "attemptId"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "command": {
+          "type": "string",
+          "const": "commit-worker"
+        },
+        "attemptId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "attemptId",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "command": {
+          "type": "string",
+          "const": "review-comment"
+        },
+        "prNumber": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60000
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "command",
+        "prNumber",
+        "body"
       ],
       "additionalProperties": false
     },
