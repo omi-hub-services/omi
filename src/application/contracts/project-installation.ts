@@ -11,7 +11,7 @@ export type InstallationInput = z.infer<typeof installationInputSchema>;
 const templatePathSchema = z
   .string()
   .regex(
-    /^(?:(workflows|roles|rules|skills|config|provenance)\/[A-Za-z0-9._/-]+|bridge\/(?:CLAUDE\.md|AGENTS\.md|skill\/(?:SKILL\.md|bridge\.ts|bridge\.config\.json)))$/,
+    /^(?:(workflows|roles|rules|skills|config|provenance)\/[A-Za-z0-9._/-]+|bridge\/(?:CLAUDE\.md|AGENTS\.md|skill\/(?:SKILL\.md|bridge\.ts|bridge\.config\.json)|skills\/omi-(?:status|next|watch)\/SKILL\.md))$/,
   )
   .refine((path) => path.split("/").every((part) => part !== ".." && part !== "." && part !== ""));
 export const templateFilesSchema = z.record(templatePathSchema, z.string().max(1024 * 1024));

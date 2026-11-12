@@ -71,12 +71,73 @@ export function registerRunCommands(program: Command, context: CliContext): void
     .description("Dispatch one ready step of a run to a worker")
     .requiredOption("--run <id>", "run id")
     .requiredOption("--step <id>", "workflow step id")
-    .action(async (options: { run: string; step: string }, command: Command) => {
+    .option("--notes <file>", "Coordinator notes only; the runtime builds the worker prompt")
+    .action(async (options: { run: string; step: string; notes?: string }, command: Command) => {
+      const notes =
+        options.notes === undefined ? undefined : await context.readText?.(options.notes);
+      if (options.notes !== undefined && notes === undefined) {
+        context.emit(
+          presentUsageError(
+            "notes file must be bounded UTF-8 text",
+            formatOf(command.optsWithGlobals<GlobalOptions>()),
+          ),
+        );
+        return;
+      }
       await runCommand(
         context,
         command,
-        { command: "dispatch", runId: options.run, stepId: options.step },
+        {
+          command: "dispatch",
+          runId: options.run,
+          stepId: options.step,
+          ...(notes === undefined ? {} : { notes }),
+        },
         60_000,
+      );
+    });
+
+  program
+    .command("worker-report")
+    .description("Read the recorded worker result and its verification outcome")
+    .requiredOption("--attempt <id>", "attempt id returned by dispatch")
+    .action(async (options: { attempt: string }, command: Command) => {
+      await runCommand(context, command, { command: "worker-report", attemptId: options.attempt });
+    });
+
+  program
+    .command("commit-worker")
+    .description("Commit a stopped worker's allowed output paths without executing hooks")
+    .requiredOption("--attempt <id>", "stopped attempt id")
+    .requiredOption("--message-file <file>", "commit message file")
+    .action(async (options: { attempt: string; messageFile: string }, command: Command) => {
+      await runCommand(
+        context,
+        command,
+        {
+          command: "commit-worker",
+          attemptId: options.attempt,
+          message: await context.readText?.(options.messageFile),
+        },
+        SLOW_COMMAND_MS,
+      );
+    });
+
+  program
+    .command("review-comment")
+    .description("Validate a review verdict against the live PR head and Issue AC before posting")
+    .requiredOption("--pr <number>", "pull request number")
+    .requiredOption("--file <file>", "independent review body")
+    .action(async (options: { pr: string; file: string }, command: Command) => {
+      await runCommand(
+        context,
+        command,
+        {
+          command: "review-comment",
+          prNumber: wholeNumber(options.pr),
+          body: await context.readText?.(options.file),
+        },
+        SLOW_COMMAND_MS,
       );
     });
 

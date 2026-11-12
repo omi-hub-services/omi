@@ -200,6 +200,57 @@ Issues, Epics, PRs and drafts are excluded from readiness warnings.
   `--json`), produced by the same `promotableBacklog` function. It does not change Priority,
   move a task back to Backlog, or repair Issues that fail the gate (those stay Attention lines).
 
+## Framework worker commands and Coordinator skills (OMI-082)
+
+The product reuses `dispatch --run --step`, `dispatchRunStep`, policy selection and `buildPrompt`;
+it accepts only optional Coordinator notes and generates the worker instructions/report scaffold
+from the Issue context. `worker-report --attempt` reads the durable completion event; it does not
+duplicate native transcript parsing. `commit-worker --attempt --message-file` uses the existing
+workspace writer lease and the pinned task scope rather than this repository's fixed directories,
+and creates commits without executing repository hooks. It cannot make the old report valid at a new revision.
+`review-comment --pr --file` reuses the AC parser and outbox, requires the full live PR head and
+publishes presentation only; recorded independent runtime review remains the merge authority.
+There is no product import from these development scripts and no hard-coded repository login.
+
+Bridge templates `templates/bridges/claude-code/omi-{status,next,watch}/SKILL.md` install as
+`.claude/skills/omi-{status,next,watch}/SKILL.md` via the existing three-way installer. They call
+only the installed CLI/Windows bound launcher. They stay outside worker skill provenance and
+role catalogs, preserving ADR-0019 native discovery isolation. The original development scripts
+and `.claude/` skills remain read-only sources until a separate migration switches this repo.
+
+### Worker commit hook isolation — OMI-082 / Issue #165
+
+`commit-worker` creates a local commit without executing repository hooks. Its Git commands retain
+the adapter’s command-local `core.hooksPath=/dev/null`; repository configuration is not modified.
+There is no hook-enabling option.
+
+Hook files matching HEAD are insufficient evidence of trusted execution. An unchanged hook can
+delegate to worker-modified scripts, dependencies or configuration. Executing that chain with
+Coordinator/runtime authority crosses the worker execution boundary. Subsequent scope validation
+cannot undo arbitrary side effects.
+
+This supersedes the OMI-082 requirement to run normal commit hooks. It is a scoped change to commit
+execution, not permission to bypass required validation. AGENTS.md §7 remains mandatory: required
+checks, independent review, native approvals and merge protections remain enforced on the resulting
+revision. Mandatory validation available only through hooks must be configured as required checks.
+A successful commit supplies no passing check or review evidence and cannot validate an earlier report.
+
+After every commit attempt, command failure must not be interpreted as proof that HEAD remained
+unchanged. Errors during commit or post-commit validation trigger HEAD reconciliation under the
+writer lease. A newly created local commit is undone to the captured pre-commit SHA while preserving
+worktree files. Uncertain or failed recovery is reported explicitly.
+
+Trusted-snapshot hook execution is rejected because securing delegated execution requires a separate
+execution environment. Refusing every repository with hooks is rejected because hooks can remain
+configured without executing at this boundary. Worker prohibitions on `--no-verify` and all approval
+requirements remain unchanged.
+
+Coordinator scope extension for this fix: every Git invocation in the legacy `flow-workers.ts`
+`commitWorkerCommand` is hook- and fsmonitor-isolated through command-local
+`-c core.hooksPath=/dev/null -c core.fsmonitor=false`, including staging, reads and commit.
+Repository configuration is not modified. The product's reconciliation/recovery logic is not
+copied there. Retiring or delegating the legacy path remains #186.
+
 ## Framework port of intake (OMI-079)
 
 The Issue-creation, readiness-gate and promote rules above now also exist in the product, as the

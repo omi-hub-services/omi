@@ -170,6 +170,7 @@ Tài liệu đặt ở `docs/product/product-overview.md`, `docs/architecture/ar
 | `.omi-squad/local/ipc/`, `locks/`, `tmp/` | Không | Socket, lock, dữ liệu tạm |
 | `.omi-squad/local/backups/` | Không | Backup state có kiểm soát |
 | `.claude/skills/omi-squad/SKILL.md` | Có | Bridge để Coordinator gọi CLI |
+| `.claude/skills/omi-{status,next,watch}/SKILL.md` | Có | Coordinator-only CLI procedures, installed through the same managed bridge; excluded from worker catalogs |
 | `CLAUDE.md`, `AGENTS.md` | Có | Đoạn hướng dẫn được merge có marker, giữ nội dung cũ |
 
 Worktree đặt ngoài checkout chính: một thư mục sibling dành riêng cho project, đường dẫn resolve từ cấu hình local. Không tạo worktree lồng trong thư mục nguồn đang được agent quét. Không copy state/credentials sang mỗi worktree. Worker nhận đường dẫn context/artifact cần thiết; runtime là chủ sở hữu state.

@@ -18,6 +18,7 @@ import { registerLogCommands, type LogCommands } from "./log-commands.js";
 import { registerTaskCommands, type TaskCommands } from "./task-commands.js";
 
 export interface CliEnvironment extends CliOutput {
+  readonly readText?: CliContext["readText"];
   readonly sendCommand: CliContext["sendCommand"];
   readonly defaultSocketPath: string;
   readonly timeoutMs: number;

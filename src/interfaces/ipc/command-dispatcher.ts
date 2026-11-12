@@ -22,6 +22,9 @@ export interface DispatchedUseCases {
   recordApproval?(input: RecordApprovalInput): Promise<RecordApprovalResult>;
   planRun?: RunUseCase;
   dispatchRunStep?: RunUseCase;
+  readWorkerReport?: RunUseCase;
+  commitWorker?: RunUseCase;
+  postReviewComment?: RunUseCase;
   waitForRun?: RunUseCase;
   inspectRun?: RunUseCase;
   pauseRun?: RunUseCase;
@@ -88,6 +91,12 @@ export function createCommandDispatcher(useCases: DispatchedUseCases): CommandHa
         return run(useCases.planRun, 'command "plan"', command);
       case "dispatch":
         return run(useCases.dispatchRunStep, 'command "dispatch"', command);
+      case "worker-report":
+        return run(useCases.readWorkerReport, 'command "worker-report"', command);
+      case "commit-worker":
+        return run(useCases.commitWorker, 'command "commit-worker"', command);
+      case "review-comment":
+        return run(useCases.postReviewComment, 'command "review-comment"', command);
       case "wait":
         return run(useCases.waitForRun, 'command "wait"', command);
       case "pause":

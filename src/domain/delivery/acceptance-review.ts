@@ -63,3 +63,16 @@ export function acceptanceReviewRefusals(
   if (lines.some((line) => line.verdict === "not met")) refusals.push("AC_NOT_MET");
   return refusals;
 }
+
+/** Presentation format only. Posting a comment never records an approval or a runtime review. */
+export function reviewCommentRefusals(body: string, head: string, criteriaCount: number): string[] {
+  const headers = body.split(/\r?\n/).filter((line) => line.startsWith("**VERDICT:"));
+  const header = /^\*\*VERDICT:\*\* (PASS|FAIL) · \*\*REVIEWED_HEAD:\*\* `([0-9a-f]{40})`\s*$/.exec(
+    headers[0] ?? "",
+  );
+  const reasons: string[] = [];
+  if (headers.length !== 1 || header === null) reasons.push("REVIEW_HEADER_INVALID");
+  else if (header[2] !== head) reasons.push("REVIEWED_HEAD_MISMATCH");
+  const ac = acceptanceReviewRefusals(criteriaCount, parseAcReviewLines(body));
+  return [...reasons, ...ac.filter((reason) => reason !== "AC_NOT_MET" || header?.[1] !== "FAIL")];
+}

@@ -4,6 +4,8 @@ const START = "<!-- omi-squad:start -->";
 const END = "<!-- omi-squad:end -->";
 
 export function installationTarget(root: string, path: string): string {
+  if (path.startsWith("bridge/skills/"))
+    return join(root, ".claude/skills", path.slice("bridge/skills/".length));
   if (path.startsWith("bridge/skill/"))
     return join(root, ".claude/skills/omi-squad", path.slice("bridge/skill/".length));
   if (path === "bridge/CLAUDE.md" || path === "bridge/AGENTS.md")

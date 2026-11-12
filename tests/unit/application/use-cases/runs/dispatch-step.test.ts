@@ -17,6 +17,18 @@ function dispatched(result: DispatchStepResult) {
 }
 
 describe("dispatchStep", () => {
+  it("generates numbered Issue criteria, worker rules and the result format before dispatch", async () => {
+    const r = rig();
+    dispatched(await dispatchStep(r.deps, dispatchInput()));
+    const prompt = r.executor.started[0]?.prompt ?? "";
+    expect(prompt).toContain("Acceptance criteria (1 top-level criteria)");
+    expect(prompt).toContain("AC-1:");
+    expect(prompt).toContain("Do not push, open PRs, merge, or change GitHub state.");
+    expect(prompt).toContain("Do not write under .claude/.");
+    expect(prompt).toContain('"skillsApplied"');
+    expect(prompt).toContain('"checks"');
+    expect(prompt).toContain("one AC-n: met|not met — <evidence> line per criterion");
+  });
   it("completes an attempt id reserved by executor selection instead of allocating another", async () => {
     const r = rig();
     const result = dispatched(
