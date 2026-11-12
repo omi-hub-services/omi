@@ -18,6 +18,7 @@ import type {
   SkillContent,
   SkillSource,
 } from "../../../../../src/application/ports/skill-source.ts";
+import type { RuleSource } from "../../../../../src/application/ports/rule-source.ts";
 import { AgentExecutorError } from "../../../../../src/application/ports/agent-executor.ts";
 import type {
   AttemptRecord,
@@ -353,6 +354,7 @@ export interface Rig {
   deps: {
     catalog: ResolutionCatalog;
     skills: FakeSkillSource;
+    rules: RuleSource;
     steps: FakeSteps;
     attempts: FakeAttempts;
     artifacts: FakeArtifacts;
@@ -392,6 +394,12 @@ export function rig(stepStatus: StepRunRecord["status"] = "ready"): Rig {
     deps: {
       catalog: catalog(),
       skills,
+      rules: {
+        read: (id) => {
+          const entry = catalog().rules.find((rule) => rule.id === id);
+          return entry === undefined ? undefined : { sha256: entry.sha256, ruleMd: `Rule ${id}\n` };
+        },
+      },
       steps,
       attempts,
       artifacts,

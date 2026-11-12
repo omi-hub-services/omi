@@ -13,7 +13,10 @@ import { validateWorkflowGraph } from "../../src/domain/workflows/workflow-polic
 import type { ApprovalSubject } from "../../src/domain/approvals/approval.ts";
 import { loadWorkflowTemplate } from "../../src/infrastructure/config/load-workflow-template.ts";
 import { createFileSkillSource } from "../../src/infrastructure/config/file-skill-source.ts";
-import { loadResolutionCatalog } from "../../src/infrastructure/config/load-resolution-catalog.ts";
+import {
+  createFileRuleSource,
+  loadResolutionCatalog,
+} from "../../src/infrastructure/config/load-resolution-catalog.ts";
 import { createSqliteApprovalStore } from "../../src/infrastructure/persistence/sqlite/sqlite-approval-store.ts";
 import { createSqliteStateUnitOfWork } from "../../src/infrastructure/persistence/sqlite/sqlite-state-unit-of-work.ts";
 import {
@@ -30,6 +33,7 @@ const templates = resolve(import.meta.dirname, "../../templates/project/workflow
 const squadDir = resolve(templates, "../.omi-squad");
 const catalog = loadResolutionCatalog(squadDir);
 const skills = createFileSkillSource(squadDir);
+const rules = createFileRuleSource(squadDir);
 let directory: string;
 let db: StateDatabase;
 beforeEach(() => {
@@ -88,6 +92,7 @@ async function setup(id: "ui-ux" | "ci-cd", stepId = "verify") {
     ...r.deps,
     catalog,
     skills,
+    rules,
     approvals: store,
     subjects: approvals.subjects,
     allowedPoActors: ["po"],
