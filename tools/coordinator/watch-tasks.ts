@@ -14,6 +14,7 @@ import {
   agentReviewOn,
   linkedIssue,
   summarizeChecks,
+  type Blocker,
   type OpenPull,
   type ProjectItem,
 } from "./github-snapshot.ts";
@@ -23,7 +24,17 @@ import { clean, workerTone, type Tone } from "./watch-core.ts";
 import type { WorkerProcess, Workers } from "./wsl-workers.ts";
 
 export type Step =
-  "Start" | "Work" | "Verify/PR" | "Review" | "Rework" | "Architect" | "Merge" | "Done" | "unknown";
+  | "Start"
+  | "Work"
+  | "Verify/PR"
+  | "Review"
+  | "Rework"
+  | "Architect"
+  | "Merge"
+  | "Done"
+  | "Blocked"
+  | "Waiting PO"
+  | "unknown";
 
 export type WorkerLookup =
   | { readonly kind: "running" }
@@ -40,18 +51,36 @@ export interface StepInput {
   /** The worker prompt file exists (the task was dispatched); null when it could not be read. */
   readonly dispatched: boolean | null;
   readonly coordinator?: string;
+  /** Blocked-by of the Issue (number and GitHub state). */
+  readonly blockers?: readonly Blocker[];
+  /** Issue comments, oldest first; the PR comments are newer, so they follow these. */
+  readonly issueComments?: readonly AuthoredComment[];
 }
 
 export interface StepResult {
   readonly step: Step;
-  /** Why the step is `unknown`; null otherwise. */
+  /** Why the step is `unknown`, `Blocked` or `Waiting PO`, or a warning on `Work`; null otherwise. */
   readonly reason: string | null;
+  /** `Blocked` / `Waiting PO` only: the step the task stands at (its last reached step). */
+  readonly at?: Step;
 }
 
 // ── comment markers (Coordinator account only) ───────────────────────────────
 
 const FAIL = /^\**VERDICT:\**\s*FAIL\b/m;
 const ARCHITECT = /^\**ARCHITECT:\**[ \t]+(\S[^\n]*)/m;
+
+const WAITING_PO = /^\**WAITING-PO:\**[ \t]+(\S[^\n]*)/;
+
+/** The reason when the newest Coordinator comment (Issue, then PR, oldest first) is `**WAITING-PO:**`. */
+export function detectWaitingPo(
+  comments: readonly AuthoredComment[],
+  coordinator: string = COORDINATOR_LOGIN,
+): string | null {
+  const newest = comments.filter((c) => c.author === coordinator).at(-1);
+  const reason = newest ? WAITING_PO.exec(newest.body.trimStart())?.[1] : undefined;
+  return reason ? clean(reason).slice(0, 200) : null;
+}
 
 const own = (comments: readonly AuthoredComment[], coordinator: string) =>
   comments.map((c, index) => ({ index, body: c.author === coordinator ? c.body : "" }));
@@ -165,8 +194,34 @@ export function cycleToken(c: CyclePhase): string {
 
 const result = (step: Step, reason: string | null = null): StepResult => ({ step, reason });
 
-/** Pure: the /omi-next lifecycle step for the observed state, or `unknown` with the reason. */
+export const openBlockers = (blockers: readonly Blocker[] = []) =>
+  blockers.filter((b) => b.state === "OPEN").map((b) => b.number);
+const hashList = (numbers: readonly number[]) => numbers.map((n) => `#${String(n)}`).join(", ");
+
+/**
+ * Pure: the /omi-next lifecycle step for the observed state, or `unknown` with the reason.
+ * `Waiting PO` (a Coordinator marker) and `Blocked` (an open blocker, no worker) replace the step
+ * the task stands at, which stays in `at`; a running worker stays `Work` with a warning.
+ */
 export function deriveStep(input: StepInput): StepResult {
+  const stands = lifecycleStep(input);
+  if (input.status !== "In Progress" && input.status !== "In Review") return stands;
+  const open = openBlockers(input.blockers);
+  if (input.worker.kind === "running") {
+    return open.length > 0 && stands.reason === null
+      ? { ...stands, reason: `worker runs but blocked by ${hashList(open)}` }
+      : stands;
+  }
+  const comments = [...(input.issueComments ?? []), ...(input.pull?.comments ?? [])];
+  const waiting = detectWaitingPo(comments, input.coordinator);
+  if (waiting !== null) return { step: "Waiting PO", reason: waiting, at: stands.step };
+  if (open.length > 0 && input.worker.kind === "none") {
+    return { step: "Blocked", reason: `blocked by ${hashList(open)}`, at: stands.step };
+  }
+  return stands;
+}
+
+function lifecycleStep(input: StepInput): StepResult {
   const login = input.coordinator ?? COORDINATOR_LOGIN;
   const { status, worker, pull } = input;
   if (status === "Done") return result("Done");
@@ -203,7 +258,7 @@ export function deriveStep(input: StepInput): StepResult {
 
 // ── diagram ──────────────────────────────────────────────────────────────────
 
-export type NodeState = "done" | "current" | "todo" | "lit" | "warn" | "idle";
+export type NodeState = "done" | "current" | "todo" | "lit" | "warn" | "idle" | "blocked";
 
 export interface DiagramNode {
   readonly id: string;
@@ -221,7 +276,13 @@ const MAIN = ["Start", "Work", "Verify/PR", "Review", "Merge", "Done"] as const;
  * current node with `rework k/2`. Architect (on the return path) exists from the 2nd FAIL or a
  * marker, Ask PO once the cycle escalates.
  */
-export function diagramNodes(step: Step, cycle: CyclePhase): DiagramNode[] {
+export function diagramNodes(
+  shown: Step,
+  cycle: CyclePhase,
+  hold?: { readonly at: Step; readonly sub: string },
+): DiagramNode[] {
+  // Blocked / Waiting PO: the node the task stands at is drawn `blocked`, the rest as at that step
+  const step = hold ? hold.at : shown;
   const rework = step === "Rework";
   // Architect is the step after Review failed: everything up to Review is done
   const lit = step === "Architect" ? "Review" : rework ? "Work" : step;
@@ -230,6 +291,7 @@ export function diagramNodes(step: Step, cycle: CyclePhase): DiagramNode[] {
     let state: NodeState = "todo";
     if (at !== -1 && (i < at || (step === "Architect" && i === at))) state = "done";
     else if (at !== -1 && i === at) state = "current";
+    if (hold && at !== -1 && i === at) return { id, label: id, state: "blocked", sub: hold.sub };
     return id === "Work" && rework
       ? { id, label: id, state, sub: `rework ${kOfMax(cycle.k)}` }
       : { id, label: id, state };
@@ -388,6 +450,8 @@ export interface TaskView {
   readonly pr: TaskPull | null;
   readonly step: Step;
   readonly stepReason: string | null;
+  /** Blocked-by of the Issue, open and closed; the page lists them. */
+  readonly blockers: readonly Blocker[];
   readonly role: string;
   readonly worker: TaskWorker | null;
   /** Coordinator FAILs in total; the page draws the Review -> Work edge when above 0. */
@@ -432,6 +496,8 @@ function roleFor(step: Step, projectRole: string | null): string {
     case "Verify/PR":
     case "Merge":
       return "Coordinator";
+    case "Waiting PO":
+      return "PO";
     default:
       return "-";
   }
@@ -469,7 +535,20 @@ function taskView(
     worker: lookup,
     pull,
     dispatched: prompt === undefined ? null : prompt !== null,
+    blockers: item.blockers,
+    issueComments: item.comments ?? [],
   });
+  const open = openBlockers(item.blockers);
+  const hold =
+    derived.at === undefined
+      ? undefined
+      : {
+          at: derived.at,
+          sub:
+            derived.step === "Waiting PO"
+              ? "waiting PO"
+              : `blocked by #${String(open[0])}${open.length > 1 ? ` +${String(open.length - 1)}` : ""}`,
+        };
   const cycle = cyclePhase(comments);
   const architect = detectArchitect(comments);
   const label = planKey ?? `#${String(item.number)}`;
@@ -499,6 +578,7 @@ function taskView(
     },
     step: shown,
     stepReason: derived.reason === null ? null : clean(derived.reason),
+    blockers: item.blockers.map((b) => ({ number: b.number, state: clean(b.state) })),
     role: roleFor(derived.step, item.role),
     worker: process && {
       pid: process.pid,
@@ -518,7 +598,7 @@ function taskView(
     skills: prompt?.skills ?? [],
     skillsNote,
     rules: prompt ? [...prompt.rules, ...WORKER_RESTRICTIONS] : [],
-    nodes: diagramNodes(derived.step, cycle),
+    nodes: diagramNodes(derived.step, cycle, hold),
     ariaLabel:
       `${orDash(label)}: Workflow: ${orDash(item.workflow)}, current step ${shown}` +
       (derived.step === "Rework" ? `, rework ${kOfMax(cycle.k)}` : "") +
@@ -546,5 +626,14 @@ export function buildTasks(input: TasksInput): TasksView {
 /** One line per task for the terminal watch: `OMI-NNN workflow step phase role tool/profile`. */
 export function taskLine(t: TaskView): string {
   const who = t.worker ? `${t.worker.tool}/${t.worker.profile}` : "-/-";
-  return `${t.planKey} ${t.workflow} ${t.step} ${cycleToken(t.cycle)} ${t.role} ${who}`;
+  const hold =
+    t.step === "Blocked"
+      ? ` blocked:${openBlockers(t.blockers)
+          .map((n) => `#${String(n)}`)
+          .join(",")}`
+      : t.step === "Waiting PO"
+        ? " waiting-po"
+        : "";
+  const step = t.step.replace(" ", "-"); // one token per column
+  return `${t.planKey} ${t.workflow} ${step} ${cycleToken(t.cycle)} ${t.role} ${who}${hold}`;
 }
