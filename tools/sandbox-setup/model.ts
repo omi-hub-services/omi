@@ -8,6 +8,8 @@ export const CHECK_NAME = "sandbox-check";
 export const DEPLOY_WORKFLOW_PATH = ".github/workflows/sandbox-deploy.yml";
 export const CHECK_WORKFLOW_PATH = ".github/workflows/sandbox-check.yml";
 export const PIPELINE_MARKER = "<!-- omi-sandbox:pipeline-report -->";
+/** The sandbox Project (org Project #2, ADR-0015); the live harness guard accepts only this one. */
+export const SANDBOX_PROJECT_NUMBER = 2;
 const RULESET_MAIN = "omi-sandbox-main";
 const RULESET_DEVELOP = "omi-sandbox-develop";
 const RULESET_TAGS = "omi-sandbox-tags";
@@ -157,6 +159,65 @@ const PARAMETER_KEYS: Record<string, readonly string[]> = {
   required_status_checks: ["strict_required_status_checks_policy"],
 };
 
+function projectRule(rule: {
+  type: string;
+  parameters?: Record<string, unknown> | undefined;
+}): Rule {
+  const keys = PARAMETER_KEYS[rule.type];
+  if (keys === undefined) return { type: rule.type };
+  const parameters: Record<string, unknown> = {};
+  for (const key of keys)
+    if (rule.parameters?.[key] !== undefined) parameters[key] = rule.parameters[key];
+  if (rule.type === "required_status_checks") {
+    const checks = rule.parameters?.["required_status_checks"];
+    parameters["required_status_checks"] = Array.isArray(checks)
+      ? checks.map((c: unknown) => ({ context: (c as { context?: unknown }).context }))
+      : [];
+  }
+  return { type: rule.type, parameters };
+}
+
+/**
+ * Compares the rules GitHub enforces on `main` (`GET rules/branches/main`) with the rules the
+ * main ruleset sets, by parsed parameters. Returns one failure per missing or weaker rule.
+ */
+export function effectiveRuleFailures(raw: unknown): string[] {
+  const parsed = z
+    .array(
+      z.looseObject({ type: z.string(), parameters: z.record(z.string(), z.unknown()).optional() }),
+    )
+    .safeParse(raw);
+  if (!parsed.success) return ["effective rules on main could not be read"];
+  const have = parsed.data.map(projectRule);
+  const want = desiredRulesets().find((r) => r.name === RULESET_MAIN)?.rules ?? [];
+  return want
+    .filter((rule) => !have.some((h) => sameJson(h, rule)))
+    .map((rule) => `effective rules on main lack or weaken ${rule.type}`);
+}
+
+/** Items still unsatisfied, blockers included; unlike planSteps it never throws. */
+export const remainingItemIds = (items: readonly Item[]): string[] =>
+  items.filter((i) => !i.ok).map((i) => i.id);
+
+/**
+ * GitHub reads can lag right after writes. Re-reads up to `attempts` times, sleeping `delayMs`
+ * between reads, and returns the ids still unsatisfied after the last read.
+ */
+export async function settleAfterApply(deps: {
+  read: () => Item[];
+  attempts: number;
+  delayMs: number;
+  sleep: (ms: number) => Promise<void>;
+}): Promise<string[]> {
+  let remaining: string[] = [];
+  for (let attempt = 1; attempt <= deps.attempts; attempt++) {
+    remaining = remainingItemIds(deps.read());
+    if (remaining.length === 0 || attempt === deps.attempts) break;
+    await deps.sleep(deps.delayMs);
+  }
+  return remaining;
+}
+
 /** Reduces a GitHub ruleset response to the fields this script sets, so defaults never show as drift. */
 export function projectRuleset(raw: unknown): ObservedRuleset | undefined {
   const parsed = rawRulesetSchema.safeParse(raw);
@@ -164,20 +225,7 @@ export function projectRuleset(raw: unknown): ObservedRuleset | undefined {
   const target = parsed.data.target;
   if (target === "push") return undefined;
   const data = parsed.data;
-  const rules = data.rules.map((rule): Rule => {
-    const keys = PARAMETER_KEYS[rule.type];
-    if (keys === undefined) return { type: rule.type };
-    const parameters: Record<string, unknown> = {};
-    for (const key of keys)
-      if (rule.parameters?.[key] !== undefined) parameters[key] = rule.parameters[key];
-    if (rule.type === "required_status_checks") {
-      const checks = rule.parameters?.["required_status_checks"];
-      parameters["required_status_checks"] = Array.isArray(checks)
-        ? checks.map((c: unknown) => ({ context: (c as { context?: unknown }).context }))
-        : [];
-    }
-    return { type: rule.type, parameters };
-  });
+  const rules = data.rules.map(projectRule);
   return {
     id: data.id,
     name: data.name,

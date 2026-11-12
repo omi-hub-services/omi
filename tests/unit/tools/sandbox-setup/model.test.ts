@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   desiredEnvironment,
   desiredRulesets,
+  effectiveRuleFailures,
   evaluateSandbox,
   parseSetupOptions,
+  remainingItemIds,
+  settleAfterApply,
   planSteps,
   projectRuleset,
   type Observed,
@@ -205,5 +208,77 @@ describe("sandbox setup options", () => {
   });
   it("refuses an unknown flag", () => {
     expect(() => parseSetupOptions([...base, "--force"], "x", "y")).toThrow(/force/);
+  });
+});
+
+describe("post-apply settling", () => {
+  const lagging: Observed = { ...satisfied(), tagSha: null, deployWorkflowCommitSha: null };
+  const lagItems = () => evaluateSandbox(lagging, options);
+
+  it("names the remaining items and never throws on a lagging read", () => {
+    expect(() => remainingItemIds(lagItems())).not.toThrow();
+    expect(remainingItemIds(lagItems())).toEqual(["tag-deploy-workflow"]);
+  });
+
+  it("retries until the read catches up, sleeping between reads", async () => {
+    const reads = [lagItems(), lagItems(), evaluateSandbox(satisfied(), options)];
+    const sleeps: number[] = [];
+    const remaining = await settleAfterApply({
+      read: () => reads.shift() ?? [],
+      attempts: 5,
+      delayMs: 250,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+    });
+    expect(remaining).toEqual([]);
+    expect(sleeps).toEqual([250, 250]);
+  });
+
+  it("reports what is still missing after the last attempt", async () => {
+    let calls = 0;
+    const remaining = await settleAfterApply({
+      read: () => {
+        calls++;
+        return lagItems();
+      },
+      attempts: 3,
+      delayMs: 1,
+      sleep: () => Promise.resolve(),
+    });
+    expect(calls).toBe(3);
+    expect(remaining).toEqual(["tag-deploy-workflow"]);
+  });
+});
+
+describe("effective rules on main", () => {
+  const effective = () =>
+    desiredRulesets()
+      .find((r) => r.name === "omi-sandbox-main")
+      ?.rules.map((r) => ({ ...r, ruleset_id: 1 }));
+
+  it("accepts the rules the ruleset sets", () => {
+    expect(effectiveRuleFailures(effective())).toEqual([]);
+  });
+
+  it("rejects a pull_request rule that no longer requires an approval", () => {
+    const weak = effective()?.map((r) =>
+      r.type === "pull_request"
+        ? { ...r, parameters: { ...r.parameters, required_approving_review_count: 0 } }
+        : r,
+    );
+    expect(effectiveRuleFailures(weak)).toEqual([expect.stringContaining("pull_request")]);
+  });
+
+  it("rejects a missing named check even when the text appears elsewhere", () => {
+    const weak = effective()?.filter((r) => r.type !== "required_status_checks");
+    expect(effectiveRuleFailures(weak)).toEqual([
+      expect.stringContaining("required_status_checks"),
+    ]);
+  });
+
+  it("rejects an unreadable answer", () => {
+    expect(effectiveRuleFailures({ message: "Not Found" }).length).toBeGreaterThan(0);
   });
 });

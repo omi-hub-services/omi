@@ -18,7 +18,10 @@ import {
   CHECK_WORKFLOW_PATH,
   DEPLOY_WORKFLOW_PATH,
   PIPELINE_MARKER,
+  SANDBOX_PROJECT_NUMBER,
+  effectiveRuleFailures,
   evaluateSandbox,
+  settleAfterApply,
   parseSetupOptions,
   planSteps,
   projectRuleset,
@@ -163,9 +166,7 @@ function printItems(items: readonly Item[]): void {
 function verifyExtras(o: SetupOptions): string[] {
   const base = `repos/${o.repository}`;
   const failures: string[] = [];
-  const effective = JSON.stringify(read(o, `${base}/rules/branches/main`));
-  if (!/"pull_request"/.test(effective) || !effective.includes("sandbox-check"))
-    failures.push("effective rules on main lack the native review or the sandbox-check check");
+  failures.push(...effectiveRuleFailures(read(o, `${base}/rules/branches/main`)));
   const atTag = read(o, `${base}/contents/${DEPLOY_WORKFLOW_PATH}?ref=${o.tag}`);
   const content =
     atTag === undefined
@@ -176,7 +177,7 @@ function verifyExtras(o: SetupOptions): string[] {
   return failures;
 }
 
-function runGithub(o: SetupOptions, mode: "apply" | "dry-run" | "verify"): number {
+async function runGithub(o: SetupOptions, mode: "apply" | "dry-run" | "verify"): Promise<number> {
   const items = evaluateSandbox(observe(o), o);
   printItems(items);
   if (mode === "verify") {
@@ -208,11 +209,17 @@ function runGithub(o: SetupOptions, mode: "apply" | "dry-run" | "verify"): numbe
     if (response?.commit?.sha !== undefined) created.set(step.id, response.commit.sha);
     console.log(`done ${step.id}`);
   }
-  const rest = planSteps(evaluateSandbox(observe(o), o));
+  // Reads can lag right after writes: retry, and never let a lagging read throw a blocker.
+  const rest = await settleAfterApply({
+    read: () => evaluateSandbox(observe(o), o),
+    attempts: 5,
+    delayMs: 3000,
+    sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+  });
   console.log(
     rest.length === 0
       ? "re-read: nothing left to change"
-      : `re-read: ${String(rest.length)} step(s) remain`,
+      : `re-read: still unsatisfied after retries: ${rest.join(", ")}. All writes were sent; run --verify before re-running`,
   );
   return rest.length === 0 ? 0 : 1;
 }
@@ -240,7 +247,7 @@ async function runLocalState(o: SetupOptions, stateDir: string, approvalId: stri
   const result = await prepareLocalState({
     stateDir,
     repository: o.repository,
-    projectNumber: 2,
+    projectNumber: SANDBOX_PROJECT_NUMBER,
     reviewer: o.reviewer,
     now: Date.now,
     newId: randomUUID,

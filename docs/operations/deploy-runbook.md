@@ -96,9 +96,21 @@ node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts github 
 ```
 
 `--dry-run` reads (GET only) and prints every call it would make: method, path, body summary.
-The real run executes exactly that list in dependency order and re-reads; a second run plans
-nothing. `--verify` reads every object back and exits 1 if one is missing or weaker. A workflow
-file or tag that exists but differs is a blocker, never overwritten or moved.
+The real run executes exactly that list in dependency order, then re-reads up to five times,
+three seconds apart, because GitHub reads can lag right after writes; a second run plans
+nothing. If it still exits 1 after every step printed `done`, it lists the ids that were not
+seen: that is read lag until proven otherwise. Do not re-run the apply; run `--verify` (and
+`--dry-run`, which must plan 0 calls). Exit 1 from `--verify` is the real failure.
+`--verify` reads every object back, compares the effective rules on `main` by parsed
+parameters, and exits 1 if anything is missing or weaker. A workflow file or tag that exists
+but differs is a blocker, never overwritten or moved.
+
+The bootstrap commits the deploy workflow to `main` and tags that commit **before** the
+rulesets exist, so no ruleset or native review covers it. The PO reviews that commit (and the
+tag's target) before the live run; later changes to the workflow need a reviewed PR.
+`OMI_SANDBOX_IMAGE_DIGEST` is only a record of the chosen digest. The controls are the dispatch
+input `artifact_digest` and the deploy approval bound to it; a changed variable alone approves
+or deploys nothing.
 
 Created, in order: branch `develop`; the deploy workflow (fixture `sandbox-deploy.yml`) and a
 lightweight tag `sandbox-deploy-r1` at its commit; the `sandbox-check` workflow (the named
