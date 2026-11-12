@@ -3,6 +3,8 @@ import { taskComplexitySchema, effortPolicySchema } from "../../contracts/task-c
 import { modelsConfigSchema } from "../../contracts/model-capability.js";
 import { z, ZodError } from "zod";
 import { transitionAgentAttempt } from "../../../domain/runs/agent-attempt.js";
+import { taskReadinessReasons } from "../../../domain/tasks/readiness-gate.js";
+import type { GithubTaskBoard } from "../../ports/github-task-board.js";
 import { transitionStep } from "../../../domain/runs/step-run.js";
 import { accessLevelSchema, MAX_EXECUTION_TIMEOUT_MS } from "../../contracts/agent-execution.js";
 import { CredentialInputError } from "../../contracts/credential-input.js";
@@ -94,6 +96,8 @@ export interface DispatchStepDependencies {
   readonly leaseTtlMs: number;
   /** Business checkpoint at the dispatch boundary (OMI-026); absent means none is taken. */
   readonly checkpoint?: BoundaryCheckpointHook;
+  /** Live Project reader for the readiness gate before a task branch is created (OMI-079). */
+  readonly board?: Pick<GithubTaskBoard, "read">;
   readonly now: () => number;
   readonly nextId: () => string;
 }
@@ -114,6 +118,8 @@ export type DispatchRefusal =
   /** A manifest skill's content hash differs from the pinned one. */
   | "SKILL_HASH_MISMATCH"
   | "WORKSPACE_UNAVAILABLE"
+  /** The Issue lacks a Plan Key, a Project field or an acceptance criterion; no branch was made. */
+  | "TASK_NOT_READY"
   | "CONTEXT_REJECTED"
   /** The before-dispatch checkpoint could not be written; nothing was dispatched. */
   | "CHECKPOINT_FAILED"
@@ -247,6 +253,18 @@ export async function dispatchStep(
     effortRank(command.execution.effort) < effortRank(decision.minEffort)
   ) {
     return { ok: false, reason: "NO_ELIGIBLE_EXECUTOR" };
+  }
+
+  // Nothing is allocated yet: a task that fails the gate gets no attempt, branch or worker.
+  if (deps.board !== undefined) {
+    const issueNumber = command.context.taskSnapshot.issueNumber;
+    const task = await deps.board.read(issueNumber);
+    const reasons =
+      task === undefined
+        ? [`#${String(issueNumber)} is not on the Project`]
+        : taskReadinessReasons(task);
+    if (reasons.length > 0)
+      return { ok: false, reason: "TASK_NOT_READY", detail: reasons.join("; ") };
   }
 
   let resolved;
