@@ -252,6 +252,8 @@ reason on the card.
 | `Done`      | Status `Done`                                                                                  | `-`                 |
 | `Work`      | a worker process runs for the Plan Key and the Coordinator has posted no FAIL                  | Project Role field  |
 | `Rework`    | the worker runs after a FAIL, or the newest Coordinator VERDICT on the head is FAIL; shown as `Work` with `rework k/2` (OMI-075) | Project Role field  |
+| `Waiting PO` | no worker runs and the newest Coordinator comment (Issue, then PR) starts with `**WAITING-PO:** <reason>` (OMI-086) | `PO`                |
+| `Blocked`   | no worker runs and the Issue has an open blocker; reason `blocked by #N, #M` (OMI-086)         | `-`                 |
 | `Architect` | the newest VERDICT on the head is FAIL and an `**ARCHITECT:**` comment came after that FAIL    | `Architect`         |
 | `Merge`     | the Coordinator posted PASS on the current head                                                | `Coordinator`       |
 | `Review`    | In Review, PR open, no VERDICT on the current head (a stale one does not count)                | `Reviewer`          |
@@ -274,6 +276,28 @@ that it called the Architect with a PR comment of its own account:
 
 (the reason is required; a marker alone does not count). The `omi-next` skill posts the marker
 (updated by the Coordinator, not by this task).
+
+**Blocked and Waiting PO** (OMI-086). `Waiting PO` and `Blocked` replace the step the task stands
+at, which is the step the rows below would give (kept as `at`). Blockers come from the `blockedBy`
+field of the Project items query (number and state; no new query); Issue comments come from the
+same query (`comments(last: 30)`). A running worker keeps `Work` and the card warns
+`worker runs but blocked by #N`. The Coordinator records that it waits for the PO with a comment
+of its own account on the Issue or the PR:
+
+```
+**WAITING-PO:** <reason>
+```
+
+(the reason is required, the marker starts the comment). It holds until a newer Coordinator
+comment; other accounts are ignored. Issue comments are ordered before PR comments, because the PR
+comes after the Issue (shortcut: no timestamps are read; upgrade if a PR comment ever precedes an
+Issue one). `Waiting PO` wins over `Blocked`. The `omi-next` skill posts the marker (updated by the
+Coordinator, not by this task).
+
+*Diagram.* The node at `at` is drawn in state `blocked` (orange outline) with the sub-label
+`blocked by #N` (`+k` when more are open) or `waiting PO`; earlier nodes stay `done`. The card
+lists every blocker as `#N (open|closed)`; the terminal line ends with `blocked:#N,#M` or
+`waiting-po`. Everything is rendered through `textContent` / `setAttribute`.
 
 **Cycle phase** (OMI-075, `cyclePhase`, pure). The `2 + Architect + 2` cycle of design-patterns.md
 is computed from the Coordinator-account comments, oldest first (other accounts are ignored):

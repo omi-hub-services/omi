@@ -124,6 +124,7 @@ describe("watch page rendering (fake DOM)", () => {
     comments: { author: string; body: string }[],
     running = false,
     workflow: string | null = "feature",
+    extra: Record<string, unknown> = {},
   ) =>
     buildTasks({
       workers: {
@@ -161,6 +162,7 @@ describe("watch page rendering (fake DOM)", () => {
             milestone: null,
             blockers: [],
             blockersTruncated: false,
+            ...extra,
           },
         ],
         pulls: [
@@ -220,6 +222,37 @@ describe("watch page rendering (fake DOM)", () => {
     expect(d.badge).toBeUndefined();
     expect(d.text.some((t) => t.includes("×0"))).toBe(false);
     expect(d.text).not.toContain("Rework");
+  });
+
+  it("draws the standing node as blocked with a sub-label and lists the blockers on the card", () => {
+    const all = renderInDom(
+      viewOf([], false, "feature", {
+        status: "In Progress",
+        blockers: [
+          { number: 158, state: "OPEN" },
+          { number: 9, state: "CLOSED" },
+        ],
+      }),
+    ).all();
+    const groups = all.filter((n) => n.tag === "g" && (n.attrs.class ?? "").startsWith("n "));
+    const node = groups.find((g) => g.children[1]?.textContent === "Verify/PR");
+    expect(node?.attrs.class).toBe("n blocked");
+    expect(node?.children[2]?.textContent).toBe("blocked by #158");
+    expect(all.some((n) => n.textContent === "Step: Blocked")).toBe(true);
+    expect(all.map((n) => n.textContent)).toContain("Blockers: #158 (open), #9 (closed)");
+  });
+
+  it("labels a Waiting PO node with waiting PO and shows the reason", () => {
+    const all = renderInDom(
+      viewOf([], false, "feature", {
+        status: "In Progress",
+        comments: [comment("**WAITING-PO:** run live")],
+      }),
+    ).all();
+    const groups = all.filter((n) => n.tag === "g" && (n.attrs.class ?? "").startsWith("n "));
+    const node = groups.find((g) => (g.attrs.class ?? "") === "n blocked");
+    expect(node?.children[2]?.textContent).toBe("waiting PO");
+    expect(all.map((n) => n.textContent)).toContain("run live");
   });
 
   it("shows Workflow: - when the Project field is missing", () => {
