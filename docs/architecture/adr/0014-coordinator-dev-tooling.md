@@ -233,7 +233,7 @@ stays as the fallback. No dependency is added.
 The web watch replaces its Workers section with **Tasks**: one card per open Issue whose Project
 Status is `In Progress` or `In Review` (Epics and draft items excluded), In Progress first, then
 by Priority and Issue number. The terminal watch prints one line per task above its Workers
-section: `OMI-NNN step role tool/profile rework:N`. No collector was added: the Project items,
+section: `OMI-NNN workflow step phase role tool/profile` (OMI-075; was `... rework:N`). No collector was added: the Project items,
 open PRs and their comments come from `readProject` (`github-reads.ts`, read every 60 seconds,
 `TASKS_INTERVAL_MS`), the worker from `readWorkers` (every 5 seconds), both through the injected
 runner. Checks are summarised over the checks the PR reports (no required-check read), so
@@ -251,7 +251,7 @@ reason on the card.
 | ----------- | ---------------------------------------------------------------------------------------------- | ------------------- |
 | `Done`      | Status `Done`                                                                                  | `-`                 |
 | `Work`      | a worker process runs for the Plan Key and the Coordinator has posted no FAIL                  | Project Role field  |
-| `Rework`    | the worker runs after a FAIL, or the newest Coordinator VERDICT on the head is FAIL            | Project Role field  |
+| `Rework`    | the worker runs after a FAIL, or the newest Coordinator VERDICT on the head is FAIL; shown as `Work` with `rework k/2` (OMI-075) | Project Role field  |
 | `Architect` | the newest VERDICT on the head is FAIL and an `**ARCHITECT:**` comment came after that FAIL    | `Architect`         |
 | `Merge`     | the Coordinator posted PASS on the current head                                                | `Coordinator`       |
 | `Review`    | In Review, PR open, no VERDICT on the current head (a stale one does not count)                | `Reviewer`          |
@@ -272,9 +272,27 @@ that it called the Architect with a PR comment of its own account:
 **ARCHITECT:** <reason>
 ```
 
-(the reason is required; a marker alone does not count). This is the `2 + Architect + 2` cycle of
-design-patterns.md made visible: with two FAILs and no marker the Architect node gets a warning
-outline. The `omi-next` skill posts the marker (updated by the Coordinator, not by this task).
+(the reason is required; a marker alone does not count). The `omi-next` skill posts the marker
+(updated by the Coordinator, not by this task).
+
+**Cycle phase** (OMI-075, `cyclePhase`, pure). The `2 + Architect + 2` cycle of design-patterns.md
+is computed from the Coordinator-account comments, oldest first (other accounts are ignored):
+
+| Phase              | When                                                        | Shown as                                       |
+| ------------------ | ----------------------------------------------------------- | ---------------------------------------------- |
+| `before-architect` | no marker and fewer than 2 FAILs                            | `rework k/2` (k = 0 to 1)                      |
+| `architect`        | 2 FAILs and no marker; or a marker and no FAIL after it    | Architect node warns (needs a call) / is lit   |
+| `after-architect`  | a marker and 1 FAIL after it                                | `rework k/2 (after Architect)`                 |
+| `escalate-po`      | 2 FAILs after the marker (and any later FAIL)               | `Ask PO` warning node; no further loop is drawn |
+
+A third FAIL without a marker stays in `architect` (the Coordinator still owes the call). The
+first marker is the call; a later marker does not give two more reworks. A **marker before any
+FAIL** counts as the call: the phase is `architect` with the node lit, the FAILs after it are the
+"after Architect" reworks. In one comment the FAIL is counted before the marker.
+
+The terminal line is `OMI-NNN workflow step phase role tool/profile`, with the phase as one token:
+`rework:k/2`, `architect:needed`, `architect:called`, `after-architect:k/2` or `ask-po`, for
+example `OMI-075 feature Work rework:1/2 Developer codex/ggtintran`.
 
 **Skills and rules** are read from the worker's real prompt `~/omi-runs/omi-NNN-prompt.md` (one
 WSL call per read; only the lines that match, never the prompt body): skills from the
@@ -284,17 +302,29 @@ WSL call per read; only the lines that match, never the prompt body): skills fro
 
 **Diagram.** An inline SVG per card, built by the page with `createElementNS`, `setAttribute` and
 `textContent` (no `innerHTML`, nothing loaded from outside, CSP unchanged). Main row
-`Start → Work → Verify/PR → Review → Merge → Done`; below Review the `Rework` node with a
-down/up arrow pair (Review ⇄ Rework) and a badge `×N`; a dashed edge leads on to `Architect`.
-Node states come from the pure `diagramNodes`: past nodes are green (done), the current node is
-blue with a thick outline, later nodes are plain. `Architect` is green with a blue outline when
-called, has a dashed amber outline when two FAILs have no marker, and is dim otherwise. Every
-node carries its text label, so colour is never the only signal, and the SVG has an `aria-label`
-with the current step. Colours are the existing CSS variables (light and dark). The SVG scales
-to the card width (`viewBox`), so there is no horizontal scroll.
+`Start → Work → Verify/PR → Review → Merge → Done`. Above it a bold title `Workflow: <name>` (the
+Project Workflow field, `Workflow: -` when empty), also at the start of the `aria-label`
+(`OMI-NNN: Workflow: feature, current step Work, rework 1/2`).
 
-The Edge app window is now **560×760** (was 440×460) to give the three-card case room
-(`WINDOW_SIZE` in `watch-web.ts`).
+Rework is not a node (OMI-075): it is going back to Work. With at least one Coordinator FAIL a
+curved red edge runs Review → Work with the pill `FAIL ×N`; with 0 FAILs there is no edge and no
+`×0`. While the task is in rework (a FAIL on the head, or the worker runs after a FAIL) `Work` is
+the current node with the sub-label `rework k/2`, and the step shown is `Work` (`deriveStep` still
+distinguishes `Rework` internally). From the 2nd FAIL, or once a marker exists, the `Architect`
+node sits on the return path (Review → Architect → Work): dashed amber outline while there is no
+marker, green with a blue outline once it is called, blue with a thick outline when it is the
+current step. In `escalate-po` an `Ask PO` node with a dashed amber outline hangs under Merge,
+reached by a dashed edge from Review, and no further loop is drawn. A card note `Cycle: ...`
+repeats the phase in words, including "after Architect", which does not fit inside the node.
+
+Node states come from the pure `diagramNodes(step, cyclePhase)`: past nodes are green (done), the
+current node is blue with a thick outline, later nodes are plain. Every node carries its text
+label, so colour is never the only signal. Colours are the existing CSS variables (light and
+dark). The SVG scales to the card width (`viewBox`, unchanged `0 0 540 124`), so there is no
+horizontal scroll.
+
+The Edge app window is **560×760** (was 440×460 before OMI-074) to give the three-card case room
+(`WINDOW_SIZE` in `watch-web.ts`); OMI-075 keeps that size.
 
 Snapshot `workers` was replaced by `tasks` (`state: loading | unavailable | ok`). The Host/Origin
 checks, the 127.0.0.1 bind, the `X-Omi-Watch` probe guard and the idle exit are unchanged. Workers
@@ -368,6 +398,67 @@ reads one listing and applies the result with one bash script, both through the 
   go, then the oldest until the total is at most 50 MB. The cap sees the archive as listed, so
   files archived by the same run count at the next one.
 - A failed `cleanup` of the branch (refused or error) skips the log step.
+
+## Worker commands (OMI-077)
+
+The omi-next skill used to make the LLM compose five deterministic things in every task: the
+worker launch command, the curated skills in the prompt, the report out of the worker log, the
+commit of a Codex worker's output and the format of the review comment. They are now
+`flow.ts` subcommands (script-first, AGENTS.md §9; the same principle ships to projects as the
+rule `script-first`, architecture.md §2). Each takes `--dry-run`. `flow-workers.ts` does the I/O
+through the injectable runner; the pure parts are `worker-launch.ts`, `worker-report.ts`,
+`worker-commit.ts` and `review-verdict.ts`. No dependency and no product module is added.
+`<issue>` is the Issue number; the task number `NNN` of the files comes from its Plan Key.
+
+```
+node tools/coordinator/flow.ts dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] --prompt <file> [--dry-run]
+node tools/coordinator/flow.ts worker-report <issue> [--dry-run]
+node tools/coordinator/flow.ts commit-worker <branch> --message-file <f> [--dry-run]
+node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
+```
+
+- **`dispatch`** reads the Issue (Plan Key, Role, Workflow and the complexity of the effort
+  policy above), refuses a profile that is not a `WORKER_PROFILES` entry of that tool, then:
+  1. reads the role's curated skills from the worker's checkout (Developer:
+     `test-driven-development`, `minimal-change`, `verification-before-completion`; the `docs`
+     Workflow leaves out `test-driven-development`; other roles get none) and writes the prompt
+     file plus one `## Skill: <name> (follow it; report it under Skills applied)` section per
+     skill to WSL `~/omi-runs/omi-NNN-prompt.md`. With `--resume` the file is the follow-up text
+     only and no skill is appended again;
+  2. launches the worker **in the foreground** (an 8-hour limit instead of the runner's 2
+     minutes; the Coordinator backgrounds the command) in the checkout of `OMI_WSL_REPO_DIR`.
+     Claude: `CLAUDE_CONFIG_DIR` of the profile, `ANTHROPIC_*` credentials unset,
+     `claude -p --disable-slash-commands --model <m> --effort <e> [--resume <id>]
+     --output-format stream-json --verbose --max-turns 200 --permission-mode acceptEdits` with the
+     default allow and deny lists of omi-next step 3 (`CLAUDE_ALLOWED_TOOLS`,
+     `CLAUDE_DENIED_TOOLS` in `worker-launch.ts`), the prompt on stdin and the log
+     `omi-NNN-<profile>-<ts>.jsonl` (+ `.err`). Codex: `CODEX_HOME` of the profile,
+     `codex exec --json -s workspace-write -m <m> -c model_reasoning_effort=<e> -o
+     omi-NNN-codex-last.md [resume <thread>] -`, log `omi-NNN-codex-<profile>-<ts>.jsonl`
+     (the tool in the name keeps a Codex log out of a Claude profile's quota reading). Model and
+     effort are the `EFFORT_POLICY` entry of the tool for the complexity; they are not options.
+     It prints the worker's `exit=N` and returns 1 for a non-zero exit.
+  `--dry-run` reads the skills (read-only) and prints the write and the launch command.
+- **`worker-report`** takes the newest `omi-NNN-*.jsonl` and prints the report, the turns, the
+  permission denials and the id to resume with. Claude: the longest `result` among the result
+  events, with turns, denials and `session_id` of the last one. Codex (a `-codex-` log): the
+  `omi-NNN-codex-last.md` text and the `thread_id` of the first line. It exits 1 without a
+  report (the worker still runs, or stopped early), still printing the id.
+- **`commit-worker`** checks that the checkout is on `<branch>` before it stages anything, runs
+  `git add -A -- src tests docs templates schemas`, refuses when nothing is staged or the index
+  holds a path outside those directories (for example `.claude/` or `.tmp/`), commits with the
+  message on stdin (`git commit -F -`, no `--no-verify`) and prints the SHA.
+- **`review-comment`** refuses unless the PR is open and its body names the Issue
+  (`Issue: #N`), then checks the comment: the `**VERDICT:** PASS|FAIL · **REVIEWED_HEAD:**
+  `<sha>`` line with a head that is the PR head; exactly one
+  `AC-<n>: met|not met — <evidence>` line for each top-level AC of the Issue
+  (`acceptance-criteria.ts` counts), none extra or repeated; and PASS only with every line met.
+  It posts with `gh pr comment --body-file -` only when the local `gh` login is
+  `COORDINATOR_LOGIN`. Every reason is listed in one `refused:`.
+
+Boundaries and known limits: `dispatch` does not check whether a worker already runs for the task;
+the Claude `exit=` is the shell's view of the worker; `codex exec resume` takes the same `exec`
+options before the subcommand, which this tooling has not run against a live Codex.
 
 ## Boundaries
 

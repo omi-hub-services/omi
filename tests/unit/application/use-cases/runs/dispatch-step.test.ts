@@ -79,6 +79,14 @@ describe("dispatchStep", () => {
     expect(prompt).not.toContain(h("c"));
   });
 
+  it("tells every worker to leave deterministic steps to scripts and keep the LLM for judgement (OMI-077)", async () => {
+    const r = rig();
+    dispatched(await dispatchStep(r.deps, dispatchInput()));
+    const prompt = r.executor.started[0]?.prompt ?? "";
+    expect(prompt).toMatch(/script first, LLM second/i);
+    expect(prompt).toMatch(/refuses a step.*gate/i);
+  });
+
   it("inlines the SKILL.md of exactly the manifest skills in manifest order and names bundled files by path", async () => {
     const r = rig();
     const result = dispatched(

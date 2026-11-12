@@ -192,6 +192,7 @@ function buildPrompt(
     `Finish with one JSON document of schema "${packet.expectedOutputSchema}" (attempt id ${packet.attemptId}).`,
     "Use only the skills and rules listed in the context packet. The skills are given in full below; no other skill is available.",
     'Report each skill you applied in "skillsApplied" with its id and an "evidenceRef" to an artifact that shows how.',
+    "Script first, LLM second: do deterministic steps (reading state, parsing logs, mechanical git, checking a gate) with the project's scripts or CLI, and keep your own reasoning for judgement. When a script refuses a step it is a gate: fix the cause or report it, never work around it.",
     ...skills.map(skillSection),
     `Context packet ${packetRef.path} (sha256 ${packetRef.sha256}):`,
     JSON.stringify(packet, null, 2),

@@ -85,6 +85,82 @@ function architectAfterLastFail(comments: readonly AuthoredComment[], coordinato
   return lastArchitect > lastFail && lastFail >= 0;
 }
 
+// ── quality cycle 2 + Architect + 2 ──────────────────────────────────────────
+
+/** Reworks allowed before the Architect, and again after it (design-patterns.md). */
+const CYCLE_MAX = 2;
+
+export interface CyclePhase {
+  readonly phase: "before-architect" | "architect" | "after-architect" | "escalate-po";
+  /** Coordinator FAILs in total. */
+  readonly fails: number;
+  /** The k of "rework k/2" for the current stage: FAILs before the Architect, or after it. */
+  readonly k: number;
+  readonly architectCalled: boolean;
+}
+
+/**
+ * Pure: the phase of the `2 + Architect + 2` cycle from the comments, oldest first. Only the
+ * Coordinator account counts. The first `**ARCHITECT:** <reason>` marker is the call; a marker that
+ * comes before any FAIL still counts as the call (phase `architect`, lit), and the FAILs after it
+ * are the "after Architect" reworks. A FAIL and a marker in one comment: the FAIL comes first.
+ */
+export function cyclePhase(
+  comments: readonly AuthoredComment[],
+  coordinator: string = COORDINATOR_LOGIN,
+): CyclePhase {
+  let fails = 0;
+  let failsAfter = 0;
+  let called = false;
+  for (const c of own(comments, coordinator)) {
+    if (FAIL.test(c.body)) {
+      fails += 1;
+      if (called) failsAfter += 1;
+    }
+    if (ARCHITECT.test(c.body)) called = true;
+  }
+  if (!called) {
+    return fails >= CYCLE_MAX
+      ? { phase: "architect", fails, k: CYCLE_MAX, architectCalled: false }
+      : { phase: "before-architect", fails, k: fails, architectCalled: false };
+  }
+  const phase =
+    failsAfter >= CYCLE_MAX ? "escalate-po" : failsAfter === 0 ? "architect" : "after-architect";
+  return { phase, fails, k: Math.min(failsAfter, CYCLE_MAX), architectCalled: true };
+}
+
+const kOfMax = (k: number) => `${String(k)}/${String(CYCLE_MAX)}`;
+
+/** The card note: what the cycle asks for now; null before any FAIL. */
+export function cycleNote(c: CyclePhase): string | null {
+  switch (c.phase) {
+    case "before-architect":
+      return c.fails === 0 ? null : `rework ${kOfMax(c.k)}`;
+    case "architect":
+      return c.architectCalled
+        ? `Architect called, rework ${kOfMax(0)} after Architect`
+        : `call the Architect (${String(c.fails)} FAILs, no ARCHITECT marker)`;
+    case "after-architect":
+      return `rework ${kOfMax(c.k)} (after Architect)`;
+    case "escalate-po":
+      return `${String(CYCLE_MAX)} FAILs after Architect, ask the PO`;
+  }
+}
+
+/** One space-free token for the terminal line. */
+export function cycleToken(c: CyclePhase): string {
+  switch (c.phase) {
+    case "before-architect":
+      return `rework:${kOfMax(c.k)}`;
+    case "architect":
+      return c.architectCalled ? "architect:called" : "architect:needed";
+    case "after-architect":
+      return `after-architect:${kOfMax(c.k)}`;
+    case "escalate-po":
+      return "ask-po";
+  }
+}
+
 // ── step derivation ──────────────────────────────────────────────────────────
 
 const result = (step: Step, reason: string | null = null): StepResult => ({ step, reason });
@@ -133,55 +209,39 @@ export interface DiagramNode {
   readonly id: string;
   readonly label: string;
   readonly state: NodeState;
+  /** Second line inside the node, e.g. `rework 1/2` on Work. */
+  readonly sub?: string;
 }
 
 const MAIN = ["Start", "Work", "Verify/PR", "Review", "Merge", "Done"] as const;
-/** Fail count at which the quality cycle `2 + Architect + 2` calls for the Architect. */
-const ARCHITECT_AT = 2;
 
-export const architectState = (rework: number, called: boolean) =>
-  called ? "called" : rework >= ARCHITECT_AT ? "warn" : "none";
-
-/** Pure: node states of the lifecycle diagram, main row first, then the Rework loop and Architect. */
-export function diagramNodes(step: Step, rework: number, architectCalled: boolean): DiagramNode[] {
-  const onLoop = step === "Rework" || step === "Architect";
-  const at = onLoop ? MAIN.indexOf("Review") : MAIN.indexOf(step as (typeof MAIN)[number]);
+/**
+ * Pure: nodes of the lifecycle diagram, main row first. Rework is not a node: it is the edge
+ * Review -> Work, drawn by the page when there is a FAIL; while the task is in rework Work is the
+ * current node with `rework k/2`. Architect (on the return path) exists from the 2nd FAIL or a
+ * marker, Ask PO once the cycle escalates.
+ */
+export function diagramNodes(step: Step, cycle: CyclePhase): DiagramNode[] {
+  const rework = step === "Rework";
+  // Architect is the step after Review failed: everything up to Review is done
+  const lit = step === "Architect" ? "Review" : rework ? "Work" : step;
+  const at = (MAIN as readonly string[]).indexOf(lit);
   const main = MAIN.map((id, i): DiagramNode => {
-    const state: NodeState =
-      at === -1
-        ? "todo"
-        : onLoop
-          ? i <= at
-            ? "done"
-            : "todo"
-          : i < at
-            ? "done"
-            : i === at
-              ? "current"
-              : "todo";
-    return { id, label: id, state };
+    let state: NodeState = "todo";
+    if (at !== -1 && (i < at || (step === "Architect" && i === at))) state = "done";
+    else if (at !== -1 && i === at) state = "current";
+    return id === "Work" && rework
+      ? { id, label: id, state, sub: `rework ${kOfMax(cycle.k)}` }
+      : { id, label: id, state };
   });
-  const architect = architectState(rework, architectCalled);
-  return [
-    ...main,
-    {
-      id: "Rework",
-      label: "Rework",
-      state: step === "Rework" ? "current" : rework > 0 ? "done" : "todo",
-    },
-    {
-      id: "Architect",
-      label: "Architect",
-      state:
-        step === "Architect"
-          ? "current"
-          : architect === "called"
-            ? "lit"
-            : architect === "warn"
-              ? "warn"
-              : "idle",
-    },
-  ];
+  const extra: DiagramNode[] = [];
+  if (cycle.phase !== "before-architect") {
+    const state: NodeState =
+      step === "Architect" ? "current" : cycle.architectCalled ? "lit" : "warn";
+    extra.push({ id: "Architect", label: "Architect", state });
+  }
+  if (cycle.phase === "escalate-po") extra.push({ id: "Ask PO", label: "Ask PO", state: "warn" });
+  return [...main, ...extra];
 }
 
 // ── prompt parsing ───────────────────────────────────────────────────────────
@@ -330,8 +390,10 @@ export interface TaskView {
   readonly stepReason: string | null;
   readonly role: string;
   readonly worker: TaskWorker | null;
+  /** Coordinator FAILs in total; the page draws the Review -> Work edge when above 0. */
   readonly rework: number;
-  readonly architect: "called" | "warn" | "none";
+  readonly cycle: CyclePhase;
+  readonly cycleNote: string | null;
   readonly architectReason: string | null;
   readonly skills: readonly string[];
   /** Why there are no skills ("-"); null when some were read. */
@@ -408,9 +470,11 @@ function taskView(
     pull,
     dispatched: prompt === undefined ? null : prompt !== null,
   });
-  const rework = countRework(comments);
+  const cycle = cyclePhase(comments);
   const architect = detectArchitect(comments);
   const label = planKey ?? `#${String(item.number)}`;
+  // Rework is not a step of its own: it is Work again, with the rework label
+  const shown = derived.step === "Rework" ? "Work" : derived.step;
   const skillsNote =
     prompt === undefined
       ? "no prompt read (WSL unavailable or task has no Plan Key)"
@@ -433,7 +497,7 @@ function taskView(
       checks: summarizeChecks(pull.checks, []).overall,
       draft: pull.isDraft,
     },
-    step: derived.step,
+    step: shown,
     stepReason: derived.reason === null ? null : clean(derived.reason),
     role: roleFor(derived.step, item.role),
     worker: process && {
@@ -447,15 +511,17 @@ function taskView(
       lastAction: orDash(process.log?.lastAction),
       tone: workerTone(process.log),
     },
-    rework,
-    architect: architectState(rework, architect.called),
+    rework: cycle.fails,
+    cycle,
+    cycleNote: cycleNote(cycle),
     architectReason: architect.reason,
     skills: prompt?.skills ?? [],
     skillsNote,
     rules: prompt ? [...prompt.rules, ...WORKER_RESTRICTIONS] : [],
-    nodes: diagramNodes(derived.step, rework, architect.called),
+    nodes: diagramNodes(derived.step, cycle),
     ariaLabel:
-      `${orDash(label)}: current step ${derived.step}` +
+      `${orDash(label)}: Workflow: ${orDash(item.workflow)}, current step ${shown}` +
+      (derived.step === "Rework" ? `, rework ${kOfMax(cycle.k)}` : "") +
       (derived.reason === null ? "" : ` (${clean(derived.reason)})`),
   };
 }
@@ -477,8 +543,8 @@ export function buildTasks(input: TasksInput): TasksView {
   return { state: "ok", items };
 }
 
-/** One line per task for the terminal watch: `OMI-NNN step role tool/profile rework:N`. */
+/** One line per task for the terminal watch: `OMI-NNN workflow step phase role tool/profile`. */
 export function taskLine(t: TaskView): string {
   const who = t.worker ? `${t.worker.tool}/${t.worker.profile}` : "-/-";
-  return `${t.planKey} ${t.step} ${t.role} ${who} rework:${String(t.rework)}`;
+  return `${t.planKey} ${t.workflow} ${t.step} ${cycleToken(t.cycle)} ${t.role} ${who}`;
 }
