@@ -23,14 +23,18 @@ const TEMPLATE_DIR = fileURLToPath(new URL("../../templates/project/workflows/",
 const WORKFLOW_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 /** Never throws: an unreadable or invalid template becomes `ok: false` with the first line why. */
-export async function loadTemplate(id: string, dir: string = TEMPLATE_DIR): Promise<TemplateRead> {
+export async function loadTemplate(
+  id: string,
+  dir: string = TEMPLATE_DIR,
+  read: (path: string) => Promise<string> = (path) => readFile(path, "utf8"),
+): Promise<TemplateRead> {
   const name = id.trim().toLowerCase();
   if (!WORKFLOW_ID.test(name))
     return { ok: false, reason: `no template for Workflow "${clean(id)}"` };
   try {
     // dynamic: the register hook above must run before src/ (`.js` specifiers) is resolved
     const { workflowSchema } = await import("../../src/application/contracts/workflow.ts");
-    const text = await readFile(`${dir}/${name}.yaml`, "utf8");
+    const text = await read(`${dir}/${name}.yaml`);
     const parsed = workflowSchema.safeParse(parse(text));
     if (parsed.success) return { ok: true, workflow: parsed.data };
     const issue = parsed.error.issues[0];
