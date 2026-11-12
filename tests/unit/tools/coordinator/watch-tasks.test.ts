@@ -16,6 +16,7 @@ import {
   type StepInput,
   type TasksRead,
 } from "../../../../tools/coordinator/watch-tasks.ts";
+import { loadTemplate } from "../../../../tools/coordinator/watch-workflow.ts";
 import type { WorkerProcess, Workers } from "../../../../tools/coordinator/wsl-workers.ts";
 
 const HEAD = "abc1234def5678abc1234def5678abc1234def56";
@@ -731,5 +732,143 @@ describe("Blocked and Waiting PO (OMI-086)", () => {
     expect(taskLine(w)).toContain(" waiting-po");
     expect(w.step).toBe("Waiting PO");
     expect(taskLine(first(item()))).not.toMatch(/blocked:|waiting-po/);
+  });
+});
+
+describe("template diagram (OMI-088)", () => {
+  const open = (n: number) => ({ number: n, state: "OPEN" });
+  const wait = () => coord("**WAITING-PO:** run the live check");
+  const card = async (
+    workflow: string | null,
+    over: Partial<ProjectItem> = {},
+    procs: WorkerProcess[] = [],
+    tasks: Partial<Extract<TasksRead, { available: true }>> = {},
+  ) => {
+    const templates = workflow === null ? {} : { [workflow]: await loadTemplate(workflow) };
+    const view = buildTasks({
+      tasks: read({
+        items: [item({ workflow, ...over })],
+        templates,
+        prompts: {
+          "OMI-074": {
+            skills: ["test-driven-development", "verification-before-completion"],
+            rules: ["AGENTS.md"],
+          },
+        },
+        ...tasks,
+      }),
+      workers: available(procs),
+    });
+    if (view.state !== "ok" || !view.items[0]) throw new Error("expected ok");
+    return view.items[0];
+  };
+
+  it("draws feature steps and gates from the template, the running worker at implement", async () => {
+    const t = await card("feature", {}, [worker]);
+    expect(t.flow).toMatchObject({
+      source: "template",
+      reason: null,
+      to: "implement",
+      from: "review",
+    });
+    expect(t.nodes.map((n) => n.id)).toEqual([
+      "analyze",
+      "scope-approved",
+      "implement",
+      "verify",
+      "review",
+      "ready-to-merge",
+    ]);
+    expect(t.nodes.find((n) => n.id === "implement")?.state).toBe("current");
+    expect(t.templateStep).toBe("implement");
+    expect(t.role).toBe("developer");
+    expect(t.step).toBe("Work");
+    expect(t.workflow).toBe("feature");
+  });
+
+  it("draws bugfix and docs from their own templates", async () => {
+    expect((await card("bugfix", {}, [worker])).nodes.map((n) => n.id)).toContain("reproduce");
+    const docs = await card("docs", {}, [worker]);
+    expect(docs.nodes.map((n) => n.id)).toEqual([
+      "scope-approved",
+      "write",
+      "verify",
+      "accept",
+      "docs-acceptance",
+      "ready-to-merge",
+    ]);
+    expect(docs.nodes.find((n) => n.id === "write")?.state).toBe("current");
+  });
+
+  it("maps no-worker states: verify (qa), review, ready-to-merge on PASS, Done", async () => {
+    const verify = await card("feature");
+    expect(verify.templateStep).toBe("verify");
+    expect(verify.role).toBe("qa");
+    const inReview = { status: "In Review" };
+    const review = await card("feature", inReview, [], { pulls: [openPull()] });
+    expect(review.templateStep).toBe("review");
+    const pass = openPull({ comments: [coord(verdict("PASS"))] });
+    const merge = await card("feature", inReview, [], { pulls: [pass] });
+    expect(merge.templateStep).toBe("ready-to-merge");
+    expect(merge.nodes.find((n) => n.id === "review")?.state).toBe("done");
+  });
+
+  it("unknown carries the reason and highlights no step", async () => {
+    const t = await card("feature", { status: "In Review" });
+    expect(t.step).toBe("unknown");
+    expect(t.templateStep).toBe("unknown");
+    expect(t.stepReason).toContain("no open PR");
+    expect(t.nodes.some((n) => n.state === "current")).toBe(false);
+  });
+
+  it("rework goes back to the developer step with rework k/2; Architect joins the path", async () => {
+    const two = openPull({ comments: [coord(verdict("FAIL")), coord(verdict("FAIL"))] });
+    const t = await card("feature", { status: "In Review" }, [], { pulls: [two] });
+    expect(t.rework).toBe(2);
+    expect(t.flow.to).toBe("implement");
+    expect(t.nodes.map((n) => n.id)).toContain("Architect");
+    const one = openPull({ comments: [coord(verdict("FAIL"))] });
+    const r = await card("feature", {}, [worker], { pulls: [one] });
+    expect(r.nodes.find((n) => n.id === "implement")).toMatchObject({
+      state: "current",
+      sub: "rework 1/2",
+    });
+  });
+
+  it("Blocked and Waiting PO mark the node the task stands at", async () => {
+    const b = await card("feature", { blockers: [open(158)] });
+    expect(b.step).toBe("Blocked");
+    expect(b.nodes.find((n) => n.id === "verify")).toMatchObject({
+      state: "blocked",
+      sub: "blocked by #158",
+    });
+    const w = await card("feature", { comments: [wait()] });
+    expect(w.nodes.find((n) => n.id === "verify")).toMatchObject({
+      state: "blocked",
+      sub: "waiting PO",
+    });
+    expect(w.role).toBe("PO");
+  });
+
+  it("shows the loaded skills against the template step and marks the mismatch", async () => {
+    const t = await card("feature", {}, [worker]);
+    expect(t.skillCheck).toEqual({
+      expected: ["test-driven-development", "minimal-change"],
+      missing: ["minimal-change"],
+      extra: [{ name: "verification-before-completion", template: "verify" }],
+    });
+    expect(t.templateInfo).toMatchObject({ id: "implement", role: "developer" });
+    expect(t.skills).toEqual(["test-driven-development", "verification-before-completion"]);
+  });
+
+  it("falls back to the lifecycle diagram with the reason when the template cannot be read", async () => {
+    const t = await card("nonexistent");
+    expect(t.flow).toMatchObject({ source: "lifecycle", from: "Review", to: "Work" });
+    expect(t.flow.reason).toContain("nonexistent");
+    expect(t.nodes.map((n) => n.id)).toContain("Verify/PR");
+    expect(t.skillCheck).toBeNull();
+    expect((await card(null)).flow.reason).toContain("Workflow");
+    const unread = await card("feature", {}, [], { templates: undefined });
+    expect(unread.flow).toMatchObject({ source: "lifecycle", reason: "template not read" });
   });
 });

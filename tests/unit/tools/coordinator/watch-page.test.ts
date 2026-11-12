@@ -2,6 +2,7 @@ import { createContext, Script } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { PAGE_HTML } from "../../../../tools/coordinator/watch-page.ts";
 import { buildTasks, diagramNodes, cyclePhase } from "../../../../tools/coordinator/watch-tasks.ts";
+import { loadTemplate } from "../../../../tools/coordinator/watch-workflow.ts";
 import { WINDOW_SIZE } from "../../../../tools/coordinator/watch-web.ts";
 
 const block = (tag: string) =>
@@ -343,5 +344,149 @@ describe("watch page rendering (fake DOM)", () => {
         .all()
         .some((n) => n.textContent === "GitHub unavailable: gh failed (retrying)"),
     ).toBe(true);
+  });
+});
+
+describe("watch page, template diagram (OMI-088)", () => {
+  const tasksFor = async (workflow: string, skills: string[], status = "In Progress") => {
+    const template = await loadTemplate(workflow);
+    return buildTasks({
+      workers: {
+        available: true,
+        latestLog: null,
+        processes: [
+          {
+            pid: 1,
+            tool: "codex",
+            headless: true,
+            elapsedSeconds: 5,
+            task: "OMI-074",
+            profile: "p",
+          },
+        ],
+      },
+      tasks: {
+        available: true,
+        items: [
+          {
+            kind: "Issue",
+            number: 152,
+            title: "t",
+            state: "OPEN",
+            status,
+            priority: "P1",
+            workType: "Task",
+            planKey: "OMI-074",
+            body: "",
+            workflow,
+            role: "Developer",
+            area: null,
+            milestone: null,
+            blockers: [],
+            blockersTruncated: false,
+          },
+        ],
+        pulls: [],
+        prompts: { "OMI-074": { skills, rules: ["AGENTS.md"] } },
+        templates: { [workflow]: template },
+      },
+    });
+  };
+  const nodesOf = (app: ReturnType<typeof renderInDom>) =>
+    app
+      .all()
+      .filter((n) => n.tag === "g" && (n.attrs.class ?? "").startsWith("n "))
+      .map((g) => `${g.children[1]?.textContent ?? "?"}:${(g.attrs.class ?? "").slice(2)}`);
+  const texts = (app: ReturnType<typeof renderInDom>) => app.all().map((n) => n.textContent);
+
+  it("draws the template's steps and gates with their roles, and the lifecycle viewBox is unchanged elsewhere", async () => {
+    const app = renderInDom(await tasksFor("feature", ["minimal-change"]));
+    expect(nodesOf(app)).toEqual([
+      "analyze:done",
+      "scope-approved:done",
+      "implement:cur",
+      "verify:todo",
+      "review:todo",
+      "ready-to-merge:todo",
+    ]);
+    const t = texts(app);
+    expect(t).toContain("developer");
+    expect(t).toContain("Workflow: feature");
+    expect(t).toContain("Step: Work (implement)");
+    expect(t).toContain("Role: developer");
+  });
+
+  it("lays out the 7 nodes of bugfix inside the viewBox", async () => {
+    const app = renderInDom(await tasksFor("bugfix", []));
+    const svg = app.all().find((n) => n.tag === "svg");
+    const [, , w] = (svg?.attrs.viewBox ?? "").split(" ").map(Number);
+    const rects = app.all().filter((n) => n.tag === "rect" && n.attrs.width === "116");
+    expect(rects.length).toBe(7);
+    for (const r of rects)
+      expect(Number(r.attrs.x) + Number(r.attrs.width)).toBeLessThanOrEqual(w ?? 0);
+  });
+
+  it("selecting a node shows its template skills and rules", async () => {
+    const app = renderInDom(await tasksFor("feature", ["minimal-change"]));
+    const verify = app
+      .all()
+      .find((n) => n.tag === "g" && n.children[1]?.textContent === "verify") as unknown as {
+      onclick: () => void;
+    };
+    verify.onclick();
+    const t = texts(app).join("\n");
+    expect(t).toContain("verify · qa");
+    expect(t).toContain("skills: verification-before-completion");
+    expect(t).toContain("rules: project-baseline, approval-gates, evidence-and-tests");
+  });
+
+  it("marks the loaded skills that differ from the template step", async () => {
+    const app = renderInDom(
+      await tasksFor("feature", ["test-driven-development", "verification-before-completion"]),
+    );
+    const t = texts(app);
+    expect(t).toContain("Template skills (implement): test-driven-development, minimal-change");
+    expect(t).toContain(
+      "≠ loaded, but the template gives it to verify: verification-before-completion",
+    );
+    expect(t).toContain("≠ in the template step, not loaded: minimal-change");
+    const ok = renderInDom(
+      await tasksFor("feature", ["test-driven-development", "minimal-change"]),
+    );
+    expect(texts(ok)).toContain("Skills match the template step");
+  });
+
+  it("explains the lifecycle fallback on the card", () => {
+    const view = buildTasks({
+      workers: { available: true, latestLog: null, processes: [] },
+      tasks: {
+        available: true,
+        items: [
+          {
+            kind: "Issue",
+            number: 1,
+            title: "t",
+            state: "OPEN",
+            status: "In Progress",
+            priority: "P1",
+            workType: "Task",
+            planKey: "OMI-074",
+            body: "",
+            workflow: "nope",
+            role: null,
+            area: null,
+            milestone: null,
+            blockers: [],
+            blockersTruncated: false,
+          },
+        ],
+        pulls: [],
+        prompts: { "OMI-074": { skills: [], rules: [] } },
+        templates: { nope: { ok: false, reason: 'no template for Workflow "nope"' } },
+      },
+    });
+    const app = renderInDom(view);
+    expect(nodesOf(app)[0]).toBe("Start:done");
+    expect(texts(app)).toContain('Template: no template for Workflow "nope" (lifecycle shown)');
   });
 });
