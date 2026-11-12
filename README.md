@@ -54,7 +54,8 @@ Development commands that exist today:
 | `npm run pack:check`         | Real npm archive, runtime-only contents gate                           |
 
 Project-local install/update commands, Windows launch instructions, conflict handling and backup
-recovery are documented in [packaging.md](docs/operations/packaging.md). `test:live` remains opt-in.
+recovery are documented in [packaging.md](docs/operations/packaging.md); day-to-day operation is in
+the [operations handbook](docs/operations/handbook.md). `test:live` remains opt-in.
 
 ## Branches
 
