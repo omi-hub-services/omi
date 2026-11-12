@@ -3,15 +3,22 @@ import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { ProjectInitializationError } from "../../application/ports/github-project-reader.js";
 import type { CodebaseReader } from "../../application/ports/codebase-reader.js";
+import { wslPathSchema } from "../../application/contracts/session-launch.js";
 
 const MAX_MARKER_BYTES = 256 * 1024;
 
 /** Bootstrap supplies the target repository root; only direct, regular, non-symlink files are seen. */
-export async function createCodebaseReader(directory: string): Promise<CodebaseReader> {
+export async function createCodebaseReader(
+  directory: string,
+  sourceRoot?: string,
+): Promise<CodebaseReader> {
+  wslPathSchema.parse(directory);
   const stat = await lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink())
     throw new ProjectInitializationError("INVALID_REPOSITORY_ROOT");
   const root = await realpath(directory);
+  if (sourceRoot !== undefined && root === (await realpath(sourceRoot)))
+    throw new ProjectInitializationError("INVALID_REPOSITORY_ROOT");
   return {
     async rootFiles() {
       const entries = await readdir(root, { withFileTypes: true });

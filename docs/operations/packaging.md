@@ -69,6 +69,13 @@ content separately when choosing an upstream version. Files outside the template
 project-owned. Templates under both `templates/project/.omi-squad/` and the existing onboarding
 `templates/project/workflows/` map to the same project `.omi-squad/` tree; duplicate targets fail.
 
+The preview also lists `bridge/CLAUDE.md`, `bridge/AGENTS.md`, and `bridge/skill/*`. Instruction
+keys represent only the `<!-- omi-squad:start -->` / `<!-- omi-squad:end -->` span in the root
+files, so the same three-way merge preserves text outside that span. Skill keys target
+`.claude/skills/omi-squad/{SKILL.md,bridge.ts,bridge.config.json}`. The config binds the project,
+distro and local shim. Local skill/span edits are kept while upstream is unchanged; divergent
+updates conflict. Invalid/duplicate markers or symlinked targets are refused before provisioning.
+
 ## Migration backup and recovery
 
 Before upgrading state, the installer takes a SQLite backup through the backup API (including
@@ -78,6 +85,10 @@ strict v1 loader. The only current config normalization materializes the already
 `effort_policy` when absent, preserving existing comments and explicit policies. Unknown schema
 versions are refused. No hypothetical legacy schema conversion or automatic schema downgrade is
 provided. Runtime startup also takes a SQLite backup before pending migrations.
+
+Bridge backups contain full original instruction files at `bridge/CLAUDE.md` / `bridge/AGENTS.md`
+and skill files under `bridge/skill/`. For recovery, map those back to root instructions and
+`.claude/skills/omi-squad/` respectively. They are not paths under the target `.omi-squad/` tree.
 
 SQL upgrades reuse the existing checksummed transactional migration runner. A SQL failure rolls
 back that migration batch and leaves the old tool and project files active. Dependency provisioning

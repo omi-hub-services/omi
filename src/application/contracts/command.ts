@@ -3,6 +3,7 @@ import { recordApprovalSchema, requestApprovalSchema } from "./approval.js";
 import { identifierSchema, slugSchema } from "./identifiers.js";
 import { mergeTaskPrSchema } from "./merge-delivery.js";
 import { schemaVersionV1 } from "./schema-version.js";
+import { registerProfileSchema } from "./profile-metadata.js";
 
 const envelope = { schemaVersion: schemaVersionV1 };
 
@@ -12,6 +13,13 @@ const envelope = { schemaVersion: schemaVersionV1 };
  */
 export const commandSchema = z
   .discriminatedUnion("command", [
+    registerProfileSchema.extend({ ...envelope, command: z.literal("profile.register") }),
+    z.strictObject({ ...envelope, command: z.literal("profile.list") }),
+    z.strictObject({
+      ...envelope,
+      command: z.literal("profile.probe"),
+      profileId: identifierSchema,
+    }),
     requestApprovalSchema.extend({ command: z.literal("approval.request") }),
     recordApprovalSchema.extend({ command: z.literal("approval.decide") }),
     z.strictObject({

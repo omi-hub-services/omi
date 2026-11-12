@@ -25,6 +25,12 @@ import {
 } from "../../application/contracts/project-installation.js";
 import { createProjectConfigStore } from "./project-config-store.js";
 import { assertPlainParents, readOptional, readPackageContent } from "./package-content.js";
+import {
+  installationTarget,
+  isProjectInstruction,
+  projectInstructionBlock,
+  mergeProjectInstruction,
+} from "./project-bridge.js";
 import { runCommand } from "../processes/run-command.js";
 import { openStateDatabase } from "../persistence/sqlite/sqlite-connection.js";
 import { applyMigrations, loadMigrations } from "../persistence/sqlite/migration-runner.js";
@@ -112,8 +118,13 @@ export function createProjectInstallation(options: {
         if (exists) throw new Error("UNMANAGED_TOOL_INSTALLATION");
       }
     }
+    const content = await readPackageContent(input.packageDir);
     const candidate = frameworkLockSchema.parse({
-      ...(await readPackageContent(input.packageDir)),
+      ...content,
+      base: {
+        ...content.base,
+        "bridge/skill/bridge.config.json": `${JSON.stringify({ distribution: input.distribution, repository: root, shim: join(squad, "bin", "omi") }, null, 2)}\n`,
+      },
       schemaVersion: 1,
       distribution: input.distribution,
       projectDir: root,
@@ -123,9 +134,11 @@ export function createProjectInstallation(options: {
       ...Object.keys(installed?.base ?? {}),
       ...Object.keys(candidate.base),
     ])) {
-      await assertPlainParents(root, join(squad, path));
-      const text = await readOptional(join(squad, path));
-      if (text !== undefined) local[path] = text;
+      const target = installationTarget(root, path);
+      await assertPlainParents(root, target);
+      const text = await readOptional(target);
+      const managed = isProjectInstruction(path) ? projectInstructionBlock(text) : text;
+      if (managed !== undefined) local[path] = managed;
     }
     return { candidate, installed, local };
   }
@@ -220,6 +233,17 @@ export function createProjectInstallation(options: {
         }
       }
       await writeFile(join(backupDir, "templates.json"), JSON.stringify(plan.local));
+      for (const path of new Set(
+        [...Object.keys(plan.local), ...Object.keys(plan.candidate.base)].filter((path) =>
+          path.startsWith("bridge/"),
+        ),
+      )) {
+        const target = installationTarget(input.projectDir, path);
+        await assertPlainParents(input.projectDir, target);
+        if ((await readOptional(target)) === undefined) continue;
+        await mkdir(dirname(join(backupDir, path)), { recursive: true });
+        await cp(target, join(backupDir, path));
+      }
       const tool = join(stage, "tool");
       await (options.provision ?? provisionPackage)(input.packageDir, tool);
       const installedPackage = join(tool, "node_modules", "omi-squad");
@@ -267,8 +291,15 @@ export function createProjectInstallation(options: {
       }
       for (const path of new Set([...Object.keys(plan.local), ...Object.keys(plan.merged)])) {
         if (plan.local[path] === plan.merged[path]) continue;
-        if (plan.merged[path] === undefined) await rm(join(squad, path));
-        else await write(join(squad, path), plan.merged[path]);
+        const target = installationTarget(input.projectDir, path);
+        if (isProjectInstruction(path)) {
+          await assertPlainParents(input.projectDir, target);
+          await write(
+            target,
+            mergeProjectInstruction(await readOptional(target), plan.merged[path]),
+          );
+        } else if (plan.merged[path] === undefined) await rm(target);
+        else await write(target, plan.merged[path]);
       }
       const previousTool = join(stage, "previous-tool");
       const toolExists = await lstat(join(squad, "tool")).then(

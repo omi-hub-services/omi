@@ -409,25 +409,32 @@ headless runtime dùng `--github-comment <numeric-id>` với actor được allo
 phải là quyết định cấu trúc đúng request/hash/version (ADR-0026), không suy diễn từ Issue prose.
 
 
-## 13. CLI surface đề xuất
+## 13. CLI surface v0.1
 
-Tên executable là `omi-squad` trong package; project shim gọi bằng `.omi-squad/bin/omi`. Trong các ví dụ sau, `omi` là shorthand của shim, không yêu cầu cài global. Cú pháp là thiết kế cần triển khai.
+Tên executable là `omi-squad` trong package; project shim gọi bằng `.omi-squad/bin/omi`. Trong các ví dụ sau, `omi` là shorthand của shim, không yêu cầu cài global.
+
+v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch --run --step` → `wait` → `status` → `deliver`. Runtime giữ retry hạ tầng/rework có giới hạn; `resume` chỉ phục hồi run paused/interrupted, không mở lại task blocked. Không thêm alias `run` cho một bước plan hoặc `retry` để bỏ gate PO.
 
 | Lệnh | Chức năng |
 |---|---|
-| `omi init` | Detect/init, preview mapping và cài bridge/config |
-| `omi doctor` | Kiểm tra CLI, version, profile, Git/GitHub, permission, filesystem |
+| `omi install/update --project <path> --package <path> --distribution <name> [--apply]` | Preview/cài runtime, templates, skill bridge và merge có marker vào CLAUDE.md/AGENTS.md |
+| `omi init --project <path> --config <baseline.json> [--variant new\|existing] [--apply]` | Detect codebase và tạo config/workflow/plan còn thiếu qua initializeProject; preview mặc định, giữ file đã có |
+| `omi doctor --project <path> --distribution <name>` | Kiểm tra cài đặt WSL2; lỗi `DOCTOR_FAILED`, exit 6 |
 | `omi session start` | Mở runtime và Claude Code Coordinator có quản lý lifecycle |
-| `omi run --issue <number>` | Giao một task |
-| `omi run --scope <scope-id>` | Giao phạm vi đã lưu |
+| `omi plan --issue <number> [--workflow <id>]` | Lập run cho Issue đã import |
+| `omi dispatch --run <id> --step <id>` | Dispatch step ready theo gate hiện hành |
+| `omi wait --run <id> [--timeout <seconds>]` | Chờ worker kết thúc |
+| `omi deliver --run <id> --pr <n> --head-sha <sha> --check <name>` | Gate merge bản đã được review độc lập |
 | `omi status --json` | Trạng thái máy đọc được; text mặc định cho PO |
 | `omi pause --run <id>` | Dừng có checkpoint |
 | `omi resume --run <id>` | Reconcile rồi tiếp tục |
-| `omi retry --task <id>` | Mở lại task đã blocked theo quyết định PO |
-| `omi profiles list/probe/login` | Quản lý profile local; login tương tác |
-| `omi approvals list/decide` | Xem và xử lý quyết định theo nguồn được xác thực |
-| `omi workflows validate` | Kiểm tra schema, reference, dependency, mandatory gate |
-| `omi sync` | Đối soát và flush outbox |
+| `omi profiles register <id> --tool <claude-code\|codex> --profile-home <path> --account-group <id> [--model <name> ...]` | Đăng ký metadata vào registry SQLite qua runtime; trạng thái unknown đến khi probe |
+| `omi profiles list` / `omi profiles probe <id>` | Liệt kê/probe qua adapter hiện có; login dùng native CLI với CLAUDE_CONFIG_DIR/CODEX_HOME |
+| `omi approvals decide <id> --expected-version <n> --decision <approved\|rejected> [--github-comment <id>]` | Chỉ runtime TTY hoặc GitHub actor được allowlist, theo ADR-0026 |
+
+`login`, `approvals list`, `workflows validate`, `sync` chưa có trong v0.1. `init` dùng nhánh local codebase của ADR-0029; mapping/copy GitHub Project vẫn là use case, chưa có CLI. Baseline JSON do caller cung cấp tường minh; không đoán repository, Project, branch, policy hay capability model. `models.yaml` do project cấu hình riêng trước khi chạy runtime.
+
+Runtime approval composition đọc business subject từ `content_hash` của task snapshot đã import, scope là task ID; một revision import mới làm request cũ stale. Các subject cost/release/deploy cần reader của workflow sở hữu chúng và không được suy ra từ request/agent text. GitHub pathway mặc định từ chối mọi actor; `policies.github_approval_actors` trong project.yaml cấu hình allowlist. Terminal pathway vẫn yêu cầu TTY thật của runtime.
 
 CLI command nhận argument có kiểu, không nối prompt/Issue body thành shell string. JSON output phải có schema/version, exit code và error classification ổn định.
 
