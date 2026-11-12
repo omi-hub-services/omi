@@ -66,6 +66,11 @@ export async function readPackageContent(directory: string) {
         templates[`bridge/${name.slice("templates/bridges/".length)}`] =
           wrapProjectInstruction(text);
       }
+      if (/^templates\/bridges\/claude-code\/omi-(?:status|next|watch)\/SKILL\.md$/.test(name)) {
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(content);
+        assertCredentialFree(text);
+        templates[`bridge/skills/${name.slice("templates/bridges/claude-code/".length)}`] = text;
+      }
       if (
         name === "templates/bridges/claude-code/omi-squad/SKILL.md" ||
         name === "templates/bridges/claude-code/omi-squad/bridge.ts"

@@ -108,6 +108,19 @@ import { createSqliteExecutorSelectionStore } from "../infrastructure/profiles/s
 import { createSqliteStateUnitOfWork } from "../infrastructure/persistence/sqlite/sqlite-state-unit-of-work.js";
 import type { StateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
 import { readFileSync } from "node:fs";
+import { readBoundedText } from "../infrastructure/processes/read-bounded-text.js";
+import {
+  commitWorker,
+  type CommitWorkerDeps,
+} from "../application/use-cases/runs/commit-worker.js";
+import { readWorkerReport } from "../application/use-cases/runs/read-worker-report.js";
+import type { WorkerReportReader } from "../application/ports/worker-report-reader.js";
+import { createCliWorkerCommitter } from "../infrastructure/git/cli-worker-committer.js";
+import { createSqliteWorkerReportReader } from "../infrastructure/persistence/sqlite/sqlite-worker-report-reader.js";
+import {
+  postReviewComment,
+  type PostReviewCommentDeps,
+} from "../application/use-cases/delivery/post-review-comment.js";
 import { join } from "node:path";
 import { inspectRuntime } from "../application/use-cases/project/inspect-runtime.js";
 import type { RuntimeIdentity } from "../application/use-cases/project/inspect-runtime.js";
@@ -435,12 +448,26 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
     },
     launchSession: launchWindowsSession,
     readStdin: () => readStandardInput(process.stdin),
+    readText: (path) => readBoundedText(path, 65_536),
     defaultSocketPath: options.socketPath,
     timeoutMs: options.timeoutMs ?? 5_000,
     version: readPackageVersion(),
     stdout: options.stdout,
     stderr: options.stderr,
   };
+}
+
+export function createWorkerCommandUseCases(
+  deps: CommitWorkerDeps & { readonly reports: WorkerReportReader },
+) {
+  return {
+    readWorkerReport: (input: unknown) => readWorkerReport(deps, input),
+    commitWorker: (input: unknown) => commitWorker(deps, input),
+  };
+}
+
+export function createReviewCommentUseCase(deps: PostReviewCommentDeps) {
+  return (input: unknown) => postReviewComment(deps, input);
 }
 
 /**
@@ -696,6 +723,9 @@ export async function createProjectRunCommandUseCases(
         resumeRun: refuse,
         deliverRun: refuse,
         handoffCoordinator: refuse,
+        readWorkerReport: refuse,
+        commitWorker: refuse,
+        postReviewComment: refuse,
       },
       drain: () => Promise.resolve(),
       resourceWakeup: undefined,
@@ -993,7 +1023,19 @@ export async function createProjectRunCommandUseCases(
   });
   return {
     runs,
-    commands,
+    commands: {
+      ...commands,
+      ...createWorkerCommandUseCases({
+        ...dispatch,
+        committer: createCliWorkerCommitter(),
+        reports: createSqliteWorkerReportReader(database),
+      }),
+      postReviewComment: createReviewCommentUseCase({
+        ...merge,
+        repository: `${config.project.repository.owner}/${config.project.repository.name}`,
+        hasher: sha256ContentHasher,
+      }),
+    },
     approvals: createApprovalUseCases({
       database,
       subjects: createSqliteTaskApprovalSubjects(database),

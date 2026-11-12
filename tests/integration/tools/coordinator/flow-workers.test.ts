@@ -7,6 +7,11 @@ import {
 } from "../../../../tools/coordinator/flow-workers.ts";
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
 import type { WslTarget } from "../../../../tools/coordinator/coordinator-settings.ts";
+import { createProcessRunner } from "../../../../tools/coordinator/process-runner.ts";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const target: WslTarget = {
   viaWslExe: true,
@@ -238,7 +243,9 @@ describe("workerReportCommand", () => {
 
 describe("commitWorkerCommand", () => {
   const BRANCH = "task/omi-077-script-first";
-  const git = (c: Command) => payload(c).replace(/^git /, "");
+  const rawGit = (c: Command) => payload(c).replace(/^git /, "");
+  const git = (c: Command) =>
+    rawGit(c).replace(/^(?:-c core\.(?:hooksPath=\/dev\/null|fsmonitor=false) )+/, "");
   const repo = (over: { current?: string; staged?: string } = {}) =>
     fake((c) => {
       const g = git(c);
@@ -251,12 +258,73 @@ describe("commitWorkerCommand", () => {
     });
   const input = { branch: BRANCH, message: "feat: x\n\nCo-Authored-By: T <t@x>\n", dryRun: false };
 
+  it("isolates every Git invocation from hooks and fsmonitor", async () => {
+    const f = repo();
+    expect(await commitWorkerCommand(f.ctx, input)).toBe(0);
+    expect(f.seen).toHaveLength(5);
+    for (const command of f.seen)
+      expect(rawGit(command)).toMatch(/^-c core\.hooksPath=\/dev\/null -c core\.fsmonitor=false /);
+  });
+
+  it("staging cannot execute post-index-change hooks or fsmonitor", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "omi-legacy-commit-isolation-"));
+    try {
+      const gitLocal = (...args: string[]) =>
+        execFileSync(
+          "git",
+          ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args],
+          { cwd, encoding: "utf8" },
+        ).trim();
+      gitLocal("init", `--initial-branch=${BRANCH}`);
+      gitLocal("config", "user.name", "Fixture");
+      gitLocal("config", "user.email", "fixture@example.invalid");
+      for (const path of ["src", "tests", "docs", "templates", "schemas"]) {
+        mkdirSync(join(cwd, path));
+        writeFileSync(join(cwd, path, "output.txt"), "before\n");
+      }
+      gitLocal("add", ".");
+      gitLocal("commit", "-m", "seed");
+      mkdirSync(join(cwd, ".git/hooks"), { recursive: true });
+      const hook = join(cwd, ".git/hooks/post-index-change");
+      writeFileSync(hook, "#!/bin/sh\necho ran > hook-ran\n");
+      chmodSync(hook, 0o700);
+      const monitor = join(cwd, ".git/fsmonitor");
+      writeFileSync(monitor, "#!/bin/sh\necho ran > fsmonitor-ran\nexit 0\n");
+      chmodSync(monitor, 0o700);
+      gitLocal("config", "core.fsmonitor", monitor);
+      writeFileSync(join(cwd, "src/output.txt"), "after\n");
+      const execute = createProcessRunner();
+      let staged = false;
+      const run: Runner = async (command) => {
+        const result = await execute(command);
+        if (git(command).startsWith("add ")) {
+          staged = true;
+          expect(existsSync(join(cwd, "hook-ran"))).toBe(false);
+          expect(existsSync(join(cwd, "fsmonitor-ran"))).toBe(false);
+        }
+        return result;
+      };
+      expect(
+        await commitWorkerCommand(
+          { run, target: { ...target, viaWslExe: false, repoDir: cwd } },
+          input,
+        ),
+      ).toBe(0);
+      expect(staged).toBe(true);
+      expect(existsSync(join(cwd, "hook-ran"))).toBe(false);
+      expect(existsSync(join(cwd, "fsmonitor-ran"))).toBe(false);
+      expect(gitLocal("show", "HEAD:src/output.txt")).toBe("after");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it("stages only the allowed paths, commits with the message on stdin and prints the SHA", async () => {
     const f = repo();
     expect(await commitWorkerCommand(f.ctx, input)).toBe(0);
     const add = f.seen.find((c) => git(c).startsWith("add"));
     expect(git(add as Command)).toBe("add -A -- src tests docs templates schemas");
-    const commit = f.seen.find((c) => git(c).startsWith("commit"));
+    const commit = f.seen.find((c) => /\bcommit -F -$/.test(git(c)));
     expect(git(commit as Command)).toBe("commit -F -");
     expect(commit?.input).toBe(input.message);
     expect(out.join("\n")).toContain("abcdef1234567890abcdef1234567890abcdef12");
@@ -274,14 +342,14 @@ describe("commitWorkerCommand", () => {
     const f = repo({ staged: "" });
     expect(await commitWorkerCommand(f.ctx, input)).toBe(1);
     expect(err.join("\n")).toMatch(/nothing/);
-    expect(f.seen.some((c) => git(c).startsWith("commit"))).toBe(false);
+    expect(f.seen.some((c) => /\bcommit -F -$/.test(git(c)))).toBe(false);
   });
 
   it("refuses when .claude/ is already in the index", async () => {
     const f = repo({ staged: "src/a.ts\n.claude/settings.json\n" });
     expect(await commitWorkerCommand(f.ctx, input)).toBe(1);
     expect(err.join("\n")).toContain(".claude/settings.json");
-    expect(f.seen.some((c) => git(c).startsWith("commit"))).toBe(false);
+    expect(f.seen.some((c) => /\bcommit -F -$/.test(git(c)))).toBe(false);
   });
 
   it("refuses an empty message", async () => {
@@ -293,7 +361,9 @@ describe("commitWorkerCommand", () => {
   it("with --dry-run checks the branch and prints add and commit without running them", async () => {
     const f = repo();
     expect(await commitWorkerCommand(f.ctx, { ...input, dryRun: true })).toBe(0);
-    expect(f.seen.some((c) => git(c).startsWith("add") || git(c).startsWith("commit"))).toBe(false);
+    expect(f.seen.some((c) => git(c).startsWith("add") || /\bcommit -F -$/.test(git(c)))).toBe(
+      false,
+    );
     expect(out.join("\n")).toContain("would run:");
   });
 
@@ -302,11 +372,11 @@ describe("commitWorkerCommand", () => {
       const g = git(c);
       if (g.startsWith("rev-parse --abbrev-ref")) return { stdout: `${BRANCH}\n` };
       if (g.startsWith("diff --cached")) return { stdout: "src/a.ts\n" };
-      if (g.startsWith("commit")) return { code: 1, stderr: "hook failed" };
+      if (/\bcommit -F -$/.test(g)) return { code: 1, stderr: "commit failed" };
       return undefined;
     });
     expect(await commitWorkerCommand(f.ctx, input)).toBe(1);
-    expect(err.join("\n")).toContain("hook failed");
+    expect(err.join("\n")).toContain("commit failed");
   });
 });
 

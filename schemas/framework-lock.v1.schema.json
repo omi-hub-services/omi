@@ -29,7 +29,7 @@
       "type": "object",
       "propertyNames": {
         "type": "string",
-        "pattern": "^(?:(workflows|roles|rules|skills|config|provenance)\\/[A-Za-z0-9._/-]+|bridge\\/(?:CLAUDE\\.md|AGENTS\\.md|skill\\/(?:SKILL\\.md|bridge\\.ts|bridge\\.config\\.json)))$"
+        "pattern": "^(?:(workflows|roles|rules|skills|config|provenance)\\/[A-Za-z0-9._/-]+|bridge\\/(?:CLAUDE\\.md|AGENTS\\.md|skill\\/(?:SKILL\\.md|bridge\\.ts|bridge\\.config\\.json)|skills\\/omi-(?:status|next|watch)\\/SKILL\\.md))$"
       },
       "additionalProperties": {
         "type": "string",

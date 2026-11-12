@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { findingSchema } from "../../contracts/result.js";
 import { identifierSchema, slugSchema } from "../../contracts/identifiers.js";
 import { executorSchema } from "../../contracts/model-capability.js";
 import type { AgentExecutor } from "../../ports/agent-executor.js";
@@ -14,7 +15,11 @@ import type { AdvanceRunDependencies } from "./advance-run.js";
 import { dispatchStep } from "./dispatch-step.js";
 import type { DispatchRefusal, DispatchStepDependencies } from "./dispatch-step.js";
 
-const dispatchRunStepSchema = z.strictObject({ runId: identifierSchema, stepId: slugSchema });
+const dispatchRunStepSchema = z.strictObject({
+  runId: identifierSchema,
+  stepId: slugSchema,
+  notes: z.string().trim().min(1).max(2000).optional(),
+});
 
 export interface DispatchRunStepDependencies
   extends DispatchStepDependencies, CompletionRouting, Omit<AdvanceRunDependencies, "nextId"> {
@@ -92,6 +97,20 @@ export async function dispatchRunStep(
   if (request === undefined) return { ok: false, reason: "NOT_PLANNABLE" };
 
   try {
+    if (parsed.data.notes !== undefined) {
+      const context = z.record(z.string(), z.unknown()).parse(request["context"]);
+      request = {
+        ...request,
+        context: {
+          ...context,
+          previousFindings: [
+            ...z.array(findingSchema).parse(context["previousFindings"]),
+            { id: "coordinator-notes", severity: "info", message: parsed.data.notes },
+          ],
+        },
+      };
+    }
+
     if (deps.runs.get(run.id)?.status !== "running" || deps.canDispatch?.() === false) {
       releaseReservation(deps, request);
       return { ok: false, reason: "RUN_NOT_RUNNING" };

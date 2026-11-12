@@ -82,6 +82,20 @@ describe("dispatchRunStep resource wake-up", () => {
     await Promise.all(completions);
   });
 
+  it("adds Coordinator notes without replacing the script-built task context", async () => {
+    const { r, deps, completions } = setup("ready");
+    expect(
+      await dispatchRunStep(deps, {
+        runId: "run-1",
+        stepId: "implement",
+        notes: "Inspect the timeout regression.",
+      }),
+    ).toMatchObject({ ok: true });
+    expect(r.executor.started[0]?.prompt).toContain("Inspect the timeout regression.");
+    expect(r.executor.started[0]?.prompt).toContain("=== Skill tdd");
+    await Promise.all(completions);
+  });
+
   it("keeps a waiting step unchanged when selection has no candidate", async () => {
     const { r, deps } = setup();
     deps.planner.plan = () => Promise.resolve(undefined);
@@ -136,6 +150,22 @@ describe("dispatchRunStep resource wake-up", () => {
     );
     expect(r.attempts.get("reserved-1")?.status).toBe("cancelled");
     expect(r.executor.started).toHaveLength(0);
+  });
+
+  it("releases a selection reservation if notes cannot be added to an invalid planned context", async () => {
+    const { r, deps } = setup();
+    const seeded = await dispatchStep(
+      rig().deps,
+      dispatchInput({ reservedAttemptId: "reserved-1" }),
+    );
+    if (!seeded.ok) throw new Error(seeded.reason);
+    r.attempts.rows.set("reserved-1", { ...seeded.attempt, status: "pending" });
+    deps.planner.plan = () =>
+      Promise.resolve(dispatchInput({ reservedAttemptId: "reserved-1", context: {} }));
+    await expect(
+      dispatchRunStep(deps, { runId: "run-1", stepId: "implement", notes: "Review timeout" }),
+    ).rejects.toThrow();
+    expect(r.attempts.get("reserved-1")?.status).toBe("cancelled");
   });
 
   it("starts only one attempt when two dispatchers plan the same waiting revision", async () => {

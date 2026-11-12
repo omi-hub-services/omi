@@ -393,6 +393,89 @@ against live GitHub, so the first live run should start with a preview / `--dry-
 `tools/coordinator/` scripts keep doing the same job for this repository until `omi` replaces them
 (ADR-0014); the framework does not import them.
 
+## 10. Coordinator commands and skills
+
+`install --apply` (§1) installs `omi-status`, `omi-next` and `omi-watch` beside the existing
+`omi-squad` bridge under `.claude/skills/`. Reapply is idempotent. User edits remain local; an
+update that also changes the same file reports a three-way conflict instead of overwriting it.
+These are Coordinator-only bridge assets, outside the curated worker catalog/provenance lock.
+Workers continue receiving only assigned, hash-checked skills/rules inline: Claude disables native
+slash commands and profile user settings, and Codex refuses a profile with installed skills
+(ADR-0019). This is discovery/context isolation, not an OS restriction on a worker with shell access.
+
+Use `.omi-squad/bin/omi` in WSL2, or `node .omi-squad/bin/omi.cjs` from the Windows project root.
+The latter is the existing bound skill bridge launcher. File flags refer to paths **inside WSL2**;
+store notes, messages and review bodies in the project's `.tmp/` directory. No prompt or free text
+is assembled into a shell string. Every new command supports the normal `--json` envelope.
+
+For an initialized project with its Issue imported, approvals recorded and a session running (§3):
+
+1. `status --project . --json`: inspect current work first and judge the next task within PO scope.
+   Use `promote --project . --issue N` if a Backlog task is ready (§9).
+2. `plan --issue N --workflow feature`, then `status --run RUN` to find a ready step.
+3. `dispatch --run RUN --step STEP [--notes .tmp/notes.md]`: this **existing runtime dispatch** is
+   the equivalent of the dev-tool dispatch. The script reads the Issue snapshot, counts only
+   top-level acceptance criteria directly under `## Acceptance criteria` (excluding nested/fenced
+   boxes and subsections), generates numbered AC, worker rules and the JSON report format, then
+   uses the existing `buildPrompt` for verified skills/rules. The Coordinator supplies only optional
+   notes/findings, at most 2000 characters, stored as a context finding. Profile/model/effort still
+   come from the existing selector and project policy; notes cannot override those settings.
+4. Keep the returned attempt id. `wait --run RUN --timeout 300`, then
+   `worker-report --attempt ATTEMPT`. It reads the recorded completion event rather than scanning
+   native logs. `status` is the runtime verdict, `report.result` is the worker's structured claim,
+   and `report.failure` explains verification failure. A running or interrupted attempt may have
+   `report: null`; this is not success. Malformed output has no accepted structured report.
+5. If a stopped worker could not commit, `commit-worker --attempt ATTEMPT --message-file .tmp/message.md`.
+   It takes the task's writer lease, checks the branch, stages only the pinned context scope and
+   rejects an empty/unsafe index, credentials, temporary state and native agent configuration.
+   Repository hooks never execute: all Git commands use command-local `core.hooksPath=/dev/null`,
+   without changing repository configuration or offering a hook-enabling option. Mandatory validation
+   available only through hooks must be configured as required checks. Fresh required checks and
+   independent review must pass on the resulting revision; a commit supplies no passing evidence.
+   The resulting commit is checked against the pinned scope. An out-of-scope commit is undone locally
+   with a soft reset to the pre-commit head and the index cleared; worktree files are preserved and
+   the command refuses `UNSAFE_COMMIT`. It never pushes.
+   Commit or post-commit validation errors trigger HEAD inspection under the writer lease. If HEAD
+   did not move, the index and files remain intact and the original error is reported. If the expected
+   branch's HEAD moved, the local commit is undone to the captured pre-commit SHA and the index is
+   cleared while preserving files. Failed inspection, an unexpected branch or failed undo reports
+   `COMMIT_RECOVERY_FAILED`; the original and recovery errors are retained together. Do not assume a
+   failed command left HEAD unchanged, or retry an uncertain recovery without inspecting its state.
+   Writer release failures are reported as `WRITER_RELEASE_FAILED`, even after a commit succeeds.
+   Successful completion returns the new full head SHA.
+   A second unchanged request refuses `NOTHING_TO_COMMIT`. An active/interrupted writer or held
+   lease is a gate. Committing does not change the old report's revision or mark the step passed:
+   use the workflow's recovery/rework path and obtain fresh verification at the new head.
+6. Follow `status --run RUN` and dispatch the independent reviewer step on a fixed revision.
+   Prepare/publish the task PR through the project's configured delivery workflow before posting
+   its review. These commands do not introduce a new PR-opening or Issue-import interface.
+   `review-comment --pr N --file .tmp/review.md` requires this exact header with the full PR head:
+
+   ```text
+   **VERDICT:** PASS · **REVIEWED_HEAD:** `<40 lowercase hex characters>`
+   AC-1: met — <evidence>
+   AC-2: met — <evidence>
+   ```
+
+   Use `FAIL` with `not met` where appropriate. There must be exactly one well-formed AC line per
+   top-level criterion, no duplicates or unknown numbers, and evidence on each line. PASS requires
+   all met. The command reads the live PR and linked Issue before queuing a comment through the
+   existing outbox. Identical retries use one operation key; a pending outcome is reconciled before
+   sending again. A head can move after the read, so delivery independently rechecks its exact head.
+   A comment is presentation only: it grants no approval and does not replace the runtime's
+   recorded independent review. The authenticated project credential is the posting actor; no
+   repository-specific Coordinator login is hard-coded.
+7. Once the workflow and recorded independent review pass, use
+   `deliver --run RUN --pr N --head-sha HEAD --check REQUIRED` (§3). Retry pending delivery, resolve
+   refusals, and only report Done after delivery confirms it. Observe bounded rework (§6).
+8. `watch --project .` serves the existing loopback monitor; open the printed URL and stop its
+   terminal process when finished. Use `pause`/`resume` (§4–5) for checkpoint handoffs, or
+   `session new` / `coordinator switch --to PROFILE` to end the Coordinator session cleanly.
+
+No step falls back to raw Git/GitHub operations when a command refuses. Scope, uncovered
+architecture and cost decisions go to the PO. Live Windows/WSL2, subscription and remote posting
+remain opt-in verification; local fake-port tests do not establish those platform results.
+
 ## Compatibility matrix
 
 Versions, auth modes and their evidence are in [compatibility.md](compatibility.md); a version not
