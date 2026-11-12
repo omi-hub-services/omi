@@ -567,13 +567,19 @@ their own role, exactly their step skills and rules, in template order, verbatim
 do not invent mandatory status: the file's front matter is authoritative. Runtime role+step
 union semantics remain unchanged pending #186.
 
-The shared skeleton is the packaged asset templates/project/.omi-squad/worker-prompt.md, read
+The shared skeleton is the packaged asset templates/prompts/worker-prompt.md, read
 from the configured worker checkout, never a project-editable override. The pure application
 service src/application/services/render-worker-prompt.ts validates explicit slots and substitutes
 once, so placeholders inside task data stay literal. Tooling may import this application service;
 application never imports tools or performs I/O. No new layer/module/dependency is introduced.
 Repo-specific restrictions and report content are supplied as slots. Runtime buildPrompt wiring
 and JSON/artifact contracts remain #186; broader framework Coordinator dispatch remains #165.
+
+`templates/prompts/` holds package-only assets (architecture §3). Unlike `templates/project/`,
+it is never copied into the project's managed files or recorded in the framework lock. Putting
+the skeleton under `.omi-squad/` in the installed project templates caused lock-schema rejection
+of `worker-prompt.md`. The package's existing `files: ["templates/", ...]` includes the new path;
+`tools/check-package.ts` requires the skeleton in the actual archive listing.
 
 The tooling reads the complete Issue body/title, all comments with author/URL provenance and all
 Project-item pages for Workflow. Chronological comments are delimited task data; scope-note

@@ -213,7 +213,7 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
             `--- BEGIN COMMENT by ${c.author ?? "[deleted]"} · ${c.url}${/scope.note|SCOPE-APPROVED/i.test(c.body) ? " · scope-note candidate" : ""} ---\n${c.body}\n--- END COMMENT ---`,
         ),
       ].join("\n\n");
-    const text = renderWorkerPrompt(await read("templates/project/.omi-squad/worker-prompt.md"), {
+    const text = renderWorkerPrompt(await read("templates/prompts/worker-prompt.md"), {
       identity: `${resume ? `${NATIVE_RESUME_HEADER}\n\n` : ""}# Workflow ${template.workflow.id} · step ${step.id} · role ${step.role}`,
       workspace: `## Workspace\nWork only in ${target.repoDir}\nBranch: ${branch}`,
       read_first: resume ? "" : READ_FIRST,

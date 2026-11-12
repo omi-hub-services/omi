@@ -167,6 +167,9 @@ it("reads the supplied packaged skeleton in the worker checkout", async () => {
     ),
   ).toBe(0);
   expect(output.join("\n")).toContain("PACKAGED MARKER");
+  expect(f.seen.some((c) => c.args.at(-1) === "cat -- templates/prompts/worker-prompt.md")).toBe(
+    true,
+  );
   expect(f.seen.filter((c) => c.file !== "gh").every((c) => c.cwd === dir)).toBe(true);
 });
 
