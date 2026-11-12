@@ -32,6 +32,19 @@ const quotaPolicySchema = z.strictObject({
   probe_when_stale: z.boolean().default(false),
 });
 
+/**
+ * Project checks the runtime runs itself (OMI-085), keyed by the id workflow steps require. The
+ * command is an argv array run without a shell in the attempt's worktree. Absent block = the
+ * runtime runs nothing, so older configs keep their behaviour and their hash.
+ */
+const checksSchema = z.record(
+  slugSchema,
+  z.strictObject({
+    command: z.array(z.string().min(1).max(1000)).min(1).max(64),
+    timeout_seconds: z.number().int().min(1).max(86_400).default(600),
+  }),
+);
+
 /** Opaque GitHub IDs: modern URL-safe IDs, legacy padded base64, and short option IDs. */
 export const githubIdSchema = z.string().regex(/^[A-Za-z0-9_+/=-]{1,256}$/);
 export const projectFieldMappingSchema = z.record(
@@ -69,6 +82,7 @@ export const projectConfigSchema = z
     effort_policy: effortPolicySchema,
     resource_wait: resourceWaitSchema.prefault({}),
     quota: quotaPolicySchema.optional(),
+    checks: checksSchema.optional(),
     workspace: z.strictObject({ worktree_root: absolutePathSchema }).optional(),
     policies: z.strictObject({
       /** Gates that always need a human; a runtime field must not remove them. */

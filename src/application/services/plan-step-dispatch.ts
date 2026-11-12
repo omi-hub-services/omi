@@ -112,6 +112,11 @@ export function createDispatchPlanner(deps: {
     if (step === undefined) throw new Error("WORKFLOW_UNKNOWN");
     const capability = models.capability_profiles[step.capability_profile];
     if (capability === undefined) throw new Error("CAPABILITY_UNKNOWN");
+    // A required check without a command would silently fall back to the worker's word.
+    const configured = config.checks ?? {};
+    if (!step.required_checks.every((id) => Object.hasOwn(configured, id))) {
+      throw new Error("CHECK_UNCONFIGURED");
+    }
     return {
       models,
       task: {
@@ -128,6 +133,7 @@ export function createDispatchPlanner(deps: {
       role: step.role,
       stepSkills: step.skills,
       stepRules: step.rules,
+      requiredChecks: step.required_checks,
       execution: {
         profileHome: selection.profileHome,
         model: selection.model,

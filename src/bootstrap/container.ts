@@ -29,6 +29,7 @@ import { createLocalArtifactStore } from "../infrastructure/artifacts/local-arti
 import { createLocalCheckpointStore } from "../infrastructure/artifacts/local-checkpoint-store.js";
 import { sha256ContentHasher } from "../infrastructure/artifacts/sha256-content-hasher.js";
 import { createCliGitWorkspace } from "../infrastructure/git/cli-git-workspace.js";
+import { createProcessCheckRunner } from "../infrastructure/processes/process-check-runner.js";
 import { createGithubRestClient } from "../infrastructure/github/github-rest-client.js";
 import { createGhApiTransport } from "../infrastructure/github/gh-api-transport.js";
 import type { GithubTransport } from "../infrastructure/github/github-transport.js";
@@ -655,6 +656,22 @@ export async function createProjectRunCommandUseCases(
     },
   };
   const completion: CompletionRouting = {
+    // Only configured checks exist; with none, no id is runtime-owned and nothing is run.
+    ...(config.project.checks === undefined
+      ? {}
+      : {
+          checks: createProcessCheckRunner({
+            checks: Object.fromEntries(
+              Object.entries(config.project.checks).map(([id, check]) => [
+                id,
+                { command: check.command, timeoutMs: check.timeout_seconds * 1000 },
+              ]),
+            ),
+            artifacts,
+            now,
+            nextId,
+          }),
+        }),
     failoversMade: (stepRunId) => attempts.failoversForStep(stepRunId),
     failover,
     selections: profiles.selections,
