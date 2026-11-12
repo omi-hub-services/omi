@@ -1,3 +1,4 @@
+import { lookupDeploy, sendDeploy } from "./github-deploy.js";
 import { z } from "zod";
 import type { GithubOperation } from "../../application/contracts/github-operation.js";
 import type {
@@ -28,7 +29,9 @@ import type { StateOperation } from "./github-state-operations.js";
 /** Operations that create a body carrying the marker. */
 type MarkedOperation = Exclude<
   GithubOperation,
-  { type: "project.copy" | "pull_request.merge" } | StateOperation | ReleaseArtifactOperation
+  | { type: "project.copy" | "pull_request.merge" | "deploy.dispatch" }
+  | StateOperation
+  | ReleaseArtifactOperation
 >;
 
 /**
@@ -41,6 +44,8 @@ export function createGithubRemote(client: GithubRestClient): GithubRemote {
   return {
     async send(request: SendRequest): Promise<SendOutcome> {
       const operation = request.operation;
+      if (operation.type === "deploy.dispatch")
+        return sendDeploy(client, operation, request.operationKey);
       if (operation.type === "project.copy") {
         return sendProjectCopy(client, operation, request.operationKey);
       }
@@ -64,6 +69,8 @@ export function createGithubRemote(client: GithubRestClient): GithubRemote {
 
     async lookup(request: LookupRequest): Promise<LookupOutcome> {
       const operation = request.operation;
+      if (operation.type === "deploy.dispatch")
+        return lookupDeploy(client, operation, request.operationKey);
       if (operation.type === "project.copy") {
         return lookupProjectCopy(client, operation, request.operationKey);
       }

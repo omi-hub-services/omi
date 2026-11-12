@@ -25,7 +25,26 @@ const tagSchema = z
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, "must be a plain tag name")
   .refine((tag) => !tag.includes("..") && !/[.]$|[.]lock$/.test(tag), "invalid git ref name");
 
+export const deployOperationSchema = z.strictObject({
+  type: z.literal("deploy.dispatch"),
+  repo: repoSchema,
+  deploymentEnvironment: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/),
+  artifactDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  workflow: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*[.]ya?ml$/),
+  ref: tagSchema,
+  workflowSha: gitShaSchema,
+  allowedActors: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/)).min(1),
+  authorActor: z.string().min(1),
+  rollbackRunbook: z
+    .strictObject({
+      reference: z.string().min(1),
+      revisionHash: z.string().regex(/^[0-9a-f]{64}$/),
+    })
+    .optional(),
+});
+
 export const githubOperationSchema = z.discriminatedUnion("type", [
+  // Appended below to preserve existing schema option indices.
   z.strictObject({
     type: z.literal("project.copy"),
     sourceProjectId: githubIdSchema,
@@ -109,6 +128,7 @@ export const githubOperationSchema = z.discriminatedUnion("type", [
     title: titleSchema,
     body: bodySchema,
   }),
+  deployOperationSchema,
 ]);
 export type GithubOperation = z.infer<typeof githubOperationSchema>;
 export type GithubOperationType = GithubOperation["type"];
