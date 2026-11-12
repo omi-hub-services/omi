@@ -19,7 +19,7 @@ async function setup() {
     ok: true,
     value: {
       path,
-      headSha: "a".repeat(40),
+      headSha: (committed ? "b" : "a").repeat(40),
       branch: dispatched.attempt.workspace.branch,
       dirty: true,
       hasIgnoredFiles: false,
@@ -29,10 +29,10 @@ async function setup() {
     ...r.deps,
     reports: { read: () => ({ outcome: "succeeded", exitCode: 0, failure: "REVISION_MISSING" }) },
     committer: {
-      hooksTrusted: () => true,
       committedPaths: () => ["src/file.ts"],
       undoCommit: () => {
         committed = false;
+        staged = [];
       },
       stagedPaths: () => staged,
       stage: () => {
@@ -111,18 +111,7 @@ describe("worker commands", () => {
     });
   });
 
-  it("refuses worker-controlled hooks before staging", async () => {
-    const s = await setup();
-    s.deps.committer.hooksTrusted = () => false;
-    expect(await commitCommand(s)).toMatchObject({
-      code: 4,
-      body: { error: { message: "UNTRUSTED_HOOKS" } },
-    });
-    expect(s.stageCalls()).toBe(0);
-    expect(s.committed()).toBe(false);
-  });
-
-  it("undoes a commit whose hook added an out-of-scope file", async () => {
+  it("undoes an out-of-scope commit", async () => {
     const s = await setup();
     s.deps.committer.committedPaths = () => ["src/file.ts", "outside.txt"];
     expect(await commitCommand(s)).toMatchObject({
@@ -132,6 +121,98 @@ describe("worker commands", () => {
     expect(s.committed()).toBe(false);
     expect(s.r.workspaces.released).toEqual([2]);
   });
+
+  it("preserves the original failure and index when HEAD did not move", async () => {
+    const s = await setup();
+    const original = new Error("COMMIT_FAILED");
+    s.deps.committer.commit = () => {
+      throw original;
+    };
+    expect(() =>
+      bootstrap
+        .createWorkerCommandUseCases(s.deps)
+        .commitWorker({ attemptId: s.id, message: "Implement" }),
+    ).toThrow(original);
+    expect(s.staged()).toEqual(["src/file.ts"]);
+    expect(s.committed()).toBe(false);
+    expect(s.r.workspaces.released).toEqual([2]);
+  });
+
+  it.each(["commit", "sha", "paths"] as const)(
+    "reconciles HEAD after %s fails following commit creation",
+    async (phase) => {
+      const s = await setup();
+      const commit = s.deps.committer.commit;
+      const original = new Error("COMMAND_FAILED");
+      s.deps.committer.commit = () => {
+        const sha = commit();
+        if (phase === "commit") throw original;
+        return phase === "sha" ? "invalid-sha" : sha;
+      };
+      if (phase === "paths")
+        s.deps.committer.committedPaths = () => {
+          throw original;
+        };
+      expect(() =>
+        bootstrap
+          .createWorkerCommandUseCases(s.deps)
+          .commitWorker({ attemptId: s.id, message: "Implement" }),
+      ).toThrow(phase === "sha" ? undefined : original);
+      expect(s.committed()).toBe(false);
+      expect(s.staged()).toEqual([]);
+      expect(s.r.workspaces.released).toEqual([2]);
+    },
+  );
+
+  it.each(["inspection", "branch", "undo"] as const)(
+    "reports %s recovery failure alongside the original error",
+    async (phase) => {
+      const s = await setup();
+      const commit = s.deps.committer.commit;
+      const original = new Error("COMMAND_FAILED");
+      const recovery = new GitWorkspaceError("GIT_FAILED");
+      s.deps.committer.commit = () => {
+        commit();
+        throw original;
+      };
+      const inspect = s.r.workspaces.inspect.bind(s.r.workspaces);
+      s.r.workspaces.inspect = (path) => {
+        if (s.committed() && phase === "inspection") return { ok: false, error: recovery };
+        const state = inspect(path);
+        return s.committed() && phase === "branch" && state.ok
+          ? { ok: true, value: { ...state.value, branch: "task/unexpected" } }
+          : state;
+      };
+      if (phase === "undo")
+        s.deps.committer.undoCommit = () => {
+          throw recovery;
+        };
+      let result: unknown;
+      try {
+        result = bootstrap
+          .createWorkerCommandUseCases(s.deps)
+          .commitWorker({ attemptId: s.id, message: "Implement" });
+      } catch (error) {
+        result = error;
+      }
+      expect(result).toMatchObject({
+        ok: false,
+        reason: "COMMIT_RECOVERY_FAILED",
+      });
+      if (
+        typeof result !== "object" ||
+        result === null ||
+        !("error" in result) ||
+        !(result.error instanceof AggregateError)
+      )
+        throw new Error("missing recovery causes");
+      expect(result.error.errors[0]).toBe(original);
+      if (phase === "branch") expect(result.error.errors[1]).toBeInstanceOf(Error);
+      else expect(result.error.errors[1]).toBe(recovery);
+      expect(s.committed()).toBe(true);
+      expect(s.r.workspaces.released).toEqual([2]);
+    },
+  );
   it.each(["writer held", "branch mismatch", "unsafe scope", "empty after staging"] as const)(
     "commit-worker refuses %s through the CLI",
     async (scenario) => {

@@ -188,7 +188,10 @@ export async function commitWorkerCommand(
   const current = (await runChecked(ctx.run, git(["rev-parse", "--abbrev-ref", "HEAD"]))).trim();
   const add = git(["add", "-A", "--", ...STAGE_PATHS]);
   const staged = git(["diff", "--cached", "--name-only"]);
-  const commit: Command = { ...git(["commit", "-F", "-"]), input: input.message };
+  const commit: Command = {
+    ...git(["-c", "core.hooksPath=/dev/null", "commit", "-F", "-"]),
+    input: input.message,
+  };
   // The branch is checked before anything is staged; the staged paths are judged after.
   if (current !== input.branch) {
     return refuse(label, `the checkout is on "${current}", not on ${input.branch}`);

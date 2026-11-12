@@ -1,6 +1,5 @@
-/** Local Git only; normal commit hooks run, with no push or history rewriting. */
+/** Local Git only. Commits never execute repository hooks; configuration is not changed. */
 export interface WorkerCommitter {
-  hooksTrusted(workspace: string): boolean;
   committedPaths(workspace: string, baseSha: string, headSha: string): readonly string[];
   /** Undo only the local commit just made; preserve worktree files and clear the index. */
   undoCommit(workspace: string, baseSha: string): void;

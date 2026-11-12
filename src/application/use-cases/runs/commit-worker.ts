@@ -4,7 +4,7 @@ import { assertCredentialFree, CredentialInputError } from "../../contracts/cred
 import { gitShaSchema, identifierSchema, relativePathSchema } from "../../contracts/identifiers.js";
 import type { ArtifactStore } from "../../ports/artifact-store.js";
 import type { AttemptStore } from "../../ports/attempt-store.js";
-import type { GitWorkspace } from "../../ports/git-workspace.js";
+import { GitWorkspaceError, type GitWorkspace } from "../../ports/git-workspace.js";
 import type { WorkerCommitter } from "../../ports/worker-committer.js";
 
 export interface CommitWorkerDeps {
@@ -62,7 +62,6 @@ export function commitWorker(deps: CommitWorkerDeps, input: unknown) {
     const state = deps.workspaces.inspect(attempt.workspace.path);
     if (!state.ok) return refuse(state.error.code);
     if (state.value.branch !== attempt.workspace.branch) return refuse("BRANCH_MISMATCH");
-    if (!deps.committer.hooksTrusted(attempt.workspace.path)) return refuse("UNTRUSTED_HOOKS");
     if (!deps.committer.stagedPaths(attempt.workspace.path).every(allowed))
       return refuse("UNSAFE_INDEX");
     deps.committer.stage(attempt.workspace.path, paths);
@@ -73,28 +72,40 @@ export function commitWorker(deps: CommitWorkerDeps, input: unknown) {
       deps.committer.unstage(attempt.workspace.path, unsafe);
       return refuse("UNSAFE_INDEX");
     }
-    if (!deps.committer.hooksTrusted(attempt.workspace.path)) return refuse("UNTRUSTED_HOOKS");
-    const committed = deps.committer.commit(attempt.workspace.path, parsed.data.message);
-    let headSha: string;
-    let safe: boolean;
+    const unsafeCommit = new Error("UNSAFE_COMMIT");
     try {
-      headSha = gitShaSchema.parse(committed);
-      safe = deps.committer
+      const headSha = gitShaSchema.parse(
+        deps.committer.commit(attempt.workspace.path, parsed.data.message),
+      );
+      const safe = deps.committer
         .committedPaths(attempt.workspace.path, state.value.headSha, headSha)
         .every(allowed);
+      if (!safe) throw unsafeCommit;
+      return { ok: true as const, attemptId: attempt.id, headSha };
     } catch (error) {
-      deps.committer.undoCommit(attempt.workspace.path, state.value.headSha);
+      let recoveryStage = "HEAD_INSPECTION_FAILED";
+      try {
+        const actual = deps.workspaces.inspect(attempt.workspace.path);
+        if (!actual.ok) throw actual.error;
+        recoveryStage = "RECOVERY_BRANCH_MISMATCH";
+        if (actual.value.branch !== attempt.workspace.branch)
+          throw new Error(recoveryStage, { cause: error });
+        if (actual.value.headSha !== state.value.headSha) {
+          recoveryStage = "UNDO_FAILED";
+          deps.committer.undoCommit(attempt.workspace.path, state.value.headSha);
+        }
+      } catch (recovery) {
+        const originalCode =
+          error instanceof GitWorkspaceError ? error.code : "COMMIT_OPERATION_FAILED";
+        return {
+          ...refuse("COMMIT_RECOVERY_FAILED"),
+          detail: `original=${originalCode}; recovery=${recoveryStage}`,
+          error: new AggregateError([error, recovery], "COMMIT_RECOVERY_FAILED"),
+        };
+      }
+      if (error === unsafeCommit) return refuse("UNSAFE_COMMIT");
       throw error;
     }
-    if (!safe) {
-      deps.committer.undoCommit(attempt.workspace.path, state.value.headSha);
-      return refuse("UNSAFE_COMMIT");
-    }
-    return {
-      ok: true as const,
-      attemptId: attempt.id,
-      headSha,
-    };
   };
   const release = () =>
     deps.workspaces.releaseWriter({
@@ -109,9 +120,20 @@ export function commitWorker(deps: CommitWorkerDeps, input: unknown) {
     result = execute();
   } catch (error) {
     const released = release();
-    if (!released.ok) return { ...refuse("WRITER_RELEASE_FAILED"), detail: released.error.code };
+    if (!released.ok)
+      return {
+        ...refuse("WRITER_RELEASE_FAILED"),
+        detail: released.error.code,
+        error: new AggregateError([error, released.error], "WRITER_RELEASE_FAILED"),
+      };
     throw error;
   }
   const released = release();
-  return released.ok ? result : { ...refuse("WRITER_RELEASE_FAILED"), detail: released.error.code };
+  return released.ok
+    ? result
+    : {
+        ...refuse("WRITER_RELEASE_FAILED"),
+        detail: released.error.code,
+        error: new AggregateError([result, released.error], "WRITER_RELEASE_FAILED"),
+      };
 }

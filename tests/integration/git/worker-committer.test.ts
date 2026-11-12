@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -9,7 +17,7 @@ const temporary: string[] = [];
 afterEach(() => {
   for (const path of temporary.splice(0)) rmSync(path, { recursive: true, force: true });
 });
-it("stages literal paths and preserves normal commit hooks", () => {
+it("commits literal paths without executing a failing marker-writing hook", () => {
   const cwd = mkdtempSync(join(tmpdir(), "omi-worker-commit-"));
   temporary.push(cwd);
   const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -23,11 +31,10 @@ it("stages literal paths and preserves normal commit hooks", () => {
   adapter.stage(cwd, ["src/[literal].ts"]);
   expect(adapter.stagedPaths(cwd)).toEqual(["src/[literal].ts"]);
   const hook = join(cwd, ".git/hooks/pre-commit");
-  writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+  writeFileSync(hook, "#!/bin/sh\necho ran > hook-ran\nexit 1\n");
   chmodSync(hook, 0o700);
-  expect(() => adapter.commit(cwd, "Refused by hook")).toThrow("GIT_FAILED");
-  writeFileSync(hook, "#!/bin/sh\nexit 0\n");
   expect(adapter.commit(cwd, "Implement fixture")).toBe(git("rev-parse", "HEAD"));
+  expect(existsSync(join(cwd, "hook-ran"))).toBe(false);
   expect(git("show", "HEAD:src/[literal].ts")).toBe("fixture");
   expect(readFileSync(join(cwd, "src/l.ts"), "utf8")).toBe("outside\n");
 });

@@ -3,7 +3,6 @@ import { GitWorkspaceError } from "../../application/ports/git-workspace.js";
 
 /** Local Git only. Ambient repository/index overrides must never redirect a command. */
 interface GitCommandOptions {
-  readonly runHooks?: boolean;
   readonly allowedCodes?: readonly number[];
   readonly indexFile?: string;
   readonly input?: string;
@@ -21,7 +20,8 @@ export function gitCommand(
     "git",
     [
       "--no-optional-locks",
-      ...(options.runHooks === true ? [] : ["-c", "core.hooksPath=/dev/null"]),
+      "-c",
+      "core.hooksPath=/dev/null",
       "-c",
       "core.fsmonitor=false",
       ...args,

@@ -107,7 +107,7 @@ export function registerRunCommands(program: Command, context: CliContext): void
 
   program
     .command("commit-worker")
-    .description("Commit a stopped worker's allowed output paths with normal Git hooks")
+    .description("Commit a stopped worker's allowed output paths without executing hooks")
     .requiredOption("--attempt <id>", "stopped attempt id")
     .requiredOption("--message-file <file>", "commit message file")
     .action(async (options: { attempt: string; messageFile: string }, command: Command) => {

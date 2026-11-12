@@ -428,11 +428,19 @@ For an initialized project with its Issue imported, approvals recorded and a ses
 5. If a stopped worker could not commit, `commit-worker --attempt ATTEMPT --message-file .tmp/message.md`.
    It takes the task's writer lease, checks the branch, stages only the pinned context scope and
    rejects an empty/unsafe index, credentials, temporary state and native agent configuration.
-   Hooks run only when every file under the effective hooks directory matches HEAD, including the
-   index; changed, untracked or unprovable hooks refuse `UNTRUSTED_HOOKS` (including untracked files
-   in `.git/hooks`). The resulting commit is checked against the pinned scope. An out-of-scope
-   commit is undone locally with a soft reset to the pre-commit head and the index cleared;
-   worktree files are preserved and the command refuses `UNSAFE_COMMIT`. It never pushes.
+   Repository hooks never execute: all Git commands use command-local `core.hooksPath=/dev/null`,
+   without changing repository configuration or offering a hook-enabling option. Mandatory validation
+   available only through hooks must be configured as required checks. Fresh required checks and
+   independent review must pass on the resulting revision; a commit supplies no passing evidence.
+   The resulting commit is checked against the pinned scope. An out-of-scope commit is undone locally
+   with a soft reset to the pre-commit head and the index cleared; worktree files are preserved and
+   the command refuses `UNSAFE_COMMIT`. It never pushes.
+   Commit or post-commit validation errors trigger HEAD inspection under the writer lease. If HEAD
+   did not move, the index and files remain intact and the original error is reported. If the expected
+   branch's HEAD moved, the local commit is undone to the captured pre-commit SHA and the index is
+   cleared while preserving files. Failed inspection, an unexpected branch or failed undo reports
+   `COMMIT_RECOVERY_FAILED`; the original and recovery errors are retained together. Do not assume a
+   failed command left HEAD unchanged, or retry an uncertain recovery without inspecting its state.
    Writer release failures are reported as `WRITER_RELEASE_FAILED`, even after a commit succeeds.
    Successful completion returns the new full head SHA.
    A second unchanged request refuses `NOTHING_TO_COMMIT`. An active/interrupted writer or held

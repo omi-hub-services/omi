@@ -241,8 +241,8 @@ describe("commitWorkerCommand", () => {
     expect(await commitWorkerCommand(f.ctx, input)).toBe(0);
     const add = f.seen.find((c) => git(c).startsWith("add"));
     expect(git(add as Command)).toBe("add -A -- src tests docs templates schemas");
-    const commit = f.seen.find((c) => git(c).startsWith("commit"));
-    expect(git(commit as Command)).toBe("commit -F -");
+    const commit = f.seen.find((c) => /\bcommit -F -$/.test(git(c)));
+    expect(git(commit as Command)).toBe("-c core.hooksPath=/dev/null commit -F -");
     expect(commit?.input).toBe(input.message);
     expect(out.join("\n")).toContain("abcdef1234567890abcdef1234567890abcdef12");
     expect(f.seen.some((c) => /\.tmp|\.claude/.test(payload(c)))).toBe(false);
@@ -259,14 +259,14 @@ describe("commitWorkerCommand", () => {
     const f = repo({ staged: "" });
     expect(await commitWorkerCommand(f.ctx, input)).toBe(1);
     expect(err.join("\n")).toMatch(/nothing/);
-    expect(f.seen.some((c) => git(c).startsWith("commit"))).toBe(false);
+    expect(f.seen.some((c) => /\bcommit -F -$/.test(git(c)))).toBe(false);
   });
 
   it("refuses when .claude/ is already in the index", async () => {
     const f = repo({ staged: "src/a.ts\n.claude/settings.json\n" });
     expect(await commitWorkerCommand(f.ctx, input)).toBe(1);
     expect(err.join("\n")).toContain(".claude/settings.json");
-    expect(f.seen.some((c) => git(c).startsWith("commit"))).toBe(false);
+    expect(f.seen.some((c) => /\bcommit -F -$/.test(git(c)))).toBe(false);
   });
 
   it("refuses an empty message", async () => {
@@ -278,7 +278,9 @@ describe("commitWorkerCommand", () => {
   it("with --dry-run checks the branch and prints add and commit without running them", async () => {
     const f = repo();
     expect(await commitWorkerCommand(f.ctx, { ...input, dryRun: true })).toBe(0);
-    expect(f.seen.some((c) => git(c).startsWith("add") || git(c).startsWith("commit"))).toBe(false);
+    expect(f.seen.some((c) => git(c).startsWith("add") || /\bcommit -F -$/.test(git(c)))).toBe(
+      false,
+    );
     expect(out.join("\n")).toContain("would run:");
   });
 
@@ -287,11 +289,11 @@ describe("commitWorkerCommand", () => {
       const g = git(c);
       if (g.startsWith("rev-parse --abbrev-ref")) return { stdout: `${BRANCH}\n` };
       if (g.startsWith("diff --cached")) return { stdout: "src/a.ts\n" };
-      if (g.startsWith("commit")) return { code: 1, stderr: "hook failed" };
+      if (/\bcommit -F -$/.test(g)) return { code: 1, stderr: "commit failed" };
       return undefined;
     });
     expect(await commitWorkerCommand(f.ctx, input)).toBe(1);
-    expect(err.join("\n")).toContain("hook failed");
+    expect(err.join("\n")).toContain("commit failed");
   });
 });
 
