@@ -56,37 +56,7 @@ export const CLAUDE_DENIED_TOOLS = [
   "Bash(git switch --force*)",
 ] as const;
 
-const DEVELOPER_SKILLS = [
-  "test-driven-development",
-  "minimal-change",
-  "verification-before-completion",
-] as const;
-
-/** Developer workers get the OMI-073 set; the docs workflow has no TDD. Other roles: none. */
-export function curatedSkills(role: string | null, workflow: string | null): string[] {
-  if (role !== "Developer") return [];
-  return DEVELOPER_SKILLS.filter((s) => !(workflow === "docs" && s === "test-driven-development"));
-}
-
-const SKILL_NAME = /^[a-z][a-z0-9-]*$/;
-
-/** Path of a curated skill in the worker's checkout (relative to the checkout). */
-export function skillPath(name: string): string {
-  if (!SKILL_NAME.test(name)) throw new Error(`invalid skill name "${name}"`);
-  return `templates/project/.omi-squad/skills/${name}/SKILL.md`;
-}
-
-/** The prompt followed by every skill under the heading omi-next used to produce by hand. */
-export function promptWithSkills(
-  prompt: string,
-  skills: readonly { readonly name: string; readonly body: string }[],
-): string {
-  return skills.reduce(
-    (text, s) =>
-      `${text}\n\n## Skill: ${s.name} (follow it; report it under Skills applied)\n\n${s.body}`,
-    prompt,
-  );
-}
+export const NATIVE_RESUME_HEADER = "# Native resume only";
 
 /** `$HOME/omi-runs/omi-<task>-<suffix>`; `task` is the digits of the Plan Key. */
 export function runsPath(task: string, suffix: string): string {

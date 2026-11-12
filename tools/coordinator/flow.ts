@@ -98,6 +98,7 @@ import {
   workerReportCommand,
 } from "./flow-workers.ts";
 import { linkedIssue } from "./review-verdict.ts";
+import { promptCommand } from "./flow-prompt.ts";
 
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   new-issue --file <spec.md>                 validated Issue with Project fields and Backlog
@@ -116,8 +117,10 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   prune-runs                                  one-time log sweep for every Done task
   pick-profile <issue> [--kind claude|codex|claude+codex-live] [--probe] [--model NAME] [--json]
                                               worker profile by quota (--probe: 1 Haiku call/profile)
+  prompt <issue> --step <id> [--worktree <dir>] [--branch <b>] [--notes <f> | --findings <f>] [--out <f>]
+                                              render the workflow step packet; --dry-run previews without writing
   dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] --prompt <file>
-                                              WSL: prompt + curated skills to ~/omi-runs, then the worker
+                                              WSL: unchanged prompt to ~/omi-runs, then the worker
                                               in the foreground (model/effort from the effort policy)
   worker-report <issue>                       final report, turns, permission denials, session/thread id
   commit-worker <branch> --message-file <f>   WSL: stage src tests docs templates schemas, commit, print SHA
@@ -767,6 +770,12 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       "comment-file": { type: "string" },
       "message-file": { type: "string" },
       prompt: { type: "string" },
+      step: { type: "string" },
+      worktree: { type: "string" },
+      branch: { type: "string" },
+      notes: { type: "string" },
+      findings: { type: "string" },
+      out: { type: "string" },
       profile: { type: "string" },
       resume: { type: "string" },
       kind: { type: "string", default: "claude" },
@@ -792,6 +801,17 @@ export async function main(argv: readonly string[], context?: Context): Promise<
   const go = async (plan: Plan) => ((await execute(ctx, label, plan, dry)) ? 0 : 1);
 
   switch (sub) {
+    case "prompt":
+      return promptCommand(ctx, {
+        number: issueNumber(a),
+        step: values.step,
+        worktree: values.worktree,
+        branch: values.branch,
+        notes: values.notes,
+        findings: values.findings,
+        out: values.out,
+        dryRun: dry,
+      });
     case "new-issue":
       return createIssue(ctx.run, required(values.file, "--file"), dry);
     case "set-status": {

@@ -34,6 +34,8 @@ export function validatePackedFiles(files: readonly PackedFile[]): void {
       throw new Error(`Missing package directory: ${prefix}`);
   if (!files.some((file) => file.path === "dist/bootstrap/cli.js"))
     throw new Error("Missing executable");
+  if (!files.some((file) => file.path === "templates/prompts/worker-prompt.md"))
+    throw new Error("Missing shared prompt skeleton: templates/prompts/worker-prompt.md");
 }
 export function packAndCheck(root: string, destination: string): string {
   const parsed: unknown = JSON.parse(
