@@ -107,8 +107,9 @@ export function createLocalCheckpointStore(
     `INSERT INTO checkpoints (${COLUMNS}, status_changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
   );
   const select = db.prepare(`SELECT ${COLUMNS} FROM checkpoints WHERE id = ?`);
+  // Save order survives wall-clock rollback; timestamps can select a stale Git snapshot.
   const validRows = db.prepare(
-    `SELECT ${COLUMNS} FROM checkpoints WHERE run_id = ? AND status = 'valid' ORDER BY created_at DESC, rowid DESC`,
+    `SELECT ${COLUMNS} FROM checkpoints WHERE run_id = ? AND status = 'valid' ORDER BY rowid DESC`,
   );
   const openRows = db.prepare(
     `SELECT ${COLUMNS} FROM checkpoints WHERE run_id = ? ORDER BY created_at, rowid`,
