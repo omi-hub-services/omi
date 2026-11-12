@@ -598,3 +598,32 @@ changing GitHub. Canonical template ids resolve directly; legacy `init` means on
 with their existing independent PO approval gates; `prompt` refuses to launch them as generic
 workers. For a new empty project, select onboarding-empty-repo explicitly. The documented Project
 option routing is checked in the default unit suite; the frozen bootstrap seed is not task state.
+
+## Framework source repository Coordinator
+
+[ADR-0036](../architecture/adr/0036-coordinator-single-source.md) records shared ownership and
+why repository Project/comment/WSL adapters remain until runtime run/attempt state can migrate.
+The future production CLI is an immutable release or explicit main-SHA build installed in an
+external project, with the archive digest and framework lock retained. Never point it at a
+moving develop build or install its state into this source repository.
+
+The documented commands remain `node tools/coordinator/flow.ts <command>` and
+`node tools/coordinator/status.ts`; no --import flag is needed. Workers edit the templates,
+never native skills. The Coordinator previews and applies protected skill installation:
+
+```text
+node tools/coordinator/skill-installation.ts install
+node tools/coordinator/skill-installation.ts install --apply
+node tools/coordinator/skill-installation.ts install --check
+```
+
+`npm run check` checks template drift, registered copied-policy parity coverage and generated
+prompt assets. Edit templates/prompts/, then run `npm run prompts:generate`; never edit the
+generated application embedding. Source-maintenance and installed-project skill variants both
+live under templates/bridges/. The installer above installs only skills, no runtime or settings.
+
+Tooling Issue intake/readiness requires `## Framework counterpart` with a module/template or a
+reason none applies. New worker packets require the shared v1 JSON result document; worker-report
+prints but refuses an old free-text report. Its script-only ids do not create runtime records.
+Commit-worker includes tools and the named managed root files and refuses unstaged in-scope
+leftovers rather than silently omitting them. The existing branch/index gates still apply.

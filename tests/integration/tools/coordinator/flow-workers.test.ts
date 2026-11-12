@@ -174,13 +174,26 @@ describe("dispatchCommand", () => {
 });
 
 describe("workerReportCommand", () => {
+  const resultDocument = (summary: string) =>
+    JSON.stringify({
+      schemaVersion: 1,
+      runId: "repo-77",
+      stepId: "implement",
+      attemptId: "repo-77-implement-1",
+      status: "succeeded",
+      summary,
+      artifacts: [],
+      checks: [],
+      skillsApplied: [],
+      findings: [],
+    });
   const claudeLog = [
     JSON.stringify({ type: "system", subtype: "init", session_id: "S1" }),
     JSON.stringify({
       type: "result",
       session_id: "S1",
       num_turns: 12,
-      result: "FINAL REPORT",
+      result: resultDocument("FINAL REPORT"),
       permission_denials: [{ tool_name: "Bash", tool_input: { command: "git push" } }],
     }),
   ].join("\n");
@@ -195,6 +208,7 @@ describe("workerReportCommand", () => {
     expect(await workerReportCommand(f.ctx, { planKey: "OMI-077", dryRun: false })).toBe(0);
     const text = out.join("\n");
     expect(text).toContain("FINAL REPORT");
+    expect(text).not.toContain("schemaVersion");
     expect(text).toContain("turns: 12");
     expect(text).toContain("Bash: git push");
     expect(text).toContain("session id: S1");
@@ -205,7 +219,8 @@ describe("workerReportCommand", () => {
     const f = fake((c) => {
       if (payload(c).includes("ls -t"))
         return { stdout: "/home/u/omi-runs/omi-077-codex-ggtintran-20261112-1.jsonl\n" };
-      if (payload(c).includes("omi-077-codex-last.md")) return { stdout: "CODEX LAST" };
+      if (payload(c).includes("omi-077-codex-last.md"))
+        return { stdout: resultDocument("CODEX LAST") };
       if (payload(c).startsWith("cat "))
         return { stdout: '{"type":"thread.started","thread_id":"T9"}\n{"type":"turn.started"}' };
       return undefined;
@@ -261,7 +276,7 @@ describe("commitWorkerCommand", () => {
   it("isolates every Git invocation from hooks and fsmonitor", async () => {
     const f = repo();
     expect(await commitWorkerCommand(f.ctx, input)).toBe(0);
-    expect(f.seen).toHaveLength(5);
+    expect(f.seen).toHaveLength(7);
     for (const command of f.seen)
       expect(rawGit(command)).toMatch(/^-c core\.hooksPath=\/dev\/null -c core\.fsmonitor=false /);
   });
@@ -278,10 +293,12 @@ describe("commitWorkerCommand", () => {
       gitLocal("init", `--initial-branch=${BRANCH}`);
       gitLocal("config", "user.name", "Fixture");
       gitLocal("config", "user.email", "fixture@example.invalid");
-      for (const path of ["src", "tests", "docs", "templates", "schemas"]) {
+      for (const path of ["src", "tests", "docs", "templates", "schemas", "tools"]) {
         mkdirSync(join(cwd, path));
         writeFileSync(join(cwd, path, "output.txt"), "before\n");
       }
+      for (const path of ["AGENTS.md", "package.json", "package-lock.json"])
+        writeFileSync(join(cwd, path), "{}\n");
       gitLocal("add", ".");
       gitLocal("commit", "-m", "seed");
       mkdirSync(join(cwd, ".git/hooks"), { recursive: true });
@@ -323,7 +340,9 @@ describe("commitWorkerCommand", () => {
     const f = repo();
     expect(await commitWorkerCommand(f.ctx, input)).toBe(0);
     const add = f.seen.find((c) => git(c).startsWith("add"));
-    expect(git(add as Command)).toBe("add -A -- src tests docs templates schemas");
+    expect(git(add as Command)).toBe(
+      "add -A -- src tests docs templates schemas tools AGENTS.md package.json package-lock.json",
+    );
     const commit = f.seen.find((c) => /\bcommit -F -$/.test(git(c)));
     expect(git(commit as Command)).toBe("commit -F -");
     expect(commit?.input).toBe(input.message);
@@ -467,4 +486,18 @@ it("refuses native resume for an independent review packet", async () => {
     1,
   );
   expect(f.seen).toHaveLength(0);
+});
+
+it("refuses a commit when in-scope unstaged leftovers remain after staging", async () => {
+  const branch = "task/omi-091-single-source";
+  const f = fake((c) => {
+    const command = payload(c);
+    if (command.includes("rev-parse --abbrev-ref")) return { stdout: branch };
+    if (command.includes("diff --cached --name-only")) return { stdout: "src/a.ts\n" };
+    if (command.includes("diff --name-only --")) return { stdout: "tools/coordinator/flow.ts\n" };
+    return undefined;
+  });
+  expect(await commitWorkerCommand(f.ctx, { branch, message: "fix", dryRun: false })).toBe(1);
+  expect(f.seen.some((c) => payload(c).includes("commit -F"))).toBe(false);
+  expect(err.join("\n")).toContain("unstaged");
 });

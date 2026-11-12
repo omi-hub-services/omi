@@ -74,7 +74,7 @@ export async function createIssueFromSpec(
     return refuse(...parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`));
   const spec = parsed.data;
   const body = read.body.trim();
-  const bodyReasons = issueSpecBodyReasons(body, spec.workType, request.prefix);
+  const bodyReasons = issueSpecBodyReasons(body, spec.workType, request.prefix, spec.area);
   if (bodyReasons.length > 0) return refuse(...bodyReasons);
 
   const data = await deps.intake.snapshot();

@@ -1,5 +1,8 @@
 // Pure selection rules of `flow.ts promote` (ADR-0014): which Backlog Issue may become Ready.
 // Shared by flow.ts (promote) and status.ts ("Backlog, all blockers closed"); no I/O here.
+import "../register-ts-imports.ts";
+const { judgePromotion: judgeTaskPromotion } =
+  await import("../../src/domain/tasks/promotion-policy.ts");
 import { issueReadinessReasons, type IssueReadiness } from "./issue-readiness.ts";
 import {
   partitionByStatus,
@@ -22,22 +25,16 @@ export type Promotion =
 
 /** Verdict for one Issue: promote it, report it already Ready, or refuse with every reason. */
 export function judgePromotion(number: number, issue: PromoteInput): Promotion {
-  const id = `#${String(number)}`;
-  if (issue.workType === "Epic") return { kind: "refuse", reason: `${id} is an Epic` };
-  if (issue.status === "Ready") return { kind: "done", note: `${id} Status is already Ready` };
-  if (issue.status !== "Backlog") {
-    return { kind: "refuse", reason: `${id} is ${issue.status ?? "(none)"}, not Backlog` };
-  }
-  const reasons: string[] = [];
-  const open = issue.blockers
-    .filter((b) => b.state !== "CLOSED")
-    .map((b) => `#${String(b.number)}`);
-  if (open.length > 0) reasons.push(`blocked by ${open.join(", ")}`);
-  else if (issue.blockersTruncated) reasons.push("more blockers than could be read");
-  reasons.push(...issueReadinessReasons(issue));
-  return reasons.length > 0
-    ? { kind: "refuse", reason: `${id}: ${reasons.join("; ")}` }
-    : { kind: "promote" };
+  return judgeTaskPromotion({
+    ...issue,
+    blockers: issue.blockers.map((b) => ({
+      number: b.number,
+      state: b.state === "CLOSED" ? "CLOSED" : "OPEN",
+    })),
+    number,
+    state: "OPEN",
+    milestone: null,
+  });
 }
 
 /**

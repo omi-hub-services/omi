@@ -41,5 +41,42 @@ export function taskReadinessReasons(task: TaskReadinessInput): string[] {
   }
   if (acceptanceCriteria(task.body).length === 0)
     reasons.push("Acceptance criteria needs at least one top-level checkbox");
+  reasons.push(...frameworkCounterpartReasons(task.body, task.area));
   return reasons;
+}
+
+/** Shared sync guard: fenced examples cannot supply the required ownership declaration. */
+export function frameworkCounterpartReasons(body: string, area: string | null): string[] {
+  const prose: string[] = [];
+  let fence: string | undefined;
+  for (const line of body.split(/\r?\n/)) {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence !== undefined) {
+      if (
+        marker?.[1] !== undefined &&
+        marker[1][0] === fence[0] &&
+        marker[1].length >= fence.length &&
+        marker[2]?.trim() === ""
+      )
+        fence = undefined;
+      continue;
+    }
+    if (marker?.[1] !== undefined) {
+      fence = marker[1];
+      continue;
+    }
+    prose.push(line);
+  }
+  const text = prose.join("\n");
+  if (
+    area?.trim().toLowerCase() !== "tooling" &&
+    !/(?:tools\/coordinator\/|\.claude\/skills\/)/.test(text)
+  )
+    return [];
+  const section = /^## Framework counterpart\s*\n([\s\S]*?)(?=^#{1,2}\s|$(?![\s\S]))/m.exec(
+    text,
+  )?.[1];
+  return section?.replace(/<!--[\s\S]*?-->/g, "").trim()
+    ? []
+    : ["missing ## Framework counterpart with module/template or reason"];
 }

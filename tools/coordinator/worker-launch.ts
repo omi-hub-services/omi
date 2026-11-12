@@ -4,57 +4,11 @@
 import { shellQuote, WSL_NODE_ENV } from "./process-runner.ts";
 import { RUNS_DIR_FROM_HOME } from "./coordinator-settings.ts";
 
-/** Default worker tool allowlist for every task (omi-next step 3, ADR-0014). */
-export const CLAUDE_ALLOWED_TOOLS = [
-  "Read",
-  "Edit",
-  "Write",
-  "Grep",
-  "Glob",
-  "TodoWrite",
-  "Bash(git status*)",
-  "Bash(git diff*)",
-  "Bash(git log*)",
-  "Bash(git show*)",
-  "Bash(git add *)",
-  "Bash(git commit *)",
-  "Bash(git switch *)",
-  "Bash(git fetch*)",
-  "Bash(git rev-parse *)",
-  "Bash(git restore *)",
-  "Bash(git ls-files*)",
-  "Bash(git grep *)",
-  "Bash(npm run *)",
-  "Bash(npm ci)",
-  "Bash(node *)",
-  "Bash(gh issue view *)",
-  "Bash(gh issue list *)",
-  "Bash(gh pr view *)",
-  "Bash(gh pr list *)",
-  "Bash(gh pr diff *)",
-  "Bash(gh project item-list *)",
-  "Bash(gh project field-list *)",
-  "Bash(gh project view *)",
-  "Bash(ls *)",
-  "Bash(cat *)",
-  "Bash(mkdir *)",
-  "Bash(ps *)",
-] as const;
-
-/** Wins over the allowlist; flag-first forms only (known gap, ADR-0014). */
-export const CLAUDE_DENIED_TOOLS = [
-  "Bash(git push*)",
-  "Bash(git reset --hard*)",
-  "Bash(gh api*)",
-  "Bash(npm install*)",
-  "Bash(git commit --no-verify*)",
-  "Bash(git commit -n*)",
-  "Bash(git commit --amend*)",
-  "Bash(git switch --discard-changes*)",
-  "Bash(git switch -C*)",
-  "Bash(git switch -f*)",
-  "Bash(git switch --force*)",
-] as const;
+import "../register-ts-imports.ts";
+const { REPOSITORY_WORKER_ALLOWED_TOOLS, REPOSITORY_WORKER_DENIED_TOOLS } =
+  await import("../../src/infrastructure/executors/claude-code/claude-code-invocation.ts");
+export const CLAUDE_ALLOWED_TOOLS = REPOSITORY_WORKER_ALLOWED_TOOLS;
+export const CLAUDE_DENIED_TOOLS = REPOSITORY_WORKER_DENIED_TOOLS;
 
 export const NATIVE_RESUME_HEADER = "# Native resume only";
 

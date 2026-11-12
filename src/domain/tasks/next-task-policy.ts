@@ -2,7 +2,16 @@ import { compareTaskOrder } from "./promotion-policy.js";
 import type { PromotionCandidate } from "./promotion-policy.js";
 
 /** Board order of the Project Status options; an unknown option sorts after these. */
-const STATUS_ORDER = ["Backlog", "Ready", "In Progress", "In Review", "Done"];
+export const STATUS_ORDER = [
+  "Backlog",
+  "Ready",
+  "In Progress",
+  "In Review",
+  "Waiting Approval",
+  "Waiting Resource",
+  "Blocked",
+  "Done",
+] as const;
 const NO_STATUS = "(no status)";
 
 const isOpenTask = (task: PromotionCandidate): boolean =>
@@ -42,7 +51,7 @@ export function groupTasksByStatus<T extends PromotionCandidate>(
   }
   const rank = (status: string): number => {
     if (status === NO_STATUS) return STATUS_ORDER.length + 1;
-    const index = STATUS_ORDER.indexOf(status);
+    const index = STATUS_ORDER.findIndex((value) => value === status);
     return index === -1 ? STATUS_ORDER.length : index;
   };
   return [...groups.entries()]

@@ -2,7 +2,8 @@
 import { parse } from "yaml";
 import { z } from "zod";
 import { marker, MARKER_PATTERN } from "../github-bootstrap/manifest.ts";
-import { countAcceptanceCriteria } from "./acceptance-criteria.ts";
+import "../register-ts-imports.ts";
+const { issueSpecBodyReasons } = await import("../../src/domain/tasks/issue-spec-policy.ts");
 import { ISSUE_FIELDS } from "./issue-readiness.ts";
 
 const text = z.string().trim().min(1);
@@ -44,21 +45,7 @@ export function parseIssueSpec(source: string): SpecResult {
       reason: result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
     };
   const body = (match[2] ?? "").trim();
-  const reasons: string[] = [];
-  // Ignore fenced examples when looking for real section headings.
-  const prose = body.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1\s*$/gm, "");
-  for (const heading of ["Mục tiêu", "Phạm vi", "Acceptance criteria", "Dependencies"]) {
-    if (!prose.split(/\r?\n/).some((line) => line.trimEnd() === `## ${heading}`))
-      reasons.push(`missing ## ${heading}`);
-  }
-  if (countAcceptanceCriteria(body) === 0)
-    reasons.push("Acceptance criteria needs at least one top-level checkbox");
-  if (result.data.workType === "Epic") reasons.push("creating Epics is outside new-issue scope");
-  const markers = [...body.matchAll(new RegExp(MARKER_PATTERN.source, "g"))];
-  if (markers.length > 1 || (markers[0] && !markers[0][1]?.startsWith("OMI-")))
-    reasons.push("spec must have at most one OMI-NNN marker");
-  if (body.includes("<!-- omi-squad:plan-key=") && markers.length === 0)
-    reasons.push("malformed Plan Key marker");
+  const reasons = issueSpecBodyReasons(body, result.data.workType, "OMI", result.data.area);
   return reasons.length > 0
     ? { kind: "refuse", reason: reasons.join("; ") }
     : { kind: "ok", spec: { ...result.data, body } };

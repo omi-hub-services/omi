@@ -48,7 +48,8 @@ describe("parseAcLines", () => {
     expect([...parseAcLines(review)]).toEqual([
       [1, "met"],
       [2, "not met"],
-      [3, "met"],
+      [3, "not met"],
+      [5, "not met"],
     ]);
   });
 
@@ -107,14 +108,18 @@ describe("tickAcceptanceCriteria", () => {
   });
 
   it.each<[string, string, RegExp]>([
-    ["a missing line", "AC-1: met\nAC-2: met\nAC-4: met", /no line for AC-3 \(of 4\)/],
+    ["a missing line", "AC-1: met — a\nAC-2: met — b\nAC-4: met — d", /no line for AC-3 \(of 4\)/],
     [
       "more AC lines than criteria",
       "AC-1: met\nAC-2: met\nAC-3: met\nAC-4: met\nAC-5: met",
       /AC-5 but the Issue has 4/,
     ],
     ["AC-0", "AC-0: met", /AC-0 but the Issue has 4/],
-    ["a not met AC", "AC-1: met\nAC-2: not met\nAC-3: met\nAC-4: met", /marks AC-2 as not met/],
+    [
+      "a not met AC",
+      "AC-1: met — a\nAC-2: not met — b\nAC-3: met — c\nAC-4: met — d",
+      /marks AC-2 as not met/,
+    ],
     ["no AC lines at all", "PASS, looks good", /no line for AC-1, AC-2, AC-3, AC-4/],
   ])("refuses %s and changes nothing", (_label, review, reason) => {
     expect(tickAcceptanceCriteria(BODY, parseAcLines(review))).toEqual({

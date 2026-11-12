@@ -100,10 +100,8 @@ import {
 import { linkedIssue } from "./review-verdict.ts";
 import { promptCommand } from "./flow-prompt.ts";
 import "../register-ts-imports.ts";
-import {
-  resolveQualityPolicy,
-  workflowOptionIssues,
-} from "../../src/domain/workflows/workflow-policy.ts";
+const { resolveQualityPolicy, workflowOptionIssues } =
+  await import("../../src/domain/workflows/workflow-policy.ts");
 
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   workflow-options                          read-only check of live Project Workflow/template routing
@@ -129,7 +127,7 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
                                               WSL: unchanged prompt to ~/omi-runs, then the worker
                                               in the foreground (model/effort from the effort policy)
   worker-report <issue>                       final report, turns, permission denials, session/thread id
-  commit-worker <branch> --message-file <f>   WSL: stage src tests docs templates schemas, commit, print SHA
+  commit-worker <branch> --message-file <f>   WSL: stage source, tooling and managed root files, commit, print SHA
   review-comment <pr> --file <f>              check VERDICT/REVIEWED_HEAD/AC-n lines, post as the Coordinator`;
 
 export interface Context {

@@ -41,16 +41,8 @@ export const BASE_BRANCH = "develop";
 export const COORDINATOR_LOGIN = "minibox-claude-code";
 
 /** Status options in board order (github-project.md, Field mapping). */
-export const STATUS_ORDER = [
-  "Backlog",
-  "Ready",
-  "In Progress",
-  "In Review",
-  "Waiting Approval",
-  "Waiting Resource",
-  "Blocked",
-  "Done",
-] as const;
+import "../register-ts-imports.ts";
+export const { STATUS_ORDER } = await import("../../src/domain/tasks/next-task-policy.ts");
 
 export const PRIORITY_ORDER = ["P0", "P1", "P2"] as const;
 
@@ -67,11 +59,8 @@ export interface RunsRetention {
 }
 
 /** Retention of worker logs in `~/omi-runs` (OMI-056). */
-export const RUNS_RETENTION: RunsRetention = {
-  recentMinutes: 30,
-  archiveMaxBytes: 50 * 1024 * 1024,
-  archiveMaxAgeDays: 30,
-};
+const { logRetentionSettings } = await import("../../src/application/contracts/log-retention.ts");
+export const RUNS_RETENTION: RunsRetention = logRetentionSettings(undefined);
 
 /** Hidden marker appended to the closing evidence comment so `close` never posts it twice. */
 export const CLOSE_EVIDENCE_MARKER = "<!-- omi-coordinator:close-evidence -->";
@@ -109,11 +98,13 @@ export interface QuotaSettings {
   readonly legacyLogProfile: string | null;
 }
 
+const { quotaPolicySchema } = await import("../../src/application/contracts/project-config.ts");
+const quotaDefaults = quotaPolicySchema.parse({});
 export const QUOTA_SETTINGS: QuotaSettings = {
-  minFiveHourLeftPercent: 10,
-  minSevenDayLeftPercent: 10,
-  coordinatorSharedPenalty: 20,
-  staleAfterMinutes: 120,
+  minFiveHourLeftPercent: quotaDefaults.min_five_hour_left_percent,
+  minSevenDayLeftPercent: quotaDefaults.min_seven_day_left_percent,
+  coordinatorSharedPenalty: quotaDefaults.coordinator_shared_penalty,
+  staleAfterMinutes: quotaDefaults.stale_after_minutes,
   legacyLogProfile: null,
 };
 

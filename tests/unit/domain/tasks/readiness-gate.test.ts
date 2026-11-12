@@ -21,7 +21,7 @@ const ready: TaskReadinessInput = {
   workType: "Task",
   workflow: "feature",
   role: "Developer",
-  area: "tooling",
+  area: "domain",
 };
 
 describe("taskReadinessReasons", () => {

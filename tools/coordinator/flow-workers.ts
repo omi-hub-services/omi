@@ -5,8 +5,8 @@
 // subcommands: "refused:" and exit 1 for a gate, --dry-run changes nothing.
 import { countAcceptanceCriteria } from "./acceptance-criteria.ts";
 import "../register-ts-imports.ts";
-import { stepQualitySchema } from "../../src/application/contracts/workflow.ts";
-import { resolveQualityPolicy } from "../../src/domain/workflows/workflow-policy.ts";
+const { stepQualitySchema } = await import("../../src/application/contracts/workflow.ts");
+const { resolveQualityPolicy } = await import("../../src/domain/workflows/workflow-policy.ts");
 import type { Complexity } from "./effort-policy.ts";
 import {
   COORDINATOR_LOGIN,
@@ -34,6 +34,7 @@ import {
 } from "./worker-launch.ts";
 import {
   formatReport,
+  validateWorkerResult,
   isCodexLog,
   newestLogCommand,
   parseClaudeReport,
@@ -196,8 +197,17 @@ export async function workerReportCommand(
   } else {
     report = { tool: "claude", file: name, ...parseClaudeReport(log) };
   }
-  console.log(formatReport(report));
-  return report.report === null ? 1 : 0;
+  const validated = report.report === null ? undefined : validateWorkerResult(report.report);
+  console.log(
+    formatReport({
+      ...report,
+      report: validated?.success ? validated.data.summary : report.report,
+    }),
+  );
+  if (report.report === null) return 1;
+  if (!validated?.success)
+    return refuse(label, "worker report does not satisfy the framework step-result-v1 contract");
+  return 0;
 }
 
 /** Commits a worker's changes (Codex cannot) in the allowed paths only, then prints the SHA. */
@@ -227,6 +237,17 @@ export async function commitWorkerCommand(
   }
   await runChecked(ctx.run, add);
   const names = (await runChecked(ctx.run, staged)).split("\n").filter((l) => l.trim() !== "");
+  const leftovers = (
+    await runChecked(ctx.run, git(["diff", "--name-only", "--", ...STAGE_PATHS]))
+  ).trim();
+  if (leftovers) return refuse(label, `in-scope unstaged changes remain: ${leftovers}`);
+  const untracked = (
+    await runChecked(
+      ctx.run,
+      git(["ls-files", "--others", "--exclude-standard", "--", ...STAGE_PATHS]),
+    )
+  ).trim();
+  if (untracked) return refuse(label, `in-scope untracked changes remain: ${untracked}`);
   const verdict = judgeCommit(input.branch, current, names);
   if (verdict.kind === "refuse") return refuse(label, verdict.reason);
   const made = await ctx.run(commit);

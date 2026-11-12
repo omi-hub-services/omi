@@ -21,7 +21,7 @@ const resourceWaitSchema = z
  * Quota-aware profile choice (ADR-0033). Absent block = no quota gating, so older configs keep
  * their behaviour. Thresholds are the share (%) of a window that must be left.
  */
-const quotaPolicySchema = z.strictObject({
+export const quotaPolicySchema = z.strictObject({
   min_five_hour_left_percent: z.number().min(0).max(100).default(10),
   min_seven_day_left_percent: z.number().min(0).max(100).default(10),
   coordinator_shared_penalty: z.number().min(0).max(100).default(20),
