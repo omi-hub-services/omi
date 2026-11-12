@@ -13,6 +13,7 @@ import type { CliContext, CliOutput, GlobalOptions } from "./command-context.js"
 import { registerApprovalCommands } from "./approval-commands.js";
 import { registerRunCommands } from "./run-commands.js";
 import { registerStatusCommand } from "./status-command.js";
+import { registerProfileCommands } from "./profile-commands.js";
 
 export interface CliEnvironment extends CliOutput {
   readonly sendCommand: CliContext["sendCommand"];
@@ -47,6 +48,7 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
   registerSessionCommands(program, context, environment.launchSession);
   registerApprovalCommands(program, context);
   registerRunCommands(program, context);
+  registerProfileCommands(program, context);
   return program;
 }
 

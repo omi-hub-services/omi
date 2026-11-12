@@ -59,6 +59,8 @@ header h1 { margin: 0; }
 .n.lit rect { fill: var(--ok); stroke: var(--accent); stroke-width: 2.5; }
 .n.warn rect { fill: var(--card); stroke: var(--warn); stroke-width: 2.5; stroke-dasharray: 4 3; }
 .n.warn text { fill: var(--warn); font-weight: 700; }
+.n.blocked rect { fill: var(--card); stroke: #e8710a; stroke-width: 2.5; }
+.n.blocked text { fill: #e8710a; font-weight: 700; }
 .n.idle rect { fill: var(--card); stroke: var(--line); stroke-dasharray: 2 3; }
 .edge { stroke: var(--muted); stroke-width: 1.5; fill: none; }
 .edge.dash { stroke-dasharray: 3 3; }
@@ -125,7 +127,7 @@ var POS = {
   "Merge": [366, 8], "Done": [456, 8], "Architect": [186, 60], "Ask PO": [366, 60],
 };
 var MAIN = ["Start", "Work", "Verify/PR", "Review", "Merge", "Done"];
-var STATE = { done: "done", current: "cur", todo: "todo", lit: "lit", warn: "warn", idle: "idle" };
+var STATE = { done: "done", current: "cur", todo: "todo", lit: "lit", warn: "warn", idle: "idle", blocked: "blocked" };
 function sv(tag, attrs, text) {
   var e = document.createElementNS(NS, tag);
   Object.keys(attrs).forEach(function (k) {
@@ -204,6 +206,11 @@ function taskCard(t, since) {
   stepLine.appendChild(el("span", "meta", "Role: " + t.role));
   card.appendChild(stepLine);
   if (t.stepReason) card.appendChild(el("div", "note warnline", t.stepReason));
+  if (t.blockers.length) {
+    card.appendChild(el("div", "note", "Blockers: " + t.blockers.map(function (b) {
+      return "#" + b.number + " (" + b.state.toLowerCase() + ")";
+    }).join(", ")));
+  }
   card.appendChild(el("div", "wf", "Workflow: " + t.workflow));
   card.appendChild(flow(t));
   if (t.cycleNote) card.appendChild(el("div", "note" + (cycleWarn(t) ? " warnline" : ""), "Cycle: " + t.cycleNote));

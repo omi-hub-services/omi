@@ -34,6 +34,7 @@ const ITEM_FIELDS = `
         number title state body
         milestone { title }
         blockedBy(first: ${String(BLOCKER_PAGE)}) { totalCount nodes { number state } }
+        comments(last: 30) { nodes { author { login } body } }
       }
       ... on PullRequest { number title state }
       ... on DraftIssue { title }
@@ -86,6 +87,8 @@ export interface ProjectItem {
   readonly blockers: readonly Blocker[];
   /** More blockers exist than were fetched; treat as blocked. */
   readonly blockersTruncated: boolean;
+  /** Issue comments, oldest first (the watch reads `**WAITING-PO:**`); absent when not read. */
+  readonly comments?: readonly AuthoredComment[];
 }
 
 export interface CheckContext {
@@ -150,6 +153,7 @@ function parseItem(raw: unknown, path: string): ProjectItem | null {
     ),
     blockers,
     blockersTruncated: total > blockers.length,
+    comments: kind === "Issue" && content.comments ? authoredComments(content, path) : [],
   };
 }
 

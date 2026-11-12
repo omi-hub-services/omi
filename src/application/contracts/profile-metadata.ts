@@ -28,6 +28,21 @@ export const profileMetadataSchema = z
     }
   });
 
+export const registerProfileSchema = z
+  .strictObject(profileMetadataSchema.shape)
+  .omit({
+    state: true,
+    lastProbeAt: true,
+    cooldownUntil: true,
+  })
+  .extend({
+    authMode: z.literal("subscription").default("subscription"),
+    probeTtlMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).default(300000),
+    maxConcurrency: z.number().int().positive().default(1),
+    accountGroupMaxConcurrency: z.number().int().positive().default(1),
+    preference: z.number().int().nonnegative().default(0),
+  });
+
 /** Fixed error text keeps rejected external input (including secret-bearing extras) out of logs. */
 export function parseProfileMetadata(input: unknown): ProfileMetadata {
   assertCredentialFree(input);

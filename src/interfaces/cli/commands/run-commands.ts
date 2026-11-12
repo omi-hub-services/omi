@@ -22,7 +22,7 @@ function wholeNumber(text: string | undefined): number | undefined {
  * present: the rules live in the use case behind the runtime. A refusal (`COMMAND_REFUSED`) and a
  * usage error both end in a stable JSON document under `--json`.
  */
-async function runCommand(
+export async function runCommand(
   context: CliContext,
   command: Command,
   candidate: Readonly<Record<string, unknown>>,

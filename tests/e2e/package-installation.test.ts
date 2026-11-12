@@ -81,6 +81,82 @@ afterAll(async () => {
 });
 
 describe("project-local distribution", () => {
+  it("previews the bridge and merges marked instructions while preserving user text and edits", async () => {
+    const request = await input("bridge-project");
+    await writeFile(join(request.projectDir, "CLAUDE.md"), "# My Claude instructions\n");
+    await writeFile(join(request.projectDir, "AGENTS.md"), "# My agent rules\n");
+    const preview = await installProjectTool(store(), { ...request, apply: false });
+    expect(preview.changes).toContain("bridge/skill/SKILL.md");
+    expect(await readdir(request.projectDir)).toEqual(["AGENTS.md", "CLAUDE.md"]);
+    const installed = await installProjectTool(store(), request);
+    if (installed.status !== "installed") throw new Error("expected install");
+    expect(
+      await readFile(join(installed.backupDir, "bridge/CLAUDE.md"), "utf8").catch(() => undefined),
+    ).toBe("# My Claude instructions\n");
+    const skill = join(request.projectDir, ".claude/skills/omi-squad/SKILL.md");
+    expect(await readFile(skill, "utf8")).toContain("omi-squad bridge");
+    expect(
+      await readFile(join(request.projectDir, ".claude/skills/omi-squad/bridge.ts"), "utf8"),
+    ).toContain("callCli");
+    expect(
+      JSON.parse(
+        await readFile(
+          join(request.projectDir, ".claude/skills/omi-squad/bridge.config.json"),
+          "utf8",
+        ),
+      ),
+    ).toMatchObject({ distribution: request.distribution, repository: request.projectDir });
+    const claude = await readFile(join(request.projectDir, "CLAUDE.md"), "utf8");
+    expect(claude).toContain("# My Claude instructions");
+    expect(claude).toContain("<!-- omi-squad:start -->");
+    expect(await readFile(join(request.projectDir, "AGENTS.md"), "utf8")).toContain(
+      "# My agent rules",
+    );
+    await writeFile(join(request.projectDir, "CLAUDE.md"), `${claude}\nUser addition\n`);
+    await writeFile(skill, "# User bridge override\n");
+    await installProjectTool(store(), request);
+    expect(await readFile(join(request.projectDir, "CLAUDE.md"), "utf8")).toBe(
+      `${claude}\nUser addition\n`,
+    );
+    expect(await readFile(skill, "utf8")).toBe("# User bridge override\n");
+    const next = await candidate("bridge-update");
+    await writeFile(
+      join(next, "templates/bridges/CLAUDE.md"),
+      "Read AGENTS.md and use the omi-squad CLI bridge. Updated guidance.\n",
+    );
+    await installProjectTool(store(), { ...request, packageDir: next });
+    const updated = await readFile(join(request.projectDir, "CLAUDE.md"), "utf8");
+    expect(updated).toContain("Updated guidance.");
+    expect(updated).toContain("User addition");
+    expect(updated.match(/<!-- omi-squad:start -->/g)).toHaveLength(1);
+  }, 30_000);
+
+  it("refuses a symlinked bridge parent without writing outside the project", async () => {
+    const request = await input("bridge-symlink");
+    const outside = await project("bridge-outside");
+    await symlink(outside, join(request.projectDir, ".claude"));
+    await expect(installProjectTool(store(), request)).rejects.toThrow("SYMLINK_INSTALLATION_PATH");
+    expect(await readdir(outside)).toEqual([]);
+  }, 30_000);
+
+  it.each([
+    "<!-- omi-squad:start -->",
+    "<!-- omi-squad:end -->\n<!-- omi-squad:start -->",
+    "<!-- omi-squad:start --><!-- omi-squad:start --><!-- omi-squad:end -->",
+  ])(
+    "refuses ambiguous instruction markers without changing bytes: %s",
+    async (content) => {
+      const request = await input(`markers-${String(content.length)}`);
+      const target = join(request.projectDir, "AGENTS.md");
+      await writeFile(target, content);
+      await expect(installProjectTool(store(), request)).rejects.toThrow(
+        "INVALID_INSTRUCTION_MARKERS",
+      );
+      expect(await readFile(target, "utf8")).toBe(content);
+      expect(await readdir(request.projectDir)).toEqual(["AGENTS.md"]);
+    },
+    30_000,
+  );
   it("packs only runtime assets and npm metadata, rejecting accidental source/state", () => {
     const paths = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).trim().split("\n");
     expect(paths.some((path) => path.endsWith("/dist/bootstrap/cli.js"))).toBe(true);
@@ -377,11 +453,12 @@ describe("packaged command wiring", () => {
         ],
         environment,
       ),
-    ).toBe(1);
+    ).toBe(6);
     expect(JSON.parse(stdout.join("")) as unknown).toMatchObject({
       schemaVersion: 1,
       ok: false,
-      exitCode: 1,
+      exitCode: 6,
+      error: { code: "DOCTOR_FAILED" },
     });
   });
 });
@@ -439,6 +516,56 @@ describe("installation failure boundaries", () => {
 });
 
 describe("WSL2 doctor", () => {
+  it("classifies a failed doctor probe without exposing exception text", async () => {
+    let output = "";
+    const code = await runCli(
+      ["--json", "doctor", "--project", "/home/user/project", "--distribution", "Ubuntu"],
+      {
+        sendCommand: () => Promise.reject(new Error("unexpected IPC")),
+        defaultSocketPath: "/unused",
+        timeoutMs: 100,
+        version: "1",
+        stdout: (text) => {
+          output += text;
+        },
+        stderr: () => undefined,
+        installation: {
+          install: () => Promise.reject(new Error("unexpected install")),
+          doctor: () => Promise.reject(new Error("synthetic-private-error")),
+        },
+      },
+    );
+    expect(code).toBe(6);
+    expect(JSON.parse(output)).toMatchObject({ error: { code: "DOCTOR_FAILED" } });
+    expect(output).not.toContain("synthetic-private-error");
+  }, 30_000);
+  it("returns a dedicated CLI failure code for unsupported installations", async () => {
+    let output = "";
+    const code = await runCli(
+      ["--json", "doctor", "--project", "/home/user/project", "--distribution", "Ubuntu"],
+      {
+        sendCommand: () => Promise.reject(new Error("unexpected IPC")),
+        defaultSocketPath: "/unused",
+        timeoutMs: 100,
+        version: "1",
+        stdout: (text) => {
+          output += text;
+        },
+        stderr: () => undefined,
+        installation: {
+          install: () => Promise.reject(new Error("unexpected install")),
+          doctor: () =>
+            Promise.resolve({
+              supported: false,
+              distribution: "Ubuntu",
+              checks: [{ name: "interop", ok: false, detail: "unavailable" }],
+            }),
+        },
+      },
+    );
+    expect(code).toBe(6);
+    expect(JSON.parse(output)).toMatchObject({ error: { code: "DOCTOR_FAILED" }, exitCode: 6 });
+  }, 30_000);
   function probe(overrides: Partial<WslProbe> = {}): WslProbe {
     return {
       kernel: () => Promise.resolve("6.6.87-microsoft-standard-WSL2"),

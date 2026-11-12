@@ -639,3 +639,97 @@ describe("taskLine", () => {
     expect(line([f, f, a, f, f])).toContain(" ask-po ");
   });
 });
+
+describe("Blocked and Waiting PO (OMI-086)", () => {
+  const open = (n: number) => ({ number: n, state: "OPEN" });
+  const closed = (n: number) => ({ number: n, state: "CLOSED" });
+  const wait = (reason = "run the live check") => coord(`**WAITING-PO:** ${reason}`);
+
+  it("Blocked: an open blocker and no worker; the reason lists the open blockers only", () => {
+    expect(step({ blockers: [open(158), closed(9), open(160)] })).toMatchObject({
+      step: "Blocked",
+      reason: "blocked by #158, #160",
+      at: "Verify/PR",
+    });
+    expect(step({ dispatched: false, blockers: [open(1)] }).at).toBe("Start");
+  });
+
+  it("is not Blocked when every blocker is closed", () => {
+    expect(step({ blockers: [closed(158)] }).step).toBe("Verify/PR");
+  });
+
+  it("Work with a warning while a worker runs and a blocker is open", () => {
+    expect(step({ worker: { kind: "running" }, blockers: [open(158)] })).toEqual({
+      step: "Work",
+      reason: "worker runs but blocked by #158",
+    });
+    expect(step({ worker: { kind: "running" }, blockers: [closed(158)] }).reason).toBeNull();
+  });
+
+  it("Waiting PO: the newest Coordinator comment on the Issue starts with the marker", () => {
+    expect(step({ issueComments: [wait()] })).toMatchObject({
+      step: "Waiting PO",
+      reason: "run the live check",
+      at: "Verify/PR",
+    });
+  });
+
+  it("Waiting PO on the PR comments too; a newer Coordinator comment clears it", () => {
+    expect(step({ status: "In Review", pull: pull([wait("why")]) }).step).toBe("Waiting PO");
+    expect(step({ pull: pull([wait(), coord("PO answered, continue")]) }).step).toBe("Verify/PR");
+    expect(step({ issueComments: [wait()], pull: pull([coord("back to work")]) }).step).toBe(
+      "Verify/PR",
+    );
+    expect(step({ issueComments: [wait(), coord("continuing")] }).step).toBe("Verify/PR");
+  });
+
+  it("ignores the marker from another account and a newer comment from another account", () => {
+    expect(step({ issueComments: [by("someone-else", "**WAITING-PO:** x")] }).step).toBe(
+      "Verify/PR",
+    );
+    expect(step({ issueComments: [wait(), by("someone-else", "ok go")] }).step).toBe("Waiting PO");
+  });
+
+  it("requires a reason after the marker", () => {
+    expect(step({ issueComments: [coord("**WAITING-PO:**")] }).step).toBe("Verify/PR");
+  });
+
+  it("a running worker stays Work even with the marker", () => {
+    expect(step({ worker: { kind: "running" }, issueComments: [wait()] }).step).toBe("Work");
+  });
+
+  it("Waiting PO wins over Blocked", () => {
+    expect(step({ blockers: [open(1)], issueComments: [wait()] }).step).toBe("Waiting PO");
+  });
+
+  it("draws the node the task stands at as blocked, with a sub-label", () => {
+    const blocked = diagramNodes("Blocked", cyclePhase([]), {
+      at: "Verify/PR",
+      sub: "blocked by #158",
+    });
+    expect(blocked.find((n) => n.id === "Verify/PR")).toMatchObject({
+      state: "blocked",
+      sub: "blocked by #158",
+    });
+    expect(blocked.find((n) => n.id === "Work")?.state).toBe("done");
+    expect(blocked.find((n) => n.id === "Review")?.state).toBe("todo");
+    const po = diagramNodes("Waiting PO", cyclePhase([]), { at: "Start", sub: "waiting PO" });
+    expect(po.find((n) => n.id === "Start")).toMatchObject({ state: "blocked", sub: "waiting PO" });
+  });
+
+  it("taskLine prints blocked:#N,#M or waiting-po", () => {
+    const first = (it_: ProjectItem) => {
+      const view = buildTasks({ tasks: read({ items: [it_] }), workers: available([]) });
+      if (view.state !== "ok" || !view.items[0]) throw new Error("expected ok");
+      return view.items[0];
+    };
+    const b = first(item({ blockers: [open(158), closed(2), open(160)] }));
+    expect(taskLine(b)).toContain(" blocked:#158,#160");
+    expect(b.step).toBe("Blocked");
+    expect(b.blockers).toEqual([open(158), closed(2), open(160)]);
+    const w = first(item({ comments: [wait()] }));
+    expect(taskLine(w)).toContain(" waiting-po");
+    expect(w.step).toBe("Waiting PO");
+    expect(taskLine(first(item()))).not.toMatch(/blocked:|waiting-po/);
+  });
+});
