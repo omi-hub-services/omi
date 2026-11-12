@@ -14,6 +14,7 @@ import { registerApprovalCommands } from "./approval-commands.js";
 import { registerRunCommands } from "./run-commands.js";
 import { registerStatusCommand, type OverviewCommands } from "./status-command.js";
 import { registerProfileCommands } from "./profile-commands.js";
+import { registerLogCommands, type LogCommands } from "./log-commands.js";
 import { registerTaskCommands, type TaskCommands } from "./task-commands.js";
 
 export interface CliEnvironment extends CliOutput {
@@ -26,6 +27,7 @@ export interface CliEnvironment extends CliOutput {
   readonly installation?: InstallationCommands;
   readonly tasks?: TaskCommands;
   readonly overview?: OverviewCommands;
+  readonly logs?: LogCommands;
 }
 
 /** Builds the Commander program. Every command is registered here and nowhere else. */
@@ -53,6 +55,7 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
   registerRunCommands(program, context);
   registerProfileCommands(program, context);
   registerTaskCommands(program, context, environment.tasks);
+  registerLogCommands(program, context, environment.logs);
   return program;
 }
 

@@ -295,6 +295,30 @@
         "additionalProperties": false
       }
     },
+    "log_retention": {
+      "type": "object",
+      "properties": {
+        "recent_minutes": {
+          "default": 30,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10080
+        },
+        "archive_max_bytes": {
+          "default": 52428800,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1099511627776
+        },
+        "archive_max_age_days": {
+          "default": 30,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        }
+      },
+      "additionalProperties": false
+    },
     "workspace": {
       "type": "object",
       "properties": {

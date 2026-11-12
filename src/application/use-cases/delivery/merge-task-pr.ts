@@ -30,6 +30,7 @@ import type {
   MergePull,
   MergeTaskPrRequest,
 } from "../../contracts/merge-delivery.js";
+import type { BranchSync } from "../../ports/branch-sync.js";
 import { prMappingSchema, pullRequestCreationKey } from "../../contracts/pr-delivery.js";
 import type { LeaseStore } from "../../ports/lease-store.js";
 import type {
@@ -37,6 +38,7 @@ import type {
   MergeEvidenceReader,
   TaskCompletionStore,
 } from "../../ports/merge-delivery.js";
+import { resolveCarriedEvidence } from "../../services/resolve-carried-review.js";
 import { DeliveryError } from "../../ports/pr-delivery.js";
 import type { PrMappingStore } from "../../ports/pr-delivery.js";
 import {
@@ -58,6 +60,10 @@ export type MergeTaskPrDeps = DeliverGithubOperationDeps & {
   readonly mergeLockOwner: string;
   /** A merge lock outlives a crashed holder by at most this long. */
   readonly mergeLockTtlMs: number;
+  /** Git reads that let a PASS carry over clean syncs with develop (OMI-080). Absent: no carrying. */
+  readonly carry?: Pick<BranchSync, "facts">;
+  /** Best-effort follow-up once the task is recorded Done (e.g. worker log retention). */
+  readonly afterDone?: (taskId: string) => Promise<void>;
 };
 
 export type MergeTaskPrStep = "merge" | "confirm" | "tick" | "close" | "done";
@@ -328,6 +334,8 @@ async function completeTask(
       at: iso(deps.now()),
     });
     if (!saved.ok) throw new DeliveryError(`TASK_${saved.reason}`);
+    // A failed follow-up must never undo or hide a completed merge.
+    await deps.afterDone?.(request.taskId).catch(() => undefined);
   }
   return { status: "done", mergeCommitSha, ticked: tick.newly };
 }
@@ -391,9 +399,16 @@ function readEvidence(
   request: MergeTaskPrRequest,
   headSha: string,
 ): MergeEvidence {
-  const parsed = mergeEvidenceSchema.safeParse(
-    deps.evidence.read(request.projectId, request.taskId, headSha),
-  );
+  const raw =
+    deps.carry === undefined
+      ? deps.evidence.read(request.projectId, request.taskId, headSha)
+      : resolveCarriedEvidence(
+          { evidence: deps.evidence, sync: deps.carry },
+          request.projectId,
+          request.taskId,
+          headSha,
+        );
+  const parsed = mergeEvidenceSchema.safeParse(raw);
   if (!parsed.success) throw new DeliveryError("MERGE_EVIDENCE_INVALID");
   // Evidence for another head is never evidence for this one.
   if (parsed.data.review !== undefined && parsed.data.review.headSha !== headSha) {
