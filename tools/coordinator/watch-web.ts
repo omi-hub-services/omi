@@ -21,13 +21,15 @@ import {
   type WslTarget,
 } from "./coordinator-settings.ts";
 import { createProcessRunner, type Runner } from "./process-runner.ts";
-import { clean, createWatchPoller } from "./watch-core.ts";
+import { clean, createWatchPoller, TASKS_INTERVAL_MS } from "./watch-core.ts";
 import { PAGE_CSP, PAGE_HTML } from "./watch-page.ts";
 import { buildSnapshot } from "./watch-snapshot.ts";
+import { readTasks } from "./watch-tasks.ts";
 
 export const DEFAULT_PORT = 4317;
 export const IDLE_MS = 60_000;
-export const WINDOW_SIZE = "440,460";
+/** Wide and tall enough for the lifecycle diagram of two or three task cards (OMI-074). */
+export const WINDOW_SIZE = "560,760";
 /** `GET /health` answers this so a second launch can reuse the running server. */
 export const HEALTH_BODY = "omi-watch";
 export const PROBE_HEADER = "x-omi-watch";
@@ -53,6 +55,7 @@ export interface WatchServerOptions {
   readonly port: number;
   readonly workerIntervalMs?: number;
   readonly quotaIntervalMs?: number;
+  readonly tasksIntervalMs?: number;
   /** No SSE client for this long (from the last disconnect, or from start) stops the server. */
   readonly idleMs?: number;
   /** Injected in tests to fire the idle timeout without waiting. */
@@ -82,6 +85,7 @@ export function createWatchServer(options: WatchServerOptions): WatchServer {
     JSON.stringify(
       buildSnapshot({
         workers: poller.workers,
+        tasks: poller.tasks,
         quota: poller.quota,
         probing: poller.probing,
         now: clock() / 1000,
@@ -101,6 +105,10 @@ export function createWatchServer(options: WatchServerOptions): WatchServer {
     settings: options.settings,
     workerIntervalMs: options.workerIntervalMs ?? 5000,
     ...(options.quotaIntervalMs === undefined ? {} : { quotaIntervalMs: options.quotaIntervalMs }),
+    tasks: {
+      intervalMs: options.tasksIntervalMs ?? TASKS_INTERVAL_MS,
+      read: (run) => readTasks(run, options.target),
+    },
     onChange: broadcast,
     onError: (error) => {
       console.error(`watch-web: ${clean(error instanceof Error ? error.message : String(error))}`);

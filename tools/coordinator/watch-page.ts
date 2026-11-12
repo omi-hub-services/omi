@@ -1,5 +1,6 @@
-// The single page served by watch-web.ts (OMI-067): inline CSS and JS, nothing loaded from
-// outside. The script builds the DOM with createElement/textContent only; external strings
+// The single page served by watch-web.ts (OMI-067, OMI-074): inline CSS and JS, nothing loaded
+// from outside. The script builds the DOM with createElement/textContent and the lifecycle
+// diagram with createElementNS/setAttribute (SVG attributes are escaped by the DOM); external strings
 // (task names, last actions, notes) never reach innerHTML. The CSP allows only these two inline
 // blocks, by hash, and connections to the same origin.
 import { createHash } from "node:crypto";
@@ -47,6 +48,27 @@ header h1 { margin: 0; }
 .qval { width: 128px; flex: none; text-align: right; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .note { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .err { color: var(--bad); }
+.n text { font: 11px/1 system-ui, "Segoe UI", sans-serif; text-anchor: middle; dominant-baseline: central; fill: var(--muted); }
+.n rect { stroke-width: 1.5; }
+.n.todo rect { fill: var(--card); stroke: var(--line); }
+.n.done rect { fill: var(--ok); stroke: var(--ok); }
+.n.done text, .n.cur text, .n.lit text { fill: var(--card); }
+.n.cur rect { fill: var(--accent); stroke: var(--text); stroke-width: 2.5; }
+.n.cur text { font-weight: 700; }
+.n.lit rect { fill: var(--ok); stroke: var(--accent); stroke-width: 2.5; }
+.n.warn rect { fill: var(--card); stroke: var(--warn); stroke-width: 2.5; stroke-dasharray: 4 3; }
+.n.warn text { fill: var(--warn); font-weight: 700; }
+.n.idle rect { fill: var(--card); stroke: var(--line); stroke-dasharray: 2 3; }
+.edge { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.edge.dash { stroke-dasharray: 3 3; }
+.arrow { fill: var(--muted); }
+.badge circle { fill: var(--bad); }
+.badge.zero circle { fill: var(--muted); }
+.badge text { font: 700 10px/1 system-ui, "Segoe UI", sans-serif; text-anchor: middle; dominant-baseline: central; fill: var(--card); }
+svg.flow { display: block; width: 100%; height: auto; margin: 4px 0 2px; }
+.step { font-weight: 600; }
+.step.unknown, .warnline { color: var(--warn); }
+.wrap { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 footer { margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
 button { font: inherit; padding: 2px 10px; border-radius: 5px; border: 1px solid var(--line);
   background: var(--card); color: var(--text); cursor: pointer; }
@@ -94,34 +116,103 @@ function bar(label, left, low, resetText) {
   row.appendChild(el("span", "qval", pct(left) + (resetText ? " · reset " + resetText : "")));
   return row;
 }
-function renderWorkers(s, since) {
+var NS = "http://www.w3.org/2000/svg";
+var POS = {
+  "Start": [6, 8], "Work": [96, 8], "Verify/PR": [186, 8], "Review": [276, 8],
+  "Merge": [366, 8], "Done": [456, 8], "Rework": [276, 84], "Architect": [396, 84],
+};
+var MAIN = ["Start", "Work", "Verify/PR", "Review", "Merge", "Done"];
+var STATE = { done: "done", current: "cur", todo: "todo", lit: "lit", warn: "warn", idle: "idle" };
+function sv(tag, attrs, text) {
+  var e = document.createElementNS(NS, tag);
+  Object.keys(attrs).forEach(function (k) {
+    e.setAttribute(k, String(attrs[k]));
+  });
+  if (text !== undefined) e.textContent = String(text);
+  return e;
+}
+function arrow(svg, x1, y1, x2, y2, dash) {
+  svg.appendChild(sv("line", { x1: x1, y1: y1, x2: x2, y2: y2, "class": "edge" + (dash ? " dash" : "") }));
+  var dx = Math.sign(x2 - x1);
+  var dy = Math.sign(y2 - y1);
+  var bx = x2 - 5 * dx;
+  var by = y2 - 5 * dy;
+  var pts = [x2, y2, bx - 3.5 * dy, by + 3.5 * dx, bx + 3.5 * dy, by - 3.5 * dx].join(" ");
+  svg.appendChild(sv("polygon", { points: pts, "class": "arrow" }));
+}
+function flow(t) {
+  var svg = sv("svg", {
+    viewBox: "0 0 540 124", "class": "flow", role: "img", "aria-label": t.ariaLabel,
+  });
+  for (var i = 0; i < MAIN.length - 1; i++) arrow(svg, POS[MAIN[i]][0] + 72, 22, POS[MAIN[i + 1]][0], 22, false);
+  arrow(svg, 300, 36, 300, 84, false);
+  arrow(svg, 324, 84, 324, 36, false);
+  arrow(svg, 348, 98, 396, 98, true);
+  t.nodes.forEach(function (n) {
+    var p = POS[n.id];
+    if (!p) return;
+    var g = sv("g", { "class": "n " + (STATE[n.state] || "todo") });
+    g.appendChild(sv("rect", { x: p[0], y: p[1], width: 72, height: 28, rx: 6 }));
+    g.appendChild(sv("text", { x: p[0] + 36, y: p[1] + 14 }, n.label));
+    svg.appendChild(g);
+  });
+  var badge = sv("g", { "class": "badge" + (t.rework > 0 ? "" : " zero") });
+  badge.appendChild(sv("circle", { cx: 344, cy: 84, r: 10 }));
+  badge.appendChild(sv("text", { x: 344, y: 84 }, "×" + t.rework));
+  svg.appendChild(badge);
+  return svg;
+}
+function taskCard(t, since) {
+  var tone = t.worker && t.worker.tone !== "normal" ? " " + t.worker.tone : "";
+  var card = el("div", "card" + tone + (t.architect === "warn" ? " low" : ""));
+  var top = el("div", "row");
+  top.appendChild(el("span", "title", t.planKey));
+  top.appendChild(el("span", "meta", "#" + (t.issue === null ? "-" : t.issue) + " · " + t.priority));
+  top.appendChild(el("span", "spacer"));
+  top.appendChild(el("span", "meta", t.workflow));
+  card.appendChild(top);
+  var name = el("div", "action", t.title);
+  name.title = t.title;
+  card.appendChild(name);
+  var pr = t.pr
+    ? "PR #" + t.pr.number + " @" + t.pr.head + " · checks " + t.pr.checks + (t.pr.draft ? " · draft" : "")
+    : "PR -";
+  card.appendChild(el("div", "meta", t.status + " · " + pr));
+  var stepLine = el("div", "row");
+  stepLine.appendChild(el("span", "step" + (t.step === "unknown" ? " unknown" : ""), "Step: " + t.step));
+  stepLine.appendChild(el("span", "meta", "Role: " + t.role));
+  card.appendChild(stepLine);
+  if (t.stepReason) card.appendChild(el("div", "note warnline", t.stepReason));
+  card.appendChild(flow(t));
+  if (t.architect === "called") card.appendChild(el("div", "note", "Architect called: " + (t.architectReason || "-")));
+  if (t.architect === "warn")
+    card.appendChild(el("div", "note warnline", t.rework + " FAILs and no Architect yet (2 + Architect + 2)"));
+  var w = t.worker;
+  if (w) {
+    card.appendChild(
+      el("div", "meta", w.tool + " " + w.profile + " · " + w.model + " " + w.effort + " · " + dur(w.elapsedSeconds + since) + " · turn " + (w.turns === null ? "?" : w.turns) + " · pid " + w.pid),
+    );
+    var action = el("div", "action", "→ " + w.lastAction);
+    action.title = w.lastAction;
+    card.appendChild(action);
+  } else card.appendChild(el("div", "meta", "Worker: - (none running for this task)"));
+  card.appendChild(
+    el("div", "wrap", "Skills: " + (t.skills.length ? t.skills.join(", ") : "- (" + (t.skillsNote || "none") + ")")),
+  );
+  card.appendChild(el("div", "wrap", "Rules: " + (t.rules.length ? t.rules.join(", ") : "- (no prompt)")));
+  return card;
+}
+function renderTasks(s, since) {
   var box = el("section");
-  box.appendChild(heading("Workers"));
-  var w = s.workers;
-  if (w.state === "loading") box.appendChild(el("div", "note", "Loading…"));
-  else if (w.state === "unavailable")
-    box.appendChild(el("div", "note err", "WSL unavailable: " + w.reason + " (retrying)"));
-  else if (w.items.length === 0) box.appendChild(el("div", "note", "(none)"));
+  box.appendChild(heading("Tasks"));
+  var t = s.tasks;
+  if (t.state === "loading") box.appendChild(el("div", "note", "Loading…"));
+  else if (t.state === "unavailable")
+    box.appendChild(el("div", "note err", "GitHub unavailable: " + t.reason + " (retrying)"));
+  else if (t.items.length === 0) box.appendChild(el("div", "note", "(none In Progress or In Review)"));
   else
-    w.items.forEach(function (p) {
-      var card = el("div", "card " + (p.tone === "normal" ? "" : p.tone));
-      var top = el("div", "row");
-      top.appendChild(el("span", "title", p.task));
-      top.appendChild(el("span", "meta", p.tool + " " + p.profile));
-      top.appendChild(el("span", "spacer"));
-      top.appendChild(el("span", "meta", dur(p.elapsedSeconds + since)));
-      card.appendChild(top);
-      card.appendChild(
-        el(
-          "div",
-          "meta",
-          p.model + " " + p.effort + " · turn " + (p.turns === null ? "?" : p.turns) + " · pid " + p.pid,
-        ),
-      );
-      var action = el("div", "action", "→ " + p.lastAction);
-      action.title = p.lastAction;
-      card.appendChild(action);
-      box.appendChild(card);
+    t.items.forEach(function (task) {
+      box.appendChild(taskCard(task, since));
     });
   return box;
 }
@@ -199,7 +290,7 @@ function doProbe() {
 function render() {
   if (!snap) return;
   var since = (Date.now() - received) / 1000;
-  app.replaceChildren(renderWorkers(snap, since), renderQuota(snap, since), renderFooter(snap));
+  app.replaceChildren(renderTasks(snap, since), renderQuota(snap, since), renderFooter(snap));
 }
 function setConn(up, text) {
   conn.textContent = text;

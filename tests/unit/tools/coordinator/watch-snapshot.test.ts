@@ -14,7 +14,9 @@ import {
   openCandidates,
   openWindow,
   parseWatchWebArgs,
+  WINDOW_SIZE,
 } from "../../../../tools/coordinator/watch-web.ts";
+import type { TasksRead } from "../../../../tools/coordinator/watch-tasks.ts";
 import type { WorkerProcess } from "../../../../tools/coordinator/wsl-workers.ts";
 
 const NOW = 100_000;
@@ -62,8 +64,31 @@ const log1 = {
   isError: false,
   limited: false,
 };
+const tasksRead = (planKeys: string[]): TasksRead => ({
+  available: true,
+  items: planKeys.map((planKey, i) => ({
+    kind: "Issue",
+    number: 100 + i,
+    title: `[${planKey}] t`,
+    state: "OPEN",
+    status: "In Progress",
+    priority: "P1",
+    workType: "Task",
+    planKey,
+    body: "",
+    workflow: "Development",
+    role: "Developer",
+    area: null,
+    milestone: null,
+    blockers: [],
+    blockersTruncated: false,
+  })),
+  pulls: [],
+  prompts: Object.fromEntries(planKeys.map((k) => [k, { skills: ["minimal-change"], rules: [] }])),
+});
 const input = (over: Partial<SnapshotInput> = {}): SnapshotInput => ({
   workers: { available: true, processes: [], latestLog: null },
+  tasks: null,
   quota: null,
   probing: false,
   now: NOW,
@@ -75,71 +100,58 @@ const input = (over: Partial<SnapshotInput> = {}): SnapshotInput => ({
 describe("buildSnapshot", () => {
   it("reports loading before any read, with every configured profile", () => {
     const s = buildSnapshot(input({ workers: null }));
-    expect(s.workers).toEqual({ state: "loading" });
+    expect(s.tasks).toEqual({ state: "loading" });
     expect(s.quota.state).toBe("loading");
     expect(s.quota.profiles.map((p) => p.profile)).toEqual(["test", "other"]);
     expect(s.quota.profiles[0]?.note).toBe("loading");
     expect(s.generatedAt).toBe(NOW);
   });
 
-  it("maps worker fields and tones", () => {
+  it("builds the Tasks section from the GitHub read and the workers", () => {
     const s = buildSnapshot(
       input({
+        tasks: tasksRead(["OMI-004", "OMI-005", "OMI-006"]),
         workers: {
           available: true,
           latestLog: null,
           processes: [
             process1,
-            { ...process1, pid: 2, log: { ...log1, finished: true } },
-            { ...process1, pid: 3, log: { ...log1, isError: true } },
-            { ...process1, pid: 4, log: { ...log1, limited: true, finished: true } },
-            { ...process1, pid: 5, log: null, task: null, model: null },
+            { ...process1, pid: 2, task: "OMI-005", log: { ...log1, finished: true } },
+            { ...process1, pid: 3, task: "OMI-006", log: { ...log1, isError: true } },
           ],
         },
       }),
     );
-    if (s.workers.state !== "ok") throw new Error("expected ok");
-    const [a, b, c, d, e] = s.workers.items;
-    expect(a).toEqual({
-      pid: 4121,
-      task: "OMI-004",
-      tool: "claude",
-      profile: "test",
-      model: "opus-5-5",
-      effort: "high",
-      elapsedSeconds: 1092,
-      turns: 37,
-      lastAction: "Bash npm run check",
-      tone: "normal",
+    if (s.tasks.state !== "ok") throw new Error("expected ok");
+    const [a, b, c] = s.tasks.items;
+    expect(a).toMatchObject({
+      planKey: "OMI-004",
+      step: "Work",
+      role: "Developer",
+      worker: {
+        pid: 4121,
+        tool: "claude",
+        profile: "test",
+        model: "opus-5-5",
+        effort: "high",
+        elapsedSeconds: 1092,
+        turns: 37,
+        lastAction: "Bash npm run check",
+        tone: "normal",
+      },
     });
-    expect([b?.tone, c?.tone, d?.tone]).toEqual(["done", "error", "error"]);
-    expect(e).toMatchObject({
-      task: "-",
-      model: "-",
-      turns: null,
-      lastAction: "-",
-      tone: "normal",
-    });
+    expect([b?.worker?.tone, c?.worker?.tone]).toEqual(["done", "error"]);
+    expect(JSON.parse(JSON.stringify(s))).toEqual(s);
   });
 
   it("strips control characters from external strings", () => {
-    const s = buildSnapshot(
-      input({
-        workers: {
-          available: true,
-          latestLog: null,
-          processes: [{ ...process1, log: { ...log1, lastAction: "a\u001b[2J\nb" } }],
-        },
-      }),
-    );
+    const s = buildSnapshot(input({ tasks: { available: false, reason: "gh\u001b[2J\nfailed" } }));
     expect(JSON.stringify(s)).not.toMatch(/\\u001b|\\n/);
-    expect(s.workers).toMatchObject({ items: [{ lastAction: "a [2J b" }] });
-    expect(
-      buildSnapshot(input({ workers: { available: false, reason: "off\nline" } })).workers,
-    ).toEqual({
-      state: "unavailable",
-      reason: "off line",
-    });
+    expect(s.tasks).toEqual({ state: "unavailable", reason: "gh [2J failed" });
+    const w = buildSnapshot(
+      input({ tasks: tasksRead(["OMI-004"]), workers: { available: false, reason: "off\nline" } }),
+    );
+    expect(JSON.stringify(w.tasks)).toContain("workers unreadable: WSL unavailable: off line");
   });
 
   it("computes % left, thresholds, local reset, model windows and reading age", () => {
@@ -249,7 +261,7 @@ describe("watch-web launch helpers", () => {
     const c = openCandidates(url, "win32", ["C:\\edge.exe"]);
     expect(c[0]).toEqual({
       file: "msedge",
-      args: [`--app=${url}`, "--window-size=440,460"],
+      args: [`--app=${url}`, `--window-size=${WINDOW_SIZE}`],
     });
     expect(c[1]?.file).toBe("C:\\edge.exe");
     expect(c.at(-1)).toEqual({ file: "cmd", args: ["/c", "start", "", url] });

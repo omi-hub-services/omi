@@ -11,6 +11,7 @@ import {
   type QuotaReading,
   type QuotaReport,
 } from "../../../../tools/coordinator/quota.ts";
+import type { TasksRead } from "../../../../tools/coordinator/watch-tasks.ts";
 import {
   ANSI,
   renderWatch,
@@ -37,6 +38,7 @@ const reading: QuotaReading = {
 };
 const screen: WatchScreen = {
   workers: { available: true, processes: [], latestLog: null },
+  tasks: null,
   quota: null,
   now: 10000,
   settings: QUOTA_SETTINGS,
@@ -210,6 +212,57 @@ describe("watch rendering", () => {
     },
   );
 
+  it("prints one line per task above the workers, and nothing before the first read", () => {
+    expect(renderWatch(screen)).not.toContain("Tasks");
+    const tasks: TasksRead = {
+      available: true,
+      items: [
+        {
+          kind: "Issue",
+          number: 152,
+          title: "[OMI-074] t",
+          state: "OPEN",
+          status: "In Progress",
+          priority: "P1",
+          workType: "Task",
+          planKey: "OMI-074",
+          body: "",
+          workflow: "Development",
+          role: "Developer",
+          area: null,
+          milestone: null,
+          blockers: [],
+          blockersTruncated: false,
+        },
+      ],
+      pulls: [],
+      prompts: {},
+    };
+    const out = renderWatch({
+      ...screen,
+      tasks,
+      workers: {
+        available: true,
+        latestLog: null,
+        processes: [
+          {
+            pid: 1,
+            tool: "claude",
+            headless: true,
+            elapsedSeconds: 5,
+            task: "OMI-074",
+            profile: "p",
+          },
+        ],
+      },
+    });
+    expect(out).toContain("OMI-074 Work Developer claude/p rework:0");
+    expect(out.indexOf("Tasks")).toBeLessThan(out.indexOf("Workers"));
+    expect(renderWatch({ ...screen, tasks: { available: false, reason: "gh\nfailed" } })).toContain(
+      "GitHub unavailable: gh failed",
+    );
+  });
+
   it("validates interval input", () => {
     expect(watchInterval([])).toBe(5000);
     expect(watchInterval(["--interval", "0.5"])).toBe(500);
@@ -271,6 +324,8 @@ function harness(run: Runner, signal?: AbortSignal, write?: (s: string) => void)
 }
 
 const isQuota = (c: Command) => c.input?.includes("account/rateLimits/read") === true;
+const isTasks = (c: Command) => c.file === "gh";
+const isWorkers = (c: Command) => !isQuota(c) && !isTasks(c);
 
 describe("watch polling and terminal lifecycle", () => {
   it.each(["q", "\u0003", "abort", "already aborted"])(
@@ -342,8 +397,9 @@ describe("watch polling and terminal lifecycle", () => {
       return Promise.resolve({ code: 127, stdout: "", stderr: "offline" });
     });
     await vi.advanceTimersByTimeAsync(15000);
-    expect(commands.filter((c) => !isQuota(c))).toHaveLength(4);
+    expect(commands.filter(isWorkers)).toHaveLength(4);
     expect(commands.filter(isQuota)).toHaveLength(1);
+    expect(commands.filter(isTasks)).toHaveLength(1); // GitHub is read once a minute, not every 5 s
     expect(h.writes.join("")).toContain("offline (retrying)");
     await vi.advanceTimersByTimeAsync(285000);
     expect(commands.filter(isQuota)).toHaveLength(2);
@@ -381,7 +437,7 @@ describe("watch polling and terminal lifecycle", () => {
     h.key("p");
     h.key("y"); // queued until the free read finishes
     await vi.advanceTimersByTimeAsync(10000);
-    expect(commands.filter((c) => !isQuota(c))).toHaveLength(3);
+    expect(commands.filter(isWorkers)).toHaveLength(3);
     finishQuota?.({ code: 0, stdout: "", stderr: "" });
     await vi.advanceTimersByTimeAsync(0);
     expect(commands.filter(isQuota)).toHaveLength(2);
