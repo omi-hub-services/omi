@@ -115,8 +115,7 @@ Take the head SHA from the worker report, then:
 
 ```
 node tools/coordinator/flow.ts check <branch> --head <sha>     # npm run check on exactly <sha>
-# After fresh QA judges the check evidence below:
-node tools/coordinator/flow.ts push <branch>
+node tools/coordinator/flow.ts push <branch>                   # right after a green check: CI overlaps QA/review
 node tools/coordinator/flow.ts open-pr N <branch> --title "OMI-NNN: …" --body-file <f>
 node tools/coordinator/flow.ts set-status N "In Review"
 ```
@@ -124,7 +123,8 @@ node tools/coordinator/flow.ts set-status N "In Review"
 After the script-run check, put its exact SHA, command, exit status and output/evidence in notes.
 Generate the actual QA step packet with flow.ts prompt and dispatch a fresh independent QA worker
 as in step 3. QA judges the script-run check; it does not replace the script or treat sandbox EPERM
-as a pass. Proceed to push/PR only after QA accepts the evidence on that fixed revision.
+as a pass. Pushing early only starts CI; merge still needs QA acceptance and the review PASS on
+that fixed revision.
 
 **(judge)** The PR body has `Issue: #N`, changes, a file → layer table, check evidence,
 dependency/ADR notes, approval needs, and any extra worker permissions used for this task.
@@ -208,11 +208,14 @@ the outcome to the PO in a few lines.
 - **Merged verify + review** for complexity low/medium: one fresh independent worker gets the
   verify and review step skills and rules, judges the check log and reviews. Keep two workers
   for high complexity or PRs touching security, gates or data. Say which in the scope decision.
+  Until #186 adds a combined packet, render `--step <review-id>` and append the verify step's
+  extra skill section verbatim by script (the rules are the same); never hand-write skill text.
 - **Skip analyze** only when the Coordinator wrote the Issue from an audit and it has measurable
   top-level AC plus an implementation map; then post `SCOPE-APPROVED` from the Issue itself.
 - **Effort per step:** analyst and first review medium; QA and delta re-review low; developer as
   `pick-profile` says. Fix rounds resume the author; re-QA/re-review cover only the fix delta plus
-  the previous verdict.
+  the previous verdict. `dispatch` applies only the complexity effort today; step/round effort
+  comes with #186, until then pass it to the manual `codex exec`/`claude -p` launch explicitly.
 - QA reads the ANSI-stripped `flow.ts check` log put in `~/omi-runs/`; it never re-runs suites.
-- Push right after a green check so CI runs alongside QA/review.
+- Push right after a green check so CI runs alongside QA/review (step 4).
 - Run QA/review on whichever tool has more quota; independence is a fresh run, not another tool.
