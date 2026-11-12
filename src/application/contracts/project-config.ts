@@ -2,6 +2,7 @@ import { z } from "zod";
 import { absolutePathSchema, identifierSchema, slugSchema } from "./identifiers.js";
 import { effortPolicySchema } from "./task-complexity.js";
 import { schemaVersionV1 } from "./schema-version.js";
+import { logRetentionConfigSchema } from "./log-retention.js";
 
 const githubNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/);
 const branchNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/);
@@ -83,6 +84,8 @@ export const projectConfigSchema = z
     resource_wait: resourceWaitSchema.prefault({}),
     quota: quotaPolicySchema.optional(),
     checks: checksSchema.optional(),
+    /** Worker log retention (OMI-080). Absent block = defaults. */
+    log_retention: logRetentionConfigSchema.optional(),
     workspace: z.strictObject({ worktree_root: absolutePathSchema }).optional(),
     policies: z.strictObject({
       /** Gates that always need a human; a runtime field must not remove them. */

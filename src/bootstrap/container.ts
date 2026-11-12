@@ -29,6 +29,10 @@ import { createSqlitePrMappingStore } from "../infrastructure/persistence/sqlite
 import { createLocalArtifactStore } from "../infrastructure/artifacts/local-artifact-store.js";
 import { createLocalCheckpointStore } from "../infrastructure/artifacts/local-checkpoint-store.js";
 import { sha256ContentHasher } from "../infrastructure/artifacts/sha256-content-hasher.js";
+import { createDirectoryWorkerLogStore } from "../infrastructure/artifacts/directory-worker-log-store.js";
+import { createCliBranchSync } from "../infrastructure/git/cli-branch-sync.js";
+import { logRetentionSettings } from "../application/contracts/log-retention.js";
+import { retainWorkerLogs } from "../application/use-cases/runs/retain-worker-logs.js";
 import { createCliGitWorkspace } from "../infrastructure/git/cli-git-workspace.js";
 import { createProcessCheckRunner } from "../infrastructure/processes/process-check-runner.js";
 import { createGithubRestClient } from "../infrastructure/github/github-rest-client.js";
@@ -107,6 +111,7 @@ import { join } from "node:path";
 import { inspectRuntime } from "../application/use-cases/project/inspect-runtime.js";
 import type { RuntimeIdentity } from "../application/use-cases/project/inspect-runtime.js";
 import type { CliEnvironment } from "../interfaces/cli/commands/create-program.js";
+import type { LogCommands } from "../interfaces/cli/commands/log-commands.js";
 import type { TaskCommands } from "../interfaces/cli/commands/task-commands.js";
 import { createIssueFromSpec } from "../application/use-cases/tasks/create-issue-from-spec.js";
 import { promoteTask } from "../application/use-cases/tasks/promote-task.js";
@@ -203,11 +208,37 @@ export function createTaskCommands(
   };
 }
 
+/** Worker logs live in `.omi-squad/local/logs`, outside the immutable run artifacts. */
+const workerLogDirectory = (projectDir: string): string =>
+  join(projectDir, ".omi-squad", "local", "logs");
+
+/** Manual log retention: the same use case that runs after a task is closed. */
+export function createLogCommands(): LogCommands {
+  return {
+    pruneLogs: async (input) => {
+      const config = await createOnboardingProjectConfigStore(input.projectDir).read();
+      if (config === undefined) throw new Error("PROJECT_NOT_CONFIGURED");
+      return retainWorkerLogs(
+        {
+          logs: createDirectoryWorkerLogStore({ directory: workerLogDirectory(input.projectDir) }),
+          now: Date.now,
+        },
+        {
+          doneTasks: input.doneTasks,
+          settings: logRetentionSettings(config.log_retention),
+          dryRun: input.dryRun,
+        },
+      );
+    },
+  };
+}
+
 /** Wires the CLI to the real IPC client. Used by `cli.ts`; tests may pass their own environment. */
 export function createCliEnvironment(options: CliWiringOptions): CliEnvironment {
   return {
     sendCommand,
     tasks: createTaskCommands(),
+    logs: createLogCommands(),
     installation: {
       initialize: async (input) =>
         initializeProject(
@@ -776,6 +807,19 @@ export async function createProjectRunCommandUseCases(
     reader: createGithubMergeDelivery(client),
     mergeLockOwner: session.lease.owner,
     mergeLockTtlMs: 60_000,
+    carry: createCliBranchSync({
+      repositoryPath: projectDir,
+      baseBranch: config.project.branches.integration,
+    }),
+    afterDone: async (taskId) => {
+      await retainWorkerLogs(
+        { logs: createDirectoryWorkerLogStore({ directory: workerLogDirectory(projectDir) }), now },
+        {
+          doneTasks: [taskId],
+          settings: logRetentionSettings(config.project.log_retention),
+        },
+      );
+    },
   };
   const commands = createRunCommandUseCases({
     session,
