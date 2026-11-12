@@ -95,6 +95,13 @@ export interface FakeGithubOptions {
 }
 
 export class FakeGithub implements GithubTransport {
+  deployConclusion: string | null = "success";
+  deployStatus = "completed";
+  deployProtected = true;
+  deployNativeApproved = true;
+  deployDigestOverride: string | undefined;
+  readonly deployRuns: Record<string, unknown>[] = [];
+  readonly deployRecords: Record<string, unknown>[] = [];
   readonly comments: FakeComment[] = [];
   readonly issues: FakeIssue[] = [];
   readonly pulls: FakePull[] = [];
@@ -194,6 +201,8 @@ export class FakeGithub implements GithubTransport {
     const url = new URL(request.path, "https://api.github.com/");
     const route = url.pathname;
 
+    const deployed = this.handleDeployRoutes(request, url);
+    if (deployed !== undefined) return deployed;
     const merged = this.handleMergeRoutes(request, url);
     if (merged !== undefined) return merged;
 
@@ -308,6 +317,77 @@ export class FakeGithub implements GithubTransport {
     }
 
     return this.json(404, { message: "Not Found" });
+  }
+
+  private handleDeployRoutes(request: HttpRequest, url: URL): HttpResponse | undefined {
+    const route = /^\/repos\/([^/]+\/[^/]+)\/(.+)$/.exec(url.pathname);
+    const repo = route?.[1];
+    const rest = route?.[2];
+    if (repo === undefined || rest === undefined) return undefined;
+    if (rest.startsWith("environments/"))
+      return this.json(200, {
+        name: decodeURIComponent(rest.slice(13)),
+        can_admins_bypass: false,
+        protection_rules: this.deployProtected
+          ? [
+              {
+                type: "required_reviewers",
+                prevent_self_review: true,
+                reviewers: [{ type: "User", reviewer: { login: "po" } }],
+              },
+            ]
+          : [],
+      });
+    const workflow = /^actions\/workflows\/([^/]+)\/(dispatches|runs)$/.exec(rest);
+    if (workflow?.[1] !== undefined) {
+      if (request.method === "POST") {
+        const input = payloadOf(request);
+        const inputs = input["inputs"] as Record<string, unknown>;
+        const id = ++this.nextId;
+        this.deployRuns.push({
+          id,
+          display_title: `omi-deploy:${text(inputs["operation_key"])}`,
+          event: "workflow_dispatch",
+          head_sha: this.tags.get(`${repo}:${text(input["ref"])}`),
+          path: `.github/workflows/${workflow[1]}`,
+          run_attempt: 1,
+          repository: { full_name: repo },
+          actor: { login: this.authenticatedLogin },
+          status: this.deployStatus,
+          conclusion: this.deployConclusion,
+        });
+        this.deployRecords.push({
+          id: ++this.nextId,
+          environment: inputs["environment"],
+          sha: this.tags.get(`${repo}:${text(input["ref"])}`),
+          payload: {
+            operation_key: inputs["operation_key"],
+            artifact_digest: this.deployDigestOverride ?? inputs["artifact_digest"],
+            run_id: id,
+          },
+        });
+        return this.respond(204, "", {});
+      }
+      return this.json(200, { workflow_runs: this.deployRuns });
+    }
+    const run = /^actions\/runs\/(\d+)(\/approvals)?$/.exec(rest);
+    if (run?.[1] !== undefined) {
+      const found = this.deployRuns.find((r) => r["id"] === Number(run[1]));
+      return run[2] === undefined
+        ? this.json(200, found)
+        : this.json(
+            200,
+            this.deployNativeApproved
+              ? [{ state: "approved", user: { login: "po" }, environments: [{ name: "sandbox" }] }]
+              : [],
+          );
+    }
+    if (rest === "deployments") return this.page(url, this.deployRecords);
+    if (/^deployments\/\d+\/statuses$/.test(rest))
+      return this.json(200, [
+        { state: this.deployConclusion === "success" ? "success" : "failure" },
+      ]);
+    return undefined;
   }
 
   private pullWire(p: FakePull): unknown {

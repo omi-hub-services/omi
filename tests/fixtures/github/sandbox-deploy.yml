@@ -1,0 +1,68 @@
+# Install only in a sandbox repository. Pin a lightweight tag to the reviewed workflow commit.
+name: Immutable sandbox deploy
+run-name: "omi-deploy:${{ inputs.operation_key }}"
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        required: true
+        type: string
+      artifact_digest:
+        required: true
+        type: string
+      operation_key:
+        required: true
+        type: string
+permissions:
+  contents: read
+  deployments: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 5
+    env:
+      DIGEST: ${{ inputs.artifact_digest }}
+      OPERATION_KEY: ${{ inputs.operation_key }}
+      DEPLOYMENT_ENVIRONMENT: ${{ inputs.environment }}
+      # PO configures a sandbox image that stays running, e.g. a reviewed web-server image.
+      SANDBOX_IMAGE: ${{ vars.OMI_SANDBOX_IMAGE }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Deploy exact image in an isolated disposable container and publish evidence
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          const { DIGEST, OPERATION_KEY, DEPLOYMENT_ENVIRONMENT, SANDBOX_IMAGE,
+            GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_SHA, GH_TOKEN } = process.env;
+          if (!/^sha256:[0-9a-f]{64}$/.test(DIGEST ?? '')) throw new Error('immutable digest required');
+          if (!/sandbox/i.test(GITHUB_REPOSITORY ?? '')) throw new Error('sandbox repository required');
+          if (!/^[A-Za-z0-9./:_-]+$/.test(SANDBOX_IMAGE ?? '')) throw new Error('sandbox image required');
+          const image = `${SANDBOX_IMAGE}@${DIGEST}`;
+          const api = async (path, body) => {
+            const response = await fetch(`https://api.github.com/repos/${GITHUB_REPOSITORY}/${path}`, {
+              method: 'POST', headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
+              body: JSON.stringify(body)
+            });
+            if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
+            return response.json();
+          };
+          const deployment = await api('deployments', { ref: GITHUB_SHA, environment: DEPLOYMENT_ENVIRONMENT,
+            auto_merge: false, required_contexts: [], production_environment: false,
+            payload: { operation_key: OPERATION_KEY, artifact_digest: DIGEST, run_id: Number(GITHUB_RUN_ID) }
+          });
+          const container = `omi-sandbox-${GITHUB_RUN_ID}`;
+          let state = 'failure';
+          try {
+            execFileSync('docker', ['pull', image], { stdio: 'ignore' });
+            execFileSync('docker', ['run', '--detach', '--network', 'none', '--name', container, image], { stdio: 'ignore' });
+            const running = execFileSync('docker', ['inspect', '--format', '{{.State.Running}}', container], { encoding: 'utf8' }).trim();
+            if (running !== 'true') throw new Error('sandbox container did not stay running');
+            state = 'success';
+          } finally {
+            try { execFileSync('docker', ['rm', '--force', container], { stdio: 'ignore' }); } catch {}
+            await api(`deployments/${deployment.id}/statuses`, { state, auto_inactive: false,
+              description: 'Disposable sandbox digest verification' });
+          }
+          NODE
