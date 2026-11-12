@@ -608,3 +608,9 @@ describe("shared Claude cache decisions", () => {
     ).toBeNull();
   });
 });
+
+it("chooses one QA/review profile across tools by remaining quota", () => {
+  const quotas = [quota("claude", "a", reading(70, 70)), quota("codex", "b", reading(10, 10))];
+  const result = pickProfile("quality", quotas, settings, NOW, true, "sonnet");
+  expect(result).toMatchObject({ ok: true, chosen: [{ tool: "codex", profile: "b" }] });
+});

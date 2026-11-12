@@ -4,6 +4,9 @@
 // worker-report.ts, worker-commit.ts and review-verdict.ts. Same contract as the other
 // subcommands: "refused:" and exit 1 for a gate, --dry-run changes nothing.
 import { countAcceptanceCriteria } from "./acceptance-criteria.ts";
+import "../register-ts-imports.ts";
+import { stepQualitySchema } from "../../src/application/contracts/workflow.ts";
+import { resolveQualityPolicy } from "../../src/domain/workflows/workflow-policy.ts";
 import type { Complexity } from "./effort-policy.ts";
 import {
   COORDINATOR_LOGIN,
@@ -95,7 +98,33 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
     );
   }
 
-  const { model, effort } = EFFORT_POLICY[kind][input.complexity];
+  let level = input.complexity;
+  const packet = input.prompt.startsWith(`${NATIVE_RESUME_HEADER}\n\n`)
+    ? input.prompt.slice(NATIVE_RESUME_HEADER.length + 2)
+    : input.prompt;
+  if (packet.startsWith("<!-- omi-quality")) {
+    try {
+      const raw = /^<!-- omi-quality (.+) -->\r?\n/.exec(packet)?.[1];
+      const quality = stepQualitySchema.parse(JSON.parse(raw ?? "") as unknown);
+      if (input.resume !== null && ["analyze", "verify", "review"].includes(quality.step)) {
+        return refuse(label, "analysis, QA and review require fresh independent workers");
+      }
+      const decision = resolveQualityPolicy({
+        qualityPolicy: quality.policy,
+        complexity: input.complexity,
+        step: quality.step,
+        round: quality.round,
+        risks: { security: false, gates: false, data: false },
+      });
+      if (quality.steps.length > 1 && !decision.combineVerifyReview) {
+        return refuse(label, "current policy/complexity requires separate verify/review packets");
+      }
+      level = decision.effort === "low" || decision.effort === "medium" ? decision.effort : "high";
+    } catch {
+      return refuse(label, "invalid quality packet metadata");
+    }
+  }
+  const { model, effort } = EFFORT_POLICY[kind][level];
   const spec = { task, profile: input.profile, model, effort, resume: input.resume };
   const launch = wslCommand(
     kind === "claude" ? claudeLaunchPayload(spec) : codexLaunchPayload(spec),

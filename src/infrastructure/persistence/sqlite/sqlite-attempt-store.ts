@@ -18,6 +18,7 @@ import type { AttemptRecord, AttemptStore } from "../../../application/ports/att
 import type { LeaseFence } from "../../../application/ports/state-unit-of-work.js";
 import type { StateDatabase } from "./sqlite-connection.js";
 import { runInTransaction } from "./sqlite-transaction.js";
+import { stepResultSchema } from "../../../application/contracts/result.js";
 
 const recordSchema = z.strictObject({
   id: identifierSchema,
@@ -86,6 +87,44 @@ export function createSqliteAttemptStore(
     return { ...rest, ...(selection === undefined ? {} : { selection }), status: value.status };
   };
   return {
+    latestForRunStep: (runId, stepId) =>
+      read(
+        db
+          .prepare(
+            "SELECT dispatch_record, status FROM agent_attempts WHERE step_run_id=(SELECT id FROM step_runs WHERE run_id=? AND step_key=? ORDER BY iteration DESC LIMIT 1) ORDER BY attempt_number DESC LIMIT 1",
+          )
+          .get(identifierSchema.parse(runId), slugSchema.parse(stepId)),
+      ),
+    qualityHistory(stepRunId) {
+      const rows = db
+        .prepare(
+          "SELECT kind, payload FROM events WHERE subject=? AND kind IN ('step.failed', 'step.succeeded') ORDER BY sequence",
+        )
+        .all(identifierSchema.parse(stepRunId));
+      let round = 1;
+      let previousVerdict;
+      for (const row of rows) {
+        const event = z.object({ kind: z.string(), payload: z.string() }).parse(row);
+        const raw: unknown = JSON.parse(event.payload);
+        // Start failures predate result collection and carry no execution outcome or verdict.
+        if (
+          event.kind === "step.failed" &&
+          z
+            .strictObject({
+              attemptId: identifierSchema,
+              reason: z.string().min(1),
+            })
+            .safeParse(raw).success
+        )
+          continue;
+        const payload = z
+          .object({ outcome: z.string(), result: stepResultSchema.optional() })
+          .parse(raw);
+        if (event.kind === "step.failed" && payload.outcome === "succeeded") round += 1;
+        if (payload.result?.revision !== undefined) previousVerdict = payload.result;
+      }
+      return { round, ...(previousVerdict === undefined ? {} : { previousVerdict }) };
+    },
     failoversForStep(stepRunId) {
       const row = db
         .prepare(

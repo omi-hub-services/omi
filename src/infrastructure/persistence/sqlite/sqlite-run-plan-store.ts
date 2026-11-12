@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { workflowQualityPlanSchema } from "../../../application/contracts/workflow.js";
 import type { RunPlanStore } from "../../../application/ports/run-plan-store.js";
 import type { LeaseFence } from "../../../application/ports/state-unit-of-work.js";
 import type { StateDatabase } from "./sqlite-connection.js";
@@ -51,7 +52,24 @@ export function createSqliteRunPlanStore(
     },
     forRun(runId) {
       const row = forRun.get(runId);
-      return row === undefined ? undefined : runTaskRow.parse(row);
+      if (row === undefined) return undefined;
+      const event = z
+        .object({ payload: z.string() })
+        .optional()
+        .parse(
+          db
+            .prepare(
+              "SELECT payload FROM events WHERE run_id = ? AND kind = 'run.planned' ORDER BY sequence LIMIT 1",
+            )
+            .get(runId),
+        );
+      const qualityPlan =
+        event === undefined
+          ? undefined
+          : z
+              .object({ qualityPlan: workflowQualityPlanSchema.optional() })
+              .parse(JSON.parse(event.payload) as unknown).qualityPlan;
+      return { ...runTaskRow.parse(row), ...(qualityPlan === undefined ? {} : { qualityPlan }) };
     },
     createRun(plan) {
       return runInTransaction(db, () => {
@@ -82,6 +100,9 @@ export function createSqliteRunPlanStore(
           plan.runId,
           plan.runId,
           JSON.stringify({
+            ...(plan.qualityPlan === undefined
+              ? {}
+              : { qualityPlan: workflowQualityPlanSchema.parse(plan.qualityPlan) }),
             templateHash: plan.templateHash,
             steps: plan.steps.map((step) => step.stepId),
           }),

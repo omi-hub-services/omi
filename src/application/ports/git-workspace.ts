@@ -72,6 +72,10 @@ export type GitWorkspaceResult<T> =
   | { readonly ok: false; readonly error: GitWorkspaceError };
 
 export interface GitWorkspace {
+  /** Committed PR paths relative to the integration branch; missing/failed reads fail closed. */
+  changedPaths?(worktreePath: string): GitWorkspaceResult<readonly string[]>;
+  /** Bounded committed delta on a clean task worktree, with external diff/textconv disabled. */
+  diffSince?(worktreePath: string, headSha: string): GitWorkspaceResult<string>;
   /** Creates from local develop, or reconciles an existing matching branch/worktree on retry.
    * Refuses a dirty main checkout. Operations reserve the same lease as task writers.
    */

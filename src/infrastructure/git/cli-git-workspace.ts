@@ -168,6 +168,45 @@ export function createCliGitWorkspace(
 
   checkRoot();
   return {
+    changedPaths(path) {
+      return attempt(() => {
+        const state = inspect(path);
+        if (state.dirty) throw new GitWorkspaceError("DIRTY_WORKTREE");
+        const base = gitObjectId(
+          gitCommand(state.path, ["merge-base", "refs/heads/develop", state.headSha]).stdout,
+        );
+        const paths = gitCommand(state.path, [
+          "diff",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--name-only",
+          "-z",
+          base,
+          state.headSha,
+          "--",
+        ]).stdout;
+        return paths.split("\0").filter(Boolean);
+      });
+    },
+    diffSince(path, headSha) {
+      return attempt(() => {
+        if (!/^[a-f0-9]{40}$/.test(headSha)) throw new GitWorkspaceError("INVALID_INPUT");
+        const state = inspect(path);
+        if (state.dirty) throw new GitWorkspaceError("DIRTY_WORKTREE");
+        gitCommand(state.path, ["merge-base", "--is-ancestor", headSha, state.headSha]);
+        const diff = gitCommand(state.path, [
+          "diff",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--no-color",
+          headSha,
+          state.headSha,
+          "--",
+        ]).stdout;
+        if (diff.length > 100_000) throw new GitWorkspaceError("GIT_FAILED");
+        return diff;
+      });
+    },
     createTask(request) {
       return attempt(() =>
         reserved(request, (workspace) => {

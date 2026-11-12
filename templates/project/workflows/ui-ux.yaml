@@ -3,7 +3,7 @@ id: ui-ux
 version: 1
 selection:
   task_types: [ui-ux]
-quality_policy: task-default
+quality_policy: strict
 # dispatchSpecialistStep records a no-UI reason before skipping this whole workflow.
 # Unknown UI applicability blocks; it is never interpreted as no UI.
 steps:
@@ -14,9 +14,16 @@ steps:
     rules: [project-baseline, approval-gates, evidence-and-tests]
     capability_profile: analysis
     output_contract: analysis-result-v1
+  - id: implement
+    role: developer
+    needs: [design]
+    skills: [test-driven-development, minimal-change, frontend-design-quality]
+    rules: [project-baseline, approval-gates, evidence-and-tests, architecture-boundaries]
+    capability_profile: coding
+    output_contract: implementation-result-v1
   - id: verify
     role: designer
-    needs: [design]
+    needs: [implement]
     skills: [verification-before-completion, ui-ux-review-checklist]
     rules: [project-baseline, approval-gates, evidence-and-tests]
     capability_profile: testing
@@ -32,6 +39,9 @@ gates:
   # Re-evaluate current estimates before every step, including paid design tools.
   - id: design-cost-approved
     before: design
+    policy: approved-cost
+  - id: implement-cost-approved
+    before: implement
     policy: approved-cost
   - id: verify-cost-approved
     before: verify

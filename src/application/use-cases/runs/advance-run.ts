@@ -48,7 +48,9 @@ export function advanceRun(deps: AdvanceRunDependencies, input: unknown): Advanc
   const ready: string[] = [];
   for (const step of steps) {
     if (step.status !== "pending") continue;
-    const needs = workflow.workflow.steps.find((candidate) => candidate.id === step.stepId)?.needs;
+    const needs = (pinned?.qualityPlan?.workflow ?? workflow.workflow).steps.find(
+      (candidate) => candidate.id === step.stepId,
+    )?.needs;
     if (needs === undefined || !needs.every((need) => succeeded.has(need))) continue;
     const moved = transitionStep(step.status, {
       type: "dependencies_met",

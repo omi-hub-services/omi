@@ -492,3 +492,15 @@ CI kiểm tra root allowlist, import direction, cycles, file naming, generated s
 PoC phải có bằng chứng chạy thật cho CLI auth/profile/lifecycle. Unit test kiểm tra state machine và policy; integration test kiểm tra transaction, process, worktree và crash recovery; contract test cố định output fixtures từng CLI version; E2E kiểm tra full flow bằng fake executors có fault injection. Live test chạy opt-in với subscription và sandbox GitHub riêng, không dùng production.
 
 Các failure scenario bắt buộc: process chết giữa ghi file; timeout sau remote tạo PR; restart khi merge đã thành công; hai worker cạnh tranh worktree; base branch đổi sau review; profile hết limit; approval stale; GitHub offline; Coordinator đóng khi worker đang chạy; runtime restart với lease cũ. Chi tiết tiêu chí nằm trong `project-plan.md`.
+
+### Workflow cost execution plans (OMI-093)
+
+The existing domain workflows module owns quality decisions (`workflow-policy.ts`); application
+`plan-workflow-quality.ts` projects a pinned template into the selected execution graph without
+removing gates. Its original step packets remain attached to the independent review worker.
+The graph and scope evidence are persisted in `run.planned`, with the original template hash;
+no mutable global policy or schema migration is needed. Selection, dispatch and repo prompt
+rendering consume the same domain policy; repo tooling does not own a second cost decision.
+See ADR-0014, “Workflow cost policy”, and the operations handbook for step effort, required check
+logs, delta verdicts, conservative risk refusal and Project Workflow routes. Existing approval,
+review independence and fixed-revision delivery checks remain mandatory.
