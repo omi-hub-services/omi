@@ -45,11 +45,19 @@ export function parseSetupOptions(
   if (!/^sandbox-deploy-[A-Za-z0-9._-]+$/.test(tag))
     throw new Error("--tag must look like sandbox-deploy-<name> so the tag ruleset covers it");
   const repository = values["repo"] ?? "omi-hub-services/omi-sandbox";
+  const parts = repository.split("/");
+  const sound = (part: string) =>
+    /^[\w.-]+$/.test(part) && /[A-Za-z0-9]/.test(part) && !part.includes("..");
   if (
-    !/^[\w.-]+\/[\w.-]*sandbox[\w.-]*$/i.test(repository) ||
+    parts.length !== 2 ||
+    !parts.every(sound) ||
+    !/sandbox/i.test(parts[1] ?? "") ||
     repository.toLowerCase() === PRODUCTION_REPOSITORY
   )
     throw new Error("sandbox repository required; the production repository is refused");
+  const environment = values["environment"] ?? "sandbox";
+  if (!/^[A-Za-z0-9_-]+$/.test(environment))
+    throw new Error("--environment may only contain letters, digits, _ and -");
   const image = values["image"] ?? "";
   if (!/^[A-Za-z0-9./:_-]+$/.test(image)) throw new Error("--image must be an image repository");
   const digest = values["digest"] ?? "";
@@ -57,7 +65,7 @@ export function parseSetupOptions(
     throw new Error("--digest must be an immutable sha256:<64 lowercase hex> digest");
   return {
     repository,
-    environment: values["environment"] ?? "sandbox",
+    environment,
     reviewer: values["reviewer"] ?? "ttin-omihub",
     tag,
     image,
@@ -65,6 +73,13 @@ export function parseSetupOptions(
     deployWorkflow,
     checkWorkflow,
   };
+}
+
+/** An API path must not climb out of the repository prefix it was checked against. */
+export function assertSafeApiPath(path: string): void {
+  const [location = ""] = path.split("?");
+  if (location.split("/").some((s) => s === "." || s === "..") || /%2e|%2f|\\/i.test(location))
+    throw new Error(`refused: ${path} contains a dot segment or encoded separator`);
 }
 
 // ── rulesets (ADR-0015: no bypass, native review on main, named check) ───────────────────────

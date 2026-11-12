@@ -128,6 +128,8 @@ node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts local-s
 ```
 
 creates `state.db` (migrated), the project row, `project.yaml`, `artifacts/` and is repeatable.
+`--dry-run` lists what it would create without writing anything; `--verify` exits 1 while
+anything is missing. The directory must resolve (through symlinks) to outside this repository.
 Add `--deploy-approval-id <id>` once the deploy approval exists to write `deploy-config.json`
 (`request`, `pipeline`, `stateDirectory`; no credential, no decision) for
 `OMI_LIVE_DEPLOY_CONFIG`.

@@ -1,4 +1,12 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,7 +17,11 @@ import {
   deployReleaseSchema,
 } from "../../../../src/application/contracts/deploy-delivery.ts";
 import { openReadOnlyStateDatabase } from "../../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
-import { prepareLocalState } from "../../../../tools/sandbox-setup/local-state.ts";
+import {
+  assertOutsideDirectory,
+  inspectLocalState,
+  prepareLocalState,
+} from "../../../../tools/sandbox-setup/local-state.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -91,6 +103,63 @@ describe("sandbox local state", () => {
     const stateDir = tempState();
     await prepareLocalState({ ...base, stateDir });
     expect(readdirSync(stateDir)).not.toContain("deploy-config.json");
+  });
+
+  it("inspect lists everything missing and writes nothing", async () => {
+    const stateDir = tempState();
+    const missing = await inspectLocalState({ ...base, stateDir, deploy });
+    expect(missing.missing).toEqual([
+      "artifacts/",
+      "project.yaml",
+      "state.db",
+      "project row",
+      "deploy-config.json",
+    ]);
+    expect(existsSync(stateDir)).toBe(false);
+  });
+
+  it("inspect is empty once prepared, and notices a changed harness config", async () => {
+    const stateDir = tempState();
+    await prepareLocalState({ ...base, stateDir, deploy });
+    expect((await inspectLocalState({ ...base, stateDir, deploy })).missing).toEqual([]);
+    const other = { ...deploy, issueNumber: 8 };
+    expect((await inspectLocalState({ ...base, stateDir, deploy: other })).missing).toEqual([
+      "deploy-config.json",
+    ]);
+  });
+
+  it("rejects a state directory inside the repository, also through a symlink", () => {
+    const root = mkdtempSync(join(tmpdir(), "omi-089-root-"));
+    dirs.push(root);
+    mkdirSync(join(root, "..foo"));
+    symlinkSync(root, join(root, "..foo", "back"));
+    expect(() => {
+      assertOutsideDirectory(root, join(root, "state"));
+    }).toThrow(/outside/);
+    expect(() => {
+      assertOutsideDirectory(root, join(root, "..foo", "back", "state"));
+    }).toThrow(/outside/);
+    const elsewhere = mkdtempSync(join(tmpdir(), "omi-089-else-"));
+    dirs.push(elsewhere);
+    symlinkSync(root, join(elsewhere, "link"));
+    expect(() => {
+      assertOutsideDirectory(root, join(elsewhere, "link", "state"));
+    }).toThrow(/outside/);
+    expect(() => {
+      assertOutsideDirectory(root, join(elsewhere, "state"));
+    }).not.toThrow();
+  });
+
+  it("does not mistake a sibling named like the root prefix for inside", () => {
+    const parent = mkdtempSync(join(tmpdir(), "omi-089-par-"));
+    dirs.push(parent);
+    mkdirSync(join(parent, "repo"));
+    expect(() => {
+      assertOutsideDirectory(join(parent, "repo"), join(parent, "repo-state", "x"));
+    }).not.toThrow();
+    expect(() => {
+      assertOutsideDirectory(join(parent, "repo"), join(parent, "repo", "..foo", "x"));
+    }).toThrow(/outside/);
   });
 
   it("refuses a state directory for another repository", async () => {

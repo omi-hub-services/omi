@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertSafeApiPath,
   desiredEnvironment,
   desiredRulesets,
   effectiveRuleFailures,
@@ -205,6 +206,41 @@ describe("sandbox setup options", () => {
     const { id, ...projected } = projectRuleset(raw) ?? { id: 0 };
     expect(id).toBe(9);
     expect(projected).toEqual(main);
+  });
+  it.each(["../../omi/environments/production", "a/b", "sand box", ".."])(
+    "refuses environment %s that could escape the repository path",
+    (environment) => {
+      expect(() => parseSetupOptions([...base, "--environment", environment], "x", "y")).toThrow(
+        /environment/,
+      );
+    },
+  );
+  it.each([
+    "../omi-sandbox",
+    "owner/..sandbox",
+    "../sandbox",
+    "./omi-sandbox",
+    "owner/.-sandbox..x",
+  ])("refuses repository %s with a traversal or empty-looking part", (repo) => {
+    expect(() => parseSetupOptions([...base, "--repo", repo], "x", "y")).toThrow();
+  });
+  it("accepts an owner and name that each contain a letter or digit", () => {
+    expect(parseSetupOptions([...base, "--repo", "acme/my.sandbox-1"], "x", "y").repository).toBe(
+      "acme/my.sandbox-1",
+    );
+  });
+  it.each(["repos/o/r-sandbox/../../omi/x", "repos/o/r-sandbox/./x/..", "../user"])(
+    "refuses API path %s containing a dot segment",
+    (path) => {
+      expect(() => {
+        assertSafeApiPath(path);
+      }).toThrow(/dot segment/);
+    },
+  );
+  it("accepts an ordinary API path", () => {
+    expect(() => {
+      assertSafeApiPath("repos/o/r-sandbox/contents/a..b.yml?ref=x");
+    }).not.toThrow();
   });
   it("refuses an unknown flag", () => {
     expect(() => parseSetupOptions([...base, "--force"], "x", "y")).toThrow(/force/);

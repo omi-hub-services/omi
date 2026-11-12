@@ -11,14 +11,15 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { z } from "zod";
-import { prepareLocalState } from "./local-state.ts";
+import { assertOutsideDirectory, inspectLocalState, prepareLocalState } from "./local-state.ts";
 import {
   CHECK_WORKFLOW_PATH,
   DEPLOY_WORKFLOW_PATH,
   PIPELINE_MARKER,
   SANDBOX_PROJECT_NUMBER,
+  assertSafeApiPath,
   effectiveRuleFailures,
   evaluateSandbox,
   settleAfterApply,
@@ -36,6 +37,7 @@ type Json = Record<string, unknown>;
 
 // ── gh access: every path is checked against the sandbox repository first ────────────────────
 function gh(options: SetupOptions, method: string, path: string, body?: Json): unknown {
+  assertSafeApiPath(path);
   if (!path.startsWith(`repos/${options.repository}/`) && !/^(user|users\/[\w-]+)$/.test(path))
     throw new Error(`refused: ${method} ${path} is outside ${options.repository}`);
   try {
@@ -119,10 +121,15 @@ function observe(o: SetupOptions): Observed {
     });
   const user = z.looseObject({ id: z.number() }).parse(read(o, `users/${o.reviewer}`));
   const variables = variablesSchema.parse(read(o, `${base}/actions/variables?per_page=100`));
-  const issues = issuesSchema.parse(read(o, `${base}/issues?state=all&per_page=100`) ?? []);
-  const pipeline = issues.find(
-    (i) => i.pull_request === undefined && i.body?.includes(PIPELINE_MARKER),
-  );
+  // Every page, so a second apply can never miss the marker Issue and create a duplicate.
+  let pipeline: z.infer<typeof issuesSchema>[number] | undefined;
+  for (let page = 1; pipeline === undefined; page++) {
+    const batch = issuesSchema.parse(
+      read(o, `${base}/issues?state=all&per_page=100&page=${String(page)}`) ?? [],
+    );
+    pipeline = batch.find((i) => i.pull_request === undefined && i.body?.includes(PIPELINE_MARKER));
+    if (batch.length < 100) break;
+  }
   return {
     mainSha: sha("heads/main"),
     developSha: sha("heads/develop"),
@@ -224,9 +231,13 @@ async function runGithub(o: SetupOptions, mode: "apply" | "dry-run" | "verify"):
   return rest.length === 0 ? 0 : 1;
 }
 
-async function runLocalState(o: SetupOptions, stateDir: string, approvalId: string | undefined) {
-  if (!relative(ROOT, resolve(stateDir)).startsWith(".."))
-    throw new Error("--state-dir must be outside this repository");
+async function runLocalState(
+  o: SetupOptions,
+  stateDir: string,
+  approvalId: string | undefined,
+  mode: "apply" | "dry-run" | "verify",
+): Promise<number> {
+  assertOutsideDirectory(ROOT, stateDir);
   let deploy;
   if (approvalId !== undefined) {
     const observed = observe(o);
@@ -244,7 +255,7 @@ async function runLocalState(o: SetupOptions, stateDir: string, approvalId: stri
       authorActor: actor.login,
     };
   }
-  const result = await prepareLocalState({
+  const input = {
     stateDir,
     repository: o.repository,
     projectNumber: SANDBOX_PROJECT_NUMBER,
@@ -252,7 +263,22 @@ async function runLocalState(o: SetupOptions, stateDir: string, approvalId: stri
     now: Date.now,
     newId: randomUUID,
     ...(deploy === undefined ? {} : { deploy }),
-  });
+  };
+  if (mode !== "apply") {
+    const { missing } = await inspectLocalState(input);
+    const word = mode === "dry-run" ? "would create or change" : "VERIFY FAILED, incomplete";
+    console.log(
+      missing.length === 0
+        ? mode === "verify"
+          ? "VERIFY OK"
+          : "local state: nothing to change"
+        : `local state ${word}: ${missing.join(", ")}`,
+    );
+    if (deploy === undefined)
+      console.log("deploy-config.json not checked: no --deploy-approval-id given");
+    return mode === "verify" && missing.length > 0 ? 1 : 0;
+  }
+  const result = await prepareLocalState(input);
   console.log(
     result.changed.length === 0
       ? "local state: nothing to change"
@@ -262,6 +288,7 @@ async function runLocalState(o: SetupOptions, stateDir: string, approvalId: stri
     console.log(
       "deploy-config.json not written: pass --deploy-approval-id once the PO's deploy approval exists",
     );
+  return 0;
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -292,8 +319,7 @@ async function main(argv: string[]): Promise<number> {
   if (command === "local-state") {
     const stateDir = peeled["--state-dir"];
     if (stateDir === undefined) throw new Error("--state-dir is required");
-    await runLocalState(o, stateDir, peeled["--deploy-approval-id"]);
-    return 0;
+    return runLocalState(o, stateDir, peeled["--deploy-approval-id"], mode);
   }
   throw new Error("usage: main.ts <github|local-state> --image … --digest … [--dry-run|--verify]");
 }
