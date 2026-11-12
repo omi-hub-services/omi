@@ -431,3 +431,132 @@ describe("dispatchStep", () => {
     expect(payload).toMatchObject({ selection: result.attempt.selection });
   });
 });
+
+it("hands QA script-run logs before starting the worker", async () => {
+  const r = rig();
+  let ran = 0;
+  const evidence = r.artifacts.publish("attempts/id-1/check.log", "script check: passed");
+  const result = await dispatchStep(
+    {
+      ...r.deps,
+      checks: {
+        has: () => true,
+        run: () => {
+          expect(r.executor.started).toHaveLength(0);
+          ran += 1;
+          return Promise.resolve({
+            checkId: "project-check",
+            status: "passed" as const,
+            exitCode: 0,
+            command: ["npm", "run", "check"],
+            startedAt: "2026-11-11T00:00:00.000Z",
+            endedAt: "2026-11-11T00:00:01.000Z",
+            revision: "a".repeat(40),
+            evidence,
+          });
+        },
+      },
+    },
+    dispatchInput({
+      quality: { policy: "task-default", step: "review", steps: ["verify", "review"], round: 1 },
+      requiredChecks: ["project-check"],
+    }),
+  );
+  expect(result.ok).toBe(true);
+  expect(ran).toBe(1);
+  const prompt = r.executor.started[0]?.prompt ?? "";
+  expect(prompt).toContain("script check: passed");
+  expect(prompt).toContain("QA judges the supplied script-run check evidence; do not rerun tests.");
+  expect(prompt).toContain("verify + review");
+});
+
+it("supplies the previous verdict and Git delta to a repeated quality worker", async () => {
+  const r = rig();
+  const previousVerdict = {
+    schemaVersion: 1 as const,
+    runId: "run-1",
+    stepId: "review",
+    attemptId: "old-1",
+    status: "failed" as const,
+    summary: "previous FAIL: missing error case",
+    artifacts: [],
+    revision: { headSha: "b".repeat(40), baseSha: "c".repeat(40) },
+    checks: [],
+    skillsApplied: [],
+    findings: [],
+  };
+  const result = await dispatchStep(
+    {
+      ...r.deps,
+      attempts: Object.assign(r.attempts, {
+        qualityHistory: () => ({ round: 2, previousVerdict }),
+      }),
+      workspaces: Object.assign(r.workspaces, {
+        diffSince: (_path: string, head: string) => {
+          expect(head).toBe("b".repeat(40));
+          return { ok: true as const, value: "diff: added missing error case" };
+        },
+      }),
+    },
+    dispatchInput({
+      quality: { policy: "task-default", step: "review", steps: ["review"], round: 2 },
+    }),
+  );
+  expect(result.ok).toBe(true);
+  expect(r.executor.started[0]?.prompt).toContain("previous FAIL: missing error case");
+  expect(r.executor.started[0]?.prompt).toContain("diff: added missing error case");
+});
+
+it("refuses a combined packet when the actual changed files touch a gate", async () => {
+  const r = rig();
+  const workspaces = Object.assign(r.workspaces, {
+    changedPaths: () => ({ ok: true as const, value: ["src/domain/approvals/approval-policy.ts"] }),
+  });
+  expect(
+    await dispatchStep(
+      { ...r.deps, workspaces },
+      dispatchInput({
+        quality: { policy: "lean", step: "review", steps: ["verify", "review"], round: 1 },
+      }),
+    ),
+  ).toMatchObject({
+    ok: false,
+    reason: "CONTEXT_REJECTED",
+    detail: "RISK_REQUIRES_SEPARATE_WORKERS",
+  });
+  expect(r.executor.started).toHaveLength(0);
+});
+
+it("blocks repeated quality work without a previous verdict and delta", async () => {
+  const r = rig();
+  expect(
+    await dispatchStep(
+      r.deps,
+      dispatchInput({ quality: { policy: "lean", step: "review", steps: ["review"], round: 2 } }),
+    ),
+  ).toMatchObject({
+    ok: false,
+    reason: "CONTEXT_REJECTED",
+    detail: "PREVIOUS_VERDICT_OR_DELTA_MISSING",
+  });
+  expect(r.executor.started).toHaveLength(0);
+  expect(r.workspaces.released).toEqual([1]);
+});
+
+it("refuses a high-complexity combined packet even without a changed-path reader", async () => {
+  const r = rig();
+  expect(
+    await dispatchStep(
+      r.deps,
+      dispatchInput({
+        task: { complexity: "high" },
+        quality: { policy: "lean", step: "review", steps: ["verify", "review"], round: 1 },
+      }),
+    ),
+  ).toMatchObject({
+    ok: false,
+    reason: "CONTEXT_REJECTED",
+    detail: "RISK_REQUIRES_SEPARATE_WORKERS",
+  });
+  expect(r.executor.started).toHaveLength(0);
+});

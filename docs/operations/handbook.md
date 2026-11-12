@@ -554,3 +554,47 @@ contract tests with a fake GitHub only.
 Not run live: native login/probes, GitHub approval, runtime TTY confirmation, Windows `session start`,
 full-dependency clean npm installation, and successful worker/delivery flows. These remain opt-in
 platform acceptance; the smoke record is offline CLI evidence.
+
+## Workflow cost policy
+
+All nine shipped workflows declare a cost policy: feature/bugfix/refactor use `task-default`,
+docs/idea-to-issues use `lean`, and onboarding/UI-UX/CI-CD use `strict`. Strict and unknown policies
+keep QA and review separate. Ordinary low/medium work can share one **fresh independent** quality
+worker; high complexity, security/gate/data changes, or a gate between verify and review require
+separate workers. UI-UX now runs design → implement → verify → review, retaining its original
+step ids, visual evidence and per-step cost approval requirements.
+
+Runtime plans pin the selected graph to their original template hash and record the Issue as scope
+evidence when an approved Issue already has AC and an implementation map. Issue/comment prose
+never approves anything. Old runs keep their original graph. The developer still uses the configured
+complexity effort; analyst/first review use medium, QA/delta review low, bounded below by every
+constituent capability requirement. Quality attempts use fresh sessions; author fixes may resume.
+
+For repository development, the Coordinator can render and dispatch a combined packet:
+
+```
+node tools/coordinator/flow.ts prompt N --step verify,review --head <sha> --check-log <check-log.md> --notes <notes.md> --out <prompt.md>
+node tools/coordinator/flow.ts pick-profile N --step verify,review --round 1 --probe
+node tools/coordinator/flow.ts dispatch N --kind <chosen-tool> --profile <chosen-profile> --prompt <prompt.md>
+```
+
+Use `verify,accept` for docs. A policy refusal means render the actual verify and reviewer steps
+separately. Supply `--risk security,gates,data` (only applicable risks) when the PR touches sensitive
+behaviour even if the declared implementation paths missed it. Review never uses the author's
+resumed session. An explicit `--scope-approved <recorded-decision-ref>` records the Issue as the
+scope source and omits analyze only when AC and an implementation map exist. Without that decision,
+analysis remains applicable. Do not infer it from a `SCOPE-APPROVED` comment.
+
+For a fix round, add `--round 2 --previous-verdict <verdict.md> --delta <diff.md>` and a fresh
+`--head --check-log`. The worker judges only that delta plus the previous verdict and current
+script evidence. QA does not rerun tests. Missing or stale evidence blocks its verdict; sandbox
+EPERM is not a passing check. The runtime supplies its own recorded verdict, bounded Git diff and
+check artifacts automatically, and rejects unavailable evidence or newly discovered risky paths.
+Keep the existing 2 + Architect + 2, fixed-SHA, approval and merge gates.
+
+Run `node tools/coordinator/flow.ts workflow-options` to check live Project Workflow options without
+changing GitHub. Canonical template ids resolve directly; legacy `init` means onboarding-takeover,
+`research` means idea-to-issues. Release/deploy values route to `prepare-release` / `deploy-release`
+with their existing independent PO approval gates; `prompt` refuses to launch them as generic
+workers. For a new empty project, select onboarding-empty-repo explicitly. The documented Project
+option routing is checked in the default unit suite; the frozen bootstrap seed is not task state.

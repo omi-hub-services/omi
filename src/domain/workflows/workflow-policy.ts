@@ -1,5 +1,125 @@
 import { findDependencyCycle } from "../shared/graph.js";
 import type { StepStatus } from "../runs/step-run.js";
+import {
+  resolveTaskEffort,
+  type Complexity,
+  type EffortInput,
+} from "../agents/complexity-policy.js";
+import { effortRank } from "../agents/capability.js";
+import type { Effort } from "../agents/capability.js";
+
+export interface QualityPolicyInput {
+  readonly qualityPolicy: string;
+  readonly complexity: Complexity;
+  readonly step: string;
+  readonly round: number;
+  readonly developerEffort?: Effort;
+  readonly risks: { readonly security: boolean; readonly gates: boolean; readonly data: boolean };
+  /** An explicit runtime decision, never a SCOPE-APPROVED string parsed from prose. */
+  readonly scope?:
+    | {
+        readonly measurableAc: boolean;
+        readonly implementationMap: boolean;
+        readonly issueRef: string;
+        readonly approvalRef: string;
+      }
+    | undefined;
+}
+
+/** Broad source scopes are unknown risk; explicit files can qualify for the cheaper plan. */
+export function workflowRisks(
+  paths: readonly string[],
+  area?: string | null,
+): QualityPolicyInput["risks"] {
+  const broad =
+    paths.length === 0 ||
+    paths.some((p) => /^(?:src(?:\/(?:domain|application|infrastructure))?|\.)\/?$/.test(p));
+  return {
+    security:
+      broad || area === "security" || paths.some((p) => /security|auth|credential|secret/i.test(p)),
+    gates: broad || paths.some((p) => /approval|gate|delivery|workflow|rules|coordinator/i.test(p)),
+    data: broad || paths.some((p) => /migration|persist|database|sqlite|data\//i.test(p)),
+  };
+}
+
+/** Cost choices cannot turn off delivery requirements. Unknown policies fail closed. */
+export function resolveQualityPolicy(input: QualityPolicyInput) {
+  const qualityStep = input.step === "verify" || input.step === "review";
+  const skipAnalyze = Boolean(
+    input.scope?.measurableAc &&
+    input.scope.implementationMap &&
+    input.scope.issueRef.trim() &&
+    input.scope.approvalRef.trim(),
+  );
+  const effort: Effort =
+    input.step === "analyze" || (input.step === "review" && input.round === 1)
+      ? "medium"
+      : qualityStep
+        ? "low"
+        : (input.developerEffort ?? input.complexity);
+  return {
+    combineVerifyReview:
+      ["task-default", "lean"].includes(input.qualityPolicy) &&
+      input.complexity !== "high" &&
+      !Object.values(input.risks).some(Boolean),
+    skipAnalyze,
+    scopeEvidence: skipAnalyze ? input.scope?.issueRef : undefined,
+    effort,
+    reviewScope: qualityStep && input.round > 1 ? "delta-with-previous-verdict" : "full",
+    independentReview: true as const,
+    exactShaCheck: true as const,
+  };
+}
+
+/** The same floor is checked by selection and again at dispatch. */
+export function resolveWorkflowEffort(
+  task: EffortInput,
+  mapping: Readonly<Record<Complexity, Effort>>,
+  floor: Effort,
+  quality?: { readonly policy: string; readonly step: string; readonly round: number },
+) {
+  const taskDecision = resolveTaskEffort(task, mapping, floor);
+  if (quality === undefined) return taskDecision;
+  const decision = resolveQualityPolicy({
+    qualityPolicy: quality.policy,
+    complexity: taskDecision.complexity,
+    step: quality.step,
+    round: quality.round,
+    developerEffort: mapping[taskDecision.complexity],
+    risks: { security: false, gates: false, data: false },
+  });
+  const minEffort = effortRank(floor) > effortRank(decision.effort) ? floor : decision.effort;
+  return {
+    ...taskDecision,
+    minEffort,
+    reason: `${taskDecision.reason}; step ${quality.step} round ${String(quality.round)} policy ${quality.policy}; minimum ${minEffort}`,
+  };
+}
+
+/** Legacy Project values have explicit routes; release/deploy never become ungated workers. */
+export function resolveWorkflowRoute(id: string): {
+  readonly kind: "template" | "delivery";
+  readonly id: string;
+} {
+  if (id === "release") return { kind: "delivery", id: "prepare-release" };
+  if (id === "deploy") return { kind: "delivery", id: "deploy-release" };
+  return {
+    kind: "template",
+    id: id === "init" ? "onboarding-takeover" : id === "research" ? "idea-to-issues" : id,
+  };
+}
+
+export function workflowOptionIssues(
+  options: readonly string[],
+  templateIds: readonly string[],
+): readonly string[] {
+  return options.flatMap((option) => {
+    const route = resolveWorkflowRoute(option);
+    return route.kind === "template" && !templateIds.includes(route.id)
+      ? [`${option}: missing template ${route.id}`]
+      : [];
+  });
+}
 
 export interface WorkflowStep {
   readonly id: string;

@@ -112,3 +112,92 @@ describe("planRun", () => {
     });
   });
 });
+
+it("persists a quality execution plan while retaining the original template hash", () => {
+  const r = setup([
+    step("analyze", []),
+    step("implement", ["analyze"]),
+    { ...step("verify", ["implement"]), role: "qa" },
+    { ...step("review", ["verify"]), role: "reviewer" },
+  ]);
+  const result = planRun(
+    {
+      ...r.deps,
+      qualityTask: {
+        context: {
+          taskSnapshot: { issueNumber: 35, title: "Feature", body: "Issue data" },
+          acceptanceCriteria: ["measurable"],
+          businessBaselineHash: "a".repeat(64),
+          inputArtifacts: [],
+          previousFindings: [],
+          allowedScope: { paths: ["src/interfaces/cli/commands/task.ts"] },
+          approvalRefs: ["approved-35"],
+        },
+        complexity: {
+          workflow: "feature",
+          workType: "task",
+          area: "tooling",
+          priority: "P2",
+          acCount: 1,
+          labels: [],
+          complexity: "low",
+        },
+        workspace: { taskId: "omi-035", slug: "feature" },
+      },
+    },
+    { issueNumber: 35, workflowId: "demo" },
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    steps: [
+      { stepId: "implement", status: "ready" },
+      { stepId: "review", status: "pending" },
+    ],
+  });
+  expect(r.created[0]).toHaveProperty("qualityPlan.scopeEvidence", "issue:35");
+});
+
+it("reads the approved task boundary before planning runtime work", async () => {
+  const r = setup();
+  let reads = 0;
+  const module = await import("../../../../../src/application/use-cases/runs/plan-run.ts");
+  expect(module).toHaveProperty("planRunWithTask", expect.any(Function));
+  await module
+    .planRunWithTask(
+      {
+        ...r.deps,
+        readTask: (id: string) => {
+          reads += 1;
+          expect(id).toBe("task-35");
+          return Promise.reject(new Error("BUSINESS_APPROVAL_REQUIRED"));
+        },
+      },
+      { issueNumber: 35, workflowId: "demo" },
+    )
+    .catch(() => undefined);
+  expect(reads).toBe(1);
+  expect(r.created).toEqual([]);
+});
+
+it("keeps the original analysis graph when the Issue has no recorded scope approval yet", async () => {
+  const r = setup([step("analyze", []), step("implement", ["analyze"])]);
+  const { planRunWithTask } =
+    await import("../../../../../src/application/use-cases/runs/plan-run.ts");
+  const { DispatchPlanningError } =
+    await import("../../../../../src/application/services/dispatch-planning-error.ts");
+  expect(
+    await planRunWithTask(
+      {
+        ...r.deps,
+        readTask: () => Promise.reject(new DispatchPlanningError("BUSINESS_APPROVAL_REQUIRED")),
+      },
+      { issueNumber: 35, workflowId: "demo" },
+    ),
+  ).toMatchObject({
+    ok: true,
+    steps: [
+      { stepId: "analyze", status: "ready" },
+      { stepId: "implement", status: "pending" },
+    ],
+  });
+});

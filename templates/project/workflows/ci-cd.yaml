@@ -3,7 +3,7 @@ id: ci-cd
 version: 1
 selection:
   task_types: [ci-cd]
-quality_policy: task-default
+quality_policy: strict
 # Configure and verify a pipeline; production deployment remains a separate approval workflow.
 steps:
   - id: configure-pipeline

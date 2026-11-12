@@ -18,6 +18,7 @@ import type { AttemptRecord, AttemptStore } from "../../../application/ports/att
 import type { LeaseFence } from "../../../application/ports/state-unit-of-work.js";
 import type { StateDatabase } from "./sqlite-connection.js";
 import { runInTransaction } from "./sqlite-transaction.js";
+import { stepResultSchema } from "../../../application/contracts/result.js";
 
 const recordSchema = z.strictObject({
   id: identifierSchema,
@@ -86,6 +87,24 @@ export function createSqliteAttemptStore(
     return { ...rest, ...(selection === undefined ? {} : { selection }), status: value.status };
   };
   return {
+    qualityHistory(stepRunId) {
+      const rows = db
+        .prepare(
+          "SELECT kind, payload FROM events WHERE subject=? AND kind IN ('step.failed', 'step.succeeded') ORDER BY sequence",
+        )
+        .all(identifierSchema.parse(stepRunId));
+      let round = 1;
+      let previousVerdict;
+      for (const row of rows) {
+        const event = z.object({ kind: z.string(), payload: z.string() }).parse(row);
+        const payload = z
+          .object({ outcome: z.string(), result: stepResultSchema.optional() })
+          .parse(JSON.parse(event.payload) as unknown);
+        if (event.kind === "step.failed" && payload.outcome === "succeeded") round += 1;
+        if (payload.result?.revision !== undefined) previousVerdict = payload.result;
+      }
+      return { round, ...(previousVerdict === undefined ? {} : { previousVerdict }) };
+    },
     failoversForStep(stepRunId) {
       const row = db
         .prepare(

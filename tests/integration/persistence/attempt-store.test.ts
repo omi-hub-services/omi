@@ -151,3 +151,32 @@ describe("SQLite attempt dispatch records", () => {
     expect(store().reservedNumber?.(record.id)).toBe(1);
   });
 });
+
+it("counts quality failures separately from failovers and supplies the previous verdict", () => {
+  expect(store().qualityHistory?.("step-1")).toEqual({ round: 1 });
+  const verdict = {
+    schemaVersion: 1,
+    runId: "run-1",
+    stepId: "review",
+    attemptId: "old",
+    status: "failed",
+    summary: "fix edge case",
+    artifacts: [],
+    checks: [],
+    skillsApplied: [],
+    findings: [],
+    revision: { headSha: "a".repeat(40), baseSha: "b".repeat(40) },
+  };
+  const insert = db.prepare(
+    "INSERT INTO events (event_id, kind, subject, run_id, correlation_id, payload, occurred_at) VALUES (?, ?, 'step-1', 'run-1', 'old', ?, ?)",
+  );
+  insert.run("limit", "step.waiting_resource", JSON.stringify({ reason: "USAGE_LIMIT" }), at);
+  expect(store().qualityHistory?.("step-1")).toEqual({ round: 1 });
+  insert.run(
+    "quality",
+    "step.failed",
+    JSON.stringify({ outcome: "succeeded", result: verdict }),
+    at,
+  );
+  expect(store().qualityHistory?.("step-1")).toEqual({ round: 2, previousVerdict: verdict });
+});

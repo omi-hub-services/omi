@@ -1,4 +1,5 @@
 import { stepResultSchema } from "../contracts/result.js";
+import { contextPacketSchema } from "../contracts/context.js";
 import type { ExecutionHandle } from "../contracts/agent-execution.js";
 import type { CheckRunRecord } from "../contracts/check-run.js";
 import type { CheckRunner } from "../ports/check-runner.js";
@@ -52,6 +53,7 @@ export async function completeRunAttempt(
               ?.workflow.steps.find((entry) => entry.id === attempt.stepId);
       if (step === undefined) throw new Error("WORKFLOW_UNKNOWN");
       const result = await failoverStep(deps.failover, {
+        ...(request["quality"] === undefined ? {} : { quality: request["quality"] }),
         runId,
         stepRunId: attempt.stepRunId,
         capabilityProfile: step.capability_profile,
@@ -148,6 +150,11 @@ async function runRequiredChecks(
 ): Promise<CheckRunRecord[]> {
   const runner = deps.checks;
   if (runner === undefined || attempt.status !== "running" || outcome !== "succeeded") return [];
+  const packet = contextPacketSchema.parse(
+    JSON.parse(new TextDecoder().decode(deps.artifacts.read(attempt.contextPacket))) as unknown,
+  );
+  if (packet.quality?.step === "verify" || packet.quality?.step === "review")
+    return packet.checkEvidence ?? [];
   if (!reported.success || reported.data.status !== "succeeded") return [];
   const revision = reported.data.revision?.headSha;
   if (revision === undefined) return [];

@@ -37,7 +37,7 @@ type Lifecycle = (typeof ids)[number];
 async function load(id: Lifecycle) {
   const workflow = workflowSchema.parse(parse(await loadWorkflowTemplate(directory, id)));
   expect(workflow.selection.task_types).toEqual([id]);
-  expect(workflow.quality_policy).toBe("task-default");
+  expect(workflow.quality_policy).toBe(id === "docs" ? "lean" : "task-default");
   return workflow;
 }
 

@@ -69,7 +69,8 @@ import type { DispatchStepDependencies } from "../application/use-cases/runs/dis
 import { handoffCoordinator } from "../application/use-cases/runs/handoff-coordinator.js";
 import { inspectRun } from "../application/use-cases/runs/inspect-run.js";
 import { requestRunPause } from "../application/use-cases/runs/request-run-pause.js";
-import { planRun } from "../application/use-cases/runs/plan-run.js";
+import { planRun, planRunWithTask } from "../application/use-cases/runs/plan-run.js";
+import type { DispatchTask } from "../application/services/plan-step-dispatch.js";
 import { waitForRun } from "../application/use-cases/runs/wait-for-run.js";
 import { wakeWaitingRunSteps } from "../application/use-cases/runs/wake-waiting-run-steps.js";
 import type { ProjectSession } from "../application/ports/lease-store.js";
@@ -530,6 +531,7 @@ export type RunCommandUseCases = Pick<
 >;
 
 export interface RunCommandWiring {
+  readonly readTask?: (taskId: string) => Promise<DispatchTask>;
   /** The runtime's claimed project-owner session; every run state change goes through it. */
   readonly session: ProjectSession;
   readonly runs: RecoveryRunReader & ActiveRunReader;
@@ -569,8 +571,9 @@ export function createRunCommandUseCases(wiring: RunCommandWiring): RunCommandUs
   };
   return {
     planRun: (input) =>
-      planRun(
+      (wiring.readTask === undefined ? planRun : planRunWithTask)(
         {
+          readTask: wiring.readTask ?? (() => Promise.reject(new Error("TASK_READER_REQUIRED"))),
           tasks: plans,
           workflows,
           ...(wiring.defaultWorkflowId === undefined
@@ -768,6 +771,7 @@ export async function createProjectRunCommandUseCases(
     profiles: profiles.registry,
     selections: profiles.selections,
     task: (taskId) => taskReader.read(taskId),
+    qualityRound: (stepRunId) => attempts.qualityHistory?.(stepRunId).round ?? 1,
     nextAttemptNumber: (stepRunId) => attempts.nextNumberForStep(stepRunId),
     cancelReservation: (attemptId) => {
       attempts.setStatus(attemptId, "cancelled");
@@ -975,6 +979,7 @@ export async function createProjectRunCommandUseCases(
     },
   };
   const commands = createRunCommandUseCases({
+    readTask: (taskId) => taskReader.read(taskId),
     session,
     runs,
     plans,

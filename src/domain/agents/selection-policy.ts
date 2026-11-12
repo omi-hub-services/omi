@@ -39,6 +39,7 @@ export type CandidateRejection =
   | "SHARES_COORDINATOR_ACCOUNT";
 
 export interface SelectionInput {
+  readonly preferQuota?: boolean;
   readonly requirement: CapabilityRequirement;
   readonly candidates: readonly ExecutorCandidate[];
   /** Account groups with an active cooldown (circuit open). */
@@ -129,6 +130,7 @@ export function selectExecutor(input: SelectionInput): SelectionResult {
   };
   const best = [...qualifying].sort(
     (a, b) =>
+      (input.preferQuota === true ? quotaOrder(a.candidate, b.candidate) : 0) ||
       a.candidate.preference - b.candidate.preference ||
       quotaOrder(a.candidate, b.candidate) ||
       a.candidate.profile.activeWorkers - b.candidate.profile.activeWorkers ||

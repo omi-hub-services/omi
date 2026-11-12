@@ -232,3 +232,29 @@ describe("verified profile models and tool requirements", () => {
     ).toBe("WAITING_RESOURCE");
   });
 });
+
+it("balances quota before preference for quality workers, after eligibility", () => {
+  const verdict = (profileId: string, score: number) => ({
+    profileId,
+    freshness: "fresh" as const,
+    blocked: [],
+    score,
+    fiveHourLeft: score,
+    sevenDayLeft: score,
+    blockedUntil: null,
+    resetCredits: null,
+    modelWindows: [],
+  });
+  const a = candidate("a", { preference: 0 });
+  const b = candidate("b", { preference: 9 });
+  const quota = new Map([
+    [a.profileId, verdict(a.profileId, 30)],
+    [b.profileId, verdict(b.profileId, 90)],
+  ]);
+  expect(select([a, b], { quota, preferQuota: true })).toMatchObject({
+    candidate: { candidateId: "b" },
+  });
+  expect(
+    select([a, { ...b, verifiedForCapability: false }], { quota, preferQuota: true }),
+  ).toMatchObject({ candidate: { candidateId: "a" } });
+});

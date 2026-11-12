@@ -1,4 +1,5 @@
 import type { StepStatus } from "../../domain/runs/step-run.js";
+import type { WorkflowQualityPlan } from "../contracts/workflow.js";
 
 /** The task a run belongs to, as local state knows it (GitHub stays the source of task content). */
 export interface RunTask {
@@ -18,6 +19,7 @@ export interface PlannedStep {
 }
 
 export interface RunPlan {
+  readonly qualityPlan?: WorkflowQualityPlan;
   readonly runId: string;
   readonly taskId: string;
   /** Pins the workflow template so a template update cannot change a running run. */
@@ -39,6 +41,10 @@ export type CreateRunResult =
 export interface RunPlanStore {
   findTask(issueNumber: number): RunTask | undefined;
   /** The task and pinned template hash of a run. */
-  forRun(runId: string): (RunTask & { readonly templateHash: string }) | undefined;
+  forRun(
+    runId: string,
+  ):
+    | (RunTask & { readonly templateHash: string; readonly qualityPlan?: WorkflowQualityPlan })
+    | undefined;
   createRun(plan: RunPlan): CreateRunResult;
 }

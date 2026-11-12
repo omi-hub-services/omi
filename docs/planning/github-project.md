@@ -195,3 +195,13 @@ Release PR phải do tài khoản khác PO tạo để PO approve được.
 
 - `tools/github-bootstrap` là công cụ một lần. **Không chạy lại `apply`**: nó đưa title/body
   Issue về nội dung seed và sẽ ghi đè các chỉnh sửa đã làm trên GitHub sau bootstrap.
+
+## Workflow routing (OMI-093)
+
+The Workflow field options above are preserved. `init` resolves to `onboarding-takeover` for an
+existing repository, and `research` to `idea-to-issues`; a new empty project explicitly selects
+`onboarding-empty-repo`. Canonical workflow ids (including `ui-ux` and `ci-cd`) resolve directly
+when configured on a Project. `release` and `deploy` route to the existing `prepare-release` and
+`deploy-release` delivery use cases, retaining their distinct recorded PO approvals; they are not
+worker-template aliases. `flow.ts workflow-options` checks the live field against these routes and
+the configured checkout's template files; the unit suite checks this document's option row.

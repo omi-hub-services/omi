@@ -86,11 +86,15 @@ function setup(
   overrides: { config?: typeof config; workflow?: typeof workflow } = {},
 ) {
   const reservations: string[] = [];
+  let attemptNumber = 1;
   const cancelled: string[] = [];
   const selections: ExecutorSelectionStore = {
     reserve: (attempt, choose) => {
       const decision = choose(profiles);
-      if (decision.outcome === "selected") reservations.push(attempt.id);
+      if (decision.outcome === "selected") {
+        reservations.push(attempt.id);
+        attemptNumber += 1;
+      }
       return decision;
     },
     settings: () => undefined,
@@ -120,7 +124,7 @@ function setup(
     profiles: { list: () => registryProfiles, save: () => true },
     selections,
     task: readTask,
-    nextAttemptNumber: () => 1,
+    nextAttemptNumber: () => attemptNumber,
     cancelReservation: (attemptId) => cancelled.push(attemptId),
     now: () => 100,
     nextId: () => `id-${String(++id)}`,
@@ -139,6 +143,7 @@ describe("dispatch planning from a trusted task boundary", () => {
     const { planner, reservations } = setup();
     const input = await planner.plan(request);
     expect(input).toMatchObject({
+      quality: { round: 1 },
       reservedAttemptId: "id-1",
       taskId: "omi-070",
       slug: "runtime-composition",
@@ -214,5 +219,17 @@ describe("required checks of a workflow step", () => {
     });
     await expect(r.planner.plan(request)).rejects.toThrow("CHECK_UNCONFIGURED");
     expect(r.cancelled).toEqual(["id-1"]);
+  });
+});
+
+it("uses first review effort rather than the developer's high complexity effort", async () => {
+  const reviewWorkflow = workflowSchema.parse({
+    ...workflow,
+    quality_policy: "strict",
+    steps: [{ ...workflow.steps[0], id: "review", role: "reviewer" }],
+  });
+  const r = setup([profile], () => Promise.resolve(task), [profile], { workflow: reviewWorkflow });
+  expect(await r.planner.plan({ ...request, stepId: "review" })).toMatchObject({
+    execution: { effort: "medium" },
   });
 });
