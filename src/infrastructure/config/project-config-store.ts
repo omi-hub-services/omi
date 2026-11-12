@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { link, lstat, open, realpath, unlink } from "node:fs/promises";
+import { link, lstat, mkdir, open, realpath, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { parseDocument, stringify } from "yaml";
@@ -7,6 +7,28 @@ import { assertCredentialFree } from "../../application/contracts/credential-inp
 import { projectConfigSchema } from "../../application/contracts/project-config.js";
 import { ProjectInitializationError } from "../../application/ports/github-project-reader.js";
 import type { ProjectConfigStore } from "../../application/ports/project-config-store.js";
+import { assertPlainParents } from "./package-content.js";
+
+/** Lazy config directory for local onboarding: a preview must not create even a directory. */
+export function createOnboardingProjectConfigStore(projectDir: string): ProjectConfigStore {
+  const directory = join(projectDir, ".omi-squad", "config");
+  return {
+    async read() {
+      await assertPlainParents(projectDir, join(directory, "project.yaml"));
+      try {
+        return await (await createProjectConfigStore(directory)).read();
+      } catch (error) {
+        if (hasCode(error, "ENOENT")) return undefined;
+        throw error;
+      }
+    },
+    async create(config) {
+      await assertPlainParents(projectDir, join(directory, "project.yaml"));
+      await mkdir(directory, { recursive: true });
+      return (await createProjectConfigStore(directory)).create(config);
+    },
+  };
+}
 
 const MAX_CONFIG_BYTES = 1024 * 1024;
 const hasCode = (error: unknown, code: string): boolean =>

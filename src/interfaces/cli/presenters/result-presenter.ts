@@ -41,9 +41,11 @@ export function presentSuccess(value: unknown, text: string, format: OutputForma
 }
 
 export function presentFailure(
-  error: IpcError,
+  error: IpcError | { readonly code: "DOCTOR_FAILED"; readonly message: string },
   format: OutputFormat,
-  exitCode: ExitCode = exitCodeForError(error.code),
+  exitCode: ExitCode = error.code === "DOCTOR_FAILED"
+    ? EXIT_CODES.DOCTOR_FAILED
+    : exitCodeForError(error.code),
 ): Presented {
   if (format === "json") {
     const doc = {

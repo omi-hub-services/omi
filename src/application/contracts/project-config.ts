@@ -56,6 +56,8 @@ export const projectConfigSchema = z
     policies: z.strictObject({
       /** Gates that always need a human; a runtime field must not remove them. */
       mandatory_approvals: z.array(slugSchema),
+      /** Empty/absent refuses all GitHub decisions; the native runtime TTY remains available. */
+      github_approval_actors: z.array(githubNameSchema).max(100).optional(),
     }),
   })
   .meta({ title: "omi-squad project.yaml v1" });
