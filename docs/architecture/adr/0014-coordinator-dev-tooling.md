@@ -370,6 +370,64 @@ checks, the 127.0.0.1 bind, the `X-Omi-Watch` probe guard and the idle exit are 
 that belong to no In Progress/In Review task are no longer listed on the page (the terminal watch
 still lists all of them).
 
+## Diagram from the workflow template (OMI-088)
+
+The diagram is drawn from the Issue's workflow template, not from the fixed `/omi-next` lifecycle.
+`readTasks` loads `templates/project/workflows/<Workflow field, lower case>.yaml` for each distinct
+Workflow of the active tasks (`loadTemplate`, `watch-workflow.ts`). It parses with the runtime's
+own `workflowSchema` (`src/application/contracts/workflow.ts`) and the `yaml` package already
+used by the tools, so there is no second parser. `watch-workflow.ts` imports
+`tools/register-ts-imports.ts` and loads the schema with a dynamic `import()` after it, because
+`src/` uses `.js` specifiers and the watch still starts with a plain `node` (no `--import`). The id
+must match `^[a-z0-9][a-z0-9-]{0,39}$`, so a Project value cannot reach outside the template
+directory.
+
+**Nodes** (`orderNodes`, pure): the steps ordered by `needs` (stable, file order among equals),
+each gate placed right before (`before`) or after (`after`) its step. A step node shows its id and
+role; a gate shows `gate`. Selecting a node (click or Enter) shows its template skills and rules
+under the diagram; the current step is shown by default. `feature` draws `analyze → scope-approved
+→ implement → verify → review → ready-to-merge`; `bugfix` and `docs` draw their own steps and gates.
+
+**State to template step** (`mapTemplatePos`, pure; input is the lifecycle step `deriveStep` already
+gives, so Blocked, Waiting PO, Rework and Architect keep their rules):
+
+| Observed step (lifecycle) | Template position                                                     |
+| ------------------------- | --------------------------------------------------------------------- |
+| `Start`                   | before the work step: analyst steps and the scope gate done, work step todo |
+| `Work`, `Rework`          | the developer step (`workStepId`)                                     |
+| `Verify/PR`               | the first `qa` step                                                   |
+| `Review`, `Architect`     | the first `reviewer` step (done while the Architect is current)       |
+| `Merge` (PASS)            | gate `ready-to-merge`                                                 |
+| `Done`                    | every node done                                                       |
+| `unknown`                 | no node current; the reason of `deriveStep` stays on the card          |
+| no matching step or gate  | `unknown` with a reason, e.g. `workflow x has no qa step`             |
+
+Analyst steps are done once the Issue is Ready or In Progress: the Coordinator writes the spec
+when it creates the Issue. Several developer steps (`bugfix`: `reproduce`, `implement`) run in one
+worker session, which cannot tell them apart, so the last one is shown (shortcut; upgrade if a
+workflow ever dispatches developer steps separately). Blocked and Waiting PO draw the node the
+task stands at as `blocked`; the 2 + Architect + 2 cycle, the `FAIL ×N` pill and Ask PO are
+unchanged. Rework is the red edge from the reviewer step back to the developer step
+(`flow.from` / `flow.to`), through Architect once it exists. The card title stays
+`Workflow: <id>`; the step line adds the template step, `Step: Work (implement)`.
+
+**Role and skills.** The role on the card is the current template step's role (`developer`, `qa`,
+`reviewer`); Architect, Waiting PO and Blocked keep their own roles. Skills stay the ones actually
+loaded (`## Skill:` headings of the worker prompt) and are compared with the current step's
+template skills (`compareLoaded`): a loaded skill the step does not list is marked `≠ loaded, but
+the template gives it to <step>` (or `does not use it`), a listed skill that was not loaded is
+marked `≠ in the template step, not loaded`; an exact match says so. Example: the Coordinator
+loads `verification-before-completion` for the developer worker while the template gives it to
+`verify`. Template rules are ids (`project-baseline`) and the prompt names files (`AGENTS.md`), so
+rules are shown side by side and not compared.
+
+**Fallback.** When the Workflow field is empty, the template is missing, unreadable or invalid, or
+was not read, the card draws the previous lifecycle diagram and says why
+(`Template: <reason> (lifecycle shown)`); the terminal line is unchanged. The page is drawn with
+`createElementNS`, `setAttribute` and `textContent` only; the CSP and the dependencies are
+unchanged. Template nodes are laid out in rows of four inside the same 540-wide viewBox, so there is
+no horizontal scroll. The framework watch (#164) is out of scope.
+
 ## Carrying a review PASS over a clean sync (OMI-069)
 
 The `develop` ruleset requires branches to be up to date, so a PR that waited for another merge

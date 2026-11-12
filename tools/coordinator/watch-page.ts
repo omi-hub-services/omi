@@ -143,7 +143,82 @@ function head(svg, x, y, dx, dy, cls) {
 function edge(svg, d, cls) {
   svg.appendChild(sv("path", { d: d, "class": "edge " + cls }));
 }
+var selected = {};
+var EXTRA = { "Architect": 1, "Ask PO": 1 };
+// Template diagram: rows of 4 nodes (116 wide, 22 apart), extras on a row under the last one.
+function templateFlow(t) {
+  var main = t.nodes.filter(function (n) { return !EXTRA[n.id]; });
+  var rows = Math.ceil(main.length / 4);
+  var base = 8 + rows * 50;
+  var height = base + 70;
+  var svg = sv("svg", {
+    viewBox: "0 0 540 " + height, "class": "flow", role: "img", "aria-label": t.ariaLabel,
+  });
+  var at = {};
+  main.forEach(function (n, i) {
+    at[n.id] = [6 + (i % 4) * 138, 8 + Math.floor(i / 4) * 50];
+  });
+  main.forEach(function (n, i) {
+    if (i === 0) return;
+    var a = at[main[i - 1].id];
+    var b = at[n.id];
+    if (a[1] === b[1]) {
+      svg.appendChild(sv("line", { x1: a[0] + 116, y1: a[1] + 14, x2: b[0] - 2, y2: b[1] + 14, "class": "edge" }));
+      head(svg, b[0] - 2, b[1] + 14, 1, 0);
+    } else {
+      var my = a[1] + 39;
+      edge(svg, "M" + (a[0] + 58) + " " + (a[1] + 28) + " V" + my + " H" + (b[0] + 58) + " V" + (b[1] - 2), "");
+      head(svg, b[0] + 58, b[1] - 2, 0, 1);
+    }
+  });
+  var byId = {};
+  t.nodes.forEach(function (n) { byId[n.id] = n; });
+  var from = at[t.flow.from];
+  var to = at[t.flow.to];
+  if (t.rework > 0 && from && to) {
+    var fx = from[0] + 58, fy = from[1] + 28, tx = to[0] + 58, ty = to[1] + 28;
+    if (byId["Architect"]) {
+      var ax = Math.round((fx + tx) / 2) - 58;
+      edge(svg, "M" + fx + " " + fy + " C" + fx + " " + (base + 14) + " " + (ax + 130) + " " + (base + 14) + " " + (ax + 116) + " " + (base + 14), "back");
+      head(svg, ax + 116, base + 14, -1, 0, "back");
+      edge(svg, "M" + ax + " " + (base + 14) + " C" + (ax - 14) + " " + (base + 14) + " " + tx + " " + (ty + 20) + " " + tx + " " + ty, "back");
+    } else {
+      edge(svg, "M" + fx + " " + fy + " C" + fx + " " + (fy + 44) + " " + tx + " " + (ty + 44) + " " + tx + " " + ty, "back");
+    }
+    head(svg, tx, ty, 0, -1, "back");
+    var badge = sv("g", { "class": "badge" });
+    badge.appendChild(sv("rect", { x: 236, y: height - 24, width: 68, height: 16, rx: 8 }));
+    badge.appendChild(sv("text", { x: 270, y: height - 16 }, "FAIL ×" + t.rework));
+    svg.appendChild(badge);
+  }
+  if (byId["Ask PO"] && from) {
+    edge(svg, "M" + (from[0] + 80) + " " + (from[1] + 28) + " C" + (from[0] + 80) + " " + (base + 4) + " 464 " + (base - 6) + " 464 " + base, "dash ask");
+    head(svg, 464, base, 0, 1);
+  }
+  t.nodes.forEach(function (n) {
+    var p = at[n.id] || (n.id === "Architect" && from && to ? [Math.round((from[0] + to[0]) / 2), base] : [406, base]);
+    var g = sv("g", { "class": "n " + (STATE[n.state] || "todo"), role: "button", tabindex: 0 });
+    g.appendChild(sv("rect", { x: p[0], y: p[1], width: 116, height: 28, rx: 6 }));
+    g.appendChild(sv("text", { x: p[0] + 58, y: p[1] + (n.sub ? 9 : 14) }, n.label));
+    if (n.sub) g.appendChild(sv("text", { x: p[0] + 58, y: p[1] + 21, "class": "sub" }, n.sub));
+    g.onclick = function () {
+      selected[t.planKey] = n.id;
+      render();
+    };
+    svg.appendChild(g);
+  });
+  return svg;
+}
+function nodeDetail(t) {
+  var id = selected[t.planKey] || (t.templateInfo && t.templateInfo.id);
+  var n = t.nodes.filter(function (x) { return x.id === id; })[0];
+  if (!n || !n.kind) return null;
+  if (n.kind === "gate") return "Gate " + n.id;
+  return n.id + " · " + n.role + " · skills: " + (n.skills.length ? n.skills.join(", ") : "-") +
+    " · rules: " + (n.rules.length ? n.rules.join(", ") : "-");
+}
 function flow(t) {
+  if (t.flow && t.flow.source === "template") return templateFlow(t);
   var svg = sv("svg", {
     viewBox: "0 0 540 124", "class": "flow", role: "img", "aria-label": t.ariaLabel,
   });
@@ -202,7 +277,8 @@ function taskCard(t, since) {
     : "PR -";
   card.appendChild(el("div", "meta", t.status + " · " + pr));
   var stepLine = el("div", "row");
-  stepLine.appendChild(el("span", "step" + (t.step === "unknown" ? " unknown" : ""), "Step: " + t.step));
+  var inTemplate = t.templateStep && t.templateStep !== t.step && t.templateStep !== "unknown" && t.templateStep !== "Start";
+  stepLine.appendChild(el("span", "step" + (t.step === "unknown" ? " unknown" : ""), "Step: " + t.step + (inTemplate ? " (" + t.templateStep + ")" : "")));
   stepLine.appendChild(el("span", "meta", "Role: " + t.role));
   card.appendChild(stepLine);
   if (t.stepReason) card.appendChild(el("div", "note warnline", t.stepReason));
@@ -212,7 +288,10 @@ function taskCard(t, since) {
     }).join(", ")));
   }
   card.appendChild(el("div", "wf", "Workflow: " + t.workflow));
+  if (t.flow && t.flow.reason) card.appendChild(el("div", "note warnline", "Template: " + t.flow.reason + " (lifecycle shown)"));
   card.appendChild(flow(t));
+  var detail = nodeDetail(t);
+  if (detail) card.appendChild(el("div", "note", detail));
   if (t.cycleNote) card.appendChild(el("div", "note" + (cycleWarn(t) ? " warnline" : ""), "Cycle: " + t.cycleNote));
   if (t.architectReason) card.appendChild(el("div", "note", "Architect called: " + t.architectReason));
   var w = t.worker;
@@ -227,7 +306,19 @@ function taskCard(t, since) {
   card.appendChild(
     el("div", "wrap", "Skills: " + (t.skills.length ? t.skills.join(", ") : "- (" + (t.skillsNote || "none") + ")")),
   );
+  var sc = t.skillCheck;
+  if (sc) {
+    var cur = t.templateInfo.id;
+    card.appendChild(el("div", "wrap", "Template skills (" + cur + "): " + (sc.expected.length ? sc.expected.join(", ") : "-")));
+    sc.extra.forEach(function (x) {
+      var where = x.template ? "the template gives it to " + x.template : "the template does not use it";
+      card.appendChild(el("div", "wrap warnline", "≠ loaded, but " + where + ": " + x.name));
+    });
+    if (sc.missing.length) card.appendChild(el("div", "wrap warnline", "≠ in the template step, not loaded: " + sc.missing.join(", ")));
+    if (!sc.extra.length && !sc.missing.length) card.appendChild(el("div", "wrap", "Skills match the template step"));
+  }
   card.appendChild(el("div", "wrap", "Rules: " + (t.rules.length ? t.rules.join(", ") : "- (no prompt)")));
+  if (t.templateInfo) card.appendChild(el("div", "wrap", "Template rules (" + t.templateInfo.id + "): " + (t.templateInfo.rules.length ? t.templateInfo.rules.join(", ") : "-") + " (ids; the prompt names files, so not compared)"));
   return card;
 }
 function renderTasks(s, since) {
