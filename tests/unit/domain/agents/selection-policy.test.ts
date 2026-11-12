@@ -242,6 +242,7 @@ it("balances quota before preference for quality workers, after eligibility", ()
     fiveHourLeft: score,
     sevenDayLeft: score,
     blockedUntil: null,
+    fiveHourResetsAt: null,
     resetCredits: null,
     modelWindows: [],
   });
