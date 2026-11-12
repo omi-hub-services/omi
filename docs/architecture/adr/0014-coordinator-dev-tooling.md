@@ -399,6 +399,67 @@ reads one listing and applies the result with one bash script, both through the 
   files archived by the same run count at the next one.
 - A failed `cleanup` of the branch (refused or error) skips the log step.
 
+## Worker commands (OMI-077)
+
+The omi-next skill used to make the LLM compose five deterministic things in every task: the
+worker launch command, the curated skills in the prompt, the report out of the worker log, the
+commit of a Codex worker's output and the format of the review comment. They are now
+`flow.ts` subcommands (script-first, AGENTS.md §9; the same principle ships to projects as the
+rule `script-first`, architecture.md §2). Each takes `--dry-run`. `flow-workers.ts` does the I/O
+through the injectable runner; the pure parts are `worker-launch.ts`, `worker-report.ts`,
+`worker-commit.ts` and `review-verdict.ts`. No dependency and no product module is added.
+`<issue>` is the Issue number; the task number `NNN` of the files comes from its Plan Key.
+
+```
+node tools/coordinator/flow.ts dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] --prompt <file> [--dry-run]
+node tools/coordinator/flow.ts worker-report <issue> [--dry-run]
+node tools/coordinator/flow.ts commit-worker <branch> --message-file <f> [--dry-run]
+node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
+```
+
+- **`dispatch`** reads the Issue (Plan Key, Role, Workflow and the complexity of the effort
+  policy above), refuses a profile that is not a `WORKER_PROFILES` entry of that tool, then:
+  1. reads the role's curated skills from the worker's checkout (Developer:
+     `test-driven-development`, `minimal-change`, `verification-before-completion`; the `docs`
+     Workflow leaves out `test-driven-development`; other roles get none) and writes the prompt
+     file plus one `## Skill: <name> (follow it; report it under Skills applied)` section per
+     skill to WSL `~/omi-runs/omi-NNN-prompt.md`. With `--resume` the file is the follow-up text
+     only and no skill is appended again;
+  2. launches the worker **in the foreground** (an 8-hour limit instead of the runner's 2
+     minutes; the Coordinator backgrounds the command) in the checkout of `OMI_WSL_REPO_DIR`.
+     Claude: `CLAUDE_CONFIG_DIR` of the profile, `ANTHROPIC_*` credentials unset,
+     `claude -p --disable-slash-commands --model <m> --effort <e> [--resume <id>]
+     --output-format stream-json --verbose --max-turns 200 --permission-mode acceptEdits` with the
+     default allow and deny lists of omi-next step 3 (`CLAUDE_ALLOWED_TOOLS`,
+     `CLAUDE_DENIED_TOOLS` in `worker-launch.ts`), the prompt on stdin and the log
+     `omi-NNN-<profile>-<ts>.jsonl` (+ `.err`). Codex: `CODEX_HOME` of the profile,
+     `codex exec --json -s workspace-write -m <m> -c model_reasoning_effort=<e> -o
+     omi-NNN-codex-last.md [resume <thread>] -`, log `omi-NNN-codex-<profile>-<ts>.jsonl`
+     (the tool in the name keeps a Codex log out of a Claude profile's quota reading). Model and
+     effort are the `EFFORT_POLICY` entry of the tool for the complexity; they are not options.
+     It prints the worker's `exit=N` and returns 1 for a non-zero exit.
+  `--dry-run` reads the skills (read-only) and prints the write and the launch command.
+- **`worker-report`** takes the newest `omi-NNN-*.jsonl` and prints the report, the turns, the
+  permission denials and the id to resume with. Claude: the longest `result` among the result
+  events, with turns, denials and `session_id` of the last one. Codex (a `-codex-` log): the
+  `omi-NNN-codex-last.md` text and the `thread_id` of the first line. It exits 1 without a
+  report (the worker still runs, or stopped early), still printing the id.
+- **`commit-worker`** checks that the checkout is on `<branch>` before it stages anything, runs
+  `git add -A -- src tests docs templates schemas`, refuses when nothing is staged or the index
+  holds a path outside those directories (for example `.claude/` or `.tmp/`), commits with the
+  message on stdin (`git commit -F -`, no `--no-verify`) and prints the SHA.
+- **`review-comment`** refuses unless the PR is open and its body names the Issue
+  (`Issue: #N`), then checks the comment: the `**VERDICT:** PASS|FAIL · **REVIEWED_HEAD:**
+  `<sha>`` line with a head that is the PR head; exactly one
+  `AC-<n>: met|not met — <evidence>` line for each top-level AC of the Issue
+  (`acceptance-criteria.ts` counts), none extra or repeated; and PASS only with every line met.
+  It posts with `gh pr comment --body-file -` only when the local `gh` login is
+  `COORDINATOR_LOGIN`. Every reason is listed in one `refused:`.
+
+Boundaries and known limits: `dispatch` does not check whether a worker already runs for the task;
+the Claude `exit=` is the shell's view of the worker; `codex exec resume` takes the same `exec`
+options before the subcommand, which this tooling has not run against a live Codex.
+
 ## Boundaries
 
 - This is not product code. `src/` must never import `tools/` (already enforced by

@@ -91,6 +91,13 @@ import {
   RUNS_LISTING,
 } from "./runs-retention.ts";
 import { formatPick, pickProfile, readQuota, WORKER_KINDS, type WorkerKind } from "./quota.ts";
+import {
+  commitWorkerCommand,
+  dispatchCommand,
+  reviewCommentCommand,
+  workerReportCommand,
+} from "./flow-workers.ts";
+import { linkedIssue } from "./review-verdict.ts";
 
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   new-issue --file <spec.md>                 validated Issue with Project fields and Backlog
@@ -108,7 +115,13 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
                                               archive its worker logs in ~/omi-runs
   prune-runs                                  one-time log sweep for every Done task
   pick-profile <issue> [--kind claude|codex|claude+codex-live] [--probe] [--model NAME] [--json]
-                                              worker profile by quota (--probe: 1 Haiku call/profile)`;
+                                              worker profile by quota (--probe: 1 Haiku call/profile)
+  dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] --prompt <file>
+                                              WSL: prompt + curated skills to ~/omi-runs, then the worker
+                                              in the foreground (model/effort from the effort policy)
+  worker-report <issue>                       final report, turns, permission denials, session/thread id
+  commit-worker <branch> --message-file <f>   WSL: stage src tests docs templates schemas, commit, print SHA
+  review-comment <pr> --file <f>              check VERDICT/REVIEWED_HEAD/AC-n lines, post as the Coordinator`;
 
 export interface Context {
   readonly run: Runner;
@@ -752,6 +765,10 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       title: { type: "string" },
       "body-file": { type: "string" },
       "comment-file": { type: "string" },
+      "message-file": { type: "string" },
+      prompt: { type: "string" },
+      profile: { type: "string" },
+      resume: { type: "string" },
       kind: { type: "string", default: "claude" },
       probe: { type: "boolean", default: false },
       model: { type: "string" },
@@ -842,6 +859,46 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         values.json,
         values.model ?? null,
       );
+    case "dispatch": {
+      const issue = await readIssue(ctx, issueNumber(a));
+      return dispatchCommand(ctx, {
+        planKey: issue.planKey,
+        role: issue.readiness.role,
+        workflow: issue.readiness.workflow,
+        complexity: inferComplexity(issue.effortInput).complexity,
+        kind: values.kind,
+        profile: required(values.profile, "--profile"),
+        resume: values.resume ?? null,
+        prompt: readFileSync(required(values.prompt, "--prompt"), "utf8"),
+        dryRun: dry,
+      });
+    }
+    case "worker-report": {
+      const issue = await readIssue(ctx, issueNumber(a));
+      return workerReportCommand(ctx, { planKey: issue.planKey, dryRun: dry });
+    }
+    case "commit-worker":
+      return commitWorkerCommand(ctx, {
+        branch: taskBranch(a),
+        message: readFileSync(required(values["message-file"], "--message-file"), "utf8"),
+        dryRun: dry,
+      });
+    case "review-comment": {
+      const pr = await readPull(ctx, issueNumber(a));
+      const n = linkedIssue(pr.body);
+      if (n === null) {
+        console.error(`${label}: refused: the PR body has no "Issue: #N" line`);
+        return 1;
+      }
+      return reviewCommentCommand(ctx, {
+        pr: pr.number,
+        prState: pr.state,
+        prHead: pr.headRefOid,
+        issueBody: (await readIssue(ctx, n)).body,
+        body: readFileSync(required(values.file, "--file"), "utf8"),
+        dryRun: dry,
+      });
+    }
     default:
       console.error(`unknown subcommand "${sub}"\n${USAGE}`);
       return 2;
