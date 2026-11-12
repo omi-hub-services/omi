@@ -381,13 +381,15 @@ describe("watch-web tasks", () => {
       });
       const tasks = client.snapshots.at(-1)?.tasks;
       if (tasks?.state !== "ok") throw new Error("expected ok");
-      // the foreign-account PASS is ignored; the Coordinator FAIL on the head means Rework
+      // the foreign-account PASS is ignored; the Coordinator FAIL on the head means rework,
+      // which is shown as Work with rework 1/2 (OMI-075)
       expect(tasks.items[0]).toMatchObject({
         planKey: "OMI-074",
         issue: 152,
         title: hostile,
-        step: "Rework",
+        step: "Work",
         rework: 1,
+        cycle: { phase: "before-architect", k: 1 },
         pr: { number: 160, head: "abc1234" },
         skills: ["minimal-change"],
       });

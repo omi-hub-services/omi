@@ -49,6 +49,7 @@ header h1 { margin: 0; }
 .note { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .err { color: var(--bad); }
 .n text { font: 11px/1 system-ui, "Segoe UI", sans-serif; text-anchor: middle; dominant-baseline: central; fill: var(--muted); }
+.n text.sub { font-size: 9px; font-weight: 400; }
 .n rect { stroke-width: 1.5; }
 .n.todo rect { fill: var(--card); stroke: var(--line); }
 .n.done rect { fill: var(--ok); stroke: var(--ok); }
@@ -61,10 +62,12 @@ header h1 { margin: 0; }
 .n.idle rect { fill: var(--card); stroke: var(--line); stroke-dasharray: 2 3; }
 .edge { stroke: var(--muted); stroke-width: 1.5; fill: none; }
 .edge.dash { stroke-dasharray: 3 3; }
+.edge.back { stroke: var(--bad); stroke-width: 2; }
 .arrow { fill: var(--muted); }
-.badge circle { fill: var(--bad); }
-.badge.zero circle { fill: var(--muted); }
+.arrow.back { fill: var(--bad); }
+.badge rect { fill: var(--bad); }
 .badge text { font: 700 10px/1 system-ui, "Segoe UI", sans-serif; text-anchor: middle; dominant-baseline: central; fill: var(--card); }
+.wf { font-size: 14px; font-weight: 700; margin-top: 4px; overflow-wrap: anywhere; }
 svg.flow { display: block; width: 100%; height: auto; margin: 4px 0 2px; }
 .step { font-weight: 600; }
 .step.unknown, .warnline { color: var(--warn); }
@@ -119,7 +122,7 @@ function bar(label, left, low, resetText) {
 var NS = "http://www.w3.org/2000/svg";
 var POS = {
   "Start": [6, 8], "Work": [96, 8], "Verify/PR": [186, 8], "Review": [276, 8],
-  "Merge": [366, 8], "Done": [456, 8], "Rework": [276, 84], "Architect": [396, 84],
+  "Merge": [366, 8], "Done": [456, 8], "Architect": [186, 60], "Ask PO": [366, 60],
 };
 var MAIN = ["Start", "Work", "Verify/PR", "Review", "Merge", "Done"];
 var STATE = { done: "done", current: "cur", todo: "todo", lit: "lit", warn: "warn", idle: "idle" };
@@ -131,45 +134,63 @@ function sv(tag, attrs, text) {
   if (text !== undefined) e.textContent = String(text);
   return e;
 }
-function arrow(svg, x1, y1, x2, y2, dash) {
-  svg.appendChild(sv("line", { x1: x1, y1: y1, x2: x2, y2: y2, "class": "edge" + (dash ? " dash" : "") }));
-  var dx = Math.sign(x2 - x1);
-  var dy = Math.sign(y2 - y1);
-  var bx = x2 - 5 * dx;
-  var by = y2 - 5 * dy;
-  var pts = [x2, y2, bx - 3.5 * dy, by + 3.5 * dx, bx + 3.5 * dy, by - 3.5 * dx].join(" ");
-  svg.appendChild(sv("polygon", { points: pts, "class": "arrow" }));
+function head(svg, x, y, dx, dy, cls) {
+  var pts = [x, y, x - 7 * dx - 3.5 * dy, y - 7 * dy + 3.5 * dx, x - 7 * dx + 3.5 * dy, y - 7 * dy - 3.5 * dx].join(" ");
+  svg.appendChild(sv("polygon", { points: pts, "class": "arrow" + (cls ? " " + cls : "") }));
+}
+function edge(svg, d, cls) {
+  svg.appendChild(sv("path", { d: d, "class": "edge " + cls }));
 }
 function flow(t) {
   var svg = sv("svg", {
     viewBox: "0 0 540 124", "class": "flow", role: "img", "aria-label": t.ariaLabel,
   });
-  for (var i = 0; i < MAIN.length - 1; i++) arrow(svg, POS[MAIN[i]][0] + 72, 22, POS[MAIN[i + 1]][0], 22, false);
-  arrow(svg, 300, 36, 300, 84, false);
-  arrow(svg, 324, 84, 324, 36, false);
-  arrow(svg, 348, 98, 396, 98, true);
+  for (var i = 0; i < MAIN.length - 1; i++) {
+    var x1 = POS[MAIN[i]][0] + 72;
+    svg.appendChild(sv("line", { x1: x1, y1: 22, x2: x1 + 18, y2: 22, "class": "edge" }));
+    head(svg, x1 + 18, 22, 1, 0);
+  }
+  var byId = {};
+  t.nodes.forEach(function (n) { byId[n.id] = n; });
+  if (t.rework > 0) {
+    // Rework is the way back to Work: Review -> Work, through Architect once it is on the path
+    if (byId["Architect"]) {
+      edge(svg, "M312 36 C312 76 290 74 258 74", "back");
+      head(svg, 258, 74, -1, 0, "back");
+      edge(svg, "M186 74 C160 74 132 66 132 36", "back");
+    } else edge(svg, "M312 36 C312 130 132 130 132 36", "back");
+    head(svg, 132, 36, 0, -1, "back");
+    var badge = sv("g", { "class": "badge" });
+    badge.appendChild(sv("rect", { x: 188, y: 98, width: 68, height: 16, rx: 8 }));
+    badge.appendChild(sv("text", { x: 222, y: 106 }, "FAIL ×" + t.rework));
+    svg.appendChild(badge);
+  }
+  if (byId["Ask PO"]) {
+    edge(svg, "M336 36 C336 74 350 74 366 74", "dash ask");
+    head(svg, 366, 74, 1, 0);
+  }
   t.nodes.forEach(function (n) {
     var p = POS[n.id];
     if (!p) return;
     var g = sv("g", { "class": "n " + (STATE[n.state] || "todo") });
     g.appendChild(sv("rect", { x: p[0], y: p[1], width: 72, height: 28, rx: 6 }));
-    g.appendChild(sv("text", { x: p[0] + 36, y: p[1] + 14 }, n.label));
+    g.appendChild(sv("text", { x: p[0] + 36, y: p[1] + (n.sub ? 9 : 14) }, n.label));
+    if (n.sub) g.appendChild(sv("text", { x: p[0] + 36, y: p[1] + 21, "class": "sub" }, n.sub));
     svg.appendChild(g);
   });
-  var badge = sv("g", { "class": "badge" + (t.rework > 0 ? "" : " zero") });
-  badge.appendChild(sv("circle", { cx: 344, cy: 84, r: 10 }));
-  badge.appendChild(sv("text", { x: 344, y: 84 }, "×" + t.rework));
-  svg.appendChild(badge);
   return svg;
+}
+function cycleWarn(t) {
+  var c = t.cycle;
+  return c.phase === "escalate-po" || (c.phase === "architect" && !c.architectCalled);
 }
 function taskCard(t, since) {
   var tone = t.worker && t.worker.tone !== "normal" ? " " + t.worker.tone : "";
-  var card = el("div", "card" + tone + (t.architect === "warn" ? " low" : ""));
+  var card = el("div", "card" + tone + (cycleWarn(t) ? " low" : ""));
   var top = el("div", "row");
   top.appendChild(el("span", "title", t.planKey));
   top.appendChild(el("span", "meta", "#" + (t.issue === null ? "-" : t.issue) + " · " + t.priority));
   top.appendChild(el("span", "spacer"));
-  top.appendChild(el("span", "meta", t.workflow));
   card.appendChild(top);
   var name = el("div", "action", t.title);
   name.title = t.title;
@@ -183,10 +204,10 @@ function taskCard(t, since) {
   stepLine.appendChild(el("span", "meta", "Role: " + t.role));
   card.appendChild(stepLine);
   if (t.stepReason) card.appendChild(el("div", "note warnline", t.stepReason));
+  card.appendChild(el("div", "wf", "Workflow: " + t.workflow));
   card.appendChild(flow(t));
-  if (t.architect === "called") card.appendChild(el("div", "note", "Architect called: " + (t.architectReason || "-")));
-  if (t.architect === "warn")
-    card.appendChild(el("div", "note warnline", t.rework + " FAILs and no Architect yet (2 + Architect + 2)"));
+  if (t.cycleNote) card.appendChild(el("div", "note" + (cycleWarn(t) ? " warnline" : ""), "Cycle: " + t.cycleNote));
+  if (t.architectReason) card.appendChild(el("div", "note", "Architect called: " + t.architectReason));
   var w = t.worker;
   if (w) {
     card.appendChild(

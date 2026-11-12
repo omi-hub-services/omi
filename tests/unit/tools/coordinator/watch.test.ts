@@ -256,7 +256,7 @@ describe("watch rendering", () => {
         ],
       },
     });
-    expect(out).toContain("OMI-074 Work Developer claude/p rework:0");
+    expect(out).toContain("OMI-074 Development Work rework:0/2 Developer claude/p");
     expect(out.indexOf("Tasks")).toBeLessThan(out.indexOf("Workers"));
     expect(renderWatch({ ...screen, tasks: { available: false, reason: "gh\nfailed" } })).toContain(
       "GitHub unavailable: gh failed",

@@ -1,7 +1,7 @@
 import { createContext, Script } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { PAGE_HTML } from "../../../../tools/coordinator/watch-page.ts";
-import { buildTasks, diagramNodes } from "../../../../tools/coordinator/watch-tasks.ts";
+import { buildTasks, diagramNodes, cyclePhase } from "../../../../tools/coordinator/watch-tasks.ts";
 import { WINDOW_SIZE } from "../../../../tools/coordinator/watch-web.ts";
 
 const block = (tag: string) =>
@@ -24,7 +24,17 @@ describe("watch page (Tasks and lifecycle diagram)", () => {
 
   it("knows every node id of the diagram so each one gets a visible text label", () => {
     const js = block("script");
-    for (const n of diagramNodes("Start", 0, false)) expect(js).toContain(`"${n.id}"`);
+    const wide = diagramNodes(
+      "Review",
+      cyclePhase(
+        ["F", "F", "A", "F", "F"].map((c) => ({
+          author: "minibox-claude-code",
+          body: c === "F" ? "**VERDICT:** FAIL" : "**ARCHITECT:** why",
+        })),
+      ),
+    );
+    expect(wide.map((n) => n.id)).toEqual(expect.arrayContaining(["Architect", "Ask PO"]));
+    for (const n of wide) expect(js).toContain(`"${n.id}"`);
     // every node state has a style in both themes (colours come from the shared tokens)
     for (const state of ["done", "cur", "todo", "lit", "warn", "idle"])
       expect(block("style")).toContain(`.n.${state}`);
@@ -108,84 +118,179 @@ function renderInDom(tasks: unknown) {
 describe("watch page rendering (fake DOM)", () => {
   const comment = (body: string) => ({ author: "minibox-claude-code", body });
   const head = "abc1234def5678abc1234def5678abc1234def56";
-  const view = buildTasks({
-    workers: { available: true, processes: [], latestLog: null },
-    tasks: {
-      available: true,
-      items: [
-        {
-          kind: "Issue",
-          number: 152,
-          title: '<script>alert(1)</script> "quoted"',
-          state: "OPEN",
-          status: "In Review",
-          priority: "P1",
-          workType: "Task",
-          planKey: "OMI-074",
-          body: "",
-          workflow: "Development",
-          role: "Developer",
-          area: null,
-          milestone: null,
-          blockers: [],
-          blockersTruncated: false,
-        },
-      ],
-      pulls: [
-        {
-          number: 160,
-          title: "t",
-          isDraft: false,
-          headRefName: "task/omi-074-x",
-          headRefOid: head,
-          baseRefName: "develop",
-          body: "Issue: #152",
-          reviewDecision: null,
-          mergeStateStatus: "CLEAN",
-          comments: [
-            comment("**VERDICT:** FAIL\n**REVIEWED_HEAD:** 1111111"),
-            comment("**VERDICT:** FAIL\n**REVIEWED_HEAD:** 2222222"),
-          ],
-          checks: [],
-        },
-      ],
-      prompts: { "OMI-074": { skills: ["minimal-change"], rules: ["AGENTS.md"] } },
-    },
+  const FAIL = (sha = "1111111") => comment(`**VERDICT:** FAIL\n**REVIEWED_HEAD:** ${sha}`);
+  const ARCH = () => comment("**ARCHITECT:** rethink the seam");
+  const viewOf = (
+    comments: { author: string; body: string }[],
+    running = false,
+    workflow: string | null = "feature",
+  ) =>
+    buildTasks({
+      workers: {
+        available: true,
+        latestLog: null,
+        processes: running
+          ? [
+              {
+                pid: 1,
+                tool: "codex",
+                headless: true,
+                elapsedSeconds: 5,
+                task: "OMI-074",
+                profile: "p",
+              },
+            ]
+          : [],
+      },
+      tasks: {
+        available: true,
+        items: [
+          {
+            kind: "Issue",
+            number: 152,
+            title: '<script>alert(1)</script> "quoted"',
+            state: "OPEN",
+            status: "In Review",
+            priority: "P1",
+            workType: "Task",
+            planKey: "OMI-074",
+            body: "",
+            workflow,
+            role: "Developer",
+            area: null,
+            milestone: null,
+            blockers: [],
+            blockersTruncated: false,
+          },
+        ],
+        pulls: [
+          {
+            number: 160,
+            title: "t",
+            isDraft: false,
+            headRefName: "task/omi-074-x",
+            headRefOid: head,
+            baseRefName: "develop",
+            body: "Issue: #152",
+            reviewDecision: null,
+            mergeStateStatus: "CLEAN",
+            comments,
+            checks: [],
+          },
+        ],
+        prompts: { "OMI-074": { skills: ["minimal-change"], rules: ["AGENTS.md"] } },
+      },
+    });
+
+  // What the diagram shows: title, node labels with state, edges, badge.
+  const diagram = (comments: { author: string; body: string }[], running = false) => {
+    const all = renderInDom(viewOf(comments, running)).all();
+    const svg = all.find((n) => n.tag === "svg");
+    const groups = all.filter((n) => n.tag === "g" && (n.attrs.class ?? "").startsWith("n "));
+    return {
+      title: all.find((n) => n.className === "wf")?.textContent,
+      aria: svg?.attrs["aria-label"],
+      viewBox: svg?.attrs.viewBox,
+      nodes: groups.map(
+        (g) => `${g.children[1]?.textContent ?? "?"}:${(g.attrs.class ?? "").slice(2)}`,
+      ),
+      work: groups.find((g) => g.children[1]?.textContent === "Work")?.children[2]?.textContent,
+      back: all.filter((n) => n.tag === "path" && (n.attrs.class ?? "").includes("back")).length,
+      ask: all.filter((n) => n.tag === "path" && (n.attrs.class ?? "").includes("ask")).length,
+      badge: all.find((n) => n.attrs.class === "badge")?.children[1]?.textContent,
+      note: all.map((n) => n.textContent).find((t) => t.startsWith("Cycle:")),
+      text: all.map((n) => n.textContent),
+    };
+  };
+  const MAIN_TODO = ["Merge:todo", "Done:todo"];
+
+  it("0 FAILs: workflow title, main row only, no Rework node, no back edge, no x0 badge", () => {
+    const d = diagram([]);
+    expect(d.title).toBe("Workflow: feature");
+    expect(d.aria).toBe("OMI-074: Workflow: feature, current step Review");
+    expect(d.viewBox).toBe("0 0 540 124");
+    expect(d.nodes).toEqual([
+      "Start:done",
+      "Work:done",
+      "Verify/PR:done",
+      "Review:cur",
+      ...MAIN_TODO,
+    ]);
+    expect(d.back).toBe(0);
+    expect(d.badge).toBeUndefined();
+    expect(d.text.some((t) => t.includes("×0"))).toBe(false);
+    expect(d.text).not.toContain("Rework");
   });
 
-  it("draws one labelled SVG per task with aria-label, rework badge and the Architect warning", () => {
-    const app = renderInDom(view);
-    const nodes = app.all();
-    const svg = nodes.find((n) => n.tag === "svg");
-    expect(svg?.attrs["aria-label"]).toBe("OMI-074: current step Review");
-    expect(svg?.attrs.viewBox).toBe("0 0 540 124");
-    const groups = nodes.filter((n) => n.tag === "g" && (n.attrs.class ?? "").startsWith("n "));
-    expect(groups.map((g) => g.children[1]?.textContent)).toEqual([
-      "Start",
-      "Work",
-      "Verify/PR",
-      "Review",
-      "Merge",
-      "Done",
-      "Rework",
-      "Architect",
+  it("shows Workflow: - when the Project field is missing", () => {
+    const all = renderInDom(viewOf([], false, null)).all();
+    expect(all.find((n) => n.className === "wf")?.textContent).toBe("Workflow: -");
+  });
+
+  it("1 FAIL: Work is current with rework 1/2 and one Review -> Work edge labelled FAIL x1", () => {
+    const d = diagram([FAIL(head.slice(0, 7))]);
+    expect(d.nodes).toEqual([
+      "Start:done",
+      "Work:cur",
+      "Verify/PR:todo",
+      "Review:todo",
+      ...MAIN_TODO,
     ]);
-    expect(groups.map((g) => g.attrs.class)).toEqual([
-      "n done",
-      "n done",
-      "n done",
-      "n cur",
-      "n todo",
-      "n todo",
-      "n done",
-      "n warn",
-    ]);
-    const badge = nodes.find((n) => n.attrs.class === "badge");
-    expect(badge?.children[1]?.textContent).toBe("×2");
+    expect(d.work).toBe("rework 1/2");
+    expect(d.back).toBe(1);
+    expect(d.badge).toBe("FAIL ×1");
+    expect(d.aria).toBe("OMI-074: Workflow: feature, current step Work, rework 1/2");
+    expect(d.note).toBe("Cycle: rework 1/2");
+  });
+
+  it("2 FAILs, no marker: Architect appears on the return path with a warning outline", () => {
+    const d = diagram([FAIL(), FAIL(head.slice(0, 7))]);
+    expect(d.nodes).toContain("Architect:warn");
+    expect(d.nodes).not.toContain("Ask PO:warn");
+    expect(d.back).toBe(2);
+    expect(d.badge).toBe("FAIL ×2");
+    expect(d.work).toBe("rework 2/2");
+    expect(d.note).toBe("Cycle: call the Architect (2 FAILs, no ARCHITECT marker)");
+  });
+
+  it("2 FAILs and the marker: Architect is lit while Work runs again", () => {
+    const d = diagram([FAIL(), FAIL(), ARCH()], true);
+    expect(d.nodes).toContain("Architect:lit");
+    expect(d.nodes).toContain("Work:cur");
+    expect(d.work).toBe("rework 0/2");
+    expect(d.back).toBe(2);
+    expect(d.note).toBe("Cycle: Architect called, rework 0/2 after Architect");
+  });
+
+  it("2 FAILs and the marker with no worker yet: Architect is the current node", () => {
+    const d = diagram([FAIL(), FAIL(head.slice(0, 7)), ARCH()]);
+    expect(d.nodes).toContain("Architect:cur");
+    expect(d.nodes).toContain("Review:done");
+    expect(d.nodes).toContain("Work:done");
+  });
+
+  it("3 FAILs: rework 1/2 after Architect, Architect lit, no Ask PO", () => {
+    const d = diagram([FAIL(), FAIL(), ARCH(), FAIL(head.slice(0, 7))]);
+    expect(d.nodes).toContain("Architect:lit");
+    expect(d.nodes).toContain("Work:cur");
+    expect(d.work).toBe("rework 1/2");
+    expect(d.badge).toBe("FAIL ×3");
+    expect(d.ask).toBe(0);
+    expect(d.note).toBe("Cycle: rework 1/2 (after Architect)");
+  });
+
+  it("4 FAILs: Ask PO warning and no further loop", () => {
+    const d = diagram([FAIL(), FAIL(), ARCH(), FAIL(), FAIL(head.slice(0, 7))]);
+    expect(d.nodes).toContain("Ask PO:warn");
+    expect(d.nodes).toContain("Architect:lit");
+    expect(d.ask).toBe(1);
+    expect(d.back).toBe(2);
+    expect(d.badge).toBe("FAIL ×4");
+    expect(d.note).toBe("Cycle: 2 FAILs after Architect, ask the PO");
   });
 
   it("puts external strings in textContent or attributes, never as markup", () => {
-    const text = renderInDom(view)
+    const text = renderInDom(viewOf([FAIL(), FAIL(head.slice(0, 7))]))
       .all()
       .map((n) => n.textContent)
       .join("\n");

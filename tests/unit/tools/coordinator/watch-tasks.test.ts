@@ -5,6 +5,7 @@ import type { Command } from "../../../../tools/coordinator/process-runner.ts";
 import {
   buildTasks,
   countRework,
+  cyclePhase,
   deriveStep,
   detectArchitect,
   diagramNodes,
@@ -152,12 +153,117 @@ describe("deriveStep", () => {
   });
 });
 
-describe("diagramNodes", () => {
-  const states = (s: Parameters<typeof diagramNodes>[0], rework = 0, called = false) =>
-    Object.fromEntries(diagramNodes(s, rework, called).map((n) => [n.id, n.state]));
+describe("cyclePhase (2 + Architect + 2)", () => {
+  const f = () => coord(verdict("FAIL"));
+  const arch = () => coord("**ARCHITECT:** fix the seam");
+  const phase = (...c: { author: string | null; body: string }[]) => cyclePhase(c);
 
-  it("has a text label for every node, in lifecycle order", () => {
-    const nodes = diagramNodes("Start", 0, false);
+  it("before-architect: 0 and 1 FAILs count k/2", () => {
+    expect(phase()).toEqual({ phase: "before-architect", fails: 0, k: 0, architectCalled: false });
+    expect(phase(f())).toEqual({
+      phase: "before-architect",
+      fails: 1,
+      k: 1,
+      architectCalled: false,
+    });
+  });
+
+  it("architect: the 2nd FAIL needs the Architect, and stays so at 3 FAILs without a marker", () => {
+    expect(phase(f(), f())).toEqual({ phase: "architect", fails: 2, k: 2, architectCalled: false });
+    expect(phase(f(), f(), f())).toMatchObject({
+      phase: "architect",
+      fails: 3,
+      architectCalled: false,
+    });
+  });
+
+  it("architect: a marker after 2 FAILs means it was called and no rework ran after it yet", () => {
+    expect(phase(f(), f(), arch())).toEqual({
+      phase: "architect",
+      fails: 2,
+      k: 0,
+      architectCalled: true,
+    });
+  });
+
+  it("after-architect: counts only FAILs after the marker, k/2", () => {
+    expect(phase(f(), f(), arch(), f())).toEqual({
+      phase: "after-architect",
+      fails: 3,
+      k: 1,
+      architectCalled: true,
+    });
+  });
+
+  it("escalate-po: the 2nd FAIL after the marker, and any later FAIL", () => {
+    expect(phase(f(), f(), arch(), f(), f())).toEqual({
+      phase: "escalate-po",
+      fails: 4,
+      k: 2,
+      architectCalled: true,
+    });
+    expect(phase(f(), f(), arch(), f(), f(), f())).toMatchObject({
+      phase: "escalate-po",
+      fails: 5,
+    });
+  });
+
+  it("ignores FAIL and marker comments of other accounts", () => {
+    const other = (body: string) => by("someone-else", body);
+    expect(phase(f(), other(verdict("FAIL")), other("**ARCHITECT:** nope"))).toMatchObject({
+      phase: "before-architect",
+      fails: 1,
+      architectCalled: false,
+    });
+    expect(phase(f(), f(), other("**ARCHITECT:** nope"), by(null, verdict("FAIL")))).toMatchObject({
+      phase: "architect",
+      architectCalled: false,
+    });
+    expect(phase(f(), f(), arch(), other(verdict("FAIL")), other(verdict("FAIL")))).toMatchObject({
+      phase: "architect",
+      k: 0,
+      architectCalled: true,
+    });
+  });
+
+  it("a marker without a reason does not count", () => {
+    expect(phase(f(), f(), coord("**ARCHITECT:**"))).toMatchObject({ architectCalled: false });
+  });
+
+  it("a marker before any FAIL counts as the call: lit at 0 FAILs, then FAILs count after it", () => {
+    expect(phase(arch())).toEqual({
+      phase: "architect",
+      fails: 0,
+      k: 0,
+      architectCalled: true,
+    });
+    expect(phase(arch(), f())).toMatchObject({ phase: "after-architect", fails: 1, k: 1 });
+    expect(phase(arch(), f(), f())).toMatchObject({ phase: "escalate-po", fails: 2, k: 2 });
+  });
+
+  it("uses the first marker, so a second call does not give two more reworks", () => {
+    expect(phase(f(), f(), arch(), f(), arch(), f())).toMatchObject({ phase: "escalate-po" });
+  });
+
+  it("a FAIL and the marker in one comment: the FAIL comes first", () => {
+    expect(phase(f(), coord(verdict("FAIL") + "**ARCHITECT:** two FAILs"))).toMatchObject({
+      phase: "architect",
+      fails: 2,
+      k: 0,
+      architectCalled: true,
+    });
+  });
+});
+
+describe("diagramNodes", () => {
+  // "F" = Coordinator FAIL, "A" = Coordinator **ARCHITECT:** marker, oldest first
+  const ph = (seq: string) =>
+    cyclePhase(Array.from(seq, (ch) => coord(ch === "F" ? verdict("FAIL") : "**ARCHITECT:** why")));
+  const states = (s: Parameters<typeof diagramNodes>[0], cycle = ph("")) =>
+    Object.fromEntries(diagramNodes(s, cycle).map((n) => [n.id, n.state]));
+
+  it("has a text label for every node, in lifecycle order, and no separate Rework node", () => {
+    const nodes = diagramNodes("Start", ph(""));
     expect(nodes.map((n) => n.id)).toEqual([
       "Start",
       "Work",
@@ -165,10 +271,9 @@ describe("diagramNodes", () => {
       "Review",
       "Merge",
       "Done",
-      "Rework",
-      "Architect",
     ]);
     expect(nodes.every((n) => n.label.length > 0)).toBe(true);
+    expect(diagramNodes("Rework", ph("F")).some((n) => n.id === "Rework")).toBe(false);
   });
 
   it("marks past nodes done and the current one current", () => {
@@ -183,19 +288,48 @@ describe("diagramNodes", () => {
     expect(states("Done")).toMatchObject({ Merge: "done", Done: "current" });
   });
 
-  it("lights the loop and Architect nodes", () => {
-    expect(states("Rework", 1)).toMatchObject({ Review: "done", Rework: "current", Merge: "todo" });
-    expect(states("Review", 1).Rework).toBe("done");
-    expect(states("Review", 0).Rework).toBe("todo");
-    expect(states("Architect", 2, true)).toMatchObject({ Architect: "current", Rework: "done" });
-    expect(states("Review", 2, true).Architect).toBe("lit");
-    expect(states("Review", 1, false).Architect).toBe("idle");
+  it("rework makes Work current with a rework k/2 sub-label", () => {
+    const nodes = diagramNodes("Rework", ph("F"));
+    expect(Object.fromEntries(nodes.map((n) => [n.id, n.state]))).toMatchObject({
+      Start: "done",
+      Work: "current",
+      "Verify/PR": "todo",
+      Review: "todo",
+      Merge: "todo",
+    });
+    expect(nodes.find((n) => n.id === "Work")?.sub).toBe("rework 1/2");
+    expect(diagramNodes("Work", ph("")).find((n) => n.id === "Work")?.sub).toBeUndefined();
+    expect(diagramNodes("Review", ph("F")).find((n) => n.id === "Work")?.sub).toBeUndefined();
   });
 
-  it("warns at two FAILs without the Architect, never once it was called", () => {
-    expect(states("Review", 2, false).Architect).toBe("warn");
-    expect(states("Rework", 3, false).Architect).toBe("warn");
-    expect(states("Rework", 2, true).Architect).toBe("lit");
+  it("shows the Architect node only from the 2nd FAIL or a marker", () => {
+    const ids = (s: Parameters<typeof diagramNodes>[0], c: ReturnType<typeof ph>) =>
+      diagramNodes(s, c).map((n) => n.id);
+    expect(ids("Review", ph(""))).not.toContain("Architect");
+    expect(ids("Rework", ph("F"))).not.toContain("Architect");
+    expect(ids("Review", ph("FF"))).toContain("Architect");
+    expect(ids("Review", ph("A"))).toContain("Architect");
+  });
+
+  it("Architect warns without a marker, is lit with one, current when it is the step", () => {
+    expect(states("Review", ph("FF")).Architect).toBe("warn");
+    expect(states("Rework", ph("FFF")).Architect).toBe("warn");
+    expect(states("Rework", ph("FFA")).Architect).toBe("lit");
+    expect(states("Architect", ph("FFA"))).toMatchObject({
+      Review: "done",
+      Work: "done",
+      Architect: "current",
+    });
+  });
+
+  it("after the Architect, Work is rework k/2 and Ask PO appears only at the 2nd FAIL after it", () => {
+    const after = diagramNodes("Rework", ph("FFAF"));
+    expect(after.find((n) => n.id === "Work")?.sub).toBe("rework 1/2");
+    expect(after.some((n) => n.id === "Ask PO")).toBe(false);
+    const esc = diagramNodes("Rework", ph("FFAFF"));
+    expect(esc.find((n) => n.id === "Ask PO")?.state).toBe("warn");
+    expect(esc.find((n) => n.id === "Work")?.sub).toBe("rework 2/2");
+    expect(esc.find((n) => n.id === "Architect")?.state).toBe("lit");
   });
 
   it("unknown highlights nothing", () => {
@@ -363,7 +497,7 @@ describe("buildTasks", () => {
       stepReason: null,
       role: "Developer",
       rework: 0,
-      architect: "none",
+      cycle: { phase: "before-architect", fails: 0, k: 0, architectCalled: false },
       pr: null,
       skills: ["minimal-change"],
       skillsNote: null,
@@ -380,7 +514,7 @@ describe("buildTasks", () => {
     expect(t?.rules).toEqual(
       expect.arrayContaining(["AGENTS.md", "no push, PR or merge", "gh is read-only"]),
     );
-    expect(t?.ariaLabel).toBe("OMI-074: current step Work");
+    expect(t?.ariaLabel).toBe("OMI-074: Workflow: Development, current step Work");
     expect(t?.nodes.find((n) => n.state === "current")?.id).toBe("Work");
   });
 
@@ -400,7 +534,7 @@ describe("buildTasks", () => {
       step: "Architect",
       role: "Architect",
       rework: 2,
-      architect: "called",
+      cycle: { phase: "architect", architectCalled: true },
       worker: null,
     });
   });
@@ -415,7 +549,11 @@ describe("buildTasks", () => {
       workers: available([]),
     });
     if (view.state !== "ok") throw new Error("expected ok");
-    expect(view.items[0]).toMatchObject({ step: "Review", role: "Reviewer", architect: "warn" });
+    expect(view.items[0]).toMatchObject({
+      step: "Review",
+      role: "Reviewer",
+      cycle: { phase: "architect", architectCalled: false },
+    });
   });
 
   it("uses '-' with a reason when data is missing", () => {
@@ -470,12 +608,34 @@ describe("buildTasks", () => {
 });
 
 describe("taskLine", () => {
-  it("prints OMI-NNN step role tool/profile rework:N on one line", () => {
+  const first = () => {
     const view = buildTasks({ tasks: read(), workers: available([worker]) });
     if (view.state !== "ok" || !view.items[0]) throw new Error("expected ok");
-    expect(taskLine(view.items[0])).toBe("OMI-074 Work Developer claude/minibox rework:0");
-    expect(taskLine({ ...view.items[0], worker: null, step: "Review", role: "Reviewer" })).toBe(
-      "OMI-074 Review Reviewer -/- rework:0",
+    return view.items[0];
+  };
+
+  it("prints OMI-NNN workflow step phase role tool/profile on one line", () => {
+    expect(taskLine(first())).toBe("OMI-074 Development Work rework:0/2 Developer claude/minibox");
+    expect(taskLine({ ...first(), worker: null, step: "Review", role: "Reviewer" })).toBe(
+      "OMI-074 Development Review rework:0/2 Reviewer -/-",
     );
+  });
+
+  it("names the phase: rework k/2, architect needed or called, after-architect k/2, ask-po", () => {
+    const line = (comments: { author: string | null; body: string }[]) => {
+      const view = buildTasks({
+        tasks: read({ pulls: [openPull({ comments })] }),
+        workers: available([worker]),
+      });
+      if (view.state !== "ok" || !view.items[0]) throw new Error("expected ok");
+      return taskLine(view.items[0]);
+    };
+    const f = coord(verdict("FAIL"));
+    const a = coord("**ARCHITECT:** why");
+    expect(line([f])).toBe("OMI-074 Development Work rework:1/2 Developer claude/minibox");
+    expect(line([f, f])).toContain(" architect:needed ");
+    expect(line([f, f, a])).toContain(" architect:called ");
+    expect(line([f, f, a, f])).toContain(" after-architect:1/2 ");
+    expect(line([f, f, a, f, f])).toContain(" ask-po ");
   });
 });

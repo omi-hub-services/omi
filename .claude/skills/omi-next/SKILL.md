@@ -161,7 +161,10 @@ must contain:
   Every criterion gets exactly one line; PASS requires every line to be `met`.
 
 FAIL → resume the worker with the findings, then repeat 4–5 for the new SHA (limit: 2 rounds,
-then Architect, then 2 more; design-patterns.md; then ask the PO).
+then Architect, then 2 more; design-patterns.md; then ask the PO). When you call the Architect,
+first post `gh pr comment <pr> --body "**ARCHITECT:** <reason>"` from the Coordinator account
+(reason required; ADR-0014, OMI-074): `/omi-watch` lights the Architect node from it and warns
+at two FAILs without it.
 
 **Parallel tasks, one review each (OMI-069, ADR-0014).** Before step 4, merge `origin/develop`
 into a finished branch so the review sees the current base. A PR that goes `BEHIND` _after_ its
