@@ -142,7 +142,9 @@ import { reportStatus } from "../application/use-cases/project/report-status.js"
 import {
   createWatchSnapshotReader,
   type QuotaInput,
+  type QuotaSource,
 } from "../application/use-cases/project/read-watch-snapshot.js";
+import type { ProfileRegistry } from "../application/ports/profile-registry.js";
 import type { ProjectConfig } from "../application/contracts/project-config.js";
 import type { QuotaVerdict } from "../domain/profiles/quota-policy.js";
 import { createQuotaVerdictReader } from "../application/services/read-quota-verdicts.js";
@@ -229,7 +231,12 @@ export function createOverviewCommands(
           board: deps.board,
           ...(deps.config.quota === undefined
             ? {}
-            : { quota: watchedQuota(deps.config.quota, deps.database) }),
+            : {
+                quota: watchedQuota(deps.config.quota, {
+                  registry: createSqliteProfileRegistry(deps.database),
+                  verdicts: freeQuotaVerdicts(deps.config.quota, deps.database),
+                }),
+              }),
           now: Date.now,
         }),
         onIdle: () => {
@@ -274,21 +281,37 @@ function freeQuotaVerdicts(
   });
 }
 
-/** The watch page's quota rows: the same free verdicts, each with the tool of its profile. */
-function watchedQuota(
-  policy: NonNullable<ProjectConfig["quota"]>,
-  database: StateDatabase,
-): () => Promise<readonly QuotaInput[]> {
-  const verdicts = freeQuotaVerdicts(policy, database);
-  const registry = createSqliteProfileRegistry(database);
-  return async () => {
-    const tools = new Map(registry.list().map((p) => [p.metadata.profileId, p.metadata.tool]));
-    return [...(await verdicts()).values()].flatMap((verdict) => {
-      const tool = tools.get(verdict.profileId);
-      return tool === undefined
-        ? []
-        : [{ tool: tool === "codex" ? ("codex" as const) : ("claude" as const), verdict }];
-    });
+/**
+ * The watch page's quota source: the free verdicts, each with the tool of its profile. A verdict
+ * for a profile the registry does not list is kept as an `unknown` tool, not dropped.
+ */
+export function watchedQuota(
+  policy: Pick<
+    NonNullable<ProjectConfig["quota"]>,
+    "min_five_hour_left_percent" | "min_seven_day_left_percent"
+  >,
+  deps: {
+    readonly registry: Pick<ProfileRegistry, "list">;
+    readonly verdicts: () => Promise<ReadonlyMap<string, QuotaVerdict>>;
+  },
+): QuotaSource {
+  return {
+    thresholds: {
+      minFiveHourLeftPercent: policy.min_five_hour_left_percent,
+      minSevenDayLeftPercent: policy.min_seven_day_left_percent,
+    },
+    async read() {
+      const tools = new Map(
+        deps.registry.list().map((p) => [p.metadata.profileId, p.metadata.tool]),
+      );
+      return [...(await deps.verdicts()).values()].map((verdict): QuotaInput => {
+        const tool = tools.get(verdict.profileId);
+        return {
+          tool: tool === undefined ? "unknown" : tool === "codex" ? "codex" : "claude",
+          verdict,
+        };
+      });
+    },
   };
 }
 

@@ -6,7 +6,6 @@
 import type {
   QuotaPanel,
   QuotaRow,
-  QuotaSeverity,
   TaskCard,
   WatchSnapshot,
 } from "../../src/application/contracts/watch-snapshot.ts";
@@ -15,7 +14,7 @@ import type { RunStatus } from "../../src/domain/runs/workflow-run.ts";
 import "../register-ts-imports.ts";
 import type { QuotaSettings, WorkerProfile } from "./coordinator-settings.ts";
 import { windowLeft, type QuotaReport, type QuotaWindow } from "./quota.ts";
-import { clean, resetText, STALE_AFTER_SECONDS, windowsLow } from "./watch-core.ts";
+import { clean, resetText, STALE_AFTER_SECONDS } from "./watch-core.ts";
 import { buildTasks, type CyclePhase, type TasksRead, type TaskView } from "./watch-tasks.ts";
 import { standingOf } from "./watch-workflow.ts";
 import type { Workers } from "./wsl-workers.ts";
@@ -25,6 +24,7 @@ const { buildWorkflowDiagram, compareLoadedSkills } =
   await import("../../src/domain/workflows/workflow-diagram.ts");
 const { layoutWorkflowDiagram } =
   await import("../../src/domain/workflows/workflow-diagram-layout.ts");
+const { quotaSeverity } = await import("../../src/domain/profiles/quota-policy.ts");
 const { CONTRACT_SCHEMA_VERSION } =
   await import("../../src/application/contracts/schema-version.ts");
 
@@ -140,23 +140,6 @@ function windowView(w: QuotaWindow | null, now: number, clockOnly: boolean) {
   return { left: windowLeft(w, now), resetText: resetText(w.resetsAt, now, clockOnly) };
 }
 
-/** The pick-profile policy's own thresholds: below one is low, below half of one is critical. */
-function severityOf(
-  left5: number | null,
-  left7: number | null,
-  limited: boolean,
-  settings: QuotaSettings,
-): QuotaSeverity {
-  if (left5 === null && left7 === null) return "unknown";
-  if (
-    limited ||
-    (left5 !== null && left5 < settings.minFiveHourLeftPercent / 2) ||
-    (left7 !== null && left7 < settings.minSevenDayLeftPercent / 2)
-  )
-    return "critical";
-  return windowsLow(left5, left7, settings) ? "low" : "ok";
-}
-
 function quotaPanel(input: SnapshotInput): QuotaPanel {
   const { quota, now, settings } = input;
   const rows = input.profiles.map((profile): QuotaRow => {
@@ -183,7 +166,10 @@ function quotaPanel(input: SnapshotInput): QuotaPanel {
       fiveHourLeft: five?.left ?? null,
       sevenDayLeft: seven?.left ?? null,
       resetText: five?.resetText ?? null,
-      severity: severityOf(five?.left ?? null, seven?.left ?? null, r.limited, settings),
+      severity: quotaSeverity(
+        { fiveHourLeft: five?.left ?? null, sevenDayLeft: seven?.left ?? null, limited: r.limited },
+        settings,
+      ),
       freshness: Math.max(0, now - r.observedAt) > STALE_AFTER_SECONDS ? "stale" : "fresh",
       note: entry.note === null ? null : clean(entry.note),
     };

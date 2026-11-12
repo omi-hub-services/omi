@@ -16,6 +16,9 @@ import { PAGE_CSP, PAGE_HTML } from "../../../src/infrastructure/observability/w
 
 class Element {
   textContent = "";
+  scrollWidth = 0;
+  clientWidth = 0;
+  scrollLeft = 0;
   open = false;
   readonly children: Element[] = [];
   readonly attributes: Record<string, string> = {};
@@ -53,7 +56,7 @@ interface Document {
   activeElement: Element | null;
 }
 
-function browser() {
+function browser(metrics = { scrollWidth: 600, clientWidth: 600 }) {
   const ids = new Map<string, Element>();
   const doc: Document & {
     getElementById: (id: string) => Element;
@@ -69,7 +72,12 @@ function browser() {
       }
       return found;
     },
-    createElement: (tag) => new Element(tag, doc),
+    createElement: (tag) => {
+      const element = new Element(tag, doc);
+      element.scrollWidth = metrics.scrollWidth;
+      element.clientWidth = metrics.clientWidth;
+      return element;
+    },
     createElementNS: (_namespace, tag) => new Element(tag, doc),
   };
   const streams: {
@@ -701,7 +709,7 @@ describe("watch page: small windows (verify round 1)", () => {
   };
 
   it("gives the diagram its natural size, in a focusable scroll region, instead of shrinking it", () => {
-    const page = browser();
+    const page = browser({ scrollWidth: 600, clientWidth: 330 });
     page.send(frame(snapshot([card({ analyze: "succeeded", implement: "running" })])));
     const body = page.tasks.children[0]?.children[1];
     expect(body?.attributes["tabindex"]).toBe("0");
@@ -715,6 +723,44 @@ describe("watch page: small windows (verify round 1)", () => {
     expect(small).toContain(".flow{width:auto;max-width:none}");
   });
 
+  it("adds no tab stop to a diagram that fits", () => {
+    const page = browser({ scrollWidth: 600, clientWidth: 600 });
+    page.send(frame(snapshot([card({ analyze: "succeeded", implement: "running" })])));
+    const body = page.tasks.children[0]?.children[1];
+    expect(body?.attributes["tabindex"]).toBeUndefined();
+    expect(body?.attributes["role"]).toBeUndefined();
+    expect(body?.scrollLeft).toBe(0);
+  });
+
+  it("scrolls the current node into view on first render", () => {
+    const page = browser({ scrollWidth: 600, clientWidth: 330 });
+    page.send(frame(snapshot([card({ analyze: "succeeded", implement: "running" })])));
+    const view = snapshot([card({ analyze: "succeeded", implement: "running" })]);
+    const current = view.tasks[0]?.layout.nodes.find((node) => node.current);
+    if (current === undefined) throw new Error("no current node");
+    const centre = current.shape.x + current.shape.w / 2;
+    expect(page.tasks.children[0]?.children[1]?.scrollLeft).toBe(centre - 330 / 2);
+  });
+
+  it("does not scroll when the current node is already near the left edge", () => {
+    const page = browser({ scrollWidth: 600, clientWidth: 330 });
+    page.send(frame(snapshot([card({})])));
+    expect(page.tasks.children[0]?.children[1]?.scrollLeft).toBe(0);
+  });
+
+  it("keeps the reader's scroll position across later updates", () => {
+    const page = browser({ scrollWidth: 600, clientWidth: 330 });
+    const view = snapshot([card({ analyze: "succeeded", implement: "running" })]);
+    page.send(frame(view));
+    const body = page.tasks.children[0]?.children[1];
+    if (body === undefined) throw new Error("no body");
+    body.scrollLeft = 42;
+    page.send(frame({ ...view, generatedAt: "2026-11-12T10:00:05.000Z" }));
+    const next = page.tasks.children[0]?.children[1];
+    expect(next).not.toBe(body);
+    expect(next?.scrollLeft).toBe(42);
+  });
+
   it("lets the card footer wrap instead of scrolling or clipping worker facts", () => {
     const footer = /\.card-footer\{[^}]*\}/.exec(css)?.[0] ?? "";
     expect(footer).toContain("overflow-wrap:anywhere");
@@ -724,7 +770,7 @@ describe("watch page: small windows (verify round 1)", () => {
 
   it("stacks the quota bar and values under the name so 5h and 7d show at 320px", () => {
     expect(/\.quota-row\{[^}]*\}/.exec(css)?.[0]).toContain("min-width:710px");
-    const small = narrow("749px");
+    const small = narrow("760px");
     expect(small).toContain(".quota-row{min-width:0;grid-template-columns:70px 1fr 1fr");
     expect(small).toContain("grid-column:1/-1");
   });

@@ -55,6 +55,8 @@ export interface QuotaVerdict {
   readonly freshness: "fresh" | "stale" | "unknown";
   readonly fiveHourLeft: number | null;
   readonly sevenDayLeft: number | null;
+  /** Epoch ms the five-hour window resets, for display; null when unknown or already past. */
+  readonly fiveHourResetsAt: number | null;
   /** Share left in the tighter window minus the Coordinator penalty; null without a reading. */
   readonly score: number | null;
   /** Empty when the profile may take a worker. */
@@ -98,6 +100,7 @@ export function evaluateQuota(
       freshness: "unknown",
       fiveHourLeft: null,
       sevenDayLeft: null,
+      fiveHourResetsAt: null,
       score: null,
       blocked: forbidden ? ["SHARES_COORDINATOR_ACCOUNT"] : [],
       blockedUntil: null,
@@ -140,6 +143,8 @@ export function evaluateQuota(
     freshness: now - r.observedAt > thresholds.staleAfterMs ? "stale" : "fresh",
     fiveHourLeft,
     sevenDayLeft,
+    fiveHourResetsAt:
+      r.fiveHour?.resetsAt != null && r.fiveHour.resetsAt > now ? r.fiveHour.resetsAt : null,
     score: known.length === 0 ? null : round1(Math.min(...known) - penalty),
     blocked,
     blockedUntil,
@@ -158,6 +163,37 @@ export function evaluateQuota(
           ];
     }),
   };
+}
+
+export type QuotaSeverity = "ok" | "low" | "critical" | "unknown";
+
+/**
+ * How a profile's quota reads on the watch, the one rule for every source: unknown when no window
+ * was read; critical when the provider limit is reached or a window is under half its threshold;
+ * low when a window is under its threshold; otherwise ok. A window not read never counts as low.
+ */
+export function quotaSeverity(
+  reading: {
+    readonly fiveHourLeft: number | null;
+    readonly sevenDayLeft: number | null;
+    readonly limited: boolean;
+  },
+  thresholds: Pick<QuotaThresholds, "minFiveHourLeftPercent" | "minSevenDayLeftPercent">,
+): QuotaSeverity {
+  const { fiveHourLeft: five, sevenDayLeft: seven } = reading;
+  if (five === null && seven === null) return "unknown";
+  const under = (value: number | null, min: number, factor: number) =>
+    value !== null && value < min * factor;
+  if (
+    reading.limited ||
+    under(five, thresholds.minFiveHourLeftPercent, 0.5) ||
+    under(seven, thresholds.minSevenDayLeftPercent, 0.5)
+  )
+    return "critical";
+  return under(five, thresholds.minFiveHourLeftPercent, 1) ||
+    under(seven, thresholds.minSevenDayLeftPercent, 1)
+    ? "low"
+    : "ok";
 }
 
 const FRESHNESS_RANK = { fresh: 0, stale: 1, unknown: 2 } as const;

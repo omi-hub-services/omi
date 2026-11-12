@@ -263,6 +263,7 @@ describe("reportStatus", () => {
       freshness: "fresh",
       fiveHourLeft: 5,
       sevenDayLeft: 70,
+      fiveHourResetsAt: null,
       score: 5,
       blocked: ["FIVE_HOUR_BELOW_THRESHOLD"],
       blockedUntil: Date.parse("2026-11-12T12:00:00Z"),

@@ -7,6 +7,7 @@ import type {
 } from "../../../../../src/application/ports/run-overview-reader.ts";
 import {
   createWatchSnapshotReader,
+  type QuotaInput,
   type WatchDeps,
 } from "../../../../../src/application/use-cases/project/read-watch-snapshot.ts";
 import {
@@ -571,6 +572,7 @@ describe("readWatchSnapshot: quota panel", () => {
     freshness: "fresh",
     fiveHourLeft: 70,
     sevenDayLeft: 40,
+    fiveHourResetsAt: null,
     score: 40,
     blocked: [],
     blockedUntil: null,
@@ -578,40 +580,35 @@ describe("readWatchSnapshot: quota panel", () => {
     modelWindows: [],
     ...overrides,
   });
+  const THRESHOLDS = { minFiveHourLeftPercent: 10, minSevenDayLeftPercent: 10 };
+  const source = (read: () => Promise<readonly QuotaInput[]>) => ({
+    thresholds: THRESHOLDS,
+    read,
+  });
+  const rowsOf = async (inputs: QuotaInput[]) =>
+    (await readWatchSnapshot(deps({ quota: source(() => Promise.resolve(inputs)) }))).quota.rows;
 
   it("is not configured when the project has no quota source", async () => {
     const snapshot = await readWatchSnapshot(deps());
     expect(snapshot.quota).toEqual({ state: "not-configured", reason: null, rows: [] });
   });
 
-  it("makes one row per profile, Claude first then Codex, each by profile name", async () => {
-    const snapshot = await readWatchSnapshot(
-      deps({
-        quota: () =>
-          Promise.resolve([
-            { tool: "codex", verdict: verdict({ profileId: "codex-b" }) },
-            {
-              tool: "claude",
-              verdict: verdict({
-                profileId: "claude-b",
-                fiveHourLeft: 8,
-                blocked: ["FIVE_HOUR_BELOW_THRESHOLD"],
-              }),
-            },
-            { tool: "claude", verdict: verdict({ profileId: "claude-a" }) },
-            { tool: "codex", verdict: verdict({ profileId: "codex-a" }) },
-          ]),
-      }),
-    );
-    expect(snapshot.quota.state).toBe("ok");
-    expect(snapshot.quota.rows.map((row) => `${row.tool}/${row.profile}`)).toEqual([
+  it("makes one row per profile, Claude then Codex then unknown tools, each by profile name", async () => {
+    const rows = await rowsOf([
+      { tool: "unknown", verdict: verdict({ profileId: "ghost" }) },
+      { tool: "codex", verdict: verdict({ profileId: "codex-b" }) },
+      { tool: "claude", verdict: verdict({ profileId: "claude-b" }) },
+      { tool: "claude", verdict: verdict({ profileId: "claude-a" }) },
+      { tool: "codex", verdict: verdict({ profileId: "codex-a" }) },
+    ]);
+    expect(rows.map((row) => `${row.tool}/${row.profile}`)).toEqual([
       "claude/claude-a",
       "claude/claude-b",
       "codex/codex-a",
       "codex/codex-b",
+      "unknown/ghost",
     ]);
-    expect(snapshot.quota.rows[1]).toMatchObject({ fiveHourLeft: 8, severity: "critical" });
-    expect(snapshot.quota.rows[0]).toMatchObject({
+    expect(rows[0]).toMatchObject({
       fiveHourLeft: 70,
       sevenDayLeft: 40,
       severity: "ok",
@@ -619,24 +616,46 @@ describe("readWatchSnapshot: quota panel", () => {
     });
   });
 
+  it("grades severity with the shared rule: low under the threshold, critical under half or at the limit", async () => {
+    const rows = await rowsOf([
+      { tool: "claude", verdict: verdict({ profileId: "a", fiveHourLeft: 8 }) },
+      { tool: "claude", verdict: verdict({ profileId: "b", fiveHourLeft: 4 }) },
+      {
+        tool: "claude",
+        verdict: verdict({ profileId: "c", blocked: ["LIMIT_REACHED"] }),
+      },
+      { tool: "claude", verdict: verdict({ profileId: "d", sevenDayLeft: 9 }) },
+    ]);
+    expect(rows.map((row) => row.severity)).toEqual(["low", "critical", "critical", "low"]);
+  });
+
+  it("passes the five-hour reset through as a local HH:MM, and null when unknown", async () => {
+    const at = new Date(NOW + 3_600_000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const rows = await rowsOf([
+      {
+        tool: "claude",
+        verdict: verdict({ profileId: "a", fiveHourResetsAt: at.getTime() }),
+      },
+      { tool: "claude", verdict: verdict({ profileId: "b" }) },
+    ]);
+    expect(rows[0]?.resetText).toBe(`${pad(at.getHours())}:${pad(at.getMinutes())}`);
+    expect(rows[1]?.resetText).toBeNull();
+  });
+
   it("shows a profile with no reading as unknown, never as 0 or as fine", async () => {
-    const snapshot = await readWatchSnapshot(
-      deps({
-        quota: () =>
-          Promise.resolve([
-            {
-              tool: "claude",
-              verdict: verdict({
-                fiveHourLeft: null,
-                sevenDayLeft: null,
-                freshness: "unknown",
-                score: null,
-              }),
-            },
-          ]),
-      }),
-    );
-    expect(snapshot.quota.rows[0]).toMatchObject({
+    const rows = await rowsOf([
+      {
+        tool: "claude",
+        verdict: verdict({
+          fiveHourLeft: null,
+          sevenDayLeft: null,
+          freshness: "unknown",
+          score: null,
+        }),
+      },
+    ]);
+    expect(rows[0]).toMatchObject({
       fiveHourLeft: null,
       sevenDayLeft: null,
       severity: "unknown",
@@ -645,7 +664,7 @@ describe("readWatchSnapshot: quota panel", () => {
 
   it("keeps the runtime cards and marks the quota unavailable when the read fails", async () => {
     const snapshot = await readWatchSnapshot(
-      deps({ quota: () => Promise.reject(new Error("token sk-secret expired")) }),
+      deps({ quota: source(() => Promise.reject(new Error("token sk-secret expired"))) }),
     );
     expect(snapshot.tasks).toHaveLength(1);
     expect(snapshot.quota).toEqual({ state: "unavailable", reason: "QUOTA_READ_FAILED", rows: [] });
@@ -658,10 +677,10 @@ describe("readWatchSnapshot: quota panel", () => {
     const read = createWatchSnapshotReader(
       deps({
         now: () => now,
-        quota: () => {
+        quota: source(() => {
           reads += 1;
           return Promise.resolve([{ tool: "codex" as const, verdict: verdict() }]);
-        },
+        }),
       }),
     );
     for (let poll = 0; poll < 12; poll += 1) {

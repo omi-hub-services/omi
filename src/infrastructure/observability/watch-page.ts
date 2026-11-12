@@ -67,7 +67,7 @@ main{padding-top:0}
 .skip{position:absolute;top:8px;left:8px;transform:translateY(-200%);background:var(--surface);color:var(--ink);padding:12px;z-index:1}.skip:focus{transform:none}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 @media(max-width:1359px){.board{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:749px){.quota-row{min-width:0;grid-template-columns:70px 1fr 1fr;row-gap:2px;padding:4px 0}.quota-row>:nth-child(2){grid-column:span 2}.quota-row>:nth-child(3){grid-column:1/-1}}
+@media(max-width:760px){.quota-row{min-width:0;grid-template-columns:70px 1fr 1fr;row-gap:2px;padding:4px 0}.quota-row>:nth-child(2){grid-column:span 2}.quota-row>:nth-child(3){grid-column:1/-1}}
 @media(max-width:699px){.card-body{overflow-x:auto}.flow{width:auto;max-width:none}}
 @media(max-width:899px){h3{white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.context-toggle summary{display:flex;align-items:center;padding:0}.board{grid-template-columns:minmax(0,1fr)}.page-header,main,.page-footer{padding-left:12px;padding-right:12px}.totals{margin-left:0;flex-wrap:wrap}.context-toggle summary{min-height:44px;font-size:14px}.card-footer{font-size:14px}.quota-row{font-size:14px}.chip,.context-toggle p,.context-toggle h4{font-size:14px}.notice,.meta{font-size:14px}.flow text{font-size:16px}}
 @media(prefers-reduced-motion:reduce){*{animation:none;transition:none;scroll-behavior:auto}}
@@ -90,6 +90,8 @@ var HEADS={forward:'',return:' return-head',branch:' branch-head',ask:' ask-head
 var openKeys={};
 var focusKeys=new WeakMap();
 var last=null;
+var bodies={};
+var saved={};
 function pick(list,value,fallback){return list.indexOf(value)>=0?value:fallback;}
 function num(value){return typeof value==='number'&&isFinite(value)?value:0;}
 function text(value,fallback){return typeof value==='string'&&value!==''?value:fallback;}
@@ -187,6 +189,18 @@ function drawContext(card,task,key,title){
  list(task.notes).forEach(function(note){add(details,'p',note);});
  return summary;
 }
+function placeDiagram(body,layout,key,task){
+ // A diagram that fits needs no tab stop; one that scrolls is a keyboard-reachable region that
+ // keeps the reader's position, and opens on the current step the first time it is drawn.
+ bodies[key]=body;
+ if(!(num(body.scrollWidth)>num(body.clientWidth)))return;
+ body.setAttribute('tabindex','0');body.setAttribute('role','region');
+ body.setAttribute('aria-label','Workflow diagram of '+text(task.planKey,'task '+num(task.issueNumber))+'; scroll horizontally');
+ if(saved[key]!==undefined){body.scrollLeft=saved[key];return;}
+ var nodes=Array.isArray(layout.nodes)?layout.nodes:[];
+ var current=nodes.filter(function(n){return n.current===true&&n.shape;})[0];
+ if(current)body.scrollLeft=Math.max(0,num(current.shape.x)+num(current.shape.w)/2-num(body.clientWidth)/2);
+}
 function drawTask(parent,task,index){
  var layout=task.layout||{};
  var tone=pick(TONES,layout.tone,'work');
@@ -198,8 +212,8 @@ function drawTask(parent,task,index){
  add(head,'span',text(task.planKey,'#'+num(task.issueNumber)),'key');
  var h3=add(head,'h3',title);h3.setAttribute('id','task-'+index);
  var body=add(card,'div',null,'card-body');
- body.setAttribute('tabindex','0');body.setAttribute('role','region');body.setAttribute('aria-label','Workflow diagram of '+text(task.planKey,'task '+num(task.issueNumber))+'; scroll horizontally on narrow screens');
  drawFlow(body,layout);
+ placeDiagram(body,layout,key,task);
  add(card,'footer',footerText(task,tone),'card-footer');
  return drawContext(card,task,key,title);
 }
@@ -237,6 +251,9 @@ function drawTotals(tasks){
 function render(snapshot){
  var focused=doc.activeElement?focusKeys.get(doc.activeElement):undefined;
  var tasks=Array.isArray(snapshot.tasks)?snapshot.tasks:[];
+ saved={};
+ Object.keys(bodies).forEach(function(k){saved[k]=bodies[k].scrollLeft;});
+ bodies={};
  drawTotals(tasks);
  drawQuota(snapshot.quota);
  tasksEl.replaceChildren();

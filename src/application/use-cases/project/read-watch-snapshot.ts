@@ -4,7 +4,11 @@ import {
   buildWorkflowDiagram,
   compareLoadedSkills,
 } from "../../../domain/workflows/workflow-diagram.js";
-import type { QuotaVerdict } from "../../../domain/profiles/quota-policy.js";
+import {
+  quotaSeverity,
+  type QuotaThresholds,
+  type QuotaVerdict,
+} from "../../../domain/profiles/quota-policy.js";
 import type { Hold } from "../../../domain/workflows/workflow-diagram.js";
 import { layoutWorkflowDiagram } from "../../../domain/workflows/workflow-diagram-layout.js";
 import { CONTRACT_SCHEMA_VERSION } from "../../contracts/schema-version.js";
@@ -27,14 +31,20 @@ export interface WatchDeps {
   /** Optional: failed reads keep the last good board data; runtime cards remain available. */
   readonly board?: GithubTaskList | undefined;
   /** Subscription quota per profile, without spending a call; absent when the project has none. */
-  readonly quota?: (() => Promise<readonly QuotaInput[]>) | undefined;
+  readonly quota?: QuotaSource | undefined;
   /** Ids of the rules every worker gets; absent when the catalog is not at hand. */
   readonly mandatoryRules?: readonly string[] | undefined;
   readonly now: () => number;
 }
 
+export interface QuotaSource {
+  /** The policy's thresholds, for the shared severity rule. */
+  readonly thresholds: Pick<QuotaThresholds, "minFiveHourLeftPercent" | "minSevenDayLeftPercent">;
+  read(): Promise<readonly QuotaInput[]>;
+}
+
 export interface QuotaInput {
-  readonly tool: "claude" | "codex";
+  readonly tool: "claude" | "codex" | "unknown";
   readonly verdict: QuotaVerdict;
 }
 
@@ -150,26 +160,35 @@ function elapsedSeconds(startedAt: string, now: number): number | null {
   return Number.isNaN(started) ? null : Math.max(0, Math.floor((now - started) / 1000));
 }
 
-function quotaRows(inputs: readonly QuotaInput[]): QuotaRow[] {
+const pad = (n: number) => String(n).padStart(2, "0");
+const clock = (epochMs: number) => {
+  const at = new Date(epochMs);
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+};
+const TOOL_RANK = { claude: 0, codex: 1, unknown: 2 } as const;
+
+function quotaRows(inputs: readonly QuotaInput[], source: QuotaSource): QuotaRow[] {
   return inputs
     .map(({ tool, verdict }): QuotaRow => {
-      const unknown = verdict.fiveHourLeft === null && verdict.sevenDayLeft === null;
       return {
         tool,
         profile: verdict.profileId,
         fiveHourLeft: verdict.fiveHourLeft,
         sevenDayLeft: verdict.sevenDayLeft,
-        resetText: null,
-        severity: unknown ? "unknown" : verdict.blocked.length > 0 ? "critical" : "ok",
+        resetText: verdict.fiveHourResetsAt === null ? null : clock(verdict.fiveHourResetsAt),
+        severity: quotaSeverity(
+          {
+            fiveHourLeft: verdict.fiveHourLeft,
+            sevenDayLeft: verdict.sevenDayLeft,
+            limited: verdict.blocked.includes("LIMIT_REACHED"),
+          },
+          source.thresholds,
+        ),
         freshness: verdict.freshness,
         note: null,
       };
     })
-    .sort(
-      (a, b) =>
-        Number(a.tool === "codex") - Number(b.tool === "codex") ||
-        a.profile.localeCompare(b.profile),
-    );
+    .sort((a, b) => TOOL_RANK[a.tool] - TOOL_RANK[b.tool] || a.profile.localeCompare(b.profile));
 }
 
 /**
@@ -189,9 +208,9 @@ export function createWatchSnapshotReader(deps: WatchDeps): () => Promise<WatchS
       : { state: "loading", reason: null, rows: [] };
   let nextQuotaReadAt = -Infinity;
   let quotaRefresh: Promise<void> | undefined;
-  const refreshQuota = async (read: () => Promise<readonly QuotaInput[]>) => {
+  const refreshQuota = async (source: QuotaSource) => {
     try {
-      quota = { state: "ok", reason: null, rows: quotaRows(await read()) };
+      quota = { state: "ok", reason: null, rows: quotaRows(await source.read(), source) };
     } catch {
       // never the error text: it may carry a token or a response body
       quota = { state: "unavailable", reason: "QUOTA_READ_FAILED", rows: [] };

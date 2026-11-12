@@ -47,11 +47,13 @@ export interface TaskCard {
   readonly notes: readonly string[];
 }
 
-export type QuotaSeverity = "ok" | "low" | "critical" | "unknown";
+export type { QuotaSeverity } from "../../domain/profiles/quota-policy.js";
+import type { QuotaSeverity } from "../../domain/profiles/quota-policy.js";
 
 /** What one subscription profile has left. A window that was not read is null, never 0. */
 export interface QuotaRow {
-  readonly tool: "claude" | "codex";
+  /** `unknown`: a verdict for a profile the registry does not list; shown, never dropped. */
+  readonly tool: "claude" | "codex" | "unknown";
   readonly profile: string;
   /** Share (%) left of each window. */
   readonly fiveHourLeft: number | null;
