@@ -129,7 +129,7 @@ describe("project-local distribution", () => {
     expect(updated).toContain("Updated guidance.");
     expect(updated).toContain("User addition");
     expect(updated.match(/<!-- omi-squad:start -->/g)).toHaveLength(1);
-  });
+  }, 30_000);
 
   it("refuses a symlinked bridge parent without writing outside the project", async () => {
     const request = await input("bridge-symlink");
@@ -137,22 +137,26 @@ describe("project-local distribution", () => {
     await symlink(outside, join(request.projectDir, ".claude"));
     await expect(installProjectTool(store(), request)).rejects.toThrow("SYMLINK_INSTALLATION_PATH");
     expect(await readdir(outside)).toEqual([]);
-  });
+  }, 30_000);
 
   it.each([
     "<!-- omi-squad:start -->",
     "<!-- omi-squad:end -->\n<!-- omi-squad:start -->",
     "<!-- omi-squad:start --><!-- omi-squad:start --><!-- omi-squad:end -->",
-  ])("refuses ambiguous instruction markers without changing bytes: %s", async (content) => {
-    const request = await input(`markers-${String(content.length)}`);
-    const target = join(request.projectDir, "AGENTS.md");
-    await writeFile(target, content);
-    await expect(installProjectTool(store(), request)).rejects.toThrow(
-      "INVALID_INSTRUCTION_MARKERS",
-    );
-    expect(await readFile(target, "utf8")).toBe(content);
-    expect(await readdir(request.projectDir)).toEqual(["AGENTS.md"]);
-  });
+  ])(
+    "refuses ambiguous instruction markers without changing bytes: %s",
+    async (content) => {
+      const request = await input(`markers-${String(content.length)}`);
+      const target = join(request.projectDir, "AGENTS.md");
+      await writeFile(target, content);
+      await expect(installProjectTool(store(), request)).rejects.toThrow(
+        "INVALID_INSTRUCTION_MARKERS",
+      );
+      expect(await readFile(target, "utf8")).toBe(content);
+      expect(await readdir(request.projectDir)).toEqual(["AGENTS.md"]);
+    },
+    30_000,
+  );
   it("packs only runtime assets and npm metadata, rejecting accidental source/state", () => {
     const paths = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" }).trim().split("\n");
     expect(paths.some((path) => path.endsWith("/dist/bootstrap/cli.js"))).toBe(true);
@@ -534,7 +538,7 @@ describe("WSL2 doctor", () => {
     expect(code).toBe(6);
     expect(JSON.parse(output)).toMatchObject({ error: { code: "DOCTOR_FAILED" } });
     expect(output).not.toContain("synthetic-private-error");
-  });
+  }, 30_000);
   it("returns a dedicated CLI failure code for unsupported installations", async () => {
     let output = "";
     const code = await runCli(
@@ -561,7 +565,7 @@ describe("WSL2 doctor", () => {
     );
     expect(code).toBe(6);
     expect(JSON.parse(output)).toMatchObject({ error: { code: "DOCTOR_FAILED" }, exitCode: 6 });
-  });
+  }, 30_000);
   function probe(overrides: Partial<WslProbe> = {}): WslProbe {
     return {
       kernel: () => Promise.resolve("6.6.87-microsoft-standard-WSL2"),

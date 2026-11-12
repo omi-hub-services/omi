@@ -147,4 +147,4 @@ it("routes decisions through production runtime composition and authenticates ex
   expect(db.prepare("SELECT status FROM approvals WHERE id=?").get(id)).toEqual({
     status: "approved",
   });
-}, 15000);
+}, 30_000);

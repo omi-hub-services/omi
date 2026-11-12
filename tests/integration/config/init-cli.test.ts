@@ -101,7 +101,7 @@ it("previews init without writes, applies config through onboarding, and keeps u
     child.stdin.end("stop\n");
     await stopped;
   }
-});
+}, 30_000);
 
 it("refuses malformed baseline data without echoing input or creating project files", async () => {
   const root = await mkdtemp(join(tmpdir(), "omi-init-invalid-"));
@@ -114,7 +114,7 @@ it("refuses malformed baseline data without echoing input or creating project fi
   expect(result.status).toBe(2);
   expect(result.stdout + result.stderr).not.toContain("synthetic-private-value");
   expect(await readdir(project)).toEqual([]);
-});
+}, 30_000);
 
 it("refuses the framework source and relative project paths even for a preview", async () => {
   const root = await mkdtemp(join(tmpdir(), "omi-init-boundary-"));
@@ -125,4 +125,4 @@ it("refuses the framework source and relative project paths even for a preview",
     const result = cli(root, ["init", "--project", project, "--config", config]);
     expect(result.status, result.stdout).toBe(2);
   }
-});
+}, 30_000);

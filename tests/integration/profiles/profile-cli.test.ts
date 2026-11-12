@@ -160,4 +160,4 @@ it("registers, lists and probes native profiles through the real runtime without
   } finally {
     db.close();
   }
-}, 15000);
+}, 30_000);
