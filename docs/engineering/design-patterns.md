@@ -287,3 +287,16 @@ Clock, ID generator và logger cũng là dependency khi ảnh hưởng determini
 | Packaging/init | Clean install, existing config preservation, no secret in artifact |
 
 Đây là engineering rules của omi-squad. Những phần tham khảo từ Superpowers/Taste/Ponytail/UI UX Pro Max phải được chuyển thể có chủ đích và ghi provenance; không để hướng dẫn bên ngoài tự thay đổi các quy tắc sản phẩm hoặc quyền PO.
+
+## Đối chiếu vận hành v0.1 (2026-11-13)
+
+Script-first có một nguồn: `templates/project/.omi-squad/rules/script-first.md` (mandatory:
+false); không copy policy vào prompt/CLI. Runtime và repo dùng chung policy theo ADR-0036.
+LLM phán đoán khi gate từ chối; không dùng raw git/gh để bỏ qua gate.
+
+§13 bước 8 dùng đầy đủ **2 + Architect + 2**: hai vòng quality fail → Architect phân tích →
+tối đa hai vòng nữa → blocked/báo PO. Lỗi vận hành dùng retry riêng, không tăng quality count.
+Nguồn: `src/domain/runs/rework-policy.ts`, architecture §9; repo procedure được quan sát bằng
+shared watch/rework policy, chưa tự động enforce bằng runtime state trong repo (ADR-0036).
+QA/review là fresh independent run trên revision cố định, không resume author để review.
+Chi tiết help và giới hạn live: [CLI verification](../operations/cli-verification.md).

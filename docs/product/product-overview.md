@@ -294,3 +294,19 @@ Các tài liệu dưới đây xác nhận nền tảng tích hợp, không ch�
 - [GitHub Projects API](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/using-the-api-to-manage-projects): quản lý project qua API.
 
 Các điểm bắt buộc kiểm chứng trước khi chốt release framework: profile subscription độc lập, khả năng phát hiện limit/model, lifecycle process WSL2, nhận diện đúng PO cho phê duyệt, và khả năng enforcement của repository/pipeline thực tế.
+
+## Trạng thái hành vi CLI v0.1 (đối chiếu 2026-11-13)
+
+Luồng §5 là mục tiêu sản phẩm; CLI hiện chạy từng bước `plan` → `dispatch` → `wait` →
+`worker-report` → `deliver`, không có `run`/`retry`/`sync`/`login` trong v0.1. Login thực hiện
+bằng native tool; registry dùng `profiles register/list/probe`. Install/update preview mặc định,
+chỉ ghi bằng `--apply`. `commit-worker` commit output attempt đã dừng; `review-comment` kiểm
+verdict độc lập trước khi post; đây không phải PO approval. Business approval yêu cầu snapshot
+đã import; deploy approval gắn digest/environment trong config (ADR-0037).
+
+Nguồn: `src/interfaces/cli/commands/`, `src/application/use-cases/tasks/store-task-snapshots.ts`,
+[handbook](../operations/handbook.md) và [bản ghi chạy CLI](../operations/cli-verification.md).
+Source repository dùng bridge bảo trì và tooling pin ngoài worktree (ADR-0036), không cài runtime
+vào source. Đường Windows/session, GitHub và subscription live không được lần đối chiếu offline
+này chứng nhận lại. Chu kỳ 2 + Architect + 2 của repo còn là procedure, không phải runtime state
+automatically enforced (ADR-0036).

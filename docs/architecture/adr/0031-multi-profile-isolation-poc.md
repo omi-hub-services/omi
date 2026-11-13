@@ -1,5 +1,7 @@
 # ADR-0031 — PoC: profile isolation, quota windows and continuation after a profile switch
 
+> Status note (2026-11-13 documentation reconciliation): “Future use case” and product-blocker wording below is historical PoC context. Production failover exists in `src/application/use-cases/profiles/failover-step.ts`; the Open decisions section records the PO resolutions. Real-limit end-to-end failover, Codex concurrent refresh and cross-profile failover are not newly proven by this audit.
+
 - Status: Accepted for Claude Code (two profiles, isolation and checkpoint continuation evidenced
   by live runs on 2026-11-11). **Codex profile-to-profile failover is not proven** (one Codex
   profile exists); see "Product blocker".

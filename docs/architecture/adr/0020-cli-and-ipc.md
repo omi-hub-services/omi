@@ -1,5 +1,7 @@
 # ADR-0020 — CLI (Commander) and versioned local IPC skeleton
 
+> Status note (2026-11-13 documentation reconciliation): The skeleton scope below describes OMI-011, not the current command inventory. Current commands are wired beyond status; doctor adds exit 6 without renumbering earlier exits. See [CLI verification](../../operations/cli-verification.md) and architecture §13. IPC v1 decisions remain unchanged.
+
 - Status: Accepted
 - Date: 2026-11-10
 - Issue: #13 (OMI-011), epic #8, milestone M1 — Core foundation

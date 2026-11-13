@@ -1,5 +1,7 @@
 # ADR-0037 — Approval subject sources and imported task snapshots
 
+> Status note (2026-11-13 documentation reconciliation): The sandbox `live-prep` example below is an intended setup integration, not an existing command: `tools/sandbox-setup/main.ts` currently accepts only github/local-state. importTask/storeTaskSnapshots exist for in-process integration before the runtime lease starts; there is no import CLI/IPC. Do not treat the example as an executable operator recipe.
+
 - Status: Accepted
 - Date: 2026-11-13
 - Issue: #196 (OMI-095), unblocks AC-3 of #49 (OMI-042)
