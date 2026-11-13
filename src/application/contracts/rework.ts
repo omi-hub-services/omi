@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { identifierSchema } from "./identifiers.js";
+import { identifierSchema, slugSchema } from "./identifiers.js";
+
+export const retryStepSchema = z.strictObject({
+  runId: identifierSchema,
+  stepId: slugSchema,
+  poDecisionId: identifierSchema.optional(),
+});
 
 export const reworkStateSchema = z.strictObject({
   phase: z.enum(["normal", "architect", "assisted", "blocked", "passed"]),
@@ -25,7 +31,23 @@ export const recordReworkEventSchema = z.strictObject({
       type: z.literal("architect_solution_accepted"),
       interventionId: identifierSchema,
       changesBusinessOrCost: z.boolean(),
-      approvalValid: z.boolean(),
+      approvalValid: z.boolean().default(false),
+      poDecisionId: identifierSchema.optional(),
+    }),
+    z.strictObject({ type: z.literal("architect_no_solution") }),
+    z.strictObject({ type: z.literal("po_reopened"), poDecisionId: identifierSchema }),
+  ]),
+});
+
+/** Public decisions only: workers cannot submit quality counters or attest approval validity. */
+export const reworkRecordSchema = z.strictObject({
+  runId: identifierSchema,
+  event: z.discriminatedUnion("type", [
+    z.strictObject({
+      type: z.literal("architect_solution_accepted"),
+      interventionId: identifierSchema,
+      changesBusinessOrCost: z.boolean(),
+      poDecisionId: identifierSchema.optional(),
     }),
     z.strictObject({ type: z.literal("architect_no_solution") }),
     z.strictObject({ type: z.literal("po_reopened"), poDecisionId: identifierSchema }),

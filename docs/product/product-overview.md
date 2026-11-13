@@ -298,8 +298,8 @@ Các điểm bắt buộc kiểm chứng trước khi chốt release framework: 
 ## Trạng thái hành vi CLI v0.1 (đối chiếu 2026-11-13)
 
 Luồng §5 là mục tiêu sản phẩm; CLI hiện chạy từng bước `plan` → `dispatch` → `wait` →
-`worker-report` → `deliver`, không có `run`/`retry`/`sync`/`login` trong v0.1. Login thực hiện
-bằng native tool; registry dùng `profiles register/list/probe`. Install/update preview mặc định,
+`worker-report` → `deliver`, `run` ghép plan/dispatch đầu tiên, `retry` qua gate rework/failover và approval (ADR-0040);
+`sync` chưa có trong v0.1. `login` hướng dẫn native login rồi probe; registry dùng `profiles register/list/probe`. Install/update preview mặc định,
 chỉ ghi bằng `--apply`. `commit-worker` commit output attempt đã dừng; `review-comment` kiểm
 verdict độc lập trước khi post; đây không phải PO approval. Business approval yêu cầu snapshot
 đã import; deploy approval gắn digest/environment trong config (ADR-0037).

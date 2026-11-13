@@ -6,6 +6,7 @@ import { mergeReleaseSchema } from "./release-merge.js";
 import { schemaVersionV1 } from "./schema-version.js";
 import { registerProfileSchema } from "./profile-metadata.js";
 import { importTaskSelectionSchema } from "./task-import.js";
+import { retryStepSchema, reworkRecordSchema } from "./rework.js";
 
 const envelope = { schemaVersion: schemaVersionV1 };
 
@@ -26,6 +27,8 @@ export const commandSchema = z
     requestApprovalSchema.extend({ command: z.literal("approval.request") }),
     listApprovalsSchema.extend({ ...envelope, command: z.literal("approval.list") }),
     recordApprovalSchema.extend({ command: z.literal("approval.decide") }),
+    retryStepSchema.extend({ ...envelope, command: z.literal("retry") }),
+    reworkRecordSchema.extend({ ...envelope, command: z.literal("rework.record") }),
     z.strictObject({
       ...envelope,
       command: z.literal("plan"),

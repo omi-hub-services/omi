@@ -48,31 +48,35 @@ export function registerApprovalCommands(program: Command, context: CliContext):
       "create a pending approval request for a trusted subject; it never records a decision",
     )
     .requiredOption("--kind <kind>", "business or deploy")
-    .action(async (subjectId: string, options: { kind: string }, command: Command) => {
-      const globals = command.optsWithGlobals<GlobalOptions>();
-      const format = formatOf(globals);
-      const parsed = requestApprovalSchema.safeParse({
-        schemaVersion: 1,
-        subjectId,
-        kind: options.kind,
-      });
-      if (!parsed.success || (parsed.data.kind !== "business" && parsed.data.kind !== "deploy")) {
+    .option("--run <id>", "bind the request to a workflow run (required for retry authorization)")
+    .action(
+      async (subjectId: string, options: { kind: string; run?: string }, command: Command) => {
+        const globals = command.optsWithGlobals<GlobalOptions>();
+        const format = formatOf(globals);
+        const parsed = requestApprovalSchema.safeParse({
+          schemaVersion: 1,
+          subjectId,
+          kind: options.kind,
+          ...(options.run === undefined ? {} : { runId: options.run }),
+        });
+        if (!parsed.success || (parsed.data.kind !== "business" && parsed.data.kind !== "deploy")) {
+          context.emit(
+            presentUsageError("invalid approval subject id or --kind business|deploy", format),
+          );
+          return;
+        }
+        const outcome = await context.sendCommand({
+          socketPath: globals.socket ?? context.defaultSocketPath,
+          timeoutMs: context.timeoutMs,
+          command: { ...parsed.data, command: "approval.request" },
+        });
         context.emit(
-          presentUsageError("invalid approval subject id or --kind business|deploy", format),
+          outcome.ok
+            ? presentSuccess(outcome.result, approvalRequestText(outcome.result), format)
+            : presentFailure(outcome.error, format),
         );
-        return;
-      }
-      const outcome = await context.sendCommand({
-        socketPath: globals.socket ?? context.defaultSocketPath,
-        timeoutMs: context.timeoutMs,
-        command: { ...parsed.data, command: "approval.request" },
-      });
-      context.emit(
-        outcome.ok
-          ? presentSuccess(outcome.result, approvalRequestText(outcome.result), format)
-          : presentFailure(outcome.error, format),
-      );
-    });
+      },
+    );
   approvals
     .command("decide <approval-id>")
     .requiredOption("--expected-version <version>", "expected request version")
