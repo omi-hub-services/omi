@@ -147,7 +147,8 @@ query($owner: String!, $repo: String!, $number: Int!, $project: Int!) {
   organization(login: $owner) { projectV2(number: $project) { id
     field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } } }
   repository(owner: $owner, name: $repo) { issue(number: $number) { state body
-    blockedBy(first: 20) { totalCount nodes { number state } }
+    # ponytail: 100 is GitHub's page ceiling; more blockers stay blockersTruncated and refuse.
+    blockedBy(first: 100) { totalCount nodes { number state } }
     labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
     comments(last: 100) { nodes { body } }
     timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 30) { nodes {

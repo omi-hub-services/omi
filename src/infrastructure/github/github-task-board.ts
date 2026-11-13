@@ -31,8 +31,9 @@ const ITEM_FIELDS = `id
   ${select("role", "Role")}
   ${select("area", "Area")}
   planKey: fieldValueByName(name: "Plan Key") { ... on ProjectV2ItemFieldTextValue { text } }`;
+// ponytail: 100 is GitHub's page ceiling; more blockers stay blockersTruncated and refuse.
 const ISSUE_FIELDS = `number state body milestone { title }
-  blockedBy(first: 50) { totalCount nodes { number state } }`;
+  blockedBy(first: 100) { totalCount nodes { number state } }`;
 const issueQuery = `query BoardIssue($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { issue(number: $number) {
     ${ISSUE_FIELDS}

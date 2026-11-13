@@ -29,11 +29,13 @@ function context(issues: Fake[]) {
     area: select("domain"),
     planKey: { text: key(i.number) },
   });
+  // Like GitHub, return at most the `first: N` the query asked for.
+  let limit = Infinity;
   const blockedBy = (i: Fake) => ({
     totalCount: (i.blockers ?? []).length,
-    nodes: i.blockers ?? [],
+    nodes: (i.blockers ?? []).slice(0, limit),
   });
-  const snapshot = {
+  const snapshot = () => ({
     organization: {
       projectV2: {
         title: "Project",
@@ -55,7 +57,7 @@ function context(issues: Fake[]) {
       },
     },
     repository: { pullRequests: { nodes: [] } },
-  };
+  });
   const issueData = (number: number) => {
     const i = issues.find((x) => x.number === number);
     return {
@@ -87,7 +89,8 @@ function context(issues: Fake[]) {
   const run: Runner = (command) => {
     seen.push(command);
     let data: unknown = {};
-    if (command.file === "gh" && command.input?.includes("pullRequests")) data = snapshot;
+    limit = Number(/blockedBy\(first: (\d+)/.exec(command.input ?? "")?.[1] ?? Infinity);
+    if (command.file === "gh" && command.input?.includes("pullRequests")) data = snapshot();
     else if (command.file === "gh" && command.input?.includes("projectItems")) {
       const variables = JSON.parse(command.input) as { variables: { number: number } };
       data = issueData(variables.variables.number);
@@ -122,6 +125,31 @@ describe("flow promote", () => {
     expect(await main(["promote", "70"], again.ctx)).toBe(0);
     expect(writes(again.seen)).toHaveLength(0);
     expect(logs()).toContain("done:");
+  });
+
+  const blockersOf = (count: number, open = 0) =>
+    Array.from({ length: count }, (_, k) => ({
+      number: k + 1,
+      state: k < open ? "OPEN" : "CLOSED",
+    }));
+
+  it("promote N moves an Issue with more than 20 closed blockers to Ready", async () => {
+    const { ctx, seen } = context([{ number: 55, status: "Backlog", blockers: blockersOf(27) }]);
+    expect(await main(["promote", "55"], ctx)).toBe(0);
+    expect(writes(seen)).toHaveLength(1);
+  });
+
+  it("promote N still refuses an open blocker among more than 20", async () => {
+    const { ctx, seen } = context([{ number: 55, status: "Backlog", blockers: blockersOf(27, 1) }]);
+    expect(await main(["promote", "55"], ctx)).toBe(1);
+    expect(writes(seen)).toHaveLength(0);
+  });
+
+  it("promote N still refuses when more than 100 blockers remain unread", async () => {
+    const { ctx, seen } = context([{ number: 55, status: "Backlog", blockers: blockersOf(101) }]);
+    expect(await main(["promote", "55"], ctx)).toBe(1);
+    expect(errors()).toContain("more blockers than could be read");
+    expect(writes(seen)).toHaveLength(0);
   });
 
   it.each([

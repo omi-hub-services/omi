@@ -18,7 +18,8 @@ import {
   type JsonObject,
 } from "./json-shape.ts";
 
-const BLOCKER_PAGE = 20;
+// ponytail: 100 is GitHub's page ceiling; more blockers stay blockersTruncated and count as blocked.
+const BLOCKER_PAGE = 100;
 
 const ITEM_FIELDS = `
   pageInfo { hasNextPage endCursor }

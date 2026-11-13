@@ -9,6 +9,7 @@ import {
   linkedIssue,
   parseSnapshotPage,
   partitionReady,
+  SNAPSHOT_QUERY,
   summarizeChecks,
   type CheckContext,
   type ProjectItem,
@@ -223,6 +224,12 @@ describe("findMismatches", () => {
         item({ number: 3, status: "Done", state: "CLOSED" }),
       ]),
     ).toEqual(["#1 is Done but open", "#2 is closed but Status is Ready"]);
+  });
+});
+
+describe("SNAPSHOT_QUERY", () => {
+  it("reads up to 100 blockers per Issue so 21 to 100 closed blockers are not truncated", () => {
+    expect(SNAPSHOT_QUERY).toContain("blockedBy(first: 100)");
   });
 });
 
