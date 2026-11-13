@@ -12,6 +12,7 @@ import {
   parsePromptText,
   readPrompts,
   taskLine,
+  workerPrompt,
   type StepInput,
   type TasksRead,
 } from "../../../../tools/coordinator/watch-tasks.ts";
@@ -350,6 +351,26 @@ describe("parsePromptProbe / readPrompts", () => {
     });
   });
 
+  it("keeps the info of each packet file of a task under its file name (OMI-111)", () => {
+    const out = [
+      "@@prompt 074",
+      "# Workflow feature · step review · role reviewer",
+      "## Skill: independent-review",
+      "@@packet omi-074-prompt-review-1.md",
+      "# Workflow feature · step review · role reviewer",
+      "## Skill: independent-review",
+      "@@packet omi-074-prompt-verify-1.md",
+      "# Workflow feature · step verify · role qa",
+      "## Skill: qa-verification",
+      "@@packet ../etc-passwd",
+    ].join("\n");
+    const probe = parsePromptProbe(out);
+    expect(probe["omi-074-prompt-review-1.md"]?.skills).toEqual(["independent-review"]);
+    expect(probe["omi-074-prompt-verify-1.md"]?.skills).toEqual(["qa-verification"]);
+    expect(probe["omi-074-prompt-verify-1.md"]?.header?.step).toBe("verify");
+    expect(Object.keys(probe)).toHaveLength(3);
+  });
+
   it("runs one WSL command for validated plan keys and degrades to {} on failure", async () => {
     const seen: Command[] = [];
     const ok = await readPrompts(
@@ -363,7 +384,9 @@ describe("parsePromptProbe / readPrompts", () => {
     expect(ok).toEqual({ "OMI-074": null });
     expect(seen).toHaveLength(1);
     const payload = seen[0]?.args.at(-1) ?? "";
-    expect(payload).toContain("omi-$n-prompt.md");
+    expect(payload).toContain("omi-$n-prompt*.md");
+    expect(payload).toContain("omi-$n-resume*.md");
+    expect(payload).toContain("@@packet");
     expect(payload).toContain("074");
     expect(payload).toContain("# Workflow ");
     expect(payload).toContain("## Rule: ");
@@ -767,6 +790,48 @@ describe("template position, worker step and hold of a task view", () => {
       prompts: { "OMI-074": header("ready-to-merge", "qa") },
     });
     expect(gate.workerStep).toBeNull();
+  });
+
+  describe("parallel workers of one task (OMI-111)", () => {
+    const info = (skill: string, step: string, role: string) => ({
+      skills: [skill],
+      rules: ["project-baseline"],
+      mandatoryRules: ["project-baseline"],
+      header: { workflow: "feature", step, role },
+    });
+    const prompts = {
+      "OMI-074": info("independent-review", "review", "reviewer"), // the newest packet of the task
+      "omi-074-prompt-verify-1.md": info("qa-verification", "verify", "qa"),
+      "omi-074-prompt-review-1.md": info("independent-review", "review", "reviewer"),
+    };
+    const qaWorker = { ...worker, pid: 11, packet: "omi-074-prompt-verify-1.md" };
+    const reviewWorker = { ...worker, pid: 12, packet: "omi-074-prompt-review-1.md" };
+
+    it("shows the skills and step of the packet the worker reads, not the newest one", async () => {
+      const t = await card("feature", {}, [qaWorker, reviewWorker], { prompts });
+      expect(t.worker?.pid).toBe(11);
+      expect(t.prompt?.skills).toEqual(["qa-verification"]);
+      expect(t.workerStep).toEqual({ step: "verify", role: "qa" });
+    });
+
+    it("shows the other worker's own packet when it is the one found", async () => {
+      const t = await card("feature", {}, [reviewWorker, qaWorker], { prompts });
+      expect(t.worker?.pid).toBe(12);
+      expect(t.prompt?.skills).toEqual(["independent-review"]);
+      expect(t.workerStep).toEqual({ step: "review", role: "reviewer" });
+    });
+
+    it("adds the resume packet's skills to the full packet of the same step and attempt", () => {
+      const merged = workerPrompt(
+        {
+          ...prompts,
+          "omi-074-resume-verify-1.md": info("receiving-code-review", "verify", "qa"),
+        },
+        "omi-074-resume-verify-1.md",
+      );
+      expect(merged?.skills).toEqual(["qa-verification", "receiving-code-review"]);
+      expect(workerPrompt(prompts, "omi-074-prompt-gone-1.md")).toBeNull();
+    });
   });
 
   it("ignores the header when no worker runs, because the prompt file may be an old step's", async () => {

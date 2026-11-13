@@ -30,7 +30,7 @@ import {
   type TemplatePos,
   type TemplateRead,
 } from "./watch-workflow.ts";
-import type { WorkerProcess, Workers } from "./wsl-workers.ts";
+import { PACKET_FILE, type WorkerProcess, type Workers } from "./wsl-workers.ts";
 
 export type Step =
   | "Start"
@@ -319,16 +319,25 @@ export function parsePromptText(text: string): PromptInfo {
 
 const PLAN_KEY = /^OMI-(\d{1,4})$/;
 
-/** One bash payload: per task, the matching lines of its prompt, never the prompt itself. */
+/**
+ * One bash payload: per task, the matching lines of its newest full packet (`@@prompt`) and of
+ * each of its recent packet files by name (`@@packet`, OMI-111), never the packets themselves.
+ */
 function promptPayload(numbers: readonly string[]): string {
   const grep = `grep -E '^(# Workflow |## Skill: |## Rule: )'`;
+  const d = `$HOME/${RUNS_DIR_FROM_HOME}`;
   return (
-    `for n in ${numbers.join(" ")}; do f=$HOME/${RUNS_DIR_FROM_HOME}/omi-$n-prompt.md; ` +
-    `if [ -f $f ]; then echo @@prompt $n; ${grep} $f | head -n 80; else echo @@missing $n; fi; done`
+    `for n in ${numbers.join(" ")}; do f=$(ls -t ${d}/omi-$n-prompt*.md 2>/dev/null | head -n 1); ` +
+    `if [ -n $f ]; then echo @@prompt $n; ${grep} $f | head -n 80; else echo @@missing $n; fi; ` +
+    `for g in $(ls -t ${d}/omi-$n-prompt*.md ${d}/omi-$n-resume*.md 2>/dev/null | head -n 8); ` +
+    `do echo @@packet $(basename $g); ${grep} $g | head -n 80; done; done`
   );
 }
 
-/** Pure: plan key → prompt info, or null when the task has no prompt file. */
+/**
+ * Pure: plan key → prompt info of the task's newest full packet, or null when it has none; each
+ * packet file name → its own info.
+ */
 export function parsePromptProbe(stdout: string): Record<string, PromptInfo | null> {
   const out: Record<string, PromptInfo | null> = {};
   let key: string | null = null;
@@ -339,10 +348,12 @@ export function parsePromptProbe(stdout: string): Record<string, PromptInfo | nu
     lines = [];
   };
   for (const line of stdout.split("\n")) {
-    const m = /^@@(prompt|missing) (\d{1,4})$/.exec(line.trim());
+    const m = /^@@(prompt|missing|packet) (\d{1,4}|\S+)$/.exec(line.trim());
     if (m?.[1] && m[2]) {
       flush();
-      if (m[1] === "missing") out[`OMI-${m[2]}`] = null;
+      if (m[1] === "packet") key = PACKET_FILE.test(m[2]) ? m[2] : null;
+      else if (!/^\d{1,4}$/.test(m[2])) key = null;
+      else if (m[1] === "missing") out[`OMI-${m[2]}`] = null;
       else key = `OMI-${m[2]}`;
     } else if (key !== null) lines.push(line);
   }
@@ -504,6 +515,24 @@ function roleFor(step: Step, projectRole: string | null): string {
   }
 }
 
+/** A resume's packet adds its follow-up skills/rules to the full packet of the same step and attempt. */
+export function workerPrompt(
+  prompts: Readonly<Record<string, PromptInfo | null>>,
+  packet: string,
+): PromptInfo | null {
+  const own = prompts[packet] ?? null;
+  if (!packet.includes("-resume-")) return own;
+  const full = prompts[packet.replace("-resume-", "-prompt-")] ?? null;
+  if (full === null) return own;
+  const merge = (a: readonly string[], b: readonly string[]) => [...new Set([...a, ...b])];
+  return {
+    skills: merge(full.skills, own?.skills ?? []),
+    rules: merge(full.rules, own?.rules ?? []),
+    mandatoryRules: merge(full.mandatoryRules, own?.mandatoryRules ?? []),
+    header: full.header ?? own?.header ?? null,
+  };
+}
+
 function taskView(
   item: ProjectItem,
   read: Extract<TasksRead, { available: true }>,
@@ -529,7 +558,12 @@ function taskView(
     lookup = process ? { kind: "running" } : { kind: "none" };
   }
 
-  const prompt = planKey !== null && planKey in read.prompts ? read.prompts[planKey] : undefined;
+  const taskPrompt =
+    planKey !== null && planKey in read.prompts ? read.prompts[planKey] : undefined;
+  // A running worker shows the packet it reads, not the task's newest one (OMI-111).
+  const prompt = process?.packet
+    ? (workerPrompt(read.prompts, process.packet) ?? taskPrompt)
+    : taskPrompt;
   const comments = pull?.comments ?? [];
   const derived = deriveStep({
     status: item.status,
@@ -567,8 +601,8 @@ function taskView(
       stands === "unknown"
         ? { kind: "unknown", reason: derived.reason ?? "step unknown" }
         : mapTemplatePos(template, stands);
-    // The prompt file is overwritten at every dispatch, so it names the running worker's step; with
-    // no worker running it may belong to an older step and is ignored. Nothing is guessed.
+    // The packet the running worker reads names its step; with no worker running the newest packet
+    // may belong to an older step and is ignored. Nothing is guessed.
     const header = process !== null && prompt ? prompt.header : null;
     const named =
       header !== null && header.workflow === template.id

@@ -91,6 +91,25 @@ describe("planRetention (root)", () => {
     ]);
   });
 
+  it("archives old per-dispatch packet and codex-last files like logs, keeps recent ones (OMI-111)", () => {
+    const l = listing([
+      file("omi-057-prompt-verify-1.md", 9 * HOUR),
+      file("omi-057-prompt-review-1.md", 9 * HOUR),
+      file("omi-057-resume-review-1.md", 9 * HOUR),
+      file("omi-057-codex-minibox-20261111-090000-last.md", 9 * HOUR),
+      file("omi-057-prompt-review-2.md", 60),
+      file("omi-057-prompt-review-2.md.tmp", 60),
+    ]);
+    expect(plan(l, "057")).toEqual([
+      "archive omi-057-codex-minibox-20261111-090000-last.md",
+      "archive omi-057-prompt-review-1.md",
+      "keep omi-057-prompt-review-2.md",
+      "keep omi-057-prompt-review-2.md.tmp",
+      "archive omi-057-prompt-verify-1.md",
+      "archive omi-057-resume-review-1.md",
+    ]);
+  });
+
   it("deletes empty .err and *-current, but archives a non-empty .err", () => {
     const l = listing([
       file("omi-050-20261110-145006.err", 5 * HOUR, 0),

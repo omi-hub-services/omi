@@ -1,6 +1,6 @@
 // Pure part of `flow.ts worker-report` (OMI-077): the worker's final report out of its log.
 // Claude: the longest `result` among the result events of the newest jsonl, with the turns,
-// permission denials and session id of the last result event. Codex: `omi-NNN-codex-last.md`
+// permission denials and session id of the last result event. Codex: `omi-NNN-codex-<profile>-<ts>-last.md`
 // plus the thread id of the first jsonl line. Lines that are not JSON are skipped.
 import "../register-ts-imports.ts";
 const { stepResultSchema } = await import("../../src/application/contracts/result.ts");
