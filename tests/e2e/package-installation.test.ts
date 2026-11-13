@@ -35,6 +35,11 @@ import {
 } from "../../src/infrastructure/persistence/sqlite/migration-runner.js";
 import { createSqliteLeaseStore } from "../../src/infrastructure/persistence/sqlite/sqlite-lease-store.js";
 import { stringify } from "yaml";
+import { initializeProject } from "../../src/application/use-cases/project/initialize-project.js";
+import { createCodebaseReader } from "../../src/infrastructure/config/codebase-reader.js";
+import { createOnboardingFileStore } from "../../src/infrastructure/config/onboarding-file-store.js";
+import { createOnboardingTemplateSource } from "../../src/infrastructure/config/onboarding-template-source.js";
+import { baseline } from "../fixtures/github/project-mapping.js";
 
 const root = resolve(import.meta.dirname, "../..");
 let temp: string;
@@ -260,6 +265,92 @@ describe("project-local distribution", () => {
       base: { [textPath]: await readFile(join(artifact, "templates/project", textPath), "utf8") },
     });
   }, 30_000);
+
+  // OMI-097: `omi init --apply` and install both supply templates/project/**.
+  async function initialize(projectDir: string) {
+    const squad = join(projectDir, ".omi-squad");
+    await mkdir(join(squad, "config"), { recursive: true });
+    return initializeProject(
+      {
+        github: {
+          inspect: () => Promise.reject(new Error("unexpected GitHub call")),
+          owner: () => Promise.reject(new Error("unexpected GitHub call")),
+        },
+        config: await createProjectConfigStore(join(squad, "config")),
+        onboarding: {
+          codebase: await createCodebaseReader(projectDir),
+          files: await createOnboardingFileStore(projectDir),
+          templates: createOnboardingTemplateSource(join(artifact, "templates/project/workflows")),
+        },
+      },
+      { config: baseline, apply: true, source: { kind: "codebase", variant: "new" } },
+    );
+  }
+  const walk = async (dir: string) =>
+    (await readdir(dir, { recursive: true, withFileTypes: true }))
+      .filter((entry) => entry.isFile())
+      .map((entry) => join(entry.parentPath, entry.name))
+      .filter((path) => !path.includes("/.omi-squad/local/") && !path.includes("/.omi-squad/tool/"))
+      .sort();
+
+  const snapshot = async (dir: string) =>
+    Object.fromEntries(
+      await Promise.all(
+        (await walk(dir)).map(async (path) => [path, await readFile(path, "utf8")] as const),
+      ),
+    );
+
+  it("installs and updates over a directory initialised by init, keeping every byte and a consistent lock", async () => {
+    const request = await input("init-then-install");
+    expect((await initialize(request.projectDir)).kind).toBe("codebase");
+    const squad = join(request.projectDir, ".omi-squad");
+    const afterInit = await snapshot(request.projectDir);
+
+    expect((await installProjectTool(store(), request)).status).toBe("installed");
+    const afterInstall = await snapshot(request.projectDir);
+    // Everything init wrote survives install byte for byte; install only adds files.
+    for (const [path, text] of Object.entries(afterInit)) expect(afterInstall[path]).toBe(text);
+
+    const lockPath = join(squad, "framework.lock.json");
+    const lock = JSON.parse(await readFile(lockPath, "utf8")) as { base: Record<string, string> };
+    // The lock records the package templates, which init and install both took from the package.
+    expect(lock.base[textPath]).toBe(
+      await readFile(join(artifact, "templates/project", textPath), "utf8"),
+    );
+    for (const [path, text] of Object.entries(lock.base))
+      if (path.startsWith("workflows/")) expect(afterInstall[join(squad, path)]).toBe(text);
+
+    // Re-running install is stable; an update applies upstream changes and keeps a later user edit.
+    const before = await readFile(lockPath, "utf8");
+    expect((await installProjectTool(store(), request)).status).toBe("installed");
+    expect(await readFile(lockPath, "utf8")).toBe(before);
+    const edited = join(squad, textPath);
+    await writeFile(edited, "# user edit after install\n");
+    const next = await candidate("init-then-update");
+    await writeFile(join(next, "templates/project/workflows/ci-cd.yaml"), "# upstream v2\n");
+    expect((await installProjectTool(store(), { ...request, packageDir: next })).status).toBe(
+      "installed",
+    );
+    expect(await readFile(edited, "utf8")).toBe("# user edit after install\n");
+    expect(await readFile(join(squad, "workflows/ci-cd.yaml"), "utf8")).toBe("# upstream v2\n");
+    expect(JSON.parse(await readFile(lockPath, "utf8"))).toMatchObject({
+      base: { "workflows/ci-cd.yaml": "# upstream v2\n" },
+    });
+  }, 60_000);
+
+  it("reports a file edited after init as a conflict and installs nothing", async () => {
+    const request = await input("init-edit-install");
+    await initialize(request.projectDir);
+    const squad = join(request.projectDir, ".omi-squad");
+    await writeFile(join(squad, textPath), "# user edit after init\n");
+    const afterInit = await snapshot(request.projectDir);
+    expect(await installProjectTool(store(), request)).toMatchObject({
+      status: "conflict",
+      conflicts: [textPath],
+    });
+    expect(await snapshot(request.projectDir)).toEqual(afterInit);
+    expect(await readdir(squad)).not.toContain("framework.lock.json");
+  }, 60_000);
 
   it("reports divergent edits and deletion conflicts before changing the install or backups", async () => {
     const request = await input("conflicts");
