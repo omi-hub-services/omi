@@ -1,7 +1,8 @@
 # Operations handbook (v0.1)
 
-Task-oriented guide for the PO and the Coordinator. Everything here was checked against the real
-CLI built from this revision (`omi-squad` 0.0.0); the evidence is in [Verification record](#verification-record).
+Task-oriented guide for the PO and the Coordinator. CLI syntax was reconciled against the built `omi-squad` 0.0.0; current offline evidence and
+explicit live exclusions are in [CLI verification](cli-verification.md). Earlier smoke evidence
+is retained in [Verification record](#verification-record), dated separately.
 A command that does not exist is marked **not available in v0.1** and is never described as if it did.
 
 Related: [compatibility.md](compatibility.md) (versions and auth modes, the single source for the
@@ -27,7 +28,8 @@ SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<d
 
 **What the v0.1 CLI really has.** `--help` lists: `init`, `install`, `update`, `doctor`, `profiles {register,list,probe}`, `status`,
 `session {new,start}`, `approvals {request,decide}`, `plan`, `dispatch`, `wait`, `pause`, `resume`, `deliver`,
-`coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9), and `watch`.
+`coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9), `watch`,
+`worker-report`, `commit-worker`, `review-comment`, and `prune-logs`.
 
 | Job            | v0.1 command                                      | Notes                                                              |
 | -------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
@@ -679,3 +681,6 @@ Repository `worker-report` prints the complete validated JSON result plus log me
 revision SHA, status, findings, checks and artifacts. Valid blocked/failed results return exit 1;
 a valid succeeded result returns 0. Inspect the document even on nonzero exit, and use its
 `revision.headSha` for the fixed-head check. Never treat a summary or schema validity as approval.
+
+Product CLI commands and repo `flow.ts` commands have different argument shapes; do not
+interchange them.

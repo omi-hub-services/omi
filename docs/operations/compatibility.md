@@ -29,8 +29,8 @@ it (gitignored).
 | -------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
 | Subscription login (`authMethod: claude.ai`, `apiProvider: firstParty`, plan `pro`) via a `CLAUDE_CONFIG_DIR` profile, `claude -p` | supported   | One profile, sequential runs; `init.apiKeySource: none` in every run (ADR-0013)                        |
 | `--bare` / `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN` | unsupported | Excluded by design (tech-stack.md §8); the live test strips them from the child env                    |
-| Several profiles in parallel, concurrent token refresh               | untested    | OMI-004                                                                                                 |
-| Quota/rate-limit detection                                           | untested    | OMI-004                                                                                                 |
+| Two Claude profiles in parallel / checkpoint continuation | supported (PoC) | ADR-0031, live 2026-11-11; continuation used an injected limit; concurrent token refresh not established |
+| Quota/rate-limit detection | partially checked | ADR-0031: real window events; fixture classification and injected continuation do not prove real-limit end-to-end failover |
 
 Note: the default model is a per-profile property (profile `b`: `claude-sonnet-5-5`; another
 profile on the same machine: `claude-opus-5-5`). Do not infer it from the Claude Code version.
@@ -160,3 +160,11 @@ variable is unset, and fails for an empty/invalid explicit config. Evidence is w
 `.tmp/live/omi-038-release-approval-evidence.json` (copy it between phases if retaining all runs).
 It is outside `npm run check` and default CI. Contract tests exercise the same adapter through
 `tests/contract/github/fake-github.ts`, including missing permissions and classic restrictions.
+
+## Offline reconciliation (2026-11-13)
+
+[CLI verification](cli-verification.md) checks local build/help/negative paths; it does not
+upgrade any live support claim. ADR-0031 also proves two concurrent Codex workers on one profile
+and namespace isolation; concurrent refresh and cross-profile failover remain unproven. Its PO
+resolution keeps one Codex profile: Codex-only work waits for quota, compatible work may switch
+tools. Historical OMI-002/003 rows above retain their original versions and dates.
