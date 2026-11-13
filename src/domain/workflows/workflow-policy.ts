@@ -199,6 +199,26 @@ export function resumeSkills(stepSkills: readonly string[]): readonly string[] {
   return stepSkills.includes(REWORK_SKILL) ? stepSkills : [...stepSkills, REWORK_SKILL];
 }
 
+/** Quality step ids (see qualityStepId): fresh independent runs, never a rework of the author's work. */
+const NON_WORK_STEPS: readonly string[] = ["analyze", "verify", "review", "accept"];
+
+/** A rework dispatch: a work step (not analyze/verify/review/accept) after its first round. */
+export function isReworkDispatch(stepId: string, round: number): boolean {
+  return round > 1 && !NON_WORK_STEPS.includes(stepId);
+}
+
+/**
+ * The one rule for a dispatched step's skills, shared by the runtime dispatch and
+ * `flow.ts prompt`: rework gets `resumeSkills`, everything else the step's own skills.
+ */
+export function dispatchSkills(
+  stepId: string,
+  stepSkills: readonly string[],
+  round: number,
+): readonly string[] {
+  return isReworkDispatch(stepId, round) ? resumeSkills(stepSkills) : stepSkills;
+}
+
 export type GateStatus = "open" | "passed" | "failed";
 
 export interface StepStartability {

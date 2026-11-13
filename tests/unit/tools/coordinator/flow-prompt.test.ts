@@ -1,6 +1,22 @@
 import { readFileSync, mkdtempSync, rmSync, existsSync, writeFileSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { readdirSync } from "node:fs";
+import { parse } from "yaml";
+import { workflowSchema } from "../../../../src/application/contracts/workflow.ts";
+import { qualityStepId } from "../../../../src/application/services/plan-workflow-quality.ts";
+import { dispatchStep } from "../../../../src/application/use-cases/runs/dispatch-step.ts";
+import {
+  dispatchSkills,
+  isReworkDispatch,
+} from "../../../../src/domain/workflows/workflow-policy.ts";
+import { createFileSkillSource } from "../../../../src/infrastructure/config/file-skill-source.ts";
+import {
+  createFileRuleSource,
+  loadResolutionCatalog,
+} from "../../../../src/infrastructure/config/load-resolution-catalog.ts";
+import { dispatchInput, rig } from "../../application/use-cases/runs/run-fakes.ts";
+import { parsePromptText } from "../../../../tools/coordinator/watch-tasks.ts";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { main } from "../../../../tools/coordinator/flow.ts";
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
@@ -395,4 +411,58 @@ it.each([
     });
   expect(await main(["workflow-options"], { ...f.ctx, run })).toBe(exit);
   expect(output.join("\n")).toContain(exit === 0 ? "Workflow options match" : "missing template");
+});
+
+it("runtime dispatch and --findings packet carry the same skills for every work step", async () => {
+  const squad = resolve("templates/project/.omi-squad");
+  const catalog = loadResolutionCatalog(squad);
+  const skills = createFileSkillSource(squad);
+  const rules = createFileRuleSource(squad);
+  const findings = join(dir, "findings.md");
+  writeFileSync(findings, "fix this\n");
+  const covered: string[] = [];
+  for (const file of readdirSync(resolve("templates/project/workflows"))) {
+    const workflow = workflowSchema.parse(
+      parse(readFileSync(resolve("templates/project/workflows", file), "utf8")),
+    );
+    const f = fake({ workflow: workflow.id });
+    for (const step of workflow.steps) {
+      const quality = qualityStepId(step);
+      const roleSkills =
+        catalog.roles.find((r) => r.definition.id === step.role)?.definition.skills ?? [];
+      const runtime = async (round: number) => {
+        const r = rig();
+        const result = await dispatchStep(
+          { ...r.deps, catalog, skills, rules },
+          dispatchInput({
+            role: step.role,
+            stepSkills: step.skills,
+            stepRules: step.rules,
+            requiredChecks: [],
+            quality: { policy: "task-default", step: quality, steps: [step.id], round },
+          }),
+        );
+        if (!result.ok) throw new Error(`${workflow.id}/${step.id}: ${result.reason}`);
+        return new Set(result.attempt.skills.map((s) => s.id));
+      };
+      if (!isReworkDispatch(quality, 2)) {
+        // The role's own skills may include it (reviewer); rework adds nothing for these steps.
+        const own = new Set([...roleSkills, ...step.skills]);
+        expect(await runtime(1)).toEqual(own);
+        // Round-2 quality runs need verdict fixtures; the shared rule is checked directly.
+        expect(new Set(dispatchSkills(quality, step.skills, 2))).toEqual(new Set(step.skills));
+        continue;
+      }
+      output.length = 0;
+      expect(await main(["prompt", "185", "--step", step.id, "--findings", findings], f.ctx)).toBe(
+        0,
+      );
+      const tooling = new Set(parsePromptText(output.join("\n")).skills);
+      expect(tooling).toContain("receiving-code-review");
+      expect(await runtime(2)).toEqual(new Set([...roleSkills, ...tooling]));
+      expect(await runtime(1)).toEqual(new Set([...roleSkills, ...step.skills]));
+      covered.push(step.id);
+    }
+  }
+  expect(covered).toEqual(expect.arrayContaining(["implement", "configure-pipeline", "write"]));
 });

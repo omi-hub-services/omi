@@ -10,7 +10,7 @@ const { planWorkflowQuality, taskQualityFacts, qualityStepId } =
 const { implementationPaths } =
   await import("../../src/application/services/resolve-dispatch-task.ts");
 const { taskComplexitySchema } = await import("../../src/application/contracts/task-complexity.ts");
-const { resolveWorkflowRoute, resumeSkills } =
+const { resolveWorkflowRoute, dispatchSkills } =
   await import("../../src/domain/workflows/workflow-policy.ts");
 import { extractAcceptanceCriteria } from "./acceptance-criteria.ts";
 import { OWNER, PROJECT_NUMBER, REPO } from "./coordinator-settings.ts";
@@ -291,7 +291,7 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       await Promise.all(
         packetSteps.map(
           async (s) =>
-            `## Step ${s.id} · role ${s.role}\n\n${await sections("skills", resume ? resumeSkills(s.skills) : s.skills)}`,
+            `## Step ${s.id} · role ${s.role}\n\n${await sections("skills", dispatchSkills(qualityStepId(s), s.skills, resume ? Math.max(round, 2) : round))}`,
         ),
       )
     ).join("\n\n");

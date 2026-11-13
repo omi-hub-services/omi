@@ -240,6 +240,7 @@ it("keeps review presentation decisions aligned on canonical full-head comments"
 
 it("rework packet skills come from the shared domain policy, not a tooling copy", () => {
   const source = readFileSync("tools/coordinator/flow-prompt.ts", "utf8");
-  expect(source).toContain("resumeSkills");
+  expect(source).toContain("dispatchSkills");
+  expect(source).not.toContain("resumeSkills");
   expect(source).not.toContain("receiving-code-review");
 });

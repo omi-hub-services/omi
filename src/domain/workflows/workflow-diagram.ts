@@ -1,4 +1,4 @@
-import { resumeSkills } from "./workflow-policy.js";
+import { dispatchSkills } from "./workflow-policy.js";
 import type { ReworkCycle } from "../runs/rework-cycle.js";
 import type { StepStatus } from "../runs/step-run.js";
 
@@ -251,7 +251,7 @@ export function compareLoadedSkills(
     missing: step.skills.filter((skill) => !loaded.includes(skill)),
     // A native-resume packet carries resumeSkills(step.skills); those are expected, not extra.
     extra: loaded
-      .filter((skill) => !resumeSkills(step.skills).includes(skill))
+      .filter((skill) => !dispatchSkills(step.id, step.skills, 2).includes(skill))
       .map((name) => ({
         name,
         template: workflow.steps.find((other) => other.skills.includes(name))?.id ?? null,

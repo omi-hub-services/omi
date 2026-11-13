@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluateRunCompletion,
+  dispatchSkills,
   evaluateStepStartability,
+  isReworkDispatch,
   resumeSkills,
   validateWorkflowGraph,
 } from "../../../../src/domain/workflows/workflow-policy.ts";
@@ -176,5 +178,16 @@ describe("resumeSkills", () => {
   it("appends receiving-code-review once, after the step skills", () => {
     expect(resumeSkills(["a", "b"])).toEqual(["a", "b", "receiving-code-review"]);
     expect(resumeSkills(["receiving-code-review", "a"])).toEqual(["receiving-code-review", "a"]);
+  });
+});
+
+describe("dispatchSkills", () => {
+  it("adds receiving-code-review only to a work step after round 1", () => {
+    expect(dispatchSkills("implement", ["a"], 1)).toEqual(["a"]);
+    expect(dispatchSkills("implement", ["a"], 2)).toEqual(["a", "receiving-code-review"]);
+    for (const step of ["analyze", "verify", "review", "accept"]) {
+      expect(isReworkDispatch(step, 2)).toBe(false);
+      expect(dispatchSkills(step, ["a"], 2)).toEqual(["a"]);
+    }
   });
 });
