@@ -24,7 +24,7 @@ Phiên bản 1.0 · 10/11/2026. Đọc cùng `architecture.md`. Dependency thự
 | Files/hash | `node:fs/promises`, `node:crypto` | Atomic writes, checksums và manifests |
 | Git | Git CLI qua process adapter | Worktree/branch/revision bằng công cụ chuẩn |
 | GitHub | `gh` + REST/GraphQL | Tận dụng auth local; bao sau port riêng |
-| Agent | `claude` và `codex` CLI | Worker process; capability/version kiểm tra bằng doctor |
+| Agent | `claude` và `codex` CLI | Worker process; capability cấu hình trong models.yaml, profile probe kiểm tra auth/version; doctor chỉ kiểm tra cài đặt WSL2 (xem §3) |
 | Logging | Node streams và artifact/check records | Không có Pino trong `package.json`; watch ở `src/infrastructure/observability/` |
 | Testing | Vitest | Unit, integration, contract và E2E; Node environment |
 | Quality | ESLint, typescript-eslint, Prettier | Lint/type/format nhất quán |
@@ -40,7 +40,7 @@ Baseline thực tế là Node 24.22.2 theo `.nvmrc` và `package.json`; các dò
 - Không ghi các số version chưa kiểm thử như cam kết tương thích. File `docs/operations/compatibility.md` ghi OS, Node, Git, gh, Claude/Codex versions, auth mode, ngày kiểm tra và evidence.
 - Chỉ một baseline Node được hỗ trợ chính thức trong bản đầu. Nâng major có Issue, CI matrix và ADR nếu đổi hành vi.
 - Ghim framework version cho từng project. Update có diff preview, backup config, migrate state và khả năng quay lại phiên bản tương thích.
-- Đối với CLI bên ngoài, doctor phân loại `supported`, `untested`, `unsupported`; phiên bản chưa biết không tự nhận là hoạt động đầy đủ.
+- `doctor` chỉ kiểm tra kernel WSL2, distro, interop, mapping đường dẫn và gọi shim; use case chỉ tổng hợp các check thành `supported`. Nguồn: [`installation-doctor.ts`](../../src/infrastructure/processes/installation-doctor.ts), [`inspect-installation.ts`](../../src/application/use-cases/project/inspect-installation.ts). Chẩn đoán capability/version của worker và phân loại CLI ngoài thành `supported`/`untested`/`unsupported` bằng doctor **chưa có trong v0.1**. Các trạng thái tương thích đã kiểm chứng được ghi thủ công kèm evidence trong [compatibility.md](../operations/compatibility.md), không suy ra từ doctor thành công.
 - Native module `better-sqlite3` phải được kiểm tra trên Node/WSL2 baseline và đường cài sạch. Không copy `node_modules` từ Windows vào Linux.
 
 ## 4. Cấu hình TypeScript

@@ -394,7 +394,7 @@ Không dựa vào closing keyword với nhánh không mặc định. Nếu tạo
 
 Review độc lập nghĩa là run/role review khác run triển khai, kiểm tra revision cố định. Hai agent dùng cùng GitHub identity không trở thành hai reviewer native khác nhau. Báo cáo review của framework có thể là một status/check hoặc bằng chứng được gate đánh giá; nếu repo yêu cầu native approval mà tài khoản hiện tại không đáp ứng, PR phải chờ reviewer hợp lệ. Không tắt branch protection để giả lập pass.
 
-Mặc định đề xuất CI kiểm tra PR–Issue link, build/test và kiến trúc. Mapping native approval và identity GitHub phải được `doctor` xác minh khi init; không giả định gói GitHub nào cũng cung cấp mọi cơ chế enforcement giống nhau.
+Mặc định đề xuất CI kiểm tra PR–Issue link, build/test và kiến trúc. Chẩn đoán mapping native approval và identity GitHub bằng `doctor` khi init **chưa có trong v0.1**. [`installation-doctor.ts`](../../src/infrastructure/processes/installation-doctor.ts) chỉ kiểm tra kernel WSL2, distro, interop, mapping đường dẫn và gọi shim; [`inspect-installation.ts`](../../src/application/use-cases/project/inspect-installation.ts) chỉ tổng hợp kết quả. Doctor thành công không xác nhận quyền hay enforcement GitHub; bằng chứng và giới hạn đã kiểm chứng nằm trong [compatibility.md](../operations/compatibility.md). Không giả định gói GitHub nào cũng cung cấp mọi cơ chế enforcement giống nhau.
 
 ### Release và deploy
 
