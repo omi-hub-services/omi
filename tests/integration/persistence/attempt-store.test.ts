@@ -215,3 +215,21 @@ it("reads preceding QA attempts by run and step without falling back past a rese
   ).run(at, at);
   expect(store().latestForRunStep?.("run-1", "implement")).toBeUndefined();
 });
+
+it("persists an operational budget separate from quality across a restart", () => {
+  const insert = db.prepare(
+    "INSERT INTO events (event_id, kind, subject, run_id, correlation_id, payload, occurred_at) VALUES (?, ?, 'step-1', 'run-1', 'a', ?, ?)",
+  );
+  insert.run("quality-fail", "step.failed", JSON.stringify({ outcome: "succeeded" }), at);
+  insert.run("infra-fail", "step.failed", JSON.stringify({ outcome: "failed" }), at);
+  insert.run(
+    "start-fail",
+    "step.failed",
+    JSON.stringify({ attemptId: "a", reason: "SPAWN_FAILED" }),
+    at,
+  );
+  insert.run("limit-fail", "step.waiting_resource", JSON.stringify({ reason: "USAGE_LIMIT" }), at);
+  db.close();
+  db = openStateDatabase(join(directory, "state.db"));
+  expect(store().operationalFailuresForStep("step-1")).toBe(3);
+});

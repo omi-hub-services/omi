@@ -65,6 +65,7 @@ export function createSqliteAttemptStore(
 ): AttemptStore & {
   nextNumberForStep(stepRunId: string): number;
   failoversForStep(stepRunId: string): number;
+  operationalFailuresForStep(stepRunId: string): number;
 } {
   const assertFence = () => {
     const { resourceKey, owner, generation } = options.fence;
@@ -129,6 +130,20 @@ export function createSqliteAttemptStore(
       const row = db
         .prepare(
           "SELECT count(*) AS count FROM events WHERE kind='step.waiting_resource' AND subject=? AND json_extract(payload, '$.reason')='USAGE_LIMIT'",
+        )
+        .get(identifierSchema.parse(stepRunId));
+      return z.object({ count: z.number().int().nonnegative() }).parse(row).count;
+    },
+    operationalFailuresForStep(stepRunId) {
+      const row = db
+        .prepare(
+          `SELECT count(*) AS count FROM events WHERE subject=? AND (
+        (kind='step.waiting_resource' AND json_extract(payload, '$.reason')='USAGE_LIMIT') OR
+        (kind='step.failed' AND (
+          json_extract(payload, '$.outcome') IS NULL OR
+          json_extract(payload, '$.outcome') <> 'succeeded'
+        ))
+      )`,
         )
         .get(identifierSchema.parse(stepRunId));
       return z.object({ count: z.number().int().nonnegative() }).parse(row).count;

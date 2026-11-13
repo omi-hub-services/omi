@@ -54,6 +54,66 @@ function collect(value: string, previous: readonly string[]): string[] {
 /** The Coordinator's run commands: plan, dispatch, wait, pause, resume, deliver. */
 export function registerRunCommands(program: Command, context: CliContext): void {
   program
+    .command("rework")
+    .description("Record Architect and PO rework decisions")
+    .command("record")
+    .requiredOption("--run <id>", "run id")
+    .requiredOption(
+      "--event <type>",
+      "architect_solution_accepted, architect_no_solution or po_reopened",
+    )
+    .option("--intervention <id>", "accepted Architect intervention id")
+    .option("--changes-business-or-cost", "the accepted solution changes business or cost")
+    .option("--po-decision <id>", "approved request id")
+    .action(
+      async (
+        options: {
+          run: string;
+          event: string;
+          intervention?: string;
+          changesBusinessOrCost?: boolean;
+          poDecision?: string;
+        },
+        command: Command,
+      ) => {
+        await runCommand(context, command, {
+          command: "rework.record",
+          runId: options.run,
+          event: {
+            type: options.event,
+            ...(options.event === "architect_solution_accepted"
+              ? {
+                  interventionId: options.intervention,
+                  changesBusinessOrCost: options.changesBusinessOrCost ?? false,
+                }
+              : {}),
+            ...(options.poDecision === undefined ? {} : { poDecisionId: options.poDecision }),
+          },
+        });
+      },
+    );
+  program
+    .command("retry")
+    .description("Retry a failed step through the runtime rework and operational gates")
+    .requiredOption("--run <id>", "run id")
+    .requiredOption("--step <id>", "workflow step id")
+    .option("--po-decision <id>", "approved request authorizing a blocked run to reopen")
+    .action(
+      async (options: { run: string; step: string; poDecision?: string }, command: Command) => {
+        await runCommand(
+          context,
+          command,
+          {
+            command: "retry",
+            runId: options.run,
+            stepId: options.step,
+            ...(options.poDecision === undefined ? {} : { poDecisionId: options.poDecision }),
+          },
+          SLOW_COMMAND_MS,
+        );
+      },
+    );
+  program
     .command("plan")
     .description("Start a run of a workflow for an imported Issue")
     .requiredOption("--issue <number>", "Issue number")

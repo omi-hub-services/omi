@@ -12,6 +12,13 @@ import {
   failoverStep,
   type FailoverStepDependencies,
 } from "../../src/application/use-cases/profiles/failover-step.ts";
+import { retryStep } from "../../src/application/use-cases/runs/retry-step.ts";
+import { workflowSchema } from "../../src/application/contracts/workflow.ts";
+import { modelsConfigSchema } from "../../src/application/contracts/model-capability.ts";
+import {
+  effortPolicySchema,
+  taskComplexitySchema,
+} from "../../src/application/contracts/task-complexity.ts";
 import { selectExecutor } from "../../src/application/use-cases/profiles/select-executor.ts";
 import { dispatchStep } from "../../src/application/use-cases/runs/dispatch-step.ts";
 import { writeCheckpoint } from "../../src/application/use-cases/runs/write-checkpoint.ts";
@@ -386,6 +393,80 @@ function setup(specs: readonly ProfileSpec[]) {
       ...extra,
     });
   };
+  const retry = (failures = 1) => {
+    const workflow = workflowSchema.parse({
+      schema_version: 1,
+      id: "feature",
+      version: 1,
+      selection: { task_types: ["feature"] },
+      quality_policy: "strict",
+      steps: [
+        {
+          id: "implement",
+          role: "developer",
+          needs: [],
+          capability_profile: "coding",
+          output_contract: "step-result",
+        },
+      ],
+    });
+    return retryStep(
+      {
+        dispatch: {
+          ...dispatchDeps,
+          runs,
+          session,
+          planner: {
+            plan: () => {
+              return Promise.reject(new Error("must reenter failover"));
+            },
+          },
+          plans: {
+            forRun: () => ({
+              taskId: "t",
+              projectId: "p",
+              repository: "acme/app",
+              issueNumber: 21,
+              templateHash: "h",
+            }),
+          },
+          workflows: {
+            byId: () => ({ workflow, hash: "h" }),
+            byHash: () => ({ workflow, hash: "h" }),
+          },
+          track: () => {},
+        },
+        rework: {
+          runs: createSqliteReworkRunReader(db),
+          session,
+          nextId,
+          checkpoint: () => ({ ok: false }),
+        },
+        operationalFailures: () => failures,
+        retryBudget: deps.retryBudget,
+        failover: {
+          dependencies: deps,
+          models: modelsConfigSchema.parse(models),
+          effortPolicy: effortPolicySchema.parse(undefined),
+          readTask: () =>
+            Promise.resolve({
+              complexity: taskComplexitySchema.parse(undefined),
+              workspace: { taskId: "omi-018", slug: "failover" },
+              context: {
+                taskSnapshot: { issueNumber: 21, title: "Failover", body: "Fail over" },
+                acceptanceCriteria: ["works"],
+                businessBaselineHash: h("9"),
+                inputArtifacts: [],
+                previousFindings: [],
+                allowedScope: { paths: ["src"] },
+                approvalRefs: [],
+              },
+            }),
+        },
+      },
+      { runId: "run-1", stepId: "implement" },
+    );
+  };
   const rework = () => createSqliteReworkRunReader(db).get("run-1");
   const profileState = (id: string) =>
     registry.list().find((entry) => entry.metadata.profileId === id)?.metadata;
@@ -421,6 +502,7 @@ function setup(specs: readonly ProfileSpec[]) {
     start,
     limit,
     failover,
+    retry,
     rework,
     profileState,
     stepStatus,
@@ -525,7 +607,7 @@ describe("failover from a checkpoint with fault injection (OMI-018)", () => {
       t.now(),
       limited.revision,
     );
-    const resumed = await t.failover("coding", undefined);
+    const resumed = await t.retry();
     expect(resumed).toMatchObject({ ok: true, outcome: "failed_over", profileId: "claude-a" });
     expect(t.r.attempts.latestForStep("step-1")).toMatchObject({
       attemptNumber: 2,
@@ -633,6 +715,7 @@ describe("failover from a checkpoint with fault injection (OMI-018)", () => {
         reason: "RETRY_BUDGET_EXHAUSTED",
       });
       expect(t.stepStatus()).toBe("waiting_resource");
+      expect(await t.retry(4)).toEqual({ ok: false, reason: "RETRY_BUDGET_EXHAUSTED" });
       expect(t.r.executor.started).toHaveLength(1);
       expect(t.rework()?.rework).toMatchObject(COUNTER);
     });

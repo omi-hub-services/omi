@@ -29,6 +29,21 @@ function setup(outcome: unknown = { ok: true, result: pending }) {
 }
 
 describe("approvals request", () => {
+  it("binds a retry authorization request to its run", async () => {
+    const s = setup();
+    expect(
+      await s.run(["approvals", "request", "task-1", "--kind", "business", "--run", "run-1"]),
+    ).toBe(0);
+    expect(s.sent).toEqual([
+      {
+        schemaVersion: 1,
+        command: "approval.request",
+        subjectId: "task-1",
+        kind: "business",
+        runId: "run-1",
+      },
+    ]);
+  });
   it("lists approvals through IPC with a status filter and preserves versions in JSON", async () => {
     const s = setup({ ok: true, result: { approvals: [pending] } });
     expect(await s.run(["approvals", "list", "--status", "invalidated", "--json"])).toBe(0);

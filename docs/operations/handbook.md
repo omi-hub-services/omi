@@ -38,7 +38,7 @@ SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<d
 | intake         | `new-issue`, `promote`, `set-status`              | Preview first; readiness gate (§9)                                |
 | run            | `run`, or `plan` → `dispatch` → `wait` → `status` → `deliver` | `run` = plan + first dispatch, same gates (see §3)       |
 | pause / resume | `pause`, `resume`                                 | §4, §5                                                             |
-| retry          | none                                              | `retry` **not available in v0.1** (see §6)                         |
+| retry          | `omi retry --run <id> --step <id> [--po-decision <id>]` | New attempt through rework/failover and approval gates (see §6) |
 | update         | `update`                                          | §7                                                                 |
 | recovery       | `status`, `resume`, `session new`, backups        | §8                                                                 |
 
@@ -414,15 +414,44 @@ A run is not Done after resume; the normal review/delivery gates still apply.
 
 ## 6. Retry
 
-**`retry` is not available in v0.1**, as recorded in architecture.md §13. What exists:
+`omi retry --run <id> --step <id> [--po-decision <approval-id>] [--json]` starts a new
+attempt through the existing dispatcher. It never restarts a terminal attempt (ADR-0030).
+An automatically readied failed step is redispatched; an authorized failed step becomes ready;
+`waiting_resource` re-enters checkpoint failover with current capability and approval gates.
 
-- Infrastructure failures (rate limit, network, a dead worker process) follow the built-in bounded
-  retry policy inside the runtime; nothing to run. Login and invalid-config failures stop instead
-  (`LOGIN_REQUIRED`, `INVALID_CONFIG`) and need a human fix.
-- `dispatch --run <id> --step <id>` works only for a **ready** step of a **running** run
-  (`STEP_NOT_READY` / `RUN_NOT_RUNNING` otherwise). It does not reopen a failed or blocked step: failed
-  steps keep the PO's retry/rework authorization boundary, and no command records that decision yet.
-- A terminal attempt never restarts; "retry" is always a new attempt (ADR-0030).
+| Refusal | Action |
+| --- | --- |
+| `PO_DECISION_REQUIRED` | The run is blocked. Obtain a run-bound approved request as below. |
+| `ARCHITECT_REQUIRED` | Dispatch an Architect and record its accepted solution or no-solution event. |
+| `STEP_NOT_FAILED`, `STEP_NOT_FOUND` | Inspect the run; retry requires a failed/ready/resource-waiting step with a terminal failed/interrupted attempt. |
+| `RUN_NOT_RUNNING` | Use recovery for paused/interrupted runs; retry cannot restart completed/cancelled runs. |
+| `NO_APPROVAL`, `APPROVAL_NOT_ACTIVE`, `STALE_REVISION`, `EXPIRED` | Obtain a current approved request; pending/rejected/invalidated decisions do not authorize reopening. |
+| `SUBJECT_MISMATCH`, `WRONG_KIND`, `SCOPE_NOT_COVERED` | Request a business approval bound to this run and its imported task baseline. |
+| `SELF_APPROVAL`, `ACTOR_NOT_ALLOWED`, `AUTHOR_UNKNOWN`, `SOURCE_NOT_AUTHENTICATED` | Use independent authenticated PO evidence; restore the trusted author reader if unavailable. |
+| `APPROVAL_ALREADY_USED` | A previously consumed reopen ID cannot authorize another reopen; obtain a fresh decision. |
+| `RETRY_BUDGET_EXHAUSTED` | Stop and resolve the operational failure. PO reopen does not replenish this budget. |
+
+For a blocked run, create `omi approvals request <task-id> --kind business --run <run-id>`.
+The request pins the current imported task baseline. Have the independent PO decide it with
+`omi approvals decide <approval-id> --expected-version 0 --decision approved`; confirmation is
+on the runtime-owned TTY. A headless runtime instead requires `--github-comment <numeric-id>`
+with the strict, unedited decision JSON from an allowlisted human actor (ADR-0026/0037).
+Then use `omi retry --run <run-id> --step <step-id> --po-decision <approval-id>`.
+The application reads the mapped PR author, or the runtime GitHub identity before a PR exists,
+and refuses self-approval. Shared-account/TTY identity limitations remain those of ADR-0026.
+
+`omi rework record --run <id> --event architect_solution_accepted --intervention <id>` records
+an accepted intervention. If it changes business or cost, add `--changes-business-or-cost
+--po-decision <approval-id>`; the runtime verifies the approval rather than trusting a boolean.
+`--event architect_no_solution` records that the Architect cannot resolve the failure.
+`--event po_reopened --po-decision <approval-id>` records reopening separately from dispatch.
+These use IPC `rework.record`; internal cycle/gate reports and `approvalValid` are not public inputs.
+
+Ordinary retry preserves the quality phase, failed-cycle count and history: two failed quality
+cycles → Architect → two further failures → blocked. Only an explicit approved PO reopen begins
+a fresh quality segment and retains the earlier cycle/decision history. Infrastructure failures
+have their own durable budget; profile/model switches and reopens do not reset it. Fix login or
+invalid configuration before retrying. See [ADR-0040](../architecture/adr/0040-retry-authorization-record.md).
 
 ## 7. Update
 
@@ -639,7 +668,6 @@ listed there is `untested`. This table adds only what the CLI itself depends on:
 
 ## Known limitations
 
-- No `retry`.
 - Init uses local onboarding; GitHub Project mapping/template copy still has no CLI.
 - Init needs an explicit baseline; models remain project/workflow configuration. Import tasks
   explicitly with `import-task` after starting the session.
@@ -671,7 +699,7 @@ Checked on 2026-11-12 after `npm run build`, using the real `dist/bootstrap/cli.
 from an extracted local package, in a throwaway project under `.tmp/omi-076-cli-*/project/`.
 The local smoke script recorded 38 CLI invocations and 48 passing assertions. The package fixture
 omitted dependencies to exercise real npm provisioning offline; imports used the checkout's existing
-dependencies. This does not prove a clean installation of the full dependency tree. Native probes
+dependencies. This does not prove a clean installation of the full dependency tree. The table records that historical revision; `run` and `retry` are now available as described in §3 and §6. Native probes
 and GitHub read-back used fake executables and synthetic data; no real profile or GitHub was touched.
 
 | Command                                                                 | Observed                                                                     |

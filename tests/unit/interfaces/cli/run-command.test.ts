@@ -135,3 +135,63 @@ describe("omi run", () => {
     expect(r.sent).toEqual([]);
   });
 });
+
+describe("omi retry", () => {
+  it("sends the run, step and approval reference through runtime IPC", async () => {
+    const r = await run(
+      ["retry", "--run", "run-1", "--step", "implement", "--po-decision", "decision", "--json"],
+      { retry: DISPATCH_OK },
+    );
+    expect(r.code).toBe(0);
+    expect(r.sent).toEqual([
+      {
+        schemaVersion: 1,
+        command: "retry",
+        runId: "run-1",
+        stepId: "implement",
+        poDecisionId: "decision",
+      },
+    ]);
+  });
+  it("preserves a retry refusal under --json", async () => {
+    const r = await run(["retry", "--run", "run-1", "--step", "implement", "--json"], {
+      retry: { ok: false, error: { code: "COMMAND_REFUSED", message: "ARCHITECT_REQUIRED" } },
+    });
+    expect(r.code).toBe(4);
+    expect(JSON.parse(r.out)).toMatchObject({ error: { message: "ARCHITECT_REQUIRED" } });
+  });
+});
+
+it("records an Architect solution through the same public rework IPC boundary", async () => {
+  const r = await run(
+    [
+      "rework",
+      "record",
+      "--run",
+      "run-1",
+      "--event",
+      "architect_solution_accepted",
+      "--intervention",
+      "arch",
+      "--changes-business-or-cost",
+      "--po-decision",
+      "decision",
+      "--json",
+    ],
+    { "rework.record": { ok: true, result: { action: "retry" } } },
+  );
+  expect(r.code).toBe(0);
+  expect(r.sent).toEqual([
+    {
+      schemaVersion: 1,
+      command: "rework.record",
+      runId: "run-1",
+      event: {
+        type: "architect_solution_accepted",
+        interventionId: "arch",
+        changesBusinessOrCost: true,
+        poDecisionId: "decision",
+      },
+    },
+  ]);
+});

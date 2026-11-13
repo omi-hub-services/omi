@@ -9,6 +9,17 @@ const base: DispatchedUseCases = { inspectRuntime: () => inspectRuntime(identity
 const SHA = "a".repeat(40);
 
 const commands: [string, Command, keyof DispatchedUseCases][] = [
+  ["retry", { schemaVersion: 1, command: "retry", runId: "r", stepId: "s" }, "retryStep"],
+  [
+    "rework.record",
+    {
+      schemaVersion: 1,
+      command: "rework.record",
+      runId: "r",
+      event: { type: "po_reopened", poDecisionId: "d" },
+    },
+    "recordReworkEvent",
+  ],
   ["sync", { schemaVersion: 1, command: "sync", issueNumbers: [235] }, "sync"],
   ["plan", { schemaVersion: 1, command: "plan", issueNumber: 3, workflowId: "demo" }, "planRun"],
   [

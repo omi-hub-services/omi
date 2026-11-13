@@ -196,29 +196,29 @@ it("persists 2 + Architect + 2 across restart, excludes infrastructure, and runs
       cycleId,
     });
     await runWorker("run-I_1", "review-round-1", "developer", "failed");
-    expect(record(failed("review-round-1"))).toMatchObject({
+    expect(await record(failed("review-round-1"))).toMatchObject({
       action: "retry",
       state: { failedCycles: 1 },
     });
-    expect(record(failed("review-round-1"))).toEqual({
+    expect(await record(failed("review-round-1"))).toEqual({
       ok: false,
       reason: "CYCLE_ALREADY_COUNTED",
     });
     const before = deps.runs.get("run-I_1");
     for (const cycleId of ["worker-crash", "quota", "network"]) {
-      expect(record({ type: "cycle_failed", kind: "infrastructure", cycleId })).toEqual({
+      expect(await record({ type: "cycle_failed", kind: "infrastructure", cycleId })).toEqual({
         ok: false,
         reason: "INFRASTRUCTURE_FAILURE_NOT_QUALITY",
       });
     }
     expect(deps.runs.get("run-I_1")).toEqual(before);
     await runWorker("run-I_1", "check-round-2", "developer", "failed");
-    expect(record(failed("check-round-2"))).toMatchObject({ action: "architect_required" });
-    expect(record(failed("premature-retry"))).toMatchObject({ ok: false });
+    expect(await record(failed("check-round-2"))).toMatchObject({ action: "architect_required" });
+    expect(await record(failed("premature-retry"))).toMatchObject({ ok: false });
     // Coordinator consumes the escalation action, dispatches an Architect, and records its solution.
     const interventionId = await runWorker("run-I_1", "architect-step", "architect");
     expect(
-      record({
+      await record({
         type: "architect_solution_accepted",
         interventionId,
         changesBusinessOrCost: false,
@@ -234,17 +234,19 @@ it("persists 2 + Architect + 2 across restart, excludes infrastructure, and runs
       architectInterventionId: interventionId,
       countedCycleIds: ["review-round-1", "check-round-2"],
     });
-    expect(record(failed("review-round-1"))).toMatchObject({ reason: "CYCLE_ALREADY_COUNTED" });
+    expect(await record(failed("review-round-1"))).toMatchObject({
+      reason: "CYCLE_ALREADY_COUNTED",
+    });
     await runWorker("run-I_1", "check-round-3", "developer", "failed");
-    expect(record(failed("check-round-3"))).toMatchObject({
+    expect(await record(failed("check-round-3"))).toMatchObject({
       action: "retry",
       state: { failedCycles: 1 },
     });
     expect(
-      record({ type: "cycle_failed", kind: "infrastructure", cycleId: "quota-again" }),
+      await record({ type: "cycle_failed", kind: "infrastructure", cycleId: "quota-again" }),
     ).toMatchObject({ ok: false });
     await runWorker("run-I_1", "review-round-4", "developer", "failed");
-    expect(record(failed("review-round-4"))).toMatchObject({
+    expect(await record(failed("review-round-4"))).toMatchObject({
       action: "blocked",
       state: { phase: "blocked", failedCycles: 2 },
     });

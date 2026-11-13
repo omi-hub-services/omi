@@ -10,6 +10,7 @@ import {
 } from "../infrastructure/config/load-runtime-config.js";
 import { createDispatchPlanner } from "../application/services/plan-step-dispatch.js";
 import { createDispatchTaskReader } from "../application/services/resolve-dispatch-task.js";
+import { readReworkAuthor } from "../application/services/check-rework-approval.js";
 import { snapshotRunContext } from "../application/services/snapshot-run-context.js";
 import type { CompletionRouting } from "../application/services/complete-run-attempt.js";
 import { writeCheckpoint } from "../application/use-cases/runs/write-checkpoint.js";
@@ -80,6 +81,7 @@ import type { MergeReleaseDeps } from "../application/use-cases/delivery/merge-r
 import { createGithubReleaseMergeReader } from "../infrastructure/github/github-release-merge.js";
 import type { MergeTaskPrDeps } from "../application/use-cases/delivery/merge-task-pr.js";
 import { dispatchRunStep } from "../application/use-cases/runs/dispatch-run-step.js";
+import { retryStep, type RetryStepDependencies } from "../application/use-cases/runs/retry-step.js";
 import type { DispatchStepDependencies } from "../application/use-cases/runs/dispatch-step.js";
 import { handoffCoordinator } from "../application/use-cases/runs/handoff-coordinator.js";
 import { inspectRun } from "../application/use-cases/runs/inspect-run.js";
@@ -91,6 +93,7 @@ import { wakeWaitingRunSteps } from "../application/use-cases/runs/wake-waiting-
 import type { ProjectSession } from "../application/ports/lease-store.js";
 import {
   recordReworkEvent,
+  recordReworkDecision,
   type RecordReworkEventDependencies,
 } from "../application/use-cases/runs/record-rework-event.js";
 import { createSqliteReworkRunReader } from "../infrastructure/persistence/sqlite/sqlite-rework-run-reader.js";
@@ -665,6 +668,8 @@ export type RunCommandUseCases = Pick<
   DispatchedUseCases,
   | "planRun"
   | "dispatchRunStep"
+  | "retryStep"
+  | "recordReworkEvent"
   | "waitForRun"
   | "inspectRun"
   | "pauseRun"
@@ -686,6 +691,7 @@ export interface RunCommandWiring {
   readonly dispatch: DispatchStepDependencies;
   readonly planner: DispatchPlanner;
   readonly completion?: CompletionRouting;
+  readonly retry?: Omit<RetryStepDependencies, "dispatch">;
   readonly executors?: Readonly<Record<"claude-code" | "codex", AgentExecutor>>;
   /** Receives each attempt's completion promise so the runtime can drain it on shutdown. */
   readonly track: (completion: Promise<void>) => void;
@@ -728,6 +734,14 @@ export function createRunCommandUseCases(wiring: RunCommandWiring): RunCommandUs
         input,
       ),
     dispatchRunStep: (input) => dispatchRunStep({ ...dispatchDeps, track: wiring.track }, input),
+    retryStep: (input) =>
+      wiring.retry === undefined
+        ? { ok: false, reason: "RETRY_UNAVAILABLE" }
+        : retryStep({ ...wiring.retry, dispatch: { ...dispatchDeps, track: wiring.track } }, input),
+    recordReworkEvent: (input) =>
+      wiring.completion?.rework === undefined
+        ? { ok: false, reason: "REWORK_UNAVAILABLE" }
+        : recordReworkDecision(wiring.completion.rework, input),
     waitForRun: (input) =>
       waitForRun({ runs, now: dispatch.now, sleep: wiring.sleep, pollMs: wiring.pollMs }, input),
     inspectRun: (input) => inspectRun({ runs }, input),
@@ -832,6 +846,8 @@ export async function createProjectRunCommandUseCases(
       commands: {
         planRun: refuse,
         dispatchRunStep: refuse,
+        retryStep: refuse,
+        recordReworkEvent: refuse,
         waitForRun: refuse,
         inspectRun: refuse,
         pauseRun: refuse,
@@ -1036,7 +1052,7 @@ export async function createProjectRunCommandUseCases(
       return dispatchPlannedRunStep(dependencies(), request, step.id, step.runId);
     },
   };
-  const completion: CompletionRouting = {
+  const completion = {
     // Only configured checks exist; with none, no id is runtime-owned and nothing is run.
     ...(config.project.checks === undefined
       ? {}
@@ -1060,6 +1076,21 @@ export async function createProjectRunCommandUseCases(
       runs: rework,
       session,
       nextId,
+      approvals: {
+        store: createSqliteApprovalStore(database),
+        subjects: createSqliteTaskApprovalSubjects(database),
+        now,
+        allowedGitHubActors: config.project.policies.github_approval_actors ?? [],
+        authorActor: (run) =>
+          readReworkAuthor(
+            {
+              plans,
+              mappings: createSqlitePrMappingStore(database),
+              reader: createGithubMergeDelivery(client),
+            },
+            run.id,
+          ),
+      },
       checkpoint: (runId, quality) => {
         const saved = writeCheckpoint(checkpointDeps, {
           ...snapshot(runId),
@@ -1070,7 +1101,7 @@ export async function createProjectRunCommandUseCases(
         return saved.ok ? { ok: true, checkpointId: saved.checkpoint.id } : { ok: false };
       },
     },
-  };
+  } satisfies CompletionRouting;
   const bound: DispatchRunStepDependencies = {
     ...dispatch,
     ...completion,
@@ -1131,6 +1162,17 @@ export async function createProjectRunCommandUseCases(
     planner,
     executors,
     completion,
+    retry: {
+      rework: completion.rework,
+      operationalFailures: (stepRunId) => attempts.operationalFailuresForStep(stepRunId),
+      retryBudget: failover.retryBudget,
+      failover: {
+        dependencies: failover,
+        models: config.models,
+        effortPolicy: config.project.effort_policy,
+        readTask: (taskId) => taskReader.read(taskId),
+      },
+    },
     track,
     recovery,
     merge,

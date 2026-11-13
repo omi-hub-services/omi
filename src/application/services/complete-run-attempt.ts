@@ -85,7 +85,7 @@ export async function completeRunAttempt(
       execution.outcome === "succeeded" &&
       deps.rework !== undefined
     ) {
-      const result = recordReworkEvent(deps.rework, {
+      const result = await recordReworkEvent(deps.rework, {
         runId,
         event: { type: "cycle_failed", cycleId: attempt.id, kind: "quality" },
       });
