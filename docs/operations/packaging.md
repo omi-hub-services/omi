@@ -111,3 +111,12 @@ dependencies, and exercise real SQLite/Unix shims. A dependency-free fixture sep
 npm pack/install and relative tarball locks offline. WSL diagnostic inputs and Windows process argv
 are simulated. Actual clean WSL2 native-module installation and Windows/WSL lifecycle/UNC behavior
 still require opt-in platform acceptance; these tests do not claim that evidence.
+
+## Current reconciliation (2026-11-13)
+
+[CLI verification](cli-verification.md) records built install/update previews from a copied package, source-target refusals, and successful init apply in a
+`.tmp/` project. It does not repeat a full dependency install or Windows acceptance. Bridge keys
+also include Coordinator-only `omi-status`, `omi-next`, `omi-watch` skills, in addition to the
+`omi-squad` bridge (`src/infrastructure/config/` installation adapters and `templates/bridges/`).
+The source-maintenance variants live in `templates/bridges/repository/` and use the external
+Coordinator pin (ADR-0036); installing the product runtime in this source repo is prohibited.

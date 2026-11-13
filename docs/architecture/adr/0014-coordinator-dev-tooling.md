@@ -1,5 +1,7 @@
 > Partially superseded by [ADR-0036](0036-coordinator-single-source.md): shared policy/text ownership and the pinned-build migration. Existing operational gates remain in force.
 
+> Status note (2026-11-13 documentation reconciliation): Original tooling snapshots below are historical. ADR-0036 now owns shared framework policy, parity guards and the implemented external tooling pin. Runtime run/attempt-state migration remains deferred even though product status/dispatch commands exist. Current CLI evidence: [cli-verification.md](../../operations/cli-verification.md).
+
 # ADR-0014 — Coordinator dev tooling lives in `tools/coordinator/`
 
 - Status: Accepted

@@ -155,3 +155,14 @@ Subjects come only from trusted records (ADR-0037), never from the caller:
 
 The rollback runbook's business approval above (`baselineHash = revisionHash`, `scopeIds =
 [reference]`) is a different subject and has no request command yet; it is not part of OMI-095.
+
+## Reconciliation boundary (2026-11-13)
+
+The built CLI exposes `approvals request` and `approvals decide`; it has no deploy, release,
+rollback or import command in v0.1. Deployment above is the application/live-test integration,
+not a CLI recipe. [CLI verification](cli-verification.md) records help checks only for those
+approval pathways; no live request, decision, GitHub write or deploy was run in this audit.
+`tools/sandbox-setup/main.ts` exposes only `github` and `local-state`; there is no `live-prep`
+command in this revision. The ADR-0037 setup-tool integration is an in-process requirement,
+not an implemented import command. Sandbox setup is repository tooling; its GitHub/admin
+operations require the separate authorization above.

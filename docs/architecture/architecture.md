@@ -4,7 +4,7 @@ Phiên bản 1.0 · 10/11/2026 · Tham chiếu: `product-overview.md`, `tech-sta
 
 ## 1. Trạng thái và quyết định nền tảng
 
-Đây là thiết kế đề xuất để triển khai, chưa phải mô tả một hệ thống đã chạy. Các yêu cầu của PO được giữ nguyên; các lựa chọn công nghệ dưới đây là quyết định kiến trúc có thể điều chỉnh qua ADR khi PoC cung cấp bằng chứng mới.
+Tài liệu kết hợp kiến trúc đã triển khai và hướng thiết kế; ví dụ DSL đề xuất được đánh dấu riêng. Bề mặt v0.1 đã đối chiếu trong [bản ghi CLI](../operations/cli-verification.md). Các yêu cầu của PO được giữ nguyên; các lựa chọn công nghệ dưới đây là quyết định kiến trúc có thể điều chỉnh qua ADR khi PoC cung cấp bằng chứng mới.
 
 Chọn **modular monolith local**, TypeScript/Node.js, SQLite và các CLI adapter. Không dùng microservices, message broker hoặc server cloud. Một runtime gắn với một phiên Coordinator, một repository và một GitHub Project.
 
@@ -93,7 +93,7 @@ Không tạo `common/`, `helpers/`, `utils/`, `manager.ts` chung chung. Hàm ch�
 |---|---|
 | `src/application/use-cases/project/` | `initialize-project.ts`, `inspect-project.ts` |
 | `src/application/use-cases/tasks/` | `import-task.ts`, `select-ready-tasks.ts`, `create-issue-from-spec.ts`, `promote-task.ts`, `set-task-status.ts` |
-| `src/application/use-cases/runs/` | `start-run.ts`, `dispatch-step.ts`, `record-step-result.ts`, `pause-run.ts`, `resume-run.ts` |
+| `src/application/use-cases/runs/` | `plan-run.ts`, `dispatch-step.ts`, `record-step-result.ts`, `pause-run.ts`, `resume-run.ts` |
 | `src/application/use-cases/profiles/` | `probe-profile.ts`, `select-executor.ts`, `failover-step.ts` |
 | `src/application/use-cases/approvals/` | `request-approval.ts`, `record-approval.ts` |
 | `src/application/use-cases/delivery/` | `prepare-pr.ts`, `merge-task-pr.ts`, `prepare-release.ts`, `deploy-release.ts` |
@@ -117,7 +117,7 @@ Contract không chứa I/O; Zod là ngoại lệ dependency thư viện có ch�
 | `src/infrastructure/github/` | Issue, Projects, PR, review, release, deployment adapter |
 | `src/infrastructure/artifacts/` | Atomic file write, checksum, local manifest |
 | `src/infrastructure/config/` | YAML loader, override resolution, migrations config |
-| `src/infrastructure/observability/` | Pino, redaction, metrics local |
+| `src/infrastructure/observability/` | Watch page và localhost server (`watch-page.ts`, `watch-server.ts`); không có dependency Pino |
 | `src/interfaces/cli/commands/` | Handler mỏng, một file cho một nhóm lệnh |
 | `src/interfaces/cli/presenters/` | Bảng/text/JSON; không suy luận trạng thái riêng |
 | `src/interfaces/ipc/` | Request/response/event qua Unix socket |
@@ -165,7 +165,7 @@ Tài liệu đặt ở `docs/product/product-overview.md`, `docs/architecture/ar
 | `.omi-squad/local/state/state.sqlite` | Không | Runtime state, WAL/SHM cùng vị trí |
 | `.omi-squad/local/runs/<run-id>/` | Không | Context, checkpoints, reports, logs |
 | `.omi-squad/local/logs/`, `archive/` | Không | Log worker `<taskId>--<profile>--<ts>.jsonl`; log task Done được nén vào `archive/` (ADR-0035) |
-| `.omi-squad/local/profiles/registry.json` | Không | Metadata/profile path, không đưa vào prompt |
+| SQLite `profile_observations` | Không | Registry metadata/profile path qua runtime; migration `0006`, không có registry.json |
 | `.omi-squad/local/credentials/<profile-id>/` | Không | Nơi profile lưu auth khi adapter hỗ trợ |
 | `.omi-squad/local/ipc/`, `locks/`, `tmp/` | Không | Socket, lock, dữ liệu tạm |
 | `.omi-squad/local/backups/` | Không | Backup state có kiểm soát |
@@ -290,13 +290,13 @@ The task floor and capability floor combine by maximum; selection never downgrad
 After preference and load ties, selection prefers the lower satisfying declared effort.
 Dispatch checks the explicit model/effort against `models.yaml` before allocating resources.
 Attempts record the choice and reason; runtime `status` exposes these separately from actual
-CLI-reported settings. Temporary Coordinator policy parity is scoped in ADR-0014.
+CLI-reported settings. Transitional Coordinator policy parity is scoped in ADR-0036.
 
 Capability profile trong models.yaml có thể khai báo `required_executor`; selector cũng nhận `requiredExecutor` tùy chọn từ step và từ chối nếu mâu thuẫn với profile. Không có yêu cầu tool thì cho phép cross-tool failover. Quyết định PO 2026-11-11: chỉ một profile Codex; Codex bị giới hạn và step bắt buộc Codex thì `waiting_resource`, nếu không có thể chọn Claude thỏa cùng minimum. Kết quả không có tổ hợp phù hợp luôn kèm lý do.
 
 Registry lưu snapshot nối tiếp trong `profile_observations` (migration 0006); snapshot mới nhất theo ID là cấu hình hiện hành. Observation cũ không có metadata không tự trở thành profile ready. `observedProfile` chiếu TTL hết hạn, chưa probe và cooldown hết hạn thành unknown; login-required giữ nguyên. Probe auth/version không xác minh quota hoặc thêm model vào allowlist, không xóa cooldown đang hiệu lực, và CAS revision chặn kết quả probe muộn ghi đè disable/cooldown.
 
-Selection và tạo pending attempt diễn ra trong một transaction ngắn `BEGIN IMMEDIATE`. Pending và running attempt cùng chiếm slot; account group cộng theo profile, không theo số model alias. Nếu các profile cùng group cấu hình trần khác nhau, dùng trần nhỏ nhất. Lifecycle của run chịu trách nhiệm chuyển attempt sang terminal khi đã xác nhận worker dừng; ghi actual model/effort chỉ ghi sự kiện CLI báo, không giải phóng slot. Attempt mới khi failover giữ minimum từ capability profile, không sửa lựa chọn của attempt cũ. Chưa có dispatcher trong phạm vi registry này.
+Selection và tạo pending attempt diễn ra trong một transaction ngắn `BEGIN IMMEDIATE`. Pending và running attempt cùng chiếm slot; account group cộng theo profile, không theo số model alias. Nếu các profile cùng group cấu hình trần khác nhau, dùng trần nhỏ nhất. Lifecycle của run chịu trách nhiệm chuyển attempt sang terminal khi đã xác nhận worker dừng; ghi actual model/effort chỉ ghi sự kiện CLI báo, không giải phóng slot. Attempt mới khi failover giữ minimum từ capability profile, không sửa lựa chọn của attempt cũ. Dispatch hiện do `src/application/use-cases/runs/dispatch-run-step.ts` điều phối; registry không tự launch worker.
 
 ### Failover subscription
 
@@ -394,7 +394,7 @@ Không dựa vào closing keyword với nhánh không mặc định. Nếu tạo
 
 Review độc lập nghĩa là run/role review khác run triển khai, kiểm tra revision cố định. Hai agent dùng cùng GitHub identity không trở thành hai reviewer native khác nhau. Báo cáo review của framework có thể là một status/check hoặc bằng chứng được gate đánh giá; nếu repo yêu cầu native approval mà tài khoản hiện tại không đáp ứng, PR phải chờ reviewer hợp lệ. Không tắt branch protection để giả lập pass.
 
-Mặc định đề xuất CI kiểm tra PR–Issue link, build/test và kiến trúc. Mapping native approval và identity GitHub phải được `doctor` xác minh khi init; không giả định gói GitHub nào cũng cung cấp mọi cơ chế enforcement giống nhau.
+Mặc định đề xuất CI kiểm tra PR–Issue link, build/test và kiến trúc. Chẩn đoán mapping native approval và identity GitHub bằng `doctor` khi init **chưa có trong v0.1**. [`installation-doctor.ts`](../../src/infrastructure/processes/installation-doctor.ts) chỉ kiểm tra kernel WSL2, distro, interop, mapping đường dẫn và gọi shim; [`inspect-installation.ts`](../../src/application/use-cases/project/inspect-installation.ts) chỉ tổng hợp kết quả. Doctor thành công không xác nhận quyền hay enforcement GitHub; bằng chứng và giới hạn đã kiểm chứng nằm trong [compatibility.md](../operations/compatibility.md). Không giả định gói GitHub nào cũng cung cấp mọi cơ chế enforcement giống nhau.
 
 ### Release và deploy
 
@@ -437,10 +437,16 @@ v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch 
 | `omi wait --run <id> [--timeout <seconds>]` | Chờ worker kết thúc |
 | `omi deliver --run <id> --pr <n> --head-sha <sha> --check <name>` | Gate merge bản đã được review độc lập |
 | `omi status --json` | Trạng thái máy đọc được; text mặc định cho PO |
-| `omi pause --run <id>` | Dừng có checkpoint |
+| `omi pause --run <id> --reason <text>` | Dừng có checkpoint |
 | `omi resume --run <id>` | Reconcile rồi tiếp tục |
 | `omi profiles register <id> --tool <claude-code\|codex> --profile-home <path> --account-group <id> [--model <name> ...]` | Đăng ký metadata vào registry SQLite qua runtime; trạng thái unknown đến khi probe |
 | `omi profiles list` / `omi profiles probe <id>` | Liệt kê/probe qua adapter hiện có; login dùng native CLI với CLAUDE_CONFIG_DIR/CODEX_HOME |
+| `omi worker-report --attempt <id>` | Đọc result và verification đã ghi |
+| `omi commit-worker --attempt <id> --message-file <file>` | Commit output trong phạm vi attempt đã dừng, không chạy hooks |
+| `omi review-comment --pr <number> --file <file>` | Validate verdict độc lập trên live head và AC trước khi post |
+| `omi prune-logs --project <path> [--task <id...>] [--dry-run]` | Retention log task Done |
+| `omi new-issue --project <path> --file <file> [--apply]`, `omi promote --project <path> [issue]`, `omi set-status --project <path> <issue> <status>` | Intake/readiness; xem handbook §9 và help cho flag bắt buộc |
+| `omi watch --project <path>`, `omi coordinator switch --to <profile>` | Read-only watch và handoff Coordinator |
 | `omi approvals request <subject-id> --kind <business\|deploy>` | Tạo request `pending` qua runtime IPC (`approval.request`), in request id và version; không có cờ quyết định (ADR-0037) |
 | `omi approvals decide <id> --expected-version <n> --decision <approved\|rejected> [--github-comment <id>]` | Chỉ runtime TTY hoặc GitHub actor được allowlist, theo ADR-0026 |
 
@@ -506,3 +512,13 @@ rendering consume the same domain policy; repo tooling does not own a second cos
 See ADR-0014, “Workflow cost policy”, and the operations handbook for step effort, required check
 logs, delta verdicts, conservative risk refusal and Project Workflow routes. Existing approval,
 review independence and fixed-revision delivery checks remain mandatory.
+
+### Đối chiếu source và CLI (2026-11-13)
+
+Folder map §3 được đối chiếu với `src/application/use-cases/`,
+`src/infrastructure/observability/` và migration registry; §13 với
+`src/interfaces/cli/commands/` và help trong [bản ghi kiểm chứng](../operations/cli-verification.md).
+§4 bridge project không phải bridge bảo trì source: `templates/bridges/repository/` là nguồn
+của skills repo; ADR-0036 yêu cầu chạy tooling từ clone pin ngoài checkout, không nạp moving
+develop. `tools/sandbox-setup/` là công cụ chuẩn bị sandbox, không phải CLI product; ADR-0037
+quy định import snapshot trước session và deploy subject từ config, không từ Issue text.

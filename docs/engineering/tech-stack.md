@@ -1,12 +1,12 @@
 # omi-squad — Tech Stack và chuẩn triển khai
 
-Phiên bản 1.0 · 10/11/2026. Đọc cùng `architecture.md`. Đây là baseline đề xuất cho việc implement, không phải bộ dependency đã cài hoặc test tương thích.
+Phiên bản 1.0 · 10/11/2026. Đọc cùng `architecture.md`. Dependency thực tế theo `package.json`/`package-lock.json`; tương thích live chỉ theo compatibility.md. Đối chiếu offline: [CLI verification](../operations/cli-verification.md).
 
 ## 1. Nguyên tắc chọn công nghệ
 
 Ưu tiên ít thành phần, chạy local trong WSL2, dễ kiểm thử process và checkpoint. Chọn thư viện cho nhu cầu cụ thể, giữ dependency ở đúng layer và pin phiên bản sau compatibility spike. Không dùng API tính phí làm fallback ngầm cho subscription; không chọn framework web chỉ để xây CLI.
 
-## 2. Stack đề xuất
+## 2. Stack triển khai
 
 | Hạng mục | Lựa chọn | Lý do và vị trí |
 |---|---|---|
@@ -24,15 +24,15 @@ Phiên bản 1.0 · 10/11/2026. Đọc cùng `architecture.md`. Đây là baseli
 | Files/hash | `node:fs/promises`, `node:crypto` | Atomic writes, checksums và manifests |
 | Git | Git CLI qua process adapter | Worktree/branch/revision bằng công cụ chuẩn |
 | GitHub | `gh` + REST/GraphQL | Tận dụng auth local; bao sau port riêng |
-| Agent | `claude` và `codex` CLI | Worker process; capability/version kiểm tra bằng doctor |
-| Logging | Pino | JSON logs có correlation và redaction |
+| Agent | `claude` và `codex` CLI | Worker process; capability cấu hình trong models.yaml, profile probe kiểm tra auth/version; doctor chỉ kiểm tra cài đặt WSL2 (xem §3) |
+| Logging | Node streams và artifact/check records | Không có Pino trong `package.json`; watch ở `src/infrastructure/observability/` |
 | Testing | Vitest | Unit, integration, contract và E2E; Node environment |
 | Quality | ESLint, typescript-eslint, Prettier | Lint/type/format nhất quán |
 | Architecture guard | dependency-cruiser + script allowlist | Kiểm tra import direction, cycle, vị trí file |
 | CI | GitHub Actions | Check PR, tests, schema drift, package smoke test |
 | Artifact distribution | npm package/tarball có version | Cài riêng trong `.omi-squad/tool/` |
 
-Tại thời điểm nghiên cứu, Node 24 và 26 đều thuộc các dòng LTS. Chọn 24 cho baseline bảo thủ, không khẳng định đây là LTS mới nhất. Xem [Node release status](https://nodejs.org/en/about/previous-releases).
+Baseline thực tế là Node 24.22.2 theo `.nvmrc` và `package.json`; các dòng khác cần compatibility test trước khi đổi pin.
 
 ## 3. Chính sách phiên bản
 
@@ -40,7 +40,7 @@ Tại thời điểm nghiên cứu, Node 24 và 26 đều thuộc các dòng LTS
 - Không ghi các số version chưa kiểm thử như cam kết tương thích. File `docs/operations/compatibility.md` ghi OS, Node, Git, gh, Claude/Codex versions, auth mode, ngày kiểm tra và evidence.
 - Chỉ một baseline Node được hỗ trợ chính thức trong bản đầu. Nâng major có Issue, CI matrix và ADR nếu đổi hành vi.
 - Ghim framework version cho từng project. Update có diff preview, backup config, migrate state và khả năng quay lại phiên bản tương thích.
-- Đối với CLI bên ngoài, doctor phân loại `supported`, `untested`, `unsupported`; phiên bản chưa biết không tự nhận là hoạt động đầy đủ.
+- `doctor` chỉ kiểm tra kernel WSL2, distro, interop, mapping đường dẫn và gọi shim; use case chỉ tổng hợp các check thành `supported`. Nguồn: [`installation-doctor.ts`](../../src/infrastructure/processes/installation-doctor.ts), [`inspect-installation.ts`](../../src/application/use-cases/project/inspect-installation.ts). Chẩn đoán capability/version của worker và phân loại CLI ngoài thành `supported`/`untested`/`unsupported` bằng doctor **chưa có trong v0.1**. Các trạng thái tương thích đã kiểm chứng được ghi thủ công kèm evidence trong [compatibility.md](../operations/compatibility.md), không suy ra từ doctor thành công.
 - Native module `better-sqlite3` phải được kiểm tra trên Node/WSL2 baseline và đường cài sạch. Không copy `node_modules` từ Windows vào Linux.
 
 ## 4. Cấu hình TypeScript
@@ -130,15 +130,15 @@ Log JSON có `timestamp`, `level`, `event`, `projectId`, `sessionId`, `runId`, `
 
 PO xem summary ngắn: running/waiting/blocked, nguyên nhân, quyết định cần duyệt. Log debug rotation theo dung lượng/thời gian. Chỉ xóa artifact hết retention khi không còn checkpoint/run đang tham chiếu; không dọn worktree còn thay đổi chưa merge.
 
-Metric local: task throughput, thời gian chờ, số quality failures, failover count, recovery success, outbox lag. Token/cost/quota không có dữ liệu thì `unknown`, không suy diễn thành 0. [Pino](https://github.com/pinojs/pino).
+Metric local: task throughput, thời gian chờ, số quality failures, failover count, recovery success, outbox lag. Token/cost/quota không có dữ liệu thì `unknown`, không suy diễn thành 0.
 
 ## 10. Bộ lệnh phát triển chuẩn
 
-Các npm script cần được implement khi scaffold:
+Các npm script hiện có trong `package.json`:
 
 | Script | Mục đích |
 |---|---|
-| `build` | Compile production bằng tsc, copy asset cần thiết |
+| `build` | Compile production bằng `tsc -p tsconfig.build.json`; templates/migrations được đóng gói riêng |
 | `typecheck` | Kiểm tra source/test/tools với config phù hợp |
 | `lint` / `format:check` | Coding conventions |
 | `check:architecture` | Dependency graph, cycle, layer và root/file allowlist |
@@ -157,7 +157,7 @@ Vitest chọn Node environment; test cần OS process chạy integration, không
 
 Build artifact chỉ chứa `dist/`, `templates/`, `schemas/`, `migrations/` và metadata/license cần thiết. `npm pack` phải loại toàn bộ `.omi-squad/local`, auth, fixtures nhạy cảm, coverage và source temp.
 
-Project đích cài package version cố định trong `.omi-squad/tool/`. Shim `.omi-squad/bin/omi` resolve đường dẫn theo vị trí file, không theo cwd tùy ý. `omi init` có preview/dry-run, không ghi đè file người dùng ngoài phần managed marker. Update là ba chiều giữa bản mẫu cũ, tùy chỉnh project và bản mẫu mới; conflict được báo để xử lý.
+Project đích cài package version cố định trong `.omi-squad/tool/`. Shim `.omi-squad/bin/omi` resolve đường dẫn theo vị trí file, không theo cwd tùy ý. `omi init` preview mặc định, ghi bằng `--apply` (không có flag `--dry-run`), không ghi đè file người dùng ngoài phần managed marker. Update là ba chiều giữa bản mẫu cũ, tùy chỉnh project và bản mẫu mới; conflict được báo để xử lý.
 
 Framework có thể được cài từ tarball local trước khi có npm registry. Chưa cần publish public để nghiệm thu. Không thay đổi package manager hoặc lockfile của ứng dụng đích.
 
@@ -176,3 +176,8 @@ Khi cần thêm thành phần, Issue phải mô tả vấn đề thực tế, l�
 - Kiểm tra phù hợp với thay đổi đã chạy; không báo pass nếu skip.
 - CLI error/help/JSON đủ rõ cho PO và Coordinator.
 - Với CLI/version/auth chưa chứng minh được, ghi trạng thái unsupported/untested và evidence cần bổ sung.
+
+Đối chiếu pin từ `package.json`: Node `>=24.22.2 <25` (`.nvmrc`: 24.22.2), TypeScript
+6.0.3, Commander 15.0.0, Zod 4.6.7, YAML 2.9.1, better-sqlite3 13.0.3, Vitest 4.1.12.
+`check` còn chạy `check:backlog`, `prompts:check`, `check:coordinator-source` và schema drift;
+không chạy `test:live` hay `test:stress`. Không suy ra tương thích CLI ngoài từ các pin này.
