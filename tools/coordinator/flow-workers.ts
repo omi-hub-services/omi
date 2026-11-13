@@ -186,18 +186,33 @@ const SAFE_PATH = /^[A-Za-z0-9_./-]+$/;
 /** Prints the final report of the newest worker log of the task; 1 while there is none. */
 export async function workerReportCommand(
   ctx: WorkerCtx,
-  input: { readonly planKey: string | null; readonly dryRun: boolean },
+  input: {
+    readonly planKey: string | null;
+    readonly dryRun: boolean;
+    readonly step?: string | null;
+  },
 ): Promise<number> {
   const label = `worker-report ${input.planKey ?? "?"}`;
   const task = /^OMI-(\d+)$/.exec(input.planKey ?? "")?.[1];
   if (task === undefined) return refuse(label, "the Issue has no OMI-NNN Plan Key on the Project");
-  const list = wslCommand(newestLogCommand(task), ctx.target, 30_000);
+  let listPayload: string;
+  try {
+    listPayload = newestLogCommand(task, input.step ?? null);
+  } catch (error) {
+    return refuse(label, error instanceof Error ? error.message : String(error));
+  }
+  const list = wslCommand(listPayload, ctx.target, 30_000);
   if (input.dryRun) {
     would(label, list);
     return 0;
   }
   const file = (await runChecked(ctx.run, list)).trim();
-  if (file === "") return refuse(label, `no worker log omi-${task}-*.jsonl in ~/omi-runs`);
+  if (file === "") {
+    return refuse(
+      label,
+      `no worker log omi-${task}-*${input.step ? `-${input.step}-*` : ""}.jsonl in ~/omi-runs`,
+    );
+  }
   if (!SAFE_PATH.test(file)) return refuse(label, "the log path has unexpected characters");
   const log = await runChecked(ctx.run, wslCommand(`cat ${file}`, ctx.target, 120_000));
   const name = file.split("/").at(-1) ?? file;

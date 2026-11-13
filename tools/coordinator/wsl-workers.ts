@@ -124,7 +124,9 @@ export function parseWorkerArgs(command: string, tool: "claude" | "codex") {
 }
 
 export function workerLogIdentity(path: string, tool: "claude" | "codex") {
-  const match = /^omi-(\d+)-(.+)-\d{8}-\d{6}\.jsonl$/.exec(basename(path));
+  const match = /^omi-(\d+)-(.+)-\d{8}-\d{6}(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?\.jsonl$/.exec(
+    basename(path),
+  );
   let profile = match?.[2] ?? null;
   // Current Codex dispatch names also include the tool before the profile.
   if (profile?.startsWith(`${tool}-`)) profile = profile.slice(tool.length + 1);

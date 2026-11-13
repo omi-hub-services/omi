@@ -574,7 +574,7 @@ through the injectable runner; the pure parts are `worker-launch.ts`, `worker-re
 
 ```
 node tools/coordinator/flow.ts dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] --prompt <file> [--dry-run]
-node tools/coordinator/flow.ts worker-report <issue> [--dry-run]
+node tools/coordinator/flow.ts worker-report <issue> [--step <step>-<attempt>] [--dry-run]
 node tools/coordinator/flow.ts commit-worker <branch> --message-file <f> [--dry-run]
 node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
 ```
@@ -597,14 +597,20 @@ node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
      --output-format stream-json --verbose --max-turns 200 --permission-mode acceptEdits` with the
      default allow and deny lists of omi-next step 3 (`CLAUDE_ALLOWED_TOOLS`,
      `CLAUDE_DENIED_TOOLS` in `worker-launch.ts`), the prompt on stdin and the log
-     `omi-NNN-<profile>-<ts>.jsonl` (+ `.err`). Codex: `CODEX_HOME` of the profile,
+     `omi-NNN-<profile>-<ts>-<step>-<attempt>-<stamp>.jsonl` (+ `.err`); the packet id after
+     `<ts>` keeps parallel same-task, same-profile, same-second dispatches in separate logs
+     (OMI-113). Codex: `CODEX_HOME` of the profile,
      `codex exec --json -s workspace-write -m <m> -c model_reasoning_effort=<e> -o
-     omi-NNN-codex-<profile>-<ts>-last.md [resume <thread>] -`, log `omi-NNN-codex-<profile>-<ts>.jsonl`
+     omi-NNN-codex-<profile>-<ts>-<packet>-last.md [resume <thread>] -`, log
+     `omi-NNN-codex-<profile>-<ts>-<packet>.jsonl`
      (the tool in the name keeps a Codex log out of a Claude profile's quota reading). Model and
      effort are the `EFFORT_POLICY` entry of the tool for the complexity; they are not options.
      It prints the worker's `exit=N` and returns 1 for a non-zero exit.
   `--dry-run` prints the write and launch commands without writing or launching.
-- **`worker-report`** takes the newest `omi-NNN-*.jsonl` and prints the report, the turns, the
+- **`worker-report`** takes the newest `omi-NNN-*.jsonl` (`--step <step>-<attempt>`, for example
+  `verify-1`, takes the newest log of that step, so parallel workers are each reportable; OMI-113;
+  retention, quota and the watch read the packet suffix as part of the name) and prints the
+  report, the turns, the
   permission denials and the id to resume with. Claude: the longest `result` among the result
   events, with turns, denials and `session_id` of the last one. Codex (a `-codex-` log): the
   `-last.md` text next to that log (same `<ts>` stem) and the `thread_id` of the first line. It exits 1 without a

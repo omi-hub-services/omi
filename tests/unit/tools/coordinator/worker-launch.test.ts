@@ -81,8 +81,22 @@ describe("claudeLaunchPayload", () => {
   it("reads the prompt file and logs to omi-NNN-<profile>-<ts>.jsonl and .err", () => {
     expect(payload).toContain("ts=$(date +%Y%m%d-%H%M%S);");
     expect(payload).toContain("< $HOME/omi-runs/omi-077-prompt-verify-1.md");
-    expect(payload).toContain("> $HOME/omi-runs/omi-077-ggtintran-$ts.jsonl");
-    expect(payload).toContain("2> $HOME/omi-runs/omi-077-ggtintran-$ts.err; echo exit=$?");
+    expect(payload).toContain("> $HOME/omi-runs/omi-077-ggtintran-$ts-verify-1.jsonl");
+    expect(payload).toContain("2> $HOME/omi-runs/omi-077-ggtintran-$ts-verify-1.err; echo exit=$?");
+  });
+
+  it("gives two dispatches of one task, profile and second different log paths (OMI-113)", () => {
+    const a = claudeLaunchPayload({ ...claude, packet: "verify-1-aaa111" });
+    const b = claudeLaunchPayload({ ...claude, packet: "review-1-bbb222" });
+    const logOf = (p: string) => /> (\S+\.jsonl)/.exec(p)?.[1];
+    expect(logOf(a)).toBeDefined();
+    expect(logOf(a)).not.toBe(logOf(b));
+    expect(a).toContain("-$ts-verify-1-aaa111.err");
+    expect(b).toContain("-$ts-review-1-bbb222.err");
+    const ca = codexLaunchPayload({ ...codex, packet: "verify-1-aaa111" });
+    const cb = codexLaunchPayload({ ...codex, packet: "review-1-bbb222" });
+    expect(ca).toContain("-$ts-verify-1-aaa111-last.md");
+    expect(cb).toContain("-$ts-review-1-bbb222-last.md");
   });
 
   it("resumes a session with --resume and keeps the same log naming", () => {
@@ -91,7 +105,7 @@ describe("claudeLaunchPayload", () => {
       resume: "11111111-2222-3333-4444-555555555555",
     });
     expect(resumed).toContain("--resume 11111111-2222-3333-4444-555555555555");
-    expect(resumed).toContain("> $HOME/omi-runs/omi-077-ggtintran-$ts.jsonl");
+    expect(resumed).toContain("> $HOME/omi-runs/omi-077-ggtintran-$ts-verify-1.jsonl");
     // the follow-up never replaces the thread's full packet that the watch reads skills from
     expect(resumed).toContain("< $HOME/omi-runs/omi-077-resume-verify-1.md");
     expect(resumed).not.toContain("omi-077-prompt-verify-1.md");
@@ -120,10 +134,12 @@ describe("codexLaunchPayload", () => {
   });
 
   it("writes the last message next to its own log and the stream to a codex-named log", () => {
-    expect(payload).toContain("-o $HOME/omi-runs/omi-077-codex-ggtintran-$ts-last.md");
+    expect(payload).toContain("-o $HOME/omi-runs/omi-077-codex-ggtintran-$ts-verify-1-last.md");
     expect(payload).toContain("< $HOME/omi-runs/omi-077-prompt-verify-1.md");
-    expect(payload).toContain("> $HOME/omi-runs/omi-077-codex-ggtintran-$ts.jsonl");
-    expect(payload).toContain("2> $HOME/omi-runs/omi-077-codex-ggtintran-$ts.err; echo exit=$?");
+    expect(payload).toContain("> $HOME/omi-runs/omi-077-codex-ggtintran-$ts-verify-1.jsonl");
+    expect(payload).toContain(
+      "2> $HOME/omi-runs/omi-077-codex-ggtintran-$ts-verify-1.err; echo exit=$?",
+    );
   });
 
   it("does not use Claude flags", () => {

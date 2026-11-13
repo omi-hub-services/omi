@@ -114,6 +114,19 @@ describe("worker display metadata", () => {
     expect(workerLogIdentity("/runs/omi-004-team-profile-20261111-135052.jsonl", "claude")).toEqual(
       { task: "OMI-004", profile: "team-profile" },
     );
+    // OMI-113: the packet id after the timestamp must not leak into the profile
+    expect(
+      workerLogIdentity(
+        "/runs/omi-107-ggtintran-20261113-163149-verify-1-mwes2dr4dc7f7a.jsonl",
+        "claude",
+      ),
+    ).toEqual({ task: "OMI-107", profile: "ggtintran" });
+    expect(
+      workerLogIdentity(
+        "/runs/omi-107-codex-ggtintran-20261113-163149-review-1-abc123.jsonl",
+        "codex",
+      ),
+    ).toEqual({ task: "OMI-107", profile: "ggtintran" });
     expect(workerLogIdentity("/dev/pts/0", "claude")).toEqual({ task: null, profile: null });
   });
 });

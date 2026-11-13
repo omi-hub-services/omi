@@ -30,8 +30,8 @@ export interface RetentionDecision {
 /** Task number (`052`) of an `omi-NNN-...` file, or null. */
 export const logTask = (name: string): string | null => /^omi-(\d+)-/.exec(name)?.[1] ?? null;
 
-// `omi-NNN-<profile>-<ts>.jsonl` as quota.ts reads it; no profile part means a legacy log.
-const JSONL = /^omi-\d+-(?:(.+)-)?\d{8}-\d{6}\.jsonl$/;
+// `omi-NNN-<profile>-<ts>[-<packet>].jsonl` as quota.ts reads it; no profile part means a legacy log.
+const JSONL = /^omi-\d+-(?:(.+)-)?\d{8}-\d{6}(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?\.jsonl$/;
 
 /** Newest by mtime wins; the name breaks a tie so the choice is stable. */
 const newer = (a: RunFile, b: RunFile) =>

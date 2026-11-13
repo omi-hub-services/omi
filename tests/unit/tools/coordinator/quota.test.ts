@@ -152,6 +152,9 @@ describe("logProfile", () => {
   it("takes the profile from omi-NNN-<profile>-<ts>.jsonl and ignores unknown names", () => {
     const names = ["ggtintran", "minibox"];
     expect(logProfile("omi-053-ggtintran-20261110-155824.jsonl", names, null)).toBe("ggtintran");
+    expect(
+      logProfile("omi-107-ggtintran-20261113-163149-verify-1-mwes2dr4.jsonl", names, null),
+    ).toBe("ggtintran");
     expect(logProfile("omi-002-resume-20261110-143110.jsonl", names, null)).toBeNull();
     expect(logProfile("omi-002-20261110-142459.jsonl", names, null)).toBeNull();
     expect(logProfile("omi-002-20261110-142459.jsonl", names, "ggtintran")).toBe("ggtintran");
