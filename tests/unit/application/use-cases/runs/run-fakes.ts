@@ -64,6 +64,7 @@ export function catalog(): ResolutionCatalog {
     skills: [
       { id: "tdd", version: "1", sha256: h("a") },
       { id: "debugging", version: "1", sha256: h("c") },
+      { id: "receiving-code-review", version: "1", sha256: h("b") },
     ],
     rules: [
       { id: "architecture-boundaries", version: "1", sha256: h("d"), mandatory: false },
@@ -80,6 +81,11 @@ export class FakeSkillSource implements SkillSource {
       sha256: h("a"),
       skillMd: "# TDD\nWrite the failing test first.\n",
       bundledFiles: [".omi-squad/skills/tdd/references/cycle.md"],
+    });
+    this.files.set("receiving-code-review", {
+      sha256: h("b"),
+      skillMd: "# Receiving review\nVerify each finding first.\n",
+      bundledFiles: [],
     });
     this.files.set("debugging", {
       sha256: h("c"),

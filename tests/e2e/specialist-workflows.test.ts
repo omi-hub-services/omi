@@ -357,3 +357,25 @@ describe("new costs require PO approval before any worker starts", () => {
     expect(s.r.executor.started).toHaveLength(0);
   });
 });
+
+describe("specialist rework skills", () => {
+  it.each([
+    ["ui-ux", "implement"],
+    ["ci-cd", "configure-pipeline"],
+  ] as const)(
+    "%s %s at round 2 carries receiving-code-review, at round 1 not",
+    async (id, step) => {
+      const ids = async (round: number) => {
+        const s = await setup(id, step);
+        const result = await dispatchSpecialistStep(s.deps, s.preparation, {
+          ...s.input,
+          quality: { policy: "task-default", step, steps: [step], round },
+        });
+        if (!result.ok || "skipped" in result) throw new Error("not dispatched");
+        return result.attempt.skills.map((skill) => skill.id);
+      };
+      expect(await ids(1)).not.toContain("receiving-code-review");
+      expect(await ids(2)).toContain("receiving-code-review");
+    },
+  );
+});

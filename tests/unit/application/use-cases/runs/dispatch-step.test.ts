@@ -708,3 +708,34 @@ it.each(["stale-sha", "corrupt-log", "failed-qa"])(
     expect(s.checksRun()).toBe(1);
   },
 );
+
+describe("rework skills at the common dispatch boundary", () => {
+  const skillIds = async (
+    quality: Parameters<typeof dispatchInput>[0] extends infer O ? O : never,
+  ) => {
+    const r = rig();
+    const result = dispatched(await dispatchStep(r.deps, dispatchInput(quality)));
+    return result.attempt.skills.map((s) => s.id);
+  };
+  const q = (step: string, round: number) => ({
+    quality: { policy: "task-default", step, steps: [step], round },
+  });
+
+  it("first dispatch does not carry receiving-code-review", async () => {
+    expect(await skillIds({ stepSkills: ["debugging"], ...q("implement", 1) })).not.toContain(
+      "receiving-code-review",
+    );
+  });
+
+  it("an implement rework round carries the step skills plus receiving-code-review", async () => {
+    expect(await skillIds({ stepSkills: ["debugging"], ...q("implement", 2) })).toEqual(
+      expect.arrayContaining(["debugging", "tdd", "receiving-code-review"]),
+    );
+  });
+
+  it("a non-implement round does not get the rework skill", async () => {
+    expect(await skillIds({ stepSkills: ["debugging"], ...q("analyze", 2) })).not.toContain(
+      "receiving-code-review",
+    );
+  });
+});
