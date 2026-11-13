@@ -30,6 +30,7 @@ import {
   claudeLaunchPayload,
   codexLaunchPayload,
   NATIVE_RESUME_HEADER,
+  promptFile,
   runsPath,
 } from "./worker-launch.ts";
 import {
@@ -135,7 +136,7 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
   );
   const write: Command = {
     ...wslCommand(
-      `mkdir -p $HOME/omi-runs; cat > ${runsPath(task, "prompt.md")}`,
+      `mkdir -p $HOME/omi-runs; cat > ${runsPath(task, promptFile(input.resume))}`,
       ctx.target,
       30_000,
     ),

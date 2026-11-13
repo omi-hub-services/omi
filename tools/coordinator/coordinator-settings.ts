@@ -112,3 +112,6 @@ export { wslTarget, type WslTarget } from "./coordinator-target.ts";
 
 /** Shared minimum for usage endpoint calls and watch quota polls (OMI-068). */
 export const QUOTA_MIN_INTERVAL_MS = 300_000;
+
+export const { EXPIRY_PROBE_COOLDOWN_MS } =
+  await import("../../src/domain/profiles/quota-policy.ts");

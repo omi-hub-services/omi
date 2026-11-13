@@ -124,6 +124,7 @@ it("keeps quota thresholds, staleness, limits, scores and ranking aligned", () =
               sharesCoordinatorAccount,
               reading,
               note: null,
+              tokenExpiresAt: null,
             };
             const repo = evaluate(q, QUOTA_SETTINGS, now, true);
             const product = evaluateQuota(

@@ -73,6 +73,9 @@ describe("claudeLaunchPayload", () => {
     });
     expect(resumed).toContain("--resume 11111111-2222-3333-4444-555555555555");
     expect(resumed).toContain("> $HOME/omi-runs/omi-077-ggtintran-$ts.jsonl");
+    // the follow-up never replaces the thread's full packet that the watch reads skills from
+    expect(resumed).toContain("< $HOME/omi-runs/omi-077-resume.md");
+    expect(resumed).not.toContain("omi-077-prompt.md");
   });
 
   it("refuses values that could break out of the payload", () => {

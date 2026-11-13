@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   compareQuota,
+  decideExpiryProbe,
   earliestQuotaReset,
   evaluateQuota,
   type QuotaReading,
@@ -174,5 +175,33 @@ describe("quota policy: earliest reset", () => {
     const known = verdict("k", reading({ fiveHour: { usedPercent: 99, resetsAt: now + HOUR } }));
     expect(earliestQuotaReset([unknown, known])).toBe(now + HOUR);
     expect(earliestQuotaReset([unknown])).toBeNull();
+  });
+});
+
+describe("decideExpiryProbe", () => {
+  const expiresAt = now - 8 * HOUR;
+  const base = { expiresAt, now, lastProbeAt: null, probedForExpiresAt: null, cooldownMs: HOUR };
+
+  it("probes once when the token has expired", () => {
+    expect(decideExpiryProbe(base)).toEqual({ probe: true, reason: "expired" });
+  });
+
+  it("never probes a token that is still valid or has no expiry", () => {
+    expect(decideExpiryProbe({ ...base, expiresAt: now + 1 }).probe).toBe(false);
+    expect(decideExpiryProbe({ ...base, expiresAt: null })).toEqual({
+      probe: false,
+      reason: "token-valid",
+    });
+  });
+
+  it("does not probe during the cooldown, then may again for a new expiry", () => {
+    const recent = { ...base, lastProbeAt: now - HOUR / 2, probedForExpiresAt: expiresAt - 1 };
+    expect(decideExpiryProbe(recent)).toEqual({ probe: false, reason: "cooldown" });
+    expect(decideExpiryProbe({ ...recent, lastProbeAt: now - HOUR }).probe).toBe(true);
+  });
+
+  it("does not loop after a probe that left the same expiry in place", () => {
+    const failed = { ...base, lastProbeAt: now - 10 * HOUR, probedForExpiresAt: expiresAt };
+    expect(decideExpiryProbe(failed)).toEqual({ probe: false, reason: "already-probed" });
   });
 });

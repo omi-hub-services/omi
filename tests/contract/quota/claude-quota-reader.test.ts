@@ -322,6 +322,56 @@ describe("Claude probe", () => {
     expect(result).toEqual({ reading: null, note: "probe returned no rate_limit_event" });
   });
 
+  describe("expired token (OMI-094)", () => {
+    const expired = () => {
+      credentials({ accessToken: TOKEN, expiresAt: NOW - 8 * 3_600_000 });
+    };
+
+    it("probes once, shows the probe reading with the reason, and never loops", async () => {
+      expired();
+      const { reader, record } = probeReader({ stdout: rateLimitEvent });
+      const first = await reader.read(profile(), { now: NOW, probe: false });
+      expect(first.note).toBe("token expired");
+      expect(first.reading?.source).toBe("claude-probe");
+      expect(readInvocations(record)).toHaveLength(1);
+      const later = await reader.read(profile(), { now: NOW + 10 * 3_600_000, probe: false });
+      expect(later.note).toBe("token expired");
+      expect(later.reading?.source).toBe("claude-probe");
+      expect(readInvocations(record)).toHaveLength(1);
+    });
+
+    it("reads usage after a probe that renewed the token", async () => {
+      expired();
+      const record = join(root, "renewing.jsonl");
+      const executable = join(root, "claude-renewing");
+      const renewed = JSON.stringify({
+        claudeAiOauth: { accessToken: TOKEN, expiresAt: NOW + 3_600_000 },
+      });
+      writeFileSync(
+        executable,
+        `#!/usr/bin/env node\nconst fs = require("node:fs");\nfs.appendFileSync(${JSON.stringify(record)}, "run\\n");\nfs.writeFileSync(require("node:path").join(process.env.CLAUDE_CONFIG_DIR, ".credentials.json"), ${JSON.stringify(renewed)});\nprocess.stdin.resume();\nprocess.stdin.on("end", () => console.log(${JSON.stringify(rateLimitEvent.split("\n")[0] ?? "")}));\n`,
+        { mode: 0o700 },
+      );
+      const stub = stubFetch(() => json(usageBody));
+      const reader = createClaudeQuotaReader({
+        fetch: stub.fetch,
+        probe: { executable, parentEnv: { PATH: process.env["PATH"] ?? "" } },
+      });
+      const result = await reader.read(profile(), { now: NOW, probe: false });
+      expect(result.note).toBeNull();
+      expect(result.reading?.source).toBe("claude-usage-api");
+      expect(stub.calls).toHaveLength(1);
+      expect(readFileSync(record, "utf8").trim().split("\n")).toHaveLength(1);
+    });
+
+    it("does not probe while the token is valid", async () => {
+      credentials({ accessToken: TOKEN, expiresAt: NOW + 3_600_000 });
+      const { reader, record } = probeReader({ stdout: rateLimitEvent });
+      await reader.read(profile(), { now: NOW, probe: false });
+      expect(readInvocations(record)).toHaveLength(0);
+    });
+  });
+
   it("does nothing extra when no probe is configured", async () => {
     credentials();
     const stub = stubFetch(() => json(usageBody));

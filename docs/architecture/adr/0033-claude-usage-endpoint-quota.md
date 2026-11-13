@@ -74,12 +74,45 @@ detection replaces it.
 
 A refresh rotates the refresh token and writes `.credentials.json`. That is a write into a profile
 directory, which the Coordinator tooling must not do, and a failed or racing write could log a
-worker out. An expired token is expected for an idle profile; the cache/log fallback keeps tooling available.
+worker out. An expired token is expected for an idle profile; the cache/log fallback keeps tooling
+available. The refresh-token grant is never called, by tooling or by the framework adapter.
+
+## Expired token: report it, probe once (OMI-094, 2026-11-13)
+
+On 2026-11-13 the `ggtintran` profile showed 9-hour-old data. The token had expired, because it
+renews only when `claude` runs on the profile (about every 8 hours), and the cached reading was
+shown with no reason. Rules:
+
+1. **Report.** An expired token is reported on every read, also inside the five-minute call
+   spacing: the collector emits `{kind: "expired", profile, expiresAt}` before the spacing check.
+   `ProfileQuota.tokenExpiresAt` carries it. `status.ts`, the terminal and web watch and
+   `pick-profile` show `token expired` with the data age (`token expired, data 9h old`). Other
+   collector errors (`HTTP n`, `network error`, `timeout`, `no access token`, ...) are shown the
+   same way, as the row note, and no longer only in `status.ts`.
+2. **Probe once.** The pure rule `decideExpiryProbe` (`src/domain/profiles/quota-policy.ts`) says
+   whether to run the existing `--probe` path (one Haiku call, which makes the CLI renew its own
+   token, and writes nothing that `claude` does not write itself). A probe runs only when the token
+   has expired, no probe of the profile ran inside the cooldown (one hour,
+   `EXPIRY_PROBE_COOLDOWN_MS`), and none was run for this same `expiresAt`. A probe that fails or
+   leaves the token expired is therefore not repeated until a new expiry exists. Usage is read
+   again after the probe.
+3. **Who probes.** The watch poller does, automatically: after a poll that reports an expired
+   token it runs the collector once more in `expired` mode for those profiles only. `status.ts` and
+   `pick-profile` only report; `pick-profile --probe` still probes everything. State is in
+   `~/omi-runs/.quota-cache.json` (`probeAt` after any probe, `probedForExpiresAt` for an expiry
+   probe), under the per-profile lock, so watch, status and pick-profile share the cooldown. The
+   rule is recorded before the probe runs, so a crash does not loop either.
+4. **One rule.** The collector embeds the framework function's source and the poller imports it;
+   `src/infrastructure/executors/claude-code/claude-code-quota.ts` calls it too when its optional
+   `probe` is configured, with the state in memory per process.
 
 ## Consequences
 
 - `status.ts`, `watch.ts` and `pick-profile` show fresh Claude numbers without a probe.
-- Idle profiles with an expired token fall back to the last good cache, then logs, until the profile runs again.
+- Idle profiles with an expired token fall back to the last good cache, then logs, with `token
+  expired` and the data age shown. The watch renews such a token with one probe per expiry.
+- A worker resume writes its follow-up to `omi-NNN-resume.md`, so `omi-NNN-prompt.md` keeps the
+  thread's full packet and the watch shows that packet's skills and rules, not the findings packet's.
 - Model windows are visible, which closes ADR-0031 decision 4's "invisible until rejected" for
   Claude; whether the product scheduler uses them is left to OMI-018.
 

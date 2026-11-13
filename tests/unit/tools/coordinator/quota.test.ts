@@ -64,7 +64,14 @@ const quota = (
   profile: string,
   r: QuotaReading | null,
   shared = false,
-): ProfileQuota => ({ tool, profile, sharesCoordinatorAccount: shared, reading: r, note: null });
+): ProfileQuota => ({
+  tool,
+  profile,
+  sharesCoordinatorAccount: shared,
+  reading: r,
+  note: null,
+  tokenExpiresAt: null,
+});
 
 // Raw provider output as it really arrives: account fields included.
 const SECRET = {

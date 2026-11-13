@@ -13,7 +13,7 @@ import type { ReworkCycle } from "../../src/domain/runs/rework-cycle.ts";
 import type { RunStatus } from "../../src/domain/runs/workflow-run.ts";
 import "../register-ts-imports.ts";
 import type { QuotaSettings, WorkerProfile } from "./coordinator-settings.ts";
-import { windowLeft, type QuotaReport, type QuotaWindow } from "./quota.ts";
+import { tokenExpiredText, windowLeft, type QuotaReport, type QuotaWindow } from "./quota.ts";
 import { clean, resetText, STALE_AFTER_SECONDS } from "./watch-core.ts";
 import { buildTasks, type CyclePhase, type TasksRead, type TaskView } from "./watch-tasks.ts";
 import { standingOf } from "./watch-workflow.ts";
@@ -156,7 +156,11 @@ function quotaPanel(input: SnapshotInput): QuotaPanel {
         resetText: null,
         severity: "unknown",
         freshness: "unknown",
-        note: clean(entry?.note ?? (quota ? "unavailable" : "loading")),
+        note: clean(
+          (entry && tokenExpiredText(entry, now)) ??
+            entry?.note ??
+            (quota ? "unavailable" : "loading"),
+        ),
       };
     }
     const five = windowView(r.fiveHour, now, true);
@@ -171,7 +175,7 @@ function quotaPanel(input: SnapshotInput): QuotaPanel {
         settings,
       ),
       freshness: Math.max(0, now - r.observedAt) > STALE_AFTER_SECONDS ? "stale" : "fresh",
-      note: entry.note === null ? null : clean(entry.note),
+      note: clean(tokenExpiredText(entry, now) ?? entry.note ?? "") || null,
     };
   });
   rows.sort(

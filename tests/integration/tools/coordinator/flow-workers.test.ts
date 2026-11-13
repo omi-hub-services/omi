@@ -6,6 +6,7 @@ import {
   workerReportCommand,
 } from "../../../../tools/coordinator/flow-workers.ts";
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
+import { parsePromptText } from "../../../../tools/coordinator/watch-tasks.ts";
 import type { WslTarget } from "../../../../tools/coordinator/coordinator-settings.ts";
 import { createProcessRunner } from "../../../../tools/coordinator/process-runner.ts";
 import { execFileSync } from "node:child_process";
@@ -137,10 +138,36 @@ describe("dispatchCommand", () => {
     });
     const write = f.seen.find((c) => payload(c).includes("cat > "));
     expect(write?.input).toBe("fix the findings\n");
+    // OMI-094: the follow-up goes to its own file; the full packet in omi-077-prompt.md stays
+    expect(payload(write as Command)).toContain("cat > $HOME/omi-runs/omi-077-resume.md");
+    expect(
+      f.seen.some((c) => payload(c).includes("omi-077-prompt.md") && c.input !== undefined),
+    ).toBe(false);
     expect(f.seen.some((c) => /cat templates/.test(payload(c)))).toBe(false);
     expect(payload(f.seen.find((c) => payload(c).includes("claude -p")) as Command)).toContain(
       "--resume sess-123",
     );
+  });
+
+  it("keeps the thread's skills and rules visible to the watch after a findings resume", async () => {
+    const files = new Map<string, string>();
+    const f = fake((c) => {
+      const written = /cat > \S*\/(omi-\d+-[a-z]+\.md)/.exec(payload(c))?.[1];
+      if (written !== undefined && c.input !== undefined) files.set(written, c.input);
+      return { stdout: "exit=0\n" };
+    });
+    const full =
+      "# Workflow feature · step implement · role developer\n## Skill: minimal-change\n\n## Rule: evidence-and-tests\n";
+    const findings = "# Native resume only\n\nfix the findings\n";
+    await dispatchCommand(f.ctx, { ...dispatchInput, prompt: full });
+    await dispatchCommand(f.ctx, { ...dispatchInput, resume: "sess-123", prompt: findings });
+    // the file the watch reads (omi-NNN-prompt.md) is still the full packet
+    expect(files.get("omi-077-prompt.md")).toBe(full);
+    expect(files.get("omi-077-resume.md")).toBe(findings);
+    const shown = parsePromptText(files.get("omi-077-prompt.md") ?? "");
+    expect(shown.skills).toEqual(["minimal-change"]);
+    expect(shown.rules).toEqual(["evidence-and-tests"]);
+    expect(parsePromptText(findings).skills).toEqual([]);
   });
 
   it("with --dry-run prints the commands and changes nothing", async () => {

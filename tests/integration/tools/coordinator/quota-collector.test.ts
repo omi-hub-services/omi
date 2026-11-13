@@ -26,12 +26,13 @@ function runCollector(
   targets: string[] = [],
   preload?: string,
   mode = "",
-  options: { probe?: boolean; now?: number } = {},
+  options: { probe?: boolean | "expired"; now?: number } = {},
 ) {
   const loader = preload ? ["--import", preload] : [];
+  const probe = options.probe === "expired" ? "expired" : options.probe ? "1" : "0";
   return spawnSync(
     process.execPath,
-    [...loader, "--input-type=module", "-", "omi-runs", options.probe ? "1" : "0", ...targets],
+    [...loader, "--input-type=module", "-", "omi-runs", probe, ...targets],
     {
       input: REMOTE_COLLECTOR,
       encoding: "utf8",
@@ -176,6 +177,7 @@ describe("quota collector", () => {
     it("does not call the endpoint for an expired token, and does not touch the profile dir", () => {
       const { result, seen, credPath } = run(Date.now() - 1000);
       expect(parsed(result.stdout)).toEqual([
+        { kind: "expired", profile: "p1", expiresAt: expect.any(Number) as number },
         { kind: "error", tool: "claude-usage", profile: "p1", message: "token expired" },
       ]);
       expect(existsSync(seen)).toBe(false);
@@ -223,7 +225,12 @@ describe("quota collector", () => {
 
 describe("Claude collector shared cache", () => {
   const now = 1794390000;
-  const collect = (setup: ReturnType<typeof usageSetup>, at: number, mode = "", probe = false) => {
+  const collect = (
+    setup: ReturnType<typeof usageSetup>,
+    at: number,
+    mode = "",
+    probe: boolean | "expired" = false,
+  ) => {
     const result = runCollector(setup.home, ["claude:p1"], setup.preload, mode, { now: at, probe });
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
@@ -361,6 +368,131 @@ describe("Claude collector shared cache", () => {
     expect(good?.source).toBe("claude-probe");
     expect(good?.modelWindows).toHaveLength(1);
     expect(cache(setup.home).p1?.nextAllowedAt).toBe(now + 1200);
-    expect(collect(setup, now + 500)).toEqual([{ kind: "cache", profile: "p1", reading: good }]);
+    // the 429 from the earlier call stays visible while calls are spaced out
+    expect(collect(setup, now + 500)).toEqual([
+      { kind: "cache", profile: "p1", reading: good },
+      { kind: "error", tool: "claude-usage", profile: "p1", message: "HTTP 429" },
+    ]);
+  });
+});
+
+describe("Claude collector expiry probe (OMI-094)", () => {
+  const now = 1794390000;
+  const expiredAt = (now - 8 * 3600) * 1000;
+  const renewedAt = (now + 10_000) * 1000;
+  const event = {
+    type: "rate_limit_event",
+    rate_limit_info: {
+      status: "allowed",
+      unifiedWindows: {
+        five_hour: { utilization: 0.29, resetsAt: now + 3600 },
+        seven_day: { utilization: 0.49, resetsAt: now + 86400 },
+      },
+    },
+  };
+
+  /** A fake `claude`; `renew` makes it rewrite the credentials the way the real CLI does. */
+  function fakeClaude(home: string, renew: boolean): void {
+    const bin = join(home, "bin");
+    mkdirSync(bin, { recursive: true });
+    const creds = "require('node:path').join(process.env.CLAUDE_CONFIG_DIR, '.credentials.json')";
+    const renewed = JSON.stringify({ claudeAiOauth: { accessToken: TOKEN, expiresAt: renewedAt } });
+    const script = [
+      `#!${process.execPath}`,
+      "const fs = require('node:fs');",
+      `fs.appendFileSync(${JSON.stringify(join(home, "claude-runs"))}, 'run\\n');`,
+      renew ? `fs.writeFileSync(${creds}, ${JSON.stringify(renewed)});` : "",
+      `process.stdin.resume(); process.stdin.on('end', () => console.log(${JSON.stringify(JSON.stringify(event))}));`,
+    ].join("\n");
+    writeFileSync(join(bin, "claude"), script);
+    chmodSync(join(bin, "claude"), 0o700);
+  }
+  const runs = (home: string) =>
+    existsSync(join(home, "claude-runs"))
+      ? readFileSync(join(home, "claude-runs"), "utf8").split("\n").filter(Boolean).length
+      : 0;
+  const collect = (
+    setup: ReturnType<typeof usageSetup>,
+    at: number,
+    probe: boolean | "expired",
+  ) => {
+    const result = runCollector(setup.home, ["claude:p1"], setup.preload, "", { now: at, probe });
+    expect(result.status).toBe(0);
+    return parsed(result.stdout);
+  };
+  const kinds = (lines: Record<string, unknown>[]) => lines.map((l) => l.kind);
+
+  it("never probes without the expiry mode: status and pick-profile only report", () => {
+    const setup = usageSetup(expiredAt);
+    fakeClaude(setup.home, true);
+    const out = collect(setup, now, false);
+    expect(kinds(out)).toEqual(["expired", "error"]);
+    expect(runs(setup.home)).toBe(0);
+  });
+
+  it("probes an expired token once, reads usage again and reports it fresh", () => {
+    const setup = usageSetup(expiredAt);
+    fakeClaude(setup.home, true);
+    const out = collect(setup, now, "expired");
+    expect(kinds(out)).toEqual(["expiry-probe", "usage"]);
+    expect(runs(setup.home)).toBe(1);
+    // a later poll with the renewed token neither probes nor reports expiry
+    expect(kinds(collect(setup, now + 400, "expired"))).not.toContain("expired");
+    expect(runs(setup.home)).toBe(1);
+  });
+
+  it("does not probe again for the same expiry when the probe did not renew the token", () => {
+    const setup = usageSetup(expiredAt);
+    fakeClaude(setup.home, false);
+    const first = collect(setup, now, "expired");
+    expect(first).toContainEqual({ kind: "expired", profile: "p1", expiresAt: expiredAt });
+    expect(first).toContainEqual({
+      kind: "error",
+      tool: "claude-usage",
+      profile: "p1",
+      message: "token expired",
+    });
+    expect(runs(setup.home)).toBe(1);
+    // well past the cooldown and the call spacing: still no second probe for this expiry
+    const later = collect(setup, now + 10_000, "expired");
+    expect(kinds(later)).toContain("expired");
+    expect(runs(setup.home)).toBe(1);
+  });
+
+  it("does not probe inside the cooldown of an earlier probe, even a manual one", () => {
+    const setup = usageSetup((now + 10_000) * 1000);
+    fakeClaude(setup.home, false);
+    collect(setup, now, true);
+    expect(runs(setup.home)).toBe(1);
+    writeFileSync(
+      setup.credPath,
+      JSON.stringify({ claudeAiOauth: { accessToken: TOKEN, expiresAt: (now + 500) * 1000 } }),
+    );
+    const refused = kinds(collect(setup, now + 600, "expired"));
+    expect(refused).toContain("expired");
+    // a refusal is not a probe: the poller must stay eligible
+    expect(refused).not.toContain("expiry-probe");
+    expect(runs(setup.home)).toBe(1);
+  });
+
+  it("reports expiry when the profile lock is busy, e.g. during a long probe", () => {
+    const setup = usageSetup(Date.now() - 1000);
+    mkdirSync(join(setup.home, "omi-runs"), { recursive: true });
+    writeFileSync(join(setup.home, "omi-runs", ".quota-cache.json.p1.lock"), "");
+    const result = runCollector(setup.home, ["claude:p1"], setup.preload, "", {});
+    expect(kinds(parsed(result.stdout))).toContain("expired");
+  });
+
+  it("keeps the last collector error visible during backoff until a read succeeds", () => {
+    const setup = usageSetup((now + 10_000) * 1000);
+    const at = (t: number, mode = "") =>
+      parsed(runCollector(setup.home, ["claude:p1"], setup.preload, mode, { now: t }).stdout);
+    const error = { kind: "error", tool: "claude-usage", profile: "p1", message: "HTTP 401" };
+    at(now);
+    expect(at(now + 300, "401")).toContainEqual(error);
+    const during = at(now + 400);
+    expect(kinds(during)).toContain("cache");
+    expect(during).toContainEqual(error);
+    expect(at(now + 700)).not.toContainEqual(error);
   });
 });

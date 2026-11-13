@@ -23,7 +23,7 @@ main{padding-top:0}
 .section-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:6px}
 .meta{color:var(--muted);font-size:12px}.quota-scroll{overflow-x:auto}
 .quota-row{display:grid;grid-template-columns:70px minmax(160px,240px) minmax(100px,1fr) 85px 85px 115px;align-items:center;gap:12px;min-height:25px;min-width:710px;font-size:13px;font-variant-numeric:tabular-nums}
-.quota-row+.quota-row{border-top:1px solid var(--line)}.quota-tool{font-weight:750}
+.quota-row+.quota-row{border-top:1px solid var(--line)}.quota-tool{font-weight:750}.quota-note{grid-column:1/-1;color:var(--waiting);font-size:12px}
 .quota-bar{display:block;width:100%;height:10px;border:1px solid var(--line);border-radius:4px;background:var(--unknownTint)}
 .quota-bar rect{fill:var(--done)}.quota-bar.low rect{fill:var(--waiting)}.quota-bar.critical rect{fill:var(--failed)}
 .quota-bar.unknown{background:repeating-linear-gradient(135deg,var(--unknownTint),var(--unknownTint) 5px,var(--line) 5px,var(--line) 7px)}
@@ -238,6 +238,7 @@ function drawQuota(quota){
   add(line,'span','5h '+pct(row.fiveHourLeft));
   add(line,'span','7d '+pct(row.sevenDayLeft));
   add(line,'span','reset '+text(row.resetText,'\\u2014')+(row.freshness==='stale'?' \\u00b7 stale':''));
+  if(typeof row.note==='string'&&row.note!=='')add(line,'span',row.note,'quota-note');
  });
 }
 function drawTotals(tasks){

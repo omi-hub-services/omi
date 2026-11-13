@@ -196,6 +196,41 @@ export function quotaSeverity(
     : "ok";
 }
 
+/** No expiry probe (one Haiku call) within this time of any earlier probe of the same profile. */
+export const EXPIRY_PROBE_COOLDOWN_MS = 3_600_000;
+
+export interface ExpiryProbeInput {
+  /** Epoch ms the OAuth access token expires; null when the credentials do not say. */
+  readonly expiresAt: number | null;
+  readonly now: number;
+  /** Epoch ms of the last probe of this profile, whoever ran it; null when none is recorded. */
+  readonly lastProbeAt: number | null;
+  /** The `expiresAt` the last expiry probe was run for; null when none was. */
+  readonly probedForExpiresAt: number | null;
+  readonly cooldownMs: number;
+}
+
+export interface ExpiryProbeDecision {
+  readonly probe: boolean;
+  readonly reason: "token-valid" | "already-probed" | "cooldown" | "expired";
+}
+
+/**
+ * An expired OAuth token is renewed only when `claude` runs on the profile, so one probe (one Haiku
+ * call, ADR-0033) renews it. At most one probe per expiry: a probe that failed or left the same
+ * expiry in place is not repeated, and no probe runs inside the cooldown of any earlier probe.
+ * Self-contained on purpose: the Coordinator's WSL collector embeds this function's source.
+ */
+export function decideExpiryProbe(input: ExpiryProbeInput): ExpiryProbeDecision {
+  if (input.expiresAt === null || input.expiresAt > input.now)
+    return { probe: false, reason: "token-valid" };
+  if (input.probedForExpiresAt === input.expiresAt)
+    return { probe: false, reason: "already-probed" };
+  if (input.lastProbeAt !== null && input.now - input.lastProbeAt < input.cooldownMs)
+    return { probe: false, reason: "cooldown" };
+  return { probe: true, reason: "expired" };
+}
+
 const FRESHNESS_RANK = { fresh: 0, stale: 1, unknown: 2 } as const;
 
 /** Fresh before stale before unknown, then higher score; 0 is a tie the caller may break. */

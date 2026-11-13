@@ -6,10 +6,12 @@ import type {
   QuotaReader,
   QuotaReadResult,
 } from "../../../application/ports/quota-reader.js";
-import type {
-  ModelQuotaWindow,
-  QuotaReading,
-  QuotaWindow,
+import {
+  decideExpiryProbe,
+  EXPIRY_PROBE_COOLDOWN_MS,
+  type ModelQuotaWindow,
+  type QuotaReading,
+  type QuotaWindow,
 } from "../../../domain/profiles/quota-policy.js";
 import { readBoundedText } from "../../processes/read-bounded-text.js";
 import { startSupervisedProcess } from "../../processes/supervised-process.js";
@@ -153,6 +155,8 @@ export interface ClaudeQuotaReaderOptions {
 interface ProfileState {
   last: QuotaReading | undefined;
   nextAllowedAt: number;
+  lastProbeAt: number | null;
+  probedForExpiresAt: number | null;
 }
 
 /** The newest `rate_limit_event` in a probe's stdout, or undefined. */
@@ -217,6 +221,39 @@ export function createClaudeQuotaReader(options: ClaudeQuotaReaderOptions = {}):
   const minInterval = options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
   const states = new Map<string, ProfileState>();
 
+  async function readOauth(
+    profile: QuotaProfileRef,
+  ): Promise<z.infer<typeof credentialsSchema>["claudeAiOauth"] | undefined> {
+    const text = await readBoundedText(join(profile.credentialRef, ".credentials.json"), 64_000);
+    try {
+      return credentialsSchema.parse(JSON.parse(text ?? "")).claudeAiOauth;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** One probe; keeps the last good model windows and starts the shared cooldown. */
+  async function probeProfile(
+    probe: ClaudeQuotaProbeOptions,
+    profile: QuotaProfileRef,
+    state: ProfileState,
+    now: number,
+  ): Promise<QuotaReadResult> {
+    state.lastProbeAt = now;
+    const event = await runProbe(probe, profile.credentialRef);
+    try {
+      if (event === undefined) throw new Error("no event");
+      // A probe does not report per-model windows: keep the last known ones.
+      state.last = {
+        ...parseClaudeRateLimitEvent(event, now),
+        modelWindows: state.last?.modelWindows ?? [],
+      };
+      return { reading: state.last, note: null };
+    } catch {
+      return { reading: state.last ?? null, note: "probe returned no rate_limit_event" };
+    }
+  }
+
   async function usage(
     profile: QuotaProfileRef,
     state: ProfileState,
@@ -226,18 +263,28 @@ export function createClaudeQuotaReader(options: ClaudeQuotaReaderOptions = {}):
       reading: state.last ?? null,
       note,
     });
-    if (now < state.nextAllowedAt) return stale(null);
-    const text = await readBoundedText(join(profile.credentialRef, ".credentials.json"), 64_000);
-    let credentials: z.infer<typeof credentialsSchema> | undefined;
-    try {
-      credentials = credentialsSchema.parse(JSON.parse(text ?? ""));
-    } catch {
-      credentials = undefined;
-    }
-    if (credentials === undefined) return stale("no readable credentials");
-    const oauth = credentials.claudeAiOauth;
+    let oauth = await readOauth(profile);
+    if (oauth === undefined) return stale("no readable credentials");
     if (oauth.accessToken === "") return stale("no access token");
-    if (oauth.expiresAt !== undefined && oauth.expiresAt <= now) return stale("token expired");
+    const expiresAt = oauth.expiresAt ?? null;
+    if (expiresAt !== null && expiresAt <= now) {
+      // The token renews only when claude runs on the profile: one probe renews it (ADR-0033).
+      const decision = decideExpiryProbe({
+        expiresAt,
+        now,
+        lastProbeAt: state.lastProbeAt,
+        probedForExpiresAt: state.probedForExpiresAt,
+        cooldownMs: EXPIRY_PROBE_COOLDOWN_MS,
+      });
+      if (options.probe !== undefined && decision.probe) {
+        state.probedForExpiresAt = expiresAt;
+        await probeProfile(options.probe, profile, state, now);
+        oauth = await readOauth(profile);
+      }
+      if (oauth === undefined || (oauth.expiresAt !== undefined && oauth.expiresAt <= now))
+        return stale("token expired");
+    }
+    if (now < state.nextAllowedAt) return stale(null);
     state.nextAllowedAt = now + minInterval;
     let response: Response;
     try {
@@ -280,22 +327,11 @@ export function createClaudeQuotaReader(options: ClaudeQuotaReaderOptions = {}):
     async read(profile, { now, probe }) {
       let state = states.get(profile.credentialRef);
       if (state === undefined) {
-        state = { last: undefined, nextAllowedAt: 0 };
+        state = { last: undefined, nextAllowedAt: 0, lastProbeAt: null, probedForExpiresAt: null };
         states.set(profile.credentialRef, state);
       }
       if (probe && options.probe !== undefined) {
-        const event = await runProbe(options.probe, profile.credentialRef);
-        try {
-          if (event === undefined) throw new Error("no event");
-          // A probe does not report per-model windows: keep the last known ones.
-          state.last = {
-            ...parseClaudeRateLimitEvent(event, now),
-            modelWindows: state.last?.modelWindows ?? [],
-          };
-          return { reading: state.last, note: null };
-        } catch {
-          return { reading: state.last ?? null, note: "probe returned no rate_limit_event" };
-        }
+        return probeProfile(options.probe, profile, state, now);
       }
       return usage(profile, state, now);
     },
