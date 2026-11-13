@@ -59,7 +59,7 @@ Repository này chứa mã nguồn **omi-squad**, khác với project sẽ cài 
 | `src/bootstrap/` | Composition root, khởi tạo dependency và lifecycle | Nghiệp vụ, adapter implementation |
 | `templates/project/` | Bộ cấu hình/workflow/role/skill/rule được cài vào project | Runtime state, secret, mã nghiệp vụ framework |
 | `templates/bridges/` | Mẫu tích hợp Claude Code/Codex, hướng dẫn Coordinator | Bản sao logic điều phối |
-| `templates/prompts/` | Packaged prompt skeletons read by tooling/runtime; never installed as project-managed files | Project-editable configuration, runtime state |
+| `templates/prompts/` | Authoritative worker prompt text; runtime embeds generated assets checked for drift; never installed as project-managed files | Project-editable configuration, runtime state |
 | `migrations/` | Migration SQLite đánh số thứ tự | Migration database của project đích |
 | `schemas/` | JSON Schema sinh từ contract, phục vụ CLI/agent | Schema viết tay trùng nguồn contract |
 | `tests/` | Unit, integration, contract, E2E, fixtures | Mã production |
@@ -484,7 +484,8 @@ CI kiểm tra root allowlist, import direction, cycles, file naming, generated s
 | ADR-0019 | Chọn lọc skills thành bộ riêng, có provenance | Tránh nhiều framework cùng điều phối |
 | ADR-0010 | Runtime version riêng mỗi project | Update có kiểm soát, không phụ thuộc global install |
 | ADR-0012 | Coordinator trên Windows, runtime/worker trong WSL2 | Quyết định PO 10/11/2026; lifecycle xuyên ranh giới cần PoC (OMI-005) |
-| ADR-0014 | Dev tooling Coordinator ở `tools/coordinator/` | Tạm thời tới khi có CLI `omi`; script trước, LLM sau (OMI-050) |
+| ADR-0014 | Dev tooling Coordinator ở `tools/coordinator/` | Partially superseded by ADR-0036; operational gates remain |
+| ADR-0036 | Framework owns shared Coordinator policy/text | External pinned CLI migration; interim adapters and parity/drift gates |
 | ADR-0025 | Outbox GitHub, operation marker, đối soát trước retry | Idempotent bằng reconciliation, không hứa exactly-once (OMI-024) |
 | ADR-0031 | Profile = thư mục theo process, failover từ checkpoint | PoC OMI-004; failover Codex giữa hai profile chưa chứng minh |
 

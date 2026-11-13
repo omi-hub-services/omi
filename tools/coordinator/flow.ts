@@ -4,7 +4,9 @@
 // Every subcommand reads the current state first: an already-done step prints "done:" and exits
 // 0, an unsafe one prints "refused:" and exits 1, otherwise it runs (or with --dry-run prints)
 // the argv it needs. Auth comes from the local gh/git logins; nothing token-like is printed.
-import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { COORDINATOR_TOOL_ROOT } from "./tool-root.ts";
+import { readFileSync, readdirSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { createIssue } from "./issue-creation.ts";
 import { issueReadinessReasons, type IssueReadiness } from "./issue-readiness.ts";
@@ -100,10 +102,8 @@ import {
 import { linkedIssue } from "./review-verdict.ts";
 import { promptCommand } from "./flow-prompt.ts";
 import "../register-ts-imports.ts";
-import {
-  resolveQualityPolicy,
-  workflowOptionIssues,
-} from "../../src/domain/workflows/workflow-policy.ts";
+const { resolveQualityPolicy, workflowOptionIssues } =
+  await import("../../src/domain/workflows/workflow-policy.ts");
 
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   workflow-options                          read-only check of live Project Workflow/template routing
@@ -129,10 +129,11 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
                                               WSL: unchanged prompt to ~/omi-runs, then the worker
                                               in the foreground (model/effort from the effort policy)
   worker-report <issue>                       final report, turns, permission denials, session/thread id
-  commit-worker <branch> --message-file <f>   WSL: stage src tests docs templates schemas, commit, print SHA
+  commit-worker <branch> --message-file <f>   WSL: stage source, tooling and managed root files, commit, print SHA
   review-comment <pr> --file <f>              check VERDICT/REVIEWED_HEAD/AC-n lines, post as the Coordinator`;
 
 export interface Context {
+  readonly toolRoot?: string;
   readonly run: Runner;
   readonly target: WslTarget;
   readonly hostCwd: string;
@@ -858,13 +859,9 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         asString(asObject(o, "option").name, "option.name"),
       );
       if (options.length === 0) throw new Error("Workflow has no options");
-      const listing = await runChecked(
-        ctx.run,
-        wslCommand("ls -1 -- templates/project/workflows", ctx.target),
-      );
-      const ids = listing
-        .trim()
-        .split(/\r?\n/)
+      const ids = readdirSync(
+        join(ctx.toolRoot ?? COORDINATOR_TOOL_ROOT, "templates/project/workflows"),
+      )
         .filter((f) => /^[a-z][a-z0-9-]*\.yaml$/.test(f))
         .map((f) => f.slice(0, -5));
       const issues = workflowOptionIssues(options, ids);

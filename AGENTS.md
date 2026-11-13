@@ -30,8 +30,11 @@ mix into the source tree.
    `tools/check-structure.ts` enforces the current map.
 3. Never create `utils/`, `helpers/`, `common/`, `misc/` directories, a generic `manager.ts`, or
    names containing `utils`, `helpers`, `misc`, `final`, `new`, `v2`. Name the responsibility.
-4. One behaviour has one authoritative implementation. Do not copy logic into CLI handlers,
-   prompts and adapters.
+4. One behaviour has one authoritative implementation in framework `src/` or `templates/`.
+   Repository Coordinator tooling consumes that implementation; transitional copies require
+   registered parity tests and a reason (ADR-0036). Tooling Issues must name a framework module
+   or template (or explain why none applies) in `## Framework counterpart`. Readiness and check
+   enforce this; do not copy logic into CLI handlers, prompts or adapters.
 
 ## 2. Layer rules (enforced by `.dependency-cruiser.cjs`)
 
@@ -121,13 +124,11 @@ checked license.
 
 ## 9. Operational work: script first, LLM second
 
-- Deterministic operational steps — reading Project/PR/CI/worker status, changing Status,
-  creating/pushing/deleting branches, opening and merging PRs, closing Issues — go through
-  scripts (`tools/coordinator/`, later the `omi` CLI; ADR-0014), not hand-written `gh`/`git`
-  sequences or LLM reasoning. Use the skills `/omi-status` and `/omi-next`.
-- New Issues are created only with `node tools/coordinator/flow.ts new-issue --file <spec.md>` (use `--dry-run` to preview).
-- Use the LLM only for judgement: choosing between tasks, writing worker prompts, reviewing,
-  and deciding what to do when a step fails or is refused.
-- A script that refuses a step is a gate, not an obstacle: fix the cause or ask the PO; never
-  work around it with raw commands. Business and cost decisions go to the PO.
-- If a deterministic step keeps being done by hand, add it to the script instead.
+Follow the authoritative [script-first rule](templates/project/.omi-squad/rules/script-first.md).
+Repository commands are `node tools/coordinator/status.ts` and
+`node tools/coordinator/flow.ts`; use `/omi-status` and `/omi-next`. New Issues go through
+`node tools/coordinator/flow.ts new-issue --file <spec.md>` (`--dry-run` previews).
+Business and cost decisions go to the PO. ADR-0036 specifies the external pinned CLI migration;
+never install an unfinished runtime in this source repository. Coordinator skills are installed
+from `templates/bridges/repository/` with
+`node tools/coordinator/skill-installation.ts install --apply`; workers edit templates only.

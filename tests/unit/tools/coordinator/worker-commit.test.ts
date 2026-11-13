@@ -5,7 +5,17 @@ const BRANCH = "task/omi-077-script-first";
 
 describe("STAGE_PATHS", () => {
   it("is exactly the allowed paths, never .tmp or .claude", () => {
-    expect(STAGE_PATHS).toEqual(["src", "tests", "docs", "templates", "schemas"]);
+    expect(STAGE_PATHS).toEqual([
+      "src",
+      "tests",
+      "docs",
+      "templates",
+      "schemas",
+      "tools",
+      "AGENTS.md",
+      "package.json",
+      "package-lock.json",
+    ]);
   });
 });
 

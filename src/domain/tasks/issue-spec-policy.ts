@@ -1,3 +1,4 @@
+import { frameworkCounterpartReasons } from "./readiness-gate.js";
 import { acceptanceCriteria } from "./acceptance-criteria.js";
 import { planKeyMarkers } from "./plan-key.js";
 
@@ -5,7 +6,12 @@ const SECTIONS = ["Mục tiêu", "Phạm vi", "Acceptance criteria", "Dependenci
 const MARKER_OPENING = "<!-- omi-squad:plan-key=";
 
 /** Why the Markdown body of a new-Issue spec cannot become an Issue; empty means acceptable. */
-export function issueSpecBodyReasons(body: string, workType: string, prefix: string): string[] {
+export function issueSpecBodyReasons(
+  body: string,
+  workType: string,
+  prefix: string,
+  area: string | null = null,
+): string[] {
   const reasons: string[] = [];
   // Headings inside a fenced example are not sections.
   const prose = body.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1\s*$/gm, "");
@@ -22,5 +28,6 @@ export function issueSpecBodyReasons(body: string, workType: string, prefix: str
     reasons.push(`spec may have at most one ${prefix}-NNN marker`);
   if (body.includes(MARKER_OPENING) && markers.length === 0)
     reasons.push("malformed Plan Key marker");
+  reasons.push(...frameworkCounterpartReasons(body, area));
   return reasons;
 }

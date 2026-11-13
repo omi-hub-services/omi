@@ -18,7 +18,7 @@ function candidate(overrides: Partial<PromotionCandidate> = {}): PromotionCandid
     workType: "Task",
     workflow: "feature",
     role: "Developer",
-    area: "tooling",
+    area: "domain",
     milestone: "M1",
     blockers: [],
     blockersTruncated: false,

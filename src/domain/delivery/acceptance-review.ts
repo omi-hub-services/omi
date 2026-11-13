@@ -64,15 +64,31 @@ export function acceptanceReviewRefusals(
   return refusals;
 }
 
+/** One unambiguous presentation header; old repository comments may use a SHA prefix. */
+export function reviewHeader(
+  body: string,
+  allowAbbreviated = false,
+): { verdict: "PASS" | "FAIL"; head: string } | undefined {
+  const headers = body.split(/\r?\n/).filter((line) => line.startsWith("**VERDICT:"));
+  if (headers.length !== 1) return undefined;
+  const match =
+    /^\*\*VERDICT:\*\* (PASS|FAIL) · \*\*REVIEWED_HEAD:\*\* `([0-9a-f]{7,40})`\s*$/.exec(
+      headers[0] ?? "",
+    );
+  const head = match?.[2];
+  if (head === undefined || (!allowAbbreviated && head.length !== 40)) return undefined;
+  return { verdict: match?.[1] === "PASS" ? "PASS" : "FAIL", head };
+}
+
 /** Presentation format only. Posting a comment never records an approval or a runtime review. */
 export function reviewCommentRefusals(body: string, head: string, criteriaCount: number): string[] {
-  const headers = body.split(/\r?\n/).filter((line) => line.startsWith("**VERDICT:"));
-  const header = /^\*\*VERDICT:\*\* (PASS|FAIL) · \*\*REVIEWED_HEAD:\*\* `([0-9a-f]{40})`\s*$/.exec(
-    headers[0] ?? "",
-  );
+  const header = reviewHeader(body);
   const reasons: string[] = [];
-  if (headers.length !== 1 || header === null) reasons.push("REVIEW_HEADER_INVALID");
-  else if (header[2] !== head) reasons.push("REVIEWED_HEAD_MISMATCH");
+  if (header === undefined) reasons.push("REVIEW_HEADER_INVALID");
+  else if (header.head !== head) reasons.push("REVIEWED_HEAD_MISMATCH");
   const ac = acceptanceReviewRefusals(criteriaCount, parseAcReviewLines(body));
-  return [...reasons, ...ac.filter((reason) => reason !== "AC_NOT_MET" || header?.[1] !== "FAIL")];
+  return [
+    ...reasons,
+    ...ac.filter((reason) => reason !== "AC_NOT_MET" || header?.verdict !== "FAIL"),
+  ];
 }

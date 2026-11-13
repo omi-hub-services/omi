@@ -1,7 +1,9 @@
+import "../register-ts-imports.ts";
+const { compareTaskOrder } = await import("../../src/domain/tasks/promotion-policy.ts");
 // Project/PR snapshot for the status script: one GraphQL query, boundary parsing and the pure
 // classification rules (status grouping, Ready-with-closed-blockers, check and review state).
 import { issueReadinessReasons } from "./issue-readiness.ts";
-import { COORDINATOR_LOGIN, PRIORITY_ORDER, STATUS_ORDER } from "./coordinator-settings.ts";
+import { COORDINATOR_LOGIN, STATUS_ORDER } from "./coordinator-settings.ts";
 import {
   asArray,
   asBoolean,
@@ -380,17 +382,11 @@ export function ignoredVerdictWarnings(
     );
 }
 
-const ISSUE_LINK = /^Issue:\s*#(\d+)\b/m;
+const { linkedIssueNumber } = await import("../../src/domain/delivery/pull-issue-link.ts");
 
 export function linkedIssue(body: string): number | null {
-  const m = ISSUE_LINK.exec(body);
-  return m?.[1] ? Number(m[1]) : null;
+  return linkedIssueNumber(body) ?? null;
 }
-
-const rank = (order: readonly string[], value: string | null) => {
-  const i = value === null ? -1 : order.indexOf(value);
-  return i === -1 ? order.length : i;
-};
 
 export interface StatusGroup {
   readonly status: string;
@@ -429,11 +425,8 @@ export function partitionByStatus(
   const ready = items
     .filter((i) => i.kind === "Issue" && i.status === status && i.state === "OPEN")
     .filter((i) => i.workType !== "Epic")
-    .sort(
-      (a, b) =>
-        rank(PRIORITY_ORDER, a.priority) - rank(PRIORITY_ORDER, b.priority) ||
-        (a.milestone ?? "~").localeCompare(b.milestone ?? "~") ||
-        (a.number ?? 0) - (b.number ?? 0),
+    .sort((a, b) =>
+      compareTaskOrder({ ...a, number: a.number ?? 0 }, { ...b, number: b.number ?? 0 }),
     )
     .map((item) => ({
       item,
