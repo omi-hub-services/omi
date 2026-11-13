@@ -96,8 +96,9 @@ pure; AC counts reuse `acceptance-criteria.ts`'s top-level counting convention. 
   zero AC does not establish a small task. Remaining work defaults to `medium`.
 
 `coordinator-settings.ts` owns the mapping: Claude uses `claude-sonnet-5-5` at low/medium and
-`claude-opus-5-5` at high; Codex uses `gpt-6.1-sol` throughout; the Claude reviewer subagent uses
-`sonnet` at low/medium and `opus` at high. Effort matches complexity for all three. This reserves
+`claude-opus-5-5` at high; Codex uses `gpt-6.1-sol` throughout. Fresh reviewer workers
+use the same dispatch policy for their selected tool. The legacy reviewer advice in pick-profile
+remains for output compatibility; dispatch owns the actual launch model/effort. This reserves
 Opus for high complexity while keeping Codex's model stable. Output includes model, effort,
 complexity and reason for each chosen tool and the reviewer; `--json` adds the same fields to
 `chosen` and `reviewer`, with the decision also at the top level. Refusals remain refusals.
@@ -107,7 +108,7 @@ provides the product policy in `src/domain/agents/complexity-policy.ts` (ADR-001
 
 **Scoped exception to AGENTS.md §1.4 / architecture §14.3 (one implementation):** until OMI-030
 switches Coordinator dispatch to the product CLI, `tools/coordinator/effort-policy.ts` mirrors
-only the pure complexity inference. Tools and product do not import each other. A parity test
+only the pure complexity inference. The effort tooling does not import the product complexity implementation. A parity test
 covers all branches, conflicting labels, manual fields, missing metadata and the default effort
 mapping. The product domain is authoritative; a rule change updates both and the test. The
 reason is to preserve the independent, Node-run Windows Coordinator tooling without adding a
@@ -199,6 +200,57 @@ Issues, Epics, PRs and drafts are excluded from readiness warnings.
   `--json`), produced by the same `promotableBacklog` function. It does not change Priority,
   move a task back to Backlog, or repair Issues that fail the gate (those stay Attention lines).
 
+## Framework worker commands and Coordinator skills (OMI-082)
+
+The product reuses `dispatch --run --step`, `dispatchRunStep`, policy selection and `buildPrompt`;
+it accepts only optional Coordinator notes and generates the worker instructions/report scaffold
+from the Issue context. `worker-report --attempt` reads the durable completion event; it does not
+duplicate native transcript parsing. `commit-worker --attempt --message-file` uses the existing
+workspace writer lease and the pinned task scope rather than this repository's fixed directories,
+and creates commits without executing repository hooks. It cannot make the old report valid at a new revision.
+`review-comment --pr --file` reuses the AC parser and outbox, requires the full live PR head and
+publishes presentation only; recorded independent runtime review remains the merge authority.
+There is no product import from these development scripts and no hard-coded repository login.
+
+Bridge templates `templates/bridges/claude-code/omi-{status,next,watch}/SKILL.md` install as
+`.claude/skills/omi-{status,next,watch}/SKILL.md` via the existing three-way installer. They call
+only the installed CLI/Windows bound launcher. They stay outside worker skill provenance and
+role catalogs, preserving ADR-0019 native discovery isolation. The original development scripts
+and `.claude/` skills remain read-only sources until a separate migration switches this repo.
+
+### Worker commit hook isolation — OMI-082 / Issue #165
+
+`commit-worker` creates a local commit without executing repository hooks. Its Git commands retain
+the adapter’s command-local `core.hooksPath=/dev/null`; repository configuration is not modified.
+There is no hook-enabling option.
+
+Hook files matching HEAD are insufficient evidence of trusted execution. An unchanged hook can
+delegate to worker-modified scripts, dependencies or configuration. Executing that chain with
+Coordinator/runtime authority crosses the worker execution boundary. Subsequent scope validation
+cannot undo arbitrary side effects.
+
+This supersedes the OMI-082 requirement to run normal commit hooks. It is a scoped change to commit
+execution, not permission to bypass required validation. AGENTS.md §7 remains mandatory: required
+checks, independent review, native approvals and merge protections remain enforced on the resulting
+revision. Mandatory validation available only through hooks must be configured as required checks.
+A successful commit supplies no passing check or review evidence and cannot validate an earlier report.
+
+After every commit attempt, command failure must not be interpreted as proof that HEAD remained
+unchanged. Errors during commit or post-commit validation trigger HEAD reconciliation under the
+writer lease. A newly created local commit is undone to the captured pre-commit SHA while preserving
+worktree files. Uncertain or failed recovery is reported explicitly.
+
+Trusted-snapshot hook execution is rejected because securing delegated execution requires a separate
+execution environment. Refusing every repository with hooks is rejected because hooks can remain
+configured without executing at this boundary. Worker prohibitions on `--no-verify` and all approval
+requirements remain unchanged.
+
+Coordinator scope extension for this fix: every Git invocation in the legacy `flow-workers.ts`
+`commitWorkerCommand` is hook- and fsmonitor-isolated through command-local
+`-c core.hooksPath=/dev/null -c core.fsmonitor=false`, including staging, reads and commit.
+Repository configuration is not modified. The product's reconciliation/recovery logic is not
+copied there. Retiring or delegating the legacy path remains #186.
+
 ## Framework port of intake (OMI-079)
 
 The Issue-creation, readiness-gate and promote rules above now also exist in the product, as the
@@ -237,8 +289,8 @@ answers `omi-watch`, it only opens another window and exits. The server uses `no
 `localhost:<port>` (DNS rebinding). `GET /events` is SSE, one snapshot per data change (workers
 every 5 seconds, quota every five minutes). The snapshot is built by a pure function and the page shows
 external strings only through `textContent`, under a CSP that allows its two inline blocks by
-hash. `POST /probe` runs the paid Haiku probe only with the header `X-Omi-Watch: 1`, which the
-page sends after the user confirms in the UI; nothing probes automatically. The server exits 60
+hash. (Until OMI-092 `POST /probe` ran the paid Haiku probe from a page button; it is gone, see
+the OMI-092 section below. The terminal watch's `p` key still asks first.) The server exits 60
 seconds after the last SSE client disconnects, or after start if none ever connects. Polling,
 colour rules and text cleaning are shared with `watch.ts` in `watch-core.ts`; the terminal watch
 stays as the fallback. No dependency is added.
@@ -499,7 +551,7 @@ reads one listing and applies the result with one bash script, both through the 
 ## Worker commands (OMI-077)
 
 The omi-next skill used to make the LLM compose five deterministic things in every task: the
-worker launch command, the curated skills in the prompt, the report out of the worker log, the
+worker launch command, the skills in the prompt, the report out of the worker log, the
 commit of a Codex worker's output and the format of the review comment. They are now
 `flow.ts` subcommands (script-first, AGENTS.md §9; the same principle ships to projects as the
 rule `script-first`, architecture.md §2). Each takes `--dry-run`. `flow-workers.ts` does the I/O
@@ -516,12 +568,10 @@ node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
 
 - **`dispatch`** reads the Issue (Plan Key, Role, Workflow and the complexity of the effort
   policy above), refuses a profile that is not a `WORKER_PROFILES` entry of that tool, then:
-  1. reads the role's curated skills from the worker's checkout (Developer:
-     `test-driven-development`, `minimal-change`, `verification-before-completion`; the `docs`
-     Workflow leaves out `test-driven-development`; other roles get none) and writes the prompt
-     file plus one `## Skill: <name> (follow it; report it under Skills applied)` section per
-     skill to WSL `~/omi-runs/omi-NNN-prompt.md`. With `--resume` the file is the follow-up text
-     only and no skill is appended again;
+  1. writes the rendered prompt file **unchanged**, for fresh and resumed workers, to WSL
+     `~/omi-runs/omi-NNN-prompt.md`. Step skills/rules are owned by `prompt` below; no role-based
+     curated skills are inserted. A findings-only packet requires `--resume`; a fresh worker
+     requires a full packet;
   2. launches the worker **in the foreground** (an 8-hour limit instead of the runner's 2
      minutes; the Coordinator backgrounds the command) in the checkout of `OMI_WSL_REPO_DIR`.
      Claude: `CLAUDE_CONFIG_DIR` of the profile, `ANTHROPIC_*` credentials unset,
@@ -535,7 +585,7 @@ node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
      (the tool in the name keeps a Codex log out of a Claude profile's quota reading). Model and
      effort are the `EFFORT_POLICY` entry of the tool for the complexity; they are not options.
      It prints the worker's `exit=N` and returns 1 for a non-zero exit.
-  `--dry-run` reads the skills (read-only) and prints the write and the launch command.
+  `--dry-run` prints the write and launch commands without writing or launching.
 - **`worker-report`** takes the newest `omi-NNN-*.jsonl` and prints the report, the turns, the
   permission denials and the id to resume with. Claude: the longest `result` among the result
   events, with turns, denials and `session_id` of the last one. Codex (a `-codex-` log): the
@@ -556,6 +606,60 @@ node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
 Boundaries and known limits: `dispatch` does not check whether a worker already runs for the task;
 the Claude `exit=` is the shell's view of the worker; `codex exec resume` takes the same `exec`
 options before the subcommand, which this tooling has not run against a live Codex.
+
+## Worker prompt packets (OMI-090)
+
+`node tools/coordinator/flow.ts prompt N --step <id> [--worktree <dir>] [--branch <b>]
+[--notes <f> | --findings <f>] [--out <f>] [--dry-run]` renders the deterministic worker packet.
+The LLM supplies only task-specific judgement in notes/findings. Required --step is the actual
+step ID of the Issue's Workflow template, with no aliases; absent steps are refused. All steps
+(feature: analyze, implement, verify, review; docs: write/accept; bugfix: reproduce, etc.) resolve
+their own role, exactly their step skills and rules, in template order, verbatim. Rule headings
+do not invent mandatory status: the file's front matter is authoritative. Runtime role+step
+union semantics remain unchanged pending #186.
+
+The shared skeleton is the packaged asset templates/prompts/worker-prompt.md, read
+from the configured worker checkout, never a project-editable override. The pure application
+service src/application/services/render-worker-prompt.ts validates explicit slots and substitutes
+once, so placeholders inside task data stay literal. Tooling may import this application service;
+application never imports tools or performs I/O. No new layer/module/dependency is introduced.
+Repo-specific restrictions and report content are supplied as slots. Runtime buildPrompt wiring
+and JSON/artifact contracts remain #186; broader framework Coordinator dispatch remains #165.
+
+`templates/prompts/` holds package-only assets (architecture §3). Unlike `templates/project/`,
+it is never copied into the project's managed files or recorded in the framework lock. Putting
+the skeleton under `.omi-squad/` in the installed project templates caused lock-schema rejection
+of `worker-prompt.md`. The package's existing `files: ["templates/", ...]` includes the new path;
+`tools/check-package.ts` requires the skeleton in the actual archive listing.
+
+The tooling reads the complete Issue body/title, all comments with author/URL provenance and all
+Project-item pages for Workflow. Chronological comments are delimited task data; scope-note
+candidates are identified without trusting text as approval. extractAcceptanceCriteria reuses
+the authoritative acceptance-criteria.ts parser, preserving verdict count/numbering. The full
+packet includes workspace/branch, AGENTS.md's design read-first list, notes, exact step content,
+restrictions and the Skills applied / Rules applied report contract. The worktree defaults to
+OMI_WSL_REPO_DIR, branch to its current branch; detached HEAD requires --branch. Use the same
+configured checkout for dispatch. Missing/invalid workflow, step, skeleton or content is refused.
+
+Notes/findings/out paths belong to the calling Coordinator process. Without --out only the packet
+is printed to stdout; --out writes only that file. --dry-run renders/previews without writing,
+including with --out, and never dispatches a worker. --notes and --findings together are refused.
+Findings mode emits only findings, workspace/identity, restrictions and report contract, marked
+native-resume-only; dispatch refuses that packet without --resume. A fresh session always gets
+the full step packet through --notes.
+
+/omi-next dispatches analyze, QA and review as **fresh independent worker runs**, not review
+subagents or a resumed author thread, with no shared author context. A different tool/profile
+is not required (PO correction 2026-11-12). Analysis is passed forward as task data; the Coordinator
+records the scope-approved decision before implementation, escalating business/cost changes to
+the PO. The Coordinator runs flow.ts check on the exact revision; fresh QA judges that recorded
+evidence before delivery proceeds. A fresh reviewer judges the same fixed revision, AC and scope
+additions, diff and evidence. The Coordinator only posts validated verdicts via review-comment.
+Findings return to the implementer's native session (or a full packet for a fresh implementer),
+then the new revision needs another script check and fresh QA/review. The 2 + Architect + 2,
+exact-head/base, approval, carried-PASS and merge/close gates are unchanged. The developer supplies
+the proposed /omi-next edit in .tmp/omi-next-SKILL.proposed.md; the Coordinator applies the protected
+native skill edit and verifies it separately.
 
 ## Boundaries
 
@@ -632,3 +736,92 @@ and poller. Expired reset times use one pure display function and are omitted; w
 return to 100. Poller failures go to `onError`: terminal cleanup/rejection via `fail`, or one-line
 web logging with the server kept alive. Worker parsing includes parent PIDs and collapses a Codex
 wrapper/binary pair to its root process; matching stdout JSONL paths also collapse duplicate rows.
+
+## Workflow cost policy (OMI-093)
+
+The authoritative decision is `resolveQualityPolicy` in `src/domain/workflows/workflow-policy.ts`.
+`task-default` and `lean` combine ordinary low/medium verify/review; `strict`, unknown policy ids,
+high complexity and security/gate/data risks keep them separate. `lean` does not weaken any gate.
+`planWorkflowQuality` retains the original step packets, unions their skills/rules/check ids, and
+keeps the reviewer as the combined worker's owner. An intermediate gate or another consumer of
+verify prevents grouping. Combined capability requirements are the intersection of verified model
+aliases, the higher effort floor and compatible executor requirements. No qualifying intersection
+means refusal, never a weaker model. No new dependency, layer or module is introduced.
+
+The runtime records its resolved execution graph and Issue scope evidence in the existing immutable
+`run.planned` event, alongside the original template hash. Recovery, advancement and dispatch read
+that graph; older runs without it retain their original graph. Removing analyze requires top-level
+AC, an implementation map and the trusted task reader's recorded business approval. The Issue is
+the scope evidence, not a comment containing an approval keyword; dispatch still validates the
+approved baseline. Scope or gate changes never gain approval through this policy.
+
+Selection and dispatch share step/round effort: analyst and first reviewer medium, QA and later
+quality verdicts low, developers use the project's complexity mapping, always respecting capability
+floors. Runtime quality rounds count recorded quality failures, not operational failovers. A repeat
+quality worker receives the prior recorded verdict and a bounded committed Git delta; unavailable,
+dirty, unrelated or oversized deltas block dispatch. The runtime runs required checks before a
+quality worker, passes their hashed logs, and reuses those records at completion. Their revision
+must still equal the reported head; a worker cannot mutate the head and retain passing evidence.
+Fresh review attempts and exact-head/base delivery gates remain unchanged.
+
+The initial grouping uses declared implementation paths conservatively (broad/unknown source scope
+is risky). Runtime rechecks actual committed PR paths before starting a combined packet. A newly
+found security/gate/data change refuses with `RISK_REQUIRES_SEPARATE_WORKERS`: the Coordinator must
+plan separate workers against the changed scope, never force the old combined plan. The repo
+Coordinator supplies `--risk security,gates,data` for its PR assessment in addition to automatic
+implementation-map risk detection.
+
+Repo `prompt --step verify,review` (or `verify,accept` for docs) uses the same projection and quality
+instruction renderer and includes each original step's skills/rules verbatim. `--round`,
+`--check-log --head`, `--previous-verdict` and `--delta` carry script evidence. `--scope-approved`
+is an explicit Coordinator decision reference, not parsed Issue/comment text. The anchored
+`omi-quality` packet header supplies step/round to dispatch; text inside the Issue cannot replace
+it. Metadata-free legacy packets retain complexity-based dispatch. `/omi-next` must stop appending
+skills or launching custom effort commands by hand; its protected edit belongs to the Coordinator.
+
+`pick-profile --step verify|review|verify,review --round N` compares eligible Claude and Codex
+profiles by quota. Runtime quality selection likewise ranks quota ahead of configured preference,
+after all capability, login, cooldown and concurrency requirements. Neither path spends Codex reset
+credits. Explicit tool requirements in runtime capability profiles remain mandatory.
+
+Project Workflow routes are shared domain data: canonical ids use their template; `init` maps to
+`onboarding-takeover` (explicit `onboarding-empty-repo` remains available), `research` to
+`idea-to-issues`, `release` to `prepare-release`, `deploy` to `deploy-release`. The latter two are
+existing approval-gated delivery use cases, never generic worker templates or task merge flows.
+`flow.ts workflow-options` reads live Project options and checks every route against the configured
+checkout's templates. CI also checks the documented field options. The frozen bootstrap seed is
+unchanged; no Project state mutation is part of this worker's implementation.
+
+## One watch page for the framework and the repo (OMI-092)
+
+The repo no longer has a page of its own (`tools/coordinator/watch-page.ts` is deleted). `/omi-watch`
+serves the framework's page (`src/infrastructure/observability/watch-page.ts`, design in
+`docs/design/watch`) through the framework's server (`watch-server.ts`), which keeps every OMI-067
+guard: 127.0.0.1 only, Host/Origin checks, hashed CSP without an inline style attribute, `textContent`
+and SVG `setAttribute` only, GET-only `/`, `/health`, `/events`. There is no control endpoint: the
+page has no probe button and `POST /probe` is a 404. `watch-web.ts` only reads the repo's sources
+and `watch-snapshot.ts` maps them into the framework's `WatchSnapshot` contract (source never imports
+tools; tools import `src/` through the register hook).
+
+The diagram and its geometry are the framework's: `workflow-diagram.ts` decides node states,
+`workflow-diagram-layout.ts` (pure, tested) places nodes, connectors and labels, so a source cannot
+draw something different. The repo's own node builders (`diagramNodes`, `templateNodes`,
+`compareLoaded`, `orderNodes`) are deleted; `watch-workflow.ts` keeps only the repo-specific part,
+mapping what it observes (Project Status, worker, PR verdict) to a template position
+(`mapTemplatePos`, `standingOf`). The Issue's template is the only diagram: with no template the
+card says "Template unavailable" instead of drawing a lifecycle guess.
+
+**The step of a running worker comes from its prompt header**, `# Workflow <id> · step <step> ·
+role <role>`, which `flow.ts prompt` and the interim step script write as the first heading.
+`readPrompts` greps that line with the `## Skill:` and `## Rule: <id> (mandatory)` headings (never the
+prompt body); `parsePromptText` takes the first valid header only, and a header for another workflow
+or a step the template lacks is ignored, as is any header when no worker runs (the prompt file is
+overwritten at every dispatch, so it can belong to an older step). With no valid header the step and
+role are shown as unknown; nothing is guessed from the lifecycle. A running worker is therefore no
+longer drawn as implement when it is the QA or review worker.
+
+Quota is one row per profile in the snapshot (Claude first, then Codex): share left of each window,
+the five-hour reset, a severity (`critical` when the limit is reached or a window is under half its
+pick-profile threshold, `low` under the threshold) and freshness. A window not read is null and the
+page writes "unknown", never 0% or an empty bar. If GitHub fails after a good read the server keeps
+the last good cards and flags the board as unavailable.

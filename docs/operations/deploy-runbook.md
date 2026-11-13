@@ -81,6 +81,65 @@ the PO's native approval. If dispatch is still unconfirmed, retain state and rer
 Default checks do not run it. The PO chooses sandbox repository, workflow/tag/SHA, protected
 environment, image/digest, PO/report Issue and the time to run the probe.
 
+## Preparing the sandbox for the live run (OMI-089)
+
+`tools/sandbox-setup/` prepares `omi-hub-services/omi-sandbox` and the local state. It never
+creates or decides an approval, and it refuses any repository whose name lacks `sandbox` and the
+production repository. Run it as the dispatch account (`minibox-claude-code`, repository admin)
+after the PO has confirmed the admin changes. The PO supplies the reviewed image repository and
+its immutable digest (`sha256:<64 hex>`); the script does not choose or pull one.
+
+```sh
+node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts github --image <repo> --digest sha256:<hex> --dry-run
+node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts github --image <repo> --digest sha256:<hex>
+node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts github --image <repo> --digest sha256:<hex> --verify
+```
+
+`--dry-run` reads (GET only) and prints every call it would make: method, path, body summary.
+The real run executes exactly that list in dependency order, then re-reads up to five times,
+three seconds apart, because GitHub reads can lag right after writes; a second run plans
+nothing. If it still exits 1 after every step printed `done`, it lists the ids that were not
+seen: that is read lag until proven otherwise. Do not re-run the apply; run `--verify` (and
+`--dry-run`, which must plan 0 calls). Exit 1 from `--verify` is the real failure.
+`--verify` reads every object back, compares the effective rules on `main` by parsed
+parameters, and exits 1 if anything is missing or weaker. A workflow file or tag that exists
+but differs is a blocker, never overwritten or moved.
+
+The bootstrap commits the deploy workflow to `main` and tags that commit **before** the
+rulesets exist, so no ruleset or native review covers it. The PO reviews that commit (and the
+tag's target) before the live run; later changes to the workflow need a reviewed PR.
+`OMI_SANDBOX_IMAGE_DIGEST` is only a record of the chosen digest. The controls are the dispatch
+input `artifact_digest` and the deploy approval bound to it; a changed variable alone approves
+or deploys nothing.
+
+Created, in order: branch `develop`; the deploy workflow (fixture `sandbox-deploy.yml`) and a
+lightweight tag `sandbox-deploy-r1` at its commit; the `sandbox-check` workflow (the named
+check); repository variables `OMI_SANDBOX_IMAGE` and `OMI_SANDBOX_IMAGE_DIGEST`; environment
+`sandbox` (required User reviewer `ttin-omihub`, `prevent_self_review`, `can_admins_bypass:
+false`); rulesets `omi-sandbox-main` (1 native approval, stale approvals dismissed, check
+`sandbox-check`), `omi-sandbox-develop` (PR, 0 approvals, same check) and `omi-sandbox-tags`
+(`sandbox-deploy-*` cannot be deleted or moved), all without bypass actors; and the pipeline/report
+Issue (found again by its marker). The PO reviews the workflow commit before the live run.
+
+Local state, outside this repository:
+
+```sh
+node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts local-state --state-dir <dir> --image <repo> --digest sha256:<hex>
+```
+
+creates `state.db` (migrated), the project row, `project.yaml`, `artifacts/` and is repeatable.
+`--dry-run` lists what it would create without writing anything; `--verify` exits 1 while
+anything is missing. The directory must resolve (through symlinks) to outside this repository.
+Add `--deploy-approval-id <id>` once the deploy approval exists to write `deploy-config.json`
+(`request`, `pipeline`, `stateDirectory`; no credential, no decision) for
+`OMI_LIVE_DEPLOY_CONFIG`.
+
+**Approvals are the PO's.** A workflow requests the business, release and deploy approvals
+(`requestApproval`); the PO records the decision through the runtime (`recordApproval`) with
+`approvals decide <request-id> --expected-version 0 --decision approved --github-comment <id>`
+(handbook, approvals). `approvals decide` is implemented in the v0.1 CLI; commands whose use case
+is missing answer `NOT_IMPLEMENTED`. Nothing here, and no agent, fills in a decision.
+
 ## Full lifecycle acceptance (OMI-042, build now / run live later)
 
 `tests/e2e/full-lifecycle.test.ts` runs offline against FakeGithub and fake workers. It chains
@@ -142,7 +201,7 @@ the intended change and green named checks. `evidence` has one reference per top
 The harness uses the application task-completion port in memory; it is a use-case acceptance
 harness, not proof of a complete CLI installation or GitHub Project synchronization.
 
-Before starting, the PO/Coordinator prepares the sandbox branches and rulesets from ADR-0015:
+Before starting, prepare the sandbox with `tools/sandbox-setup/` (previous section), which applies ADR-0015:
 no bypass, native review required on main, named checks, and a protected `sandbox` environment
 with required User reviewer `ttin-omihub`, prevent self-review, no admin bypass. Prepare the
 reviewed workflow/tag/image as described above. The operator must verify that the immutable
@@ -183,7 +242,7 @@ This is not a general resume command: after task merge, `preparePr` may refuse a
 the PR is closed. Have the Coordinator inspect completed stages and reconcile through existing
 use cases; do not start another acceptance just to bypass an unknown dispatch.
 
-Open product decisions: `approvals decide` remains NOT_IMPLEMENTED in runtime composition;
+Open product decisions: the PO records decisions with `approvals decide` (previous section);
 there is no CLI generator for `project.yaml` and no `init/login/run/retry` command. Branch/work
 preparation and authenticated approval-store setup therefore require the existing application
 boundaries and an operator, not undocumented CLI commands. There is no release merge use case

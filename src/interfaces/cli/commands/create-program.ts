@@ -12,12 +12,13 @@ import { createCliContext, formatOf } from "./command-context.js";
 import type { CliContext, CliOutput, GlobalOptions } from "./command-context.js";
 import { registerApprovalCommands } from "./approval-commands.js";
 import { registerRunCommands } from "./run-commands.js";
-import { registerStatusCommand } from "./status-command.js";
+import { registerStatusCommand, type OverviewCommands } from "./status-command.js";
 import { registerProfileCommands } from "./profile-commands.js";
 import { registerLogCommands, type LogCommands } from "./log-commands.js";
 import { registerTaskCommands, type TaskCommands } from "./task-commands.js";
 
 export interface CliEnvironment extends CliOutput {
+  readonly readText?: CliContext["readText"];
   readonly sendCommand: CliContext["sendCommand"];
   readonly defaultSocketPath: string;
   readonly timeoutMs: number;
@@ -26,6 +27,7 @@ export interface CliEnvironment extends CliOutput {
   readonly readStdin?: CliContext["readStdin"] | undefined;
   readonly installation?: InstallationCommands;
   readonly tasks?: TaskCommands;
+  readonly overview?: OverviewCommands;
   readonly logs?: LogCommands;
 }
 
@@ -48,7 +50,7 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
       outputError: () => undefined,
     });
   registerInstallationCommands(program, context, environment.installation);
-  registerStatusCommand(program, context);
+  registerStatusCommand(program, context, environment.overview);
   registerSessionCommands(program, context, environment.launchSession);
   registerApprovalCommands(program, context);
   registerRunCommands(program, context);

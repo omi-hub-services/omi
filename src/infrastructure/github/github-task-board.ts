@@ -7,6 +7,7 @@ import {
 } from "../../application/ports/github-project-reader.js";
 import { TaskBoardError } from "../../application/ports/github-task-board.js";
 import type { GithubTaskBoard } from "../../application/ports/github-task-board.js";
+import type { BoardTask, GithubTaskList } from "../../application/ports/github-task-list.js";
 import type { PromotionCandidate } from "../../domain/tasks/promotion-policy.js";
 import { SET_FIELD_MUTATION, writeGraphql } from "./github-graphql-write.js";
 import { readGraphql } from "./github-project-reader.js";
@@ -41,7 +42,7 @@ const issueQuery = `query BoardIssue($owner: String!, $name: String!, $number: I
 const itemsQuery = `query BoardItems($id: ID!, $after: String) {
   node(id: $id) { ... on ProjectV2 {
     items(first: 50, after: $after) {
-      nodes { ${ITEM_FIELDS} content { __typename ... on Issue { ${ISSUE_FIELDS} } } }
+      nodes { ${ITEM_FIELDS} content { __typename ... on Issue { title ${ISSUE_FIELDS} } } }
       pageInfo { hasNextPage endCursor }
     }
   } }
@@ -70,6 +71,8 @@ const issueWire = z.object({
   milestone: z.object({ title: z.string() }).nullable(),
   blockedBy: z.object({ totalCount: z.number().int().nonnegative(), nodes: z.array(blocker) }),
 });
+/** Only the Project listing asks for the title; the single-Issue read does not. */
+const listedIssueWire = issueWire.extend({ title: z.string() });
 const issueResponse = z.object({
   repository: z.object({
     issue: issueWire
@@ -115,7 +118,7 @@ function candidate(
 }
 
 /** Project items of one repository's tasks, read completely through the existing GitHub client. */
-export function createGithubTaskBoard(deps: GithubTaskBoardDeps): GithubTaskBoard {
+export function createGithubTaskBoard(deps: GithubTaskBoardDeps): GithubTaskBoard & GithubTaskList {
   async function inspect() {
     try {
       return await deps.projects.inspect(deps.project);
@@ -154,32 +157,41 @@ export function createGithubTaskBoard(deps: GithubTaskBoardDeps): GithubTaskBoar
     return { itemId: item.id, task: candidate(repository.issue, item) };
   }
 
+  /** Every Issue item of the Project whose Status passes `keep`, across all pages. */
+  async function listTasks(keep: (status: string | undefined) => boolean): Promise<BoardTask[]> {
+    const project = await inspect();
+    const tasks: BoardTask[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < MAX_ITEM_PAGES; page += 1) {
+      const { node }: z.infer<typeof itemsResponse> = await query(
+        itemsQuery,
+        { id: project.id, after },
+        itemsResponse,
+      );
+      for (const item of node.items.nodes) {
+        if (item.content?.__typename !== "Issue" || !keep(item.status?.name)) continue;
+        const issue = listedIssueWire.safeParse(item.content);
+        if (!issue.success) throw new TaskBoardError("INVALID_RESPONSE");
+        tasks.push({ ...candidate(issue.data, item), title: issue.data.title });
+      }
+      if (!node.items.pageInfo.hasNextPage) return tasks;
+      after = node.items.pageInfo.endCursor;
+      if (after === null || after === "") throw new TaskBoardError("INVALID_PAGINATION");
+    }
+    throw new TaskBoardError("PAGINATION_LIMIT");
+  }
+
   return {
     async read(issueNumber) {
       return (await locate((await inspect()).id, issueNumber))?.task;
     },
 
     async listBacklog() {
-      const project = await inspect();
-      const backlog: PromotionCandidate[] = [];
-      let after: string | null = null;
-      for (let page = 0; page < MAX_ITEM_PAGES; page += 1) {
-        const { node }: z.infer<typeof itemsResponse> = await query(
-          itemsQuery,
-          { id: project.id, after },
-          itemsResponse,
-        );
-        for (const item of node.items.nodes) {
-          if (item.content?.__typename !== "Issue" || item.status?.name !== "Backlog") continue;
-          const issue = issueWire.safeParse(item.content);
-          if (!issue.success) throw new TaskBoardError("INVALID_RESPONSE");
-          backlog.push(candidate(issue.data, item));
-        }
-        if (!node.items.pageInfo.hasNextPage) return backlog;
-        after = node.items.pageInfo.endCursor;
-        if (after === null || after === "") throw new TaskBoardError("INVALID_PAGINATION");
-      }
-      throw new TaskBoardError("PAGINATION_LIMIT");
+      return listTasks((status) => status === "Backlog");
+    },
+
+    async listTasks() {
+      return listTasks(() => true);
     },
 
     async setStatus(issueNumber, status: GatedStatus) {

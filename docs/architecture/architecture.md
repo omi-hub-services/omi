@@ -59,6 +59,7 @@ Repository này chứa mã nguồn **omi-squad**, khác với project sẽ cài 
 | `src/bootstrap/` | Composition root, khởi tạo dependency và lifecycle | Nghiệp vụ, adapter implementation |
 | `templates/project/` | Bộ cấu hình/workflow/role/skill/rule được cài vào project | Runtime state, secret, mã nghiệp vụ framework |
 | `templates/bridges/` | Mẫu tích hợp Claude Code/Codex, hướng dẫn Coordinator | Bản sao logic điều phối |
+| `templates/prompts/` | Packaged prompt skeletons read by tooling/runtime; never installed as project-managed files | Project-editable configuration, runtime state |
 | `migrations/` | Migration SQLite đánh số thứ tự | Migration database của project đích |
 | `schemas/` | JSON Schema sinh từ contract, phục vụ CLI/agent | Schema viết tay trùng nguồn contract |
 | `tests/` | Unit, integration, contract, E2E, fixtures | Mã production |
@@ -169,6 +170,7 @@ Tài liệu đặt ở `docs/product/product-overview.md`, `docs/architecture/ar
 | `.omi-squad/local/ipc/`, `locks/`, `tmp/` | Không | Socket, lock, dữ liệu tạm |
 | `.omi-squad/local/backups/` | Không | Backup state có kiểm soát |
 | `.claude/skills/omi-squad/SKILL.md` | Có | Bridge để Coordinator gọi CLI |
+| `.claude/skills/omi-{status,next,watch}/SKILL.md` | Có | Coordinator-only CLI procedures, installed through the same managed bridge; excluded from worker catalogs |
 | `CLAUDE.md`, `AGENTS.md` | Có | Đoạn hướng dẫn được merge có marker, giữ nội dung cũ |
 
 Worktree đặt ngoài checkout chính: một thư mục sibling dành riêng cho project, đường dẫn resolve từ cấu hình local. Không tạo worktree lồng trong thư mục nguồn đang được agent quét. Không copy state/credentials sang mỗi worktree. Worker nhận đường dẫn context/artifact cần thiết; runtime là chủ sở hữu state.
@@ -490,3 +492,15 @@ CI kiểm tra root allowlist, import direction, cycles, file naming, generated s
 PoC phải có bằng chứng chạy thật cho CLI auth/profile/lifecycle. Unit test kiểm tra state machine và policy; integration test kiểm tra transaction, process, worktree và crash recovery; contract test cố định output fixtures từng CLI version; E2E kiểm tra full flow bằng fake executors có fault injection. Live test chạy opt-in với subscription và sandbox GitHub riêng, không dùng production.
 
 Các failure scenario bắt buộc: process chết giữa ghi file; timeout sau remote tạo PR; restart khi merge đã thành công; hai worker cạnh tranh worktree; base branch đổi sau review; profile hết limit; approval stale; GitHub offline; Coordinator đóng khi worker đang chạy; runtime restart với lease cũ. Chi tiết tiêu chí nằm trong `project-plan.md`.
+
+### Workflow cost execution plans (OMI-093)
+
+The existing domain workflows module owns quality decisions (`workflow-policy.ts`); application
+`plan-workflow-quality.ts` projects a pinned template into the selected execution graph without
+removing gates. Its original step packets remain attached to the independent review worker.
+The graph and scope evidence are persisted in `run.planned`, with the original template hash;
+no mutable global policy or schema migration is needed. Selection, dispatch and repo prompt
+rendering consume the same domain policy; repo tooling does not own a second cost decision.
+See ADR-0014, “Workflow cost policy”, and the operations handbook for step effort, required check
+logs, delta verdicts, conservative risk refusal and Project Workflow routes. Existing approval,
+review independence and fixed-revision delivery checks remain mandatory.

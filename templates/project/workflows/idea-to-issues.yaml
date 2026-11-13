@@ -3,7 +3,7 @@ id: idea-to-issues
 version: 1
 selection:
   task_types: [idea]
-quality_policy: task-default
+quality_policy: lean
 steps:
   - id: clarify-idea
     role: analyst

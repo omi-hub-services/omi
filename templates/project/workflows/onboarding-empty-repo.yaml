@@ -3,7 +3,7 @@ id: onboarding-empty-repo
 version: 1
 selection:
   task_types: [onboarding]
-quality_policy: task-default
+quality_policy: strict
 steps:
   - id: define-scope
     role: analyst

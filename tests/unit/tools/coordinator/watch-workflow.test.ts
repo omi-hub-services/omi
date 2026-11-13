@@ -2,23 +2,20 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { Step } from "../../../../tools/coordinator/watch-tasks.ts";
 import {
-  compareLoaded,
   loadTemplate,
   mapTemplatePos,
-  orderNodes,
-  templateNodes,
+  standingOf,
   workStepId,
+  type TemplatePos,
 } from "../../../../tools/coordinator/watch-workflow.ts";
-import { cyclePhase, type Step } from "../../../../tools/coordinator/watch-tasks.ts";
 
 const ok = async (id: string) => {
   const read = await loadTemplate(id);
   if (!read.ok) throw new Error(read.reason);
   return read.workflow;
 };
-const none = cyclePhase([]);
-const ids = (w: Awaited<ReturnType<typeof ok>>) => orderNodes(w).map((n) => n.id);
 
 describe("loadTemplate", () => {
   it("parses the shipped templates with the workflow schema", async () => {
@@ -43,52 +40,6 @@ describe("loadTemplate", () => {
     writeFileSync(join(dir, "empty.yaml"), "schema_version: 1\nid: empty\n");
     expect((await loadTemplate("broken", dir)).ok).toBe(false);
     expect((await loadTemplate("empty", dir)).ok).toBe(false);
-  });
-});
-
-describe("orderNodes: steps by needs, gates around them", () => {
-  it("feature: analyze, scope-approved, implement, verify, review, ready-to-merge", async () => {
-    expect(ids(await ok("feature"))).toEqual([
-      "analyze",
-      "scope-approved",
-      "implement",
-      "verify",
-      "review",
-      "ready-to-merge",
-    ]);
-  });
-
-  it("bugfix: reproduce, scope-approved, implement, verify, regression-test, review, ready-to-merge", async () => {
-    expect(ids(await ok("bugfix"))).toEqual([
-      "reproduce",
-      "scope-approved",
-      "implement",
-      "verify",
-      "regression-test",
-      "review",
-      "ready-to-merge",
-    ]);
-  });
-
-  it("docs has no analyze/implement: write, verify, accept and its own gates", async () => {
-    expect(ids(await ok("docs"))).toEqual([
-      "scope-approved",
-      "write",
-      "verify",
-      "accept",
-      "docs-acceptance",
-      "ready-to-merge",
-    ]);
-  });
-
-  it("carries role, skills and rules of each step and marks gates", async () => {
-    const nodes = orderNodes(await ok("feature"));
-    expect(nodes.find((n) => n.id === "implement")).toMatchObject({
-      kind: "step",
-      role: "developer",
-      skills: ["test-driven-development", "minimal-change"],
-    });
-    expect(nodes.find((n) => n.id === "ready-to-merge")).toMatchObject({ kind: "gate" });
   });
 });
 
@@ -127,105 +78,79 @@ describe("mapTemplatePos (observed lifecycle step -> template step)", () => {
   });
 });
 
-describe("templateNodes", () => {
-  const states = (nodes: ReturnType<typeof templateNodes>) =>
-    Object.fromEntries(nodes.map((n) => [n.id, n.state]));
-
-  it("marks earlier nodes done, the current one current, later ones todo", async () => {
-    const w = await ok("feature");
-    const nodes = templateNodes(w, { kind: "node", id: "verify" }, none);
-    expect(states(nodes)).toEqual({
-      analyze: "done",
-      "scope-approved": "done",
-      implement: "done",
-      verify: "current",
-      review: "todo",
-      "ready-to-merge": "todo",
+describe("standingOf: template position -> the runtime's step statuses", () => {
+  const stand = async (
+    pos: TemplatePos,
+    over: { running?: boolean; fails?: number; architect?: boolean; id?: string } = {},
+  ) =>
+    standingOf({
+      workflow: await ok(over.id ?? "feature"),
+      pos,
+      running: over.running ?? false,
+      fails: over.fails ?? 0,
+      architect: over.architect ?? false,
     });
-    expect(nodes.find((n) => n.id === "verify")).toMatchObject({ role: "qa", sub: "qa" });
-  });
+  const at = (id: string): TemplatePos => ({ kind: "node", id });
 
-  it("before: analysis and scope gate are done, the work step is not started", async () => {
-    const s = states(templateNodes(await ok("feature"), { kind: "before" }, none));
-    expect(s).toMatchObject({ "scope-approved": "done", implement: "todo", analyze: "done" });
-  });
-
-  it("done marks every node done; unknown marks none current", async () => {
-    const w = await ok("docs");
-    expect(
-      Object.values(states(templateNodes(w, { kind: "done" }, none))).every((s) => s === "done"),
-    ).toBe(true);
-    const u = templateNodes(w, { kind: "unknown", reason: "x" }, none);
-    expect(u.some((n) => n.state === "current")).toBe(false);
-  });
-
-  it("rework: the work step is current with rework k/2 and Architect is added from the 2nd FAIL", async () => {
-    const w = await ok("feature");
-    const cycle = cyclePhase([]);
-    const n1 = templateNodes(w, { kind: "node", id: "implement" }, cycle, undefined, "rework 1/2");
-    expect(n1.find((n) => n.id === "implement")).toMatchObject({
-      state: "current",
-      sub: "rework 1/2",
+  it("marks the steps before the position done and the position running while a worker runs", async () => {
+    const s = await stand(at("verify"), { running: true });
+    expect(Object.fromEntries(s.steps)).toEqual({
+      analyze: "succeeded",
+      implement: "succeeded",
+      verify: "running",
     });
-    const arch = templateNodes(
-      w,
-      { kind: "node", id: "review" },
-      { ...cycle, phase: "architect", fails: 2, k: 2 },
-      undefined,
-    );
-    expect(arch.map((n) => n.id)).toContain("Architect");
+    expect(s.atGate).toBeUndefined();
   });
 
-  it("Architect as the step: review is done, Architect current", async () => {
-    const w = await ok("feature");
-    const cycle = { phase: "architect", fails: 2, k: 2, architectCalled: true } as const;
-    const nodes = templateNodes(
-      w,
-      { kind: "node", id: "review" },
-      cycle,
-      undefined,
-      undefined,
-      true,
-    );
-    expect(states(nodes)).toMatchObject({ review: "done", Architect: "current" });
-  });
-
-  it("Blocked / Waiting PO: the node the task stands at is blocked with the sub-label", async () => {
-    const w = await ok("feature");
-    const nodes = templateNodes(w, { kind: "node", id: "implement" }, none, "waiting PO");
-    expect(nodes.find((n) => n.id === "implement")).toMatchObject({
-      state: "blocked",
-      sub: "waiting PO",
+  it("makes the position ready, not running, when no worker runs", async () => {
+    expect(Object.fromEntries((await stand(at("implement"))).steps)).toEqual({
+      analyze: "succeeded",
+      implement: "ready",
     });
-    expect(nodes.find((n) => n.id === "analyze")?.state).toBe("done");
-  });
-});
-
-describe("compareLoaded (skills actually loaded vs the template step)", () => {
-  const compare = async (loaded: string[]) => {
-    const c = compareLoaded(await ok("feature"), "implement", loaded);
-    if (!c) throw new Error("implement is a step");
-    return c;
-  };
-
-  it("marks a loaded skill that the template assigns to another step, and a missing one", async () => {
-    const c = await compare(["test-driven-development", "verification-before-completion"]);
-    expect(c.expected).toEqual(["test-driven-development", "minimal-change"]);
-    expect(c.missing).toEqual(["minimal-change"]);
-    expect(c.extra).toEqual([{ name: "verification-before-completion", template: "verify" }]);
   });
 
-  it("an extra skill the template never uses has template null; an exact match is clean", async () => {
-    const extra = (await compare(["test-driven-development", "minimal-change", "zzz"])).extra;
-    expect(extra).toEqual([{ name: "zzz", template: null }]);
-    const c = await compare(["minimal-change", "test-driven-development"]);
-    expect(c.missing).toEqual([]);
-    expect(c.extra).toEqual([]);
+  it("stands before the developer step at Start: the analysts are done, nothing is current yet", async () => {
+    expect(Object.fromEntries((await stand({ kind: "before" })).steps)).toEqual({
+      analyze: "succeeded",
+    });
   });
 
-  it("is null for a gate or an unknown step id", async () => {
-    const w = await ok("feature");
-    expect(compareLoaded(w, "ready-to-merge", [])).toBeNull();
-    expect(compareLoaded(w, "nope", [])).toBeNull();
+  it("stands at a gate: every step before it is done and the gate is where the task stands", async () => {
+    const s = await stand(at("ready-to-merge"));
+    expect(Object.fromEntries(s.steps)).toEqual({
+      analyze: "succeeded",
+      implement: "succeeded",
+      verify: "succeeded",
+      review: "succeeded",
+    });
+    expect(s.atGate).toBe("ready-to-merge");
+  });
+
+  it("finishes every step when the task is done, and none when the position is unknown", async () => {
+    const done = await stand({ kind: "done" });
+    expect([...done.steps.values()].every((status) => status === "succeeded")).toBe(true);
+    expect(done.steps.size).toBe(4);
+    expect((await stand({ kind: "unknown", reason: "x" })).steps.size).toBe(0);
+  });
+
+  it("shows the review failed while rework runs before it, and not once the work is back at review", async () => {
+    const rework = await stand(at("implement"), { running: true, fails: 1 });
+    expect(rework.steps.get("review")).toBe("failed");
+    const again = await stand(at("review"), { running: true, fails: 1 });
+    expect(again.steps.get("review")).toBe("running");
+    const noFail = await stand(at("implement"), { running: true, fails: 0 });
+    expect(noFail.steps.has("review")).toBe(false);
+  });
+
+  it("makes the review failed when the Architect is the next call", async () => {
+    const s = await stand(at("review"), { fails: 2, architect: true });
+    expect(s.steps.get("review")).toBe("failed");
+    expect(s.steps.get("verify")).toBe("succeeded");
+  });
+
+  it("keeps ui-ux gates around its three designer and reviewer steps", async () => {
+    const s = await stand(at("design-evidence"), { id: "ui-ux" });
+    expect(Object.fromEntries(s.steps)).toEqual({ design: "succeeded" });
+    expect(s.atGate).toBe("design-evidence");
   });
 });

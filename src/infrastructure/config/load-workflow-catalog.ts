@@ -3,6 +3,7 @@ import { parseDocument } from "yaml";
 import { workflowSchema } from "../../application/contracts/workflow.js";
 import type { PinnedWorkflow, WorkflowCatalog } from "../../application/ports/workflow-catalog.js";
 import { loadWorkflowTemplate } from "./load-workflow-template.js";
+import { resolveWorkflowRoute } from "../../domain/workflows/workflow-policy.js";
 
 /**
  * Loads the named workflow templates through the shared strict loader and pins each by the
@@ -24,7 +25,10 @@ export async function loadWorkflowCatalog(
     byId.set(id, { workflow, hash: createHash("sha256").update(text).digest("hex") });
   }
   return {
-    byId: (id) => byId.get(id),
+    byId: (id) => {
+      const route = resolveWorkflowRoute(id);
+      return route.kind === "template" ? byId.get(route.id) : undefined;
+    },
     byHash: (hash) => [...byId.values()].find((pinned) => pinned.hash === hash),
   };
 }

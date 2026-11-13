@@ -27,7 +27,7 @@ SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<d
 
 **What the v0.1 CLI really has.** `--help` lists: `init`, `install`, `update`, `doctor`, `profiles {register,list,probe}`, `status`,
 `session {new,start}`, `approvals decide`, `plan`, `dispatch`, `wait`, `pause`, `resume`, `deliver`,
-`coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9).
+`coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9), and `watch`.
 
 | Job            | v0.1 command                                      | Notes                                                              |
 | -------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
@@ -48,8 +48,43 @@ error (nothing sent), `3` no runtime on the socket or timeout, `4` the runtime r
 (`COMMAND_REFUSED`, `NOT_IMPLEMENTED`, …), `5` malformed runtime answer, `6` `DOCTOR_FAILED` (installation checks failed or could not run). Text mode prints errors on
 stderr as `error[CODE]: message`.
 
-**First thing to try when anything fails:** `<cli> status`. Exit 3 means no runtime is running
+**First thing to try when anything fails:** `<cli> status --runtime`. Exit 3 means no runtime is running
 (start a session, §3). Exit 0 prints `runtime: ready`, `version: …`, `started: …`.
+
+### Status and watch
+
+`<cli> status [--project <path>] [--json]` reads the existing
+`.omi-squad/local/state/state.sqlite` in read-only mode alongside live GitHub Project and PR
+reads. It groups open non-Epic tasks by Status, lists PR checks and the latest runtime-recorded
+review (a review of another head is `stale`), running attempts, profile quota and the next
+unblocked Ready task in priority/milestone/Issue order. JSON follows the envelope above; the
+report is in `result`. Without quota configuration it reports `null`; missing readings are
+`unknown`, never zero. These views never request a paid quota probe.
+
+`<cli> watch [--project <path>] [--port 4381] [--interval 5]` prints a URL to open in the
+browser. Port `0` chooses an available port; interval is positive seconds. It binds only
+`127.0.0.1`, validates Host and Origin against its own port, and streams updates over SSE.
+Polling starts with the first SSE client; loading the page or health endpoint does not start it.
+Runtime state refreshes at the requested interval. GitHub board reads are cached for at least
+60 seconds; a failed refresh keeps the last good titles and blockers and marks GitHub unavailable.
+It exits 60 seconds after the last SSE client leaves (also if none connects), or on Ctrl-C.
+It has no control or probe endpoint. An occupied port fails; choose another with `--port`.
+
+Each active run has a diagram from its pinned workflow hash and latest runtime steps, attempts
+and quality controller: template steps/gates, Review → Developer rework, Architect after two
+quality failures and Ask PO after the assisted budget is spent. Blocked dependencies/runtime
+blocks and Waiting PO approvals are shown at the held step when no worker runs. Template
+skills/rules and the worker's recorded loaded skills/rules are shown separately. Gate colours
+indicate progress of their adjacent step; they are not approval evidence or authority to merge.
+Before the first successful GitHub read, cards remain visible without titles/blockers. If the pinned
+template is no longer in the catalog, the card says so and has no diagram; no fixed lifecycle is
+substituted. Failed snapshot reads display a fixed unavailable message and retry.
+
+Both commands default to the current project directory and need an initialized project and an
+existing migrated state DB; they never create or migrate one. `status` fails if GitHub cannot
+be read, rather than reporting an empty board. To inspect runtime connectivity without project
+configuration, use `status --runtime [--socket <path>]`; `status --run <id>` retains the IPC run
+view. Watch displays recorded runtime state; it does not scan processes to prove OS liveness.
 
 ## 1. Init
 
@@ -175,7 +210,7 @@ a configured project (§1).
 3. `<cli> dispatch --run <id> --step <id>` sends one **ready** step to a worker.
 4. `<cli> wait --run <id> [--timeout <1-3600>]` blocks until no worker of the run is running
    (default 300 s). Use it instead of polling.
-5. `<cli> status --run <id>` shows the run and its steps; `status` alone shows the runtime.
+5. `<cli> status --run <id>` shows the run and its steps; `status --runtime` shows the runtime.
 6. `<cli> deliver --run <id> --pr <n> --head-sha <sha> --check <name> [--check …] [--min-approvals <n>]`
    merges the reviewed head into `develop` and closes the task. `--head-sha` must be the head the
    independent review examined; at least one `--check` is required.
@@ -358,6 +393,89 @@ against live GitHub, so the first live run should start with a preview / `--dry-
 `tools/coordinator/` scripts keep doing the same job for this repository until `omi` replaces them
 (ADR-0014); the framework does not import them.
 
+## 10. Coordinator commands and skills
+
+`install --apply` (§1) installs `omi-status`, `omi-next` and `omi-watch` beside the existing
+`omi-squad` bridge under `.claude/skills/`. Reapply is idempotent. User edits remain local; an
+update that also changes the same file reports a three-way conflict instead of overwriting it.
+These are Coordinator-only bridge assets, outside the curated worker catalog/provenance lock.
+Workers continue receiving only assigned, hash-checked skills/rules inline: Claude disables native
+slash commands and profile user settings, and Codex refuses a profile with installed skills
+(ADR-0019). This is discovery/context isolation, not an OS restriction on a worker with shell access.
+
+Use `.omi-squad/bin/omi` in WSL2, or `node .omi-squad/bin/omi.cjs` from the Windows project root.
+The latter is the existing bound skill bridge launcher. File flags refer to paths **inside WSL2**;
+store notes, messages and review bodies in the project's `.tmp/` directory. No prompt or free text
+is assembled into a shell string. Every new command supports the normal `--json` envelope.
+
+For an initialized project with its Issue imported, approvals recorded and a session running (§3):
+
+1. `status --project . --json`: inspect current work first and judge the next task within PO scope.
+   Use `promote --project . --issue N` if a Backlog task is ready (§9).
+2. `plan --issue N --workflow feature`, then `status --run RUN` to find a ready step.
+3. `dispatch --run RUN --step STEP [--notes .tmp/notes.md]`: this **existing runtime dispatch** is
+   the equivalent of the dev-tool dispatch. The script reads the Issue snapshot, counts only
+   top-level acceptance criteria directly under `## Acceptance criteria` (excluding nested/fenced
+   boxes and subsections), generates numbered AC, worker rules and the JSON report format, then
+   uses the existing `buildPrompt` for verified skills/rules. The Coordinator supplies only optional
+   notes/findings, at most 2000 characters, stored as a context finding. Profile/model/effort still
+   come from the existing selector and project policy; notes cannot override those settings.
+4. Keep the returned attempt id. `wait --run RUN --timeout 300`, then
+   `worker-report --attempt ATTEMPT`. It reads the recorded completion event rather than scanning
+   native logs. `status` is the runtime verdict, `report.result` is the worker's structured claim,
+   and `report.failure` explains verification failure. A running or interrupted attempt may have
+   `report: null`; this is not success. Malformed output has no accepted structured report.
+5. If a stopped worker could not commit, `commit-worker --attempt ATTEMPT --message-file .tmp/message.md`.
+   It takes the task's writer lease, checks the branch, stages only the pinned context scope and
+   rejects an empty/unsafe index, credentials, temporary state and native agent configuration.
+   Repository hooks never execute: all Git commands use command-local `core.hooksPath=/dev/null`,
+   without changing repository configuration or offering a hook-enabling option. Mandatory validation
+   available only through hooks must be configured as required checks. Fresh required checks and
+   independent review must pass on the resulting revision; a commit supplies no passing evidence.
+   The resulting commit is checked against the pinned scope. An out-of-scope commit is undone locally
+   with a soft reset to the pre-commit head and the index cleared; worktree files are preserved and
+   the command refuses `UNSAFE_COMMIT`. It never pushes.
+   Commit or post-commit validation errors trigger HEAD inspection under the writer lease. If HEAD
+   did not move, the index and files remain intact and the original error is reported. If the expected
+   branch's HEAD moved, the local commit is undone to the captured pre-commit SHA and the index is
+   cleared while preserving files. Failed inspection, an unexpected branch or failed undo reports
+   `COMMIT_RECOVERY_FAILED`; the original and recovery errors are retained together. Do not assume a
+   failed command left HEAD unchanged, or retry an uncertain recovery without inspecting its state.
+   Writer release failures are reported as `WRITER_RELEASE_FAILED`, even after a commit succeeds.
+   Successful completion returns the new full head SHA.
+   A second unchanged request refuses `NOTHING_TO_COMMIT`. An active/interrupted writer or held
+   lease is a gate. Committing does not change the old report's revision or mark the step passed:
+   use the workflow's recovery/rework path and obtain fresh verification at the new head.
+6. Follow `status --run RUN` and dispatch the independent reviewer step on a fixed revision.
+   Prepare/publish the task PR through the project's configured delivery workflow before posting
+   its review. These commands do not introduce a new PR-opening or Issue-import interface.
+   `review-comment --pr N --file .tmp/review.md` requires this exact header with the full PR head:
+
+   ```text
+   **VERDICT:** PASS · **REVIEWED_HEAD:** `<40 lowercase hex characters>`
+   AC-1: met — <evidence>
+   AC-2: met — <evidence>
+   ```
+
+   Use `FAIL` with `not met` where appropriate. There must be exactly one well-formed AC line per
+   top-level criterion, no duplicates or unknown numbers, and evidence on each line. PASS requires
+   all met. The command reads the live PR and linked Issue before queuing a comment through the
+   existing outbox. Identical retries use one operation key; a pending outcome is reconciled before
+   sending again. A head can move after the read, so delivery independently rechecks its exact head.
+   A comment is presentation only: it grants no approval and does not replace the runtime's
+   recorded independent review. The authenticated project credential is the posting actor; no
+   repository-specific Coordinator login is hard-coded.
+7. Once the workflow and recorded independent review pass, use
+   `deliver --run RUN --pr N --head-sha HEAD --check REQUIRED` (§3). Retry pending delivery, resolve
+   refusals, and only report Done after delivery confirms it. Observe bounded rework (§6).
+8. `watch --project .` serves the existing loopback monitor; open the printed URL and stop its
+   terminal process when finished. Use `pause`/`resume` (§4–5) for checkpoint handoffs, or
+   `session new` / `coordinator switch --to PROFILE` to end the Coordinator session cleanly.
+
+No step falls back to raw Git/GitHub operations when a command refuses. Scope, uncovered
+architecture and cost decisions go to the PO. Live Windows/WSL2, subscription and remote posting
+remain opt-in verification; local fake-port tests do not establish those platform results.
+
 ## Compatibility matrix
 
 Versions, auth modes and their evidence are in [compatibility.md](compatibility.md); a version not
@@ -436,3 +554,47 @@ contract tests with a fake GitHub only.
 Not run live: native login/probes, GitHub approval, runtime TTY confirmation, Windows `session start`,
 full-dependency clean npm installation, and successful worker/delivery flows. These remain opt-in
 platform acceptance; the smoke record is offline CLI evidence.
+
+## Workflow cost policy
+
+All nine shipped workflows declare a cost policy: feature/bugfix/refactor use `task-default`,
+docs/idea-to-issues use `lean`, and onboarding/UI-UX/CI-CD use `strict`. Strict and unknown policies
+keep QA and review separate. Ordinary low/medium work can share one **fresh independent** quality
+worker; high complexity, security/gate/data changes, or a gate between verify and review require
+separate workers. UI-UX now runs design → implement → verify → review, retaining its original
+step ids, visual evidence and per-step cost approval requirements.
+
+Runtime plans pin the selected graph to their original template hash and record the Issue as scope
+evidence when an approved Issue already has AC and an implementation map. Issue/comment prose
+never approves anything. Old runs keep their original graph. The developer still uses the configured
+complexity effort; analyst/first review use medium, QA/delta review low, bounded below by every
+constituent capability requirement. Quality attempts use fresh sessions; author fixes may resume.
+
+For repository development, the Coordinator can render and dispatch a combined packet:
+
+```
+node tools/coordinator/flow.ts prompt N --step verify,review --head <sha> --check-log <check-log.md> --notes <notes.md> --out <prompt.md>
+node tools/coordinator/flow.ts pick-profile N --step verify,review --round 1 --probe
+node tools/coordinator/flow.ts dispatch N --kind <chosen-tool> --profile <chosen-profile> --prompt <prompt.md>
+```
+
+Use `verify,accept` for docs. A policy refusal means render the actual verify and reviewer steps
+separately. Supply `--risk security,gates,data` (only applicable risks) when the PR touches sensitive
+behaviour even if the declared implementation paths missed it. Review never uses the author's
+resumed session. An explicit `--scope-approved <recorded-decision-ref>` records the Issue as the
+scope source and omits analyze only when AC and an implementation map exist. Without that decision,
+analysis remains applicable. Do not infer it from a `SCOPE-APPROVED` comment.
+
+For a fix round, add `--round 2 --previous-verdict <verdict.md> --delta <diff.md>` and a fresh
+`--head --check-log`. The worker judges only that delta plus the previous verdict and current
+script evidence. QA does not rerun tests. Missing or stale evidence blocks its verdict; sandbox
+EPERM is not a passing check. The runtime supplies its own recorded verdict, bounded Git diff and
+check artifacts automatically, and rejects unavailable evidence or newly discovered risky paths.
+Keep the existing 2 + Architect + 2, fixed-SHA, approval and merge gates.
+
+Run `node tools/coordinator/flow.ts workflow-options` to check live Project Workflow options without
+changing GitHub. Canonical template ids resolve directly; legacy `init` means onboarding-takeover,
+`research` means idea-to-issues. Release/deploy values route to `prepare-release` / `deploy-release`
+with their existing independent PO approval gates; `prompt` refuses to launch them as generic
+workers. For a new empty project, select onboarding-empty-repo explicitly. The documented Project
+option routing is checked in the default unit suite; the frozen bootstrap seed is not task state.

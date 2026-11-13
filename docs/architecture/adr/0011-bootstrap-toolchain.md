@@ -42,7 +42,8 @@ libraries (Commander, Zod, better-sqlite3, Pino) are added by the Issues that ne
   `allowImportingTsExtensions` with `noEmit` so this stays valid. Node 24.22 still prints an
   `ExperimentalWarning` for type stripping; it is harmless.
 - **Prettier does not reformat `docs/**/*.md`.** The five handed-over design documents are kept
-  byte-for-byte; formatting them would rewrite every table.
+  byte-for-byte; formatting them would rewrite every table. Approved design evidence under
+  `docs/design/` (hash-locked by its `SHA256SUMS`) is excluded for the same reason.
 - **Root files.** Prettier config lives in `package.json`, so no `.prettierrc`/
   `.prettierignore` is added outside the architecture.md root allowlist. No `LICENSE` is added:
   choosing a license is a PO decision.

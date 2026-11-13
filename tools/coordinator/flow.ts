@@ -98,8 +98,15 @@ import {
   workerReportCommand,
 } from "./flow-workers.ts";
 import { linkedIssue } from "./review-verdict.ts";
+import { promptCommand } from "./flow-prompt.ts";
+import "../register-ts-imports.ts";
+import {
+  resolveQualityPolicy,
+  workflowOptionIssues,
+} from "../../src/domain/workflows/workflow-policy.ts";
 
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
+  workflow-options                          read-only check of live Project Workflow/template routing
   new-issue --file <spec.md>                 validated Issue with Project fields and Backlog
   set-status <issue> <status>
   promote [<issue>]                           Backlog -> Ready if blockers closed and ready (no N: first by priority)
@@ -116,8 +123,10 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   prune-runs                                  one-time log sweep for every Done task
   pick-profile <issue> [--kind claude|codex|claude+codex-live] [--probe] [--model NAME] [--json]
                                               worker profile by quota (--probe: 1 Haiku call/profile)
+  prompt <issue> --step <id> [--worktree <dir>] [--branch <b>] [--notes <f> | --findings <f>] [--out <f>]
+                                              render the workflow step packet; --dry-run previews without writing
   dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] --prompt <file>
-                                              WSL: prompt + curated skills to ~/omi-runs, then the worker
+                                              WSL: unchanged prompt to ~/omi-runs, then the worker
                                               in the foreground (model/effort from the effort policy)
   worker-report <issue>                       final report, turns, permission denials, session/thread id
   commit-worker <branch> --message-file <f>   WSL: stage src tests docs templates schemas, commit, print SHA
@@ -500,7 +509,11 @@ export async function pickProfileCommand(
   probe: boolean,
   json = false,
   model: string | null = null,
+  step?: string,
+  round = 1,
 ): Promise<number> {
+  if (!Number.isSafeInteger(round) || round < 1)
+    throw new Error("--round must be a positive integer");
   if (!(WORKER_KINDS as readonly string[]).includes(kind)) {
     throw new Error(`--kind must be one of ${WORKER_KINDS.join(", ")}`);
   }
@@ -519,19 +532,30 @@ export async function pickProfileCommand(
     ...issueData.effortInput,
     hasLiveTests: kind === "claude+codex-live",
   });
+  const qualityStep =
+    step?.split(",").some((s) => s === "verify" || s === "review") ?? kind === "quality";
+  const policy = resolveQualityPolicy({
+    qualityPolicy: "task-default",
+    complexity: decision.complexity,
+    step: step?.split(",").at(-1) ?? (qualityStep ? "review" : "implement"),
+    round,
+    risks: { security: false, gates: false, data: false },
+  });
+  const effortLevel =
+    policy.effort === "low" || policy.effort === "medium" ? policy.effort : "high";
   const result = pickProfile(
-    kind as WorkerKind,
+    qualityStep ? "quality" : (kind as WorkerKind),
     quota.profiles,
     QUOTA_SETTINGS,
     quota.now,
     probe,
-    model ?? EFFORT_POLICY.claude[decision.complexity].model,
+    model ?? EFFORT_POLICY.claude[effortLevel].model,
   );
   const lines = formatPick(label, result);
   if (result.ok) {
     const chosen = result.chosen.map((candidate) => ({
       ...candidate,
-      ...EFFORT_POLICY[candidate.tool][decision.complexity],
+      ...EFFORT_POLICY[candidate.tool][effortLevel],
       ...decision,
     }));
     const reviewer = { ...EFFORT_POLICY.reviewer[decision.complexity], ...decision };
@@ -767,6 +791,18 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       "comment-file": { type: "string" },
       "message-file": { type: "string" },
       prompt: { type: "string" },
+      step: { type: "string" },
+      round: { type: "string" },
+      risk: { type: "string" },
+      "scope-approved": { type: "string" },
+      "check-log": { type: "string" },
+      "previous-verdict": { type: "string" },
+      delta: { type: "string" },
+      worktree: { type: "string" },
+      branch: { type: "string" },
+      notes: { type: "string" },
+      findings: { type: "string" },
+      out: { type: "string" },
       profile: { type: "string" },
       resume: { type: "string" },
       kind: { type: "string", default: "claude" },
@@ -792,6 +828,71 @@ export async function main(argv: readonly string[], context?: Context): Promise<
   const go = async (plan: Plan) => ((await execute(ctx, label, plan, dry)) ? 0 : 1);
 
   switch (sub) {
+    case "workflow-options": {
+      const data = asObject(
+        parseJson(
+          await runChecked(ctx.run, {
+            file: "gh",
+            args: [
+              "project",
+              "field-list",
+              String(PROJECT_NUMBER),
+              "--owner",
+              OWNER,
+              "--limit",
+              "100",
+              "--format",
+              "json",
+            ],
+          }),
+          "Project fields",
+        ),
+        "Project fields",
+      );
+      const fields = asArray(data.fields, "fields");
+      if (asNumber(data.totalCount, "totalCount") > fields.length)
+        throw new Error("Project fields truncated; Workflow sync cannot be checked");
+      const field = fields.map((f) => asObject(f, "field")).find((f) => f.name === "Workflow");
+      if (field === undefined) throw new Error("Project has no Workflow field");
+      const options = asArray(field.options, "Workflow.options").map((o) =>
+        asString(asObject(o, "option").name, "option.name"),
+      );
+      if (options.length === 0) throw new Error("Workflow has no options");
+      const listing = await runChecked(
+        ctx.run,
+        wslCommand("ls -1 -- templates/project/workflows", ctx.target),
+      );
+      const ids = listing
+        .trim()
+        .split(/\r?\n/)
+        .filter((f) => /^[a-z][a-z0-9-]*\.yaml$/.test(f))
+        .map((f) => f.slice(0, -5));
+      const issues = workflowOptionIssues(options, ids);
+      if (issues.length > 0) {
+        console.error(`workflow-options: refused: ${issues.join("; ")}`);
+        return 1;
+      }
+      console.log("Workflow options match template/delivery routes");
+      return 0;
+    }
+    case "prompt":
+      return promptCommand(ctx, {
+        number: issueNumber(a),
+        step: values.step,
+        round: values.round,
+        risk: values.risk,
+        scopeApproved: values["scope-approved"],
+        checkLog: values["check-log"],
+        head: values.head,
+        previousVerdict: values["previous-verdict"],
+        delta: values.delta,
+        worktree: values.worktree,
+        branch: values.branch,
+        notes: values.notes,
+        findings: values.findings,
+        out: values.out,
+        dryRun: dry,
+      });
     case "new-issue":
       return createIssue(ctx.run, required(values.file, "--file"), dry);
     case "set-status": {
@@ -858,6 +959,8 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         values.probe,
         values.json,
         values.model ?? null,
+        values.step,
+        Number(values.round ?? "1"),
       );
     case "dispatch": {
       const issue = await readIssue(ctx, issueNumber(a));

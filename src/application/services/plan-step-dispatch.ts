@@ -5,19 +5,15 @@ import { contextPacketSchema } from "../contracts/context.js";
 import { taskComplexitySchema } from "../contracts/task-complexity.js";
 import type { DispatchPlanner, DispatchPlanRequest } from "../ports/dispatch-planner.js";
 import type { ExecutorSelectionStore } from "../ports/executor-selection-store.js";
-import {
-  earliestQuotaReset,
-  evaluateQuota,
-  type QuotaReading,
-  type QuotaThresholds,
-  type QuotaVerdict,
-} from "../../domain/profiles/quota-policy.js";
+import { earliestQuotaReset, type QuotaVerdict } from "../../domain/profiles/quota-policy.js";
 import type { ProfileRegistry } from "../ports/profile-registry.js";
 import type { QuotaReader } from "../ports/quota-reader.js";
 import type { RunPlanStore } from "../ports/run-plan-store.js";
 import type { WorkflowCatalog } from "../ports/workflow-catalog.js";
 import { selectExecutor } from "../use-cases/profiles/select-executor.js";
 import { DispatchPlanningError } from "./dispatch-planning-error.js";
+import { createQuotaVerdictReader } from "./read-quota-verdicts.js";
+import { qualityStepId, packetModels } from "./plan-workflow-quality.js";
 
 export const dispatchTaskSchema = z.strictObject({
   context: contextPacketSchema.pick({
@@ -77,6 +73,7 @@ export function createDispatchPlanner(deps: {
   readonly profiles: ProfileRegistry;
   readonly selections: ExecutorSelectionStore;
   readonly task: (taskId: string) => Promise<DispatchTask>;
+  readonly qualityRound?: (stepRunId: string) => number;
   readonly nextAttemptNumber: (stepRunId: string) => number;
   readonly cancelReservation: (attemptId: string) => void;
   readonly now: () => number;
@@ -89,6 +86,7 @@ export function createDispatchPlanner(deps: {
       readonly profileHome: string;
       readonly candidate: { readonly model: string; readonly executor: string };
       readonly effort: string;
+      readonly quality?: import("../contracts/context.js").ContextPacket["quality"];
     },
   ): Promise<Readonly<Record<string, unknown>>>;
 } {
@@ -104,13 +102,17 @@ export function createDispatchPlanner(deps: {
       executor: string;
     },
     task: DispatchTask,
+    round: number,
   ) => {
     const plan = deps.plans.forRun(request.runId);
     const workflow =
-      plan === undefined ? undefined : deps.workflows.byHash(plan.templateHash)?.workflow;
+      plan?.qualityPlan?.workflow ??
+      (plan === undefined ? undefined : deps.workflows.byHash(plan.templateHash)?.workflow);
     const step = workflow?.steps.find((entry) => entry.id === request.stepId);
     if (step === undefined) throw new Error("WORKFLOW_UNKNOWN");
-    const capability = models.capability_profiles[step.capability_profile];
+    const packetSteps = plan?.qualityPlan?.packets[step.id] ?? [step];
+    const selectedModels = packetModels(models, packetSteps, step.capability_profile);
+    const capability = selectedModels.capability_profiles[step.capability_profile];
     if (capability === undefined) throw new Error("CAPABILITY_UNKNOWN");
     // A required check without a command would silently fall back to the worker's word.
     const configured = config.checks ?? {};
@@ -118,7 +120,22 @@ export function createDispatchPlanner(deps: {
       throw new Error("CHECK_UNCONFIGURED");
     }
     return {
-      models,
+      checkEvidenceSteps:
+        qualityStepId(step) === "review"
+          ? step.needs.filter((id) =>
+              workflow?.steps.some(
+                (candidate) => candidate.id === id && qualityStepId(candidate) === "verify",
+              ),
+            )
+          : [],
+      quality: {
+        policy: workflow?.quality_policy ?? "strict",
+        step: qualityStepId(step),
+        steps: plan?.qualityPlan?.packets[step.id]?.map((s) => s.id) ?? [step.id],
+        round,
+      },
+      models: selectedModels,
+      packetSteps,
       task: {
         ...task.complexity,
         workflow: task.complexity.workflow ?? workflow?.id ?? null,
@@ -150,63 +167,21 @@ export function createDispatchPlanner(deps: {
   };
   /**
    * Reads quota before any attempt is reserved (readers are async, the reservation is one short
-   * synchronous transaction). A reader that throws counts as no reading: a missing number never
-   * stops a dispatch, and a limit hit mid-run still fails over.
+   * synchronous transaction). Without a `quota` block or a reader nothing is read and selection
+   * ignores quota; a limit hit mid-run still fails over.
    */
-  const quotaVerdicts = async (
+  const quotaVerdicts: (
     requiredExecutor: string | undefined,
-  ): Promise<ReadonlyMap<string, QuotaVerdict> | undefined> => {
-    const policy = config.quota;
-    const reader = deps.quota;
-    if (policy === undefined || reader === undefined) return undefined;
-    const thresholds: QuotaThresholds = {
-      minFiveHourLeftPercent: policy.min_five_hour_left_percent,
-      minSevenDayLeftPercent: policy.min_seven_day_left_percent,
-      coordinatorSharedPenalty: policy.coordinator_shared_penalty,
-      coordinatorSharedPolicy: policy.coordinator_shared_policy,
-      staleAfterMs: policy.stale_after_minutes * 60_000,
-    };
-    const now = deps.now();
-    const entries = await Promise.all(
-      deps.profiles
-        .list()
-        .filter(
-          ({ metadata }) => requiredExecutor === undefined || metadata.tool === requiredExecutor,
-        )
-        .map(async ({ metadata }) => {
-          const ref = {
-            profileId: metadata.profileId,
-            tool: metadata.tool,
-            credentialRef: metadata.credentialRef,
-          };
-          const read = (probe: boolean) =>
-            reader.read(ref, { now, probe }).then(
-              (result) => result.reading,
-              () => null,
-            );
-          const evaluate = (reading: QuotaReading | null) =>
-            evaluateQuota(
-              {
-                profileId: metadata.profileId,
-                sharesCoordinatorAccount: policy.coordinator_shared_profiles.includes(
-                  metadata.profileId,
-                ),
-                reading,
-              },
-              thresholds,
-              now,
-            );
-          let reading = await read(false);
-          let verdict = evaluate(reading);
-          if (policy.probe_when_stale && verdict.freshness !== "fresh") {
-            reading = (await read(true)) ?? reading;
-            verdict = evaluate(reading);
-          }
-          return [metadata.profileId, verdict] as const;
-        }),
-    );
-    return new Map(entries);
-  };
+  ) => Promise<ReadonlyMap<string, QuotaVerdict> | undefined> =
+    config.quota === undefined || deps.quota === undefined
+      ? () => Promise.resolve(undefined)
+      : createQuotaVerdictReader({
+          policy: config.quota,
+          reader: deps.quota,
+          profiles: deps.profiles,
+          now: deps.now,
+          probe: true,
+        });
   return {
     async planReserved(request, selection) {
       return {
@@ -220,6 +195,7 @@ export function createDispatchPlanner(deps: {
             executor: selection.candidate.executor,
           },
           dispatchTaskSchema.parse(await deps.task(request.taskId)),
+          selection.quality?.round ?? deps.qualityRound?.(request.stepRunId) ?? 1,
         ),
         selectedExecutor: selection.candidate.executor,
       };
@@ -227,22 +203,36 @@ export function createDispatchPlanner(deps: {
     async plan(request) {
       const plan = deps.plans.forRun(request.runId);
       const workflow =
-        plan === undefined ? undefined : deps.workflows.byHash(plan.templateHash)?.workflow;
+        plan?.qualityPlan?.workflow ??
+        (plan === undefined ? undefined : deps.workflows.byHash(plan.templateHash)?.workflow);
       const step = workflow?.steps.find((entry) => entry.id === request.stepId);
       if (step === undefined) return undefined;
       const task = dispatchTaskSchema.parse(await deps.task(request.taskId));
-      const verdicts = await quotaVerdicts(
-        models.capability_profiles[step.capability_profile]?.required_executor,
+      const selectedModels = packetModels(
+        models,
+        plan?.qualityPlan?.packets[step.id] ?? [step],
+        step.capability_profile,
       );
+      const verdicts = await quotaVerdicts(
+        selectedModels.capability_profiles[step.capability_profile]?.required_executor,
+      );
+      const round =
+        deps.qualityRound?.(request.stepRunId) ?? deps.nextAttemptNumber(request.stepRunId);
       const attemptId = deps.nextId();
       const selected = selectExecutor(deps.selections, {
+        quality: {
+          policy: workflow?.quality_policy ?? "strict",
+          step: qualityStepId(step),
+          steps: plan?.qualityPlan?.packets[step.id]?.map((s) => s.id) ?? [step.id],
+          round,
+        },
         ...(verdicts === undefined ? {} : { quota: verdicts }),
         attemptId,
         stepRunId: request.stepRunId,
         attemptNumber: deps.nextAttemptNumber(request.stepRunId),
         capabilityProfile: step.capability_profile,
         now: deps.now(),
-        models,
+        models: selectedModels,
         task: {
           ...task.complexity,
           workflow: task.complexity.workflow ?? workflow?.id ?? null,
@@ -270,6 +260,7 @@ export function createDispatchPlanner(deps: {
             executor: selected.candidate.executor,
           },
           task,
+          round,
         );
       } catch (error) {
         deps.cancelReservation(attemptId);

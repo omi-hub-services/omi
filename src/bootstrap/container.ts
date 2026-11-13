@@ -1,5 +1,6 @@
 import { createRunMergeEvidenceReader } from "../application/services/build-run-merge-evidence.js";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { loadWorkflowCatalog } from "../infrastructure/config/load-workflow-catalog.js";
 import { createFileRuleSource } from "../infrastructure/config/load-resolution-catalog.js";
 import { createFileSkillSource } from "../infrastructure/config/file-skill-source.js";
 import { loadRuntimeConfig } from "../infrastructure/config/load-runtime-config.js";
@@ -68,7 +69,8 @@ import type { DispatchStepDependencies } from "../application/use-cases/runs/dis
 import { handoffCoordinator } from "../application/use-cases/runs/handoff-coordinator.js";
 import { inspectRun } from "../application/use-cases/runs/inspect-run.js";
 import { requestRunPause } from "../application/use-cases/runs/request-run-pause.js";
-import { planRun } from "../application/use-cases/runs/plan-run.js";
+import { planRun, planRunWithTask } from "../application/use-cases/runs/plan-run.js";
+import type { DispatchTask } from "../application/services/plan-step-dispatch.js";
 import { waitForRun } from "../application/use-cases/runs/wait-for-run.js";
 import { wakeWaitingRunSteps } from "../application/use-cases/runs/wake-waiting-run-steps.js";
 import type { ProjectSession } from "../application/ports/lease-store.js";
@@ -107,6 +109,19 @@ import { createSqliteExecutorSelectionStore } from "../infrastructure/profiles/s
 import { createSqliteStateUnitOfWork } from "../infrastructure/persistence/sqlite/sqlite-state-unit-of-work.js";
 import type { StateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
 import { readFileSync } from "node:fs";
+import { readBoundedText } from "../infrastructure/processes/read-bounded-text.js";
+import {
+  commitWorker,
+  type CommitWorkerDeps,
+} from "../application/use-cases/runs/commit-worker.js";
+import { readWorkerReport } from "../application/use-cases/runs/read-worker-report.js";
+import type { WorkerReportReader } from "../application/ports/worker-report-reader.js";
+import { createCliWorkerCommitter } from "../infrastructure/git/cli-worker-committer.js";
+import { createSqliteWorkerReportReader } from "../infrastructure/persistence/sqlite/sqlite-worker-report-reader.js";
+import {
+  postReviewComment,
+  type PostReviewCommentDeps,
+} from "../application/use-cases/delivery/post-review-comment.js";
 import { join } from "node:path";
 import { inspectRuntime } from "../application/use-cases/project/inspect-runtime.js";
 import type { RuntimeIdentity } from "../application/use-cases/project/inspect-runtime.js";
@@ -124,6 +139,182 @@ import { createCommandDispatcher } from "../interfaces/ipc/command-dispatcher.js
 import { sendCommand } from "../interfaces/ipc/ipc-client.js";
 import { createIpcServer } from "../interfaces/ipc/ipc-server.js";
 import type { IpcServer } from "../interfaces/ipc/ipc-server.js";
+import { reportStatus } from "../application/use-cases/project/report-status.js";
+import {
+  createWatchSnapshotReader,
+  type QuotaInput,
+  type QuotaSource,
+} from "../application/use-cases/project/read-watch-snapshot.js";
+import type { ProfileRegistry } from "../application/ports/profile-registry.js";
+import type { ProjectConfig } from "../application/contracts/project-config.js";
+import type { QuotaVerdict } from "../domain/profiles/quota-policy.js";
+import { createQuotaVerdictReader } from "../application/services/read-quota-verdicts.js";
+import { openReadOnlyStateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
+import { createSqliteRunOverviewReader } from "../infrastructure/persistence/sqlite/sqlite-run-overview-reader.js";
+import { createSqlitePullReviewReader } from "../infrastructure/persistence/sqlite/sqlite-pull-review-reader.js";
+import { createGithubOpenPulls } from "../infrastructure/github/github-open-pulls.js";
+import { createWatchServer } from "../infrastructure/observability/watch-server.js";
+import type { OverviewCommands } from "../interfaces/cli/commands/status-command.js";
+
+/** Views use an existing read-only DB, including while the session runtime is stopped. */
+export function createOverviewCommands(
+  transport: GithubTransport = createGhApiTransport(),
+): OverviewCommands {
+  async function open(projectDir: string) {
+    const config = await createOnboardingProjectConfigStore(projectDir).read();
+    if (config === undefined) throw new Error("PROJECT_NOT_CONFIGURED");
+    const database = openReadOnlyStateDatabase(
+      join(projectDir, ".omi-squad", "local", "state", "state.sqlite"),
+    );
+    try {
+      const client = createGithubRestClient({
+        transport,
+        now: Date.now,
+        random: Math.random,
+        sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+      });
+      const board = createGithubTaskBoard({
+        client,
+        projects: createGithubProjectReader(client),
+        repository: config.repository,
+        project: { owner: config.project.owner, number: config.project.number },
+      });
+      return { config, database, client, board, runs: createSqliteRunOverviewReader(database) };
+    } catch (error) {
+      database.close();
+      throw error;
+    }
+  }
+  return {
+    async status(projectDir) {
+      const deps = await open(projectDir);
+      try {
+        return await reportStatus({
+          ...deps,
+          pulls: createGithubOpenPulls(deps.client),
+          checks: createGithubMergeDelivery(deps.client),
+          reviews: createSqlitePullReviewReader(deps.database),
+          repository: `${deps.config.repository.owner}/${deps.config.repository.name}`,
+          now: Date.now,
+          ...(deps.config.quota === undefined
+            ? {}
+            : { quota: freeQuotaVerdicts(deps.config.quota, deps.database) }),
+        });
+      } finally {
+        deps.database.close();
+      }
+    },
+    async watch(input) {
+      const deps = await open(input.projectDir);
+      let workflows: WorkflowCatalog;
+      try {
+        const directory = join(input.projectDir, ".omi-squad", "workflows");
+        workflows = await loadWorkflowCatalog(
+          directory,
+          readdirSync(directory, { withFileTypes: true })
+            .filter((entry) => entry.isFile() && entry.name.endsWith(".yaml"))
+            .map((entry) => entry.name.slice(0, -5)),
+        );
+      } catch (error) {
+        deps.database.close();
+        throw error;
+      }
+      let finish = () => {};
+      const ended = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const server = createWatchServer({
+        port: input.port,
+        intervalMs: input.intervalMs,
+        readSnapshot: createWatchSnapshotReader({
+          runs: deps.runs,
+          workflows,
+          board: deps.board,
+          ...(deps.config.quota === undefined
+            ? {}
+            : {
+                quota: watchedQuota(deps.config.quota, {
+                  registry: createSqliteProfileRegistry(deps.database),
+                  verdicts: freeQuotaVerdicts(deps.config.quota, deps.database),
+                }),
+              }),
+          now: Date.now,
+        }),
+        onIdle: () => {
+          finish();
+        },
+      });
+      const stop = () => {
+        void server.close().then(finish);
+      };
+      process.on("SIGINT", stop);
+      process.on("SIGTERM", stop);
+      try {
+        const { port } = await server.listen();
+        input.onListening(`http://127.0.0.1:${String(port)}`);
+        await ended;
+      } finally {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+        await server.close();
+        deps.database.close();
+      }
+    },
+  };
+}
+
+/** Quota verdicts from the tools' free reads; this never spends a subscription call. */
+function freeQuotaVerdicts(
+  policy: NonNullable<ProjectConfig["quota"]>,
+  database: StateDatabase,
+): () => Promise<ReadonlyMap<string, QuotaVerdict>> {
+  return createQuotaVerdictReader({
+    policy,
+    profiles: createSqliteProfileRegistry(database),
+    reader: createProfileQuotaReader({
+      "claude-code": createClaudeQuotaReader({
+        probe: { executable: "claude", parentEnv: process.env },
+      }),
+      codex: createCodexQuotaReader({ executable: "codex", parentEnv: process.env }),
+    }),
+    now: Date.now,
+    probe: false,
+  });
+}
+
+/**
+ * The watch page's quota source: the free verdicts, each with the tool of its profile. A verdict
+ * for a profile the registry does not list is kept as an `unknown` tool, not dropped.
+ */
+export function watchedQuota(
+  policy: Pick<
+    NonNullable<ProjectConfig["quota"]>,
+    "min_five_hour_left_percent" | "min_seven_day_left_percent"
+  >,
+  deps: {
+    readonly registry: Pick<ProfileRegistry, "list">;
+    readonly verdicts: () => Promise<ReadonlyMap<string, QuotaVerdict>>;
+  },
+): QuotaSource {
+  return {
+    thresholds: {
+      minFiveHourLeftPercent: policy.min_five_hour_left_percent,
+      minSevenDayLeftPercent: policy.min_seven_day_left_percent,
+    },
+    async read() {
+      const tools = new Map(
+        deps.registry.list().map((p) => [p.metadata.profileId, p.metadata.tool]),
+      );
+      return [...(await deps.verdicts()).values()].map((verdict): QuotaInput => {
+        const tool = tools.get(verdict.profileId);
+        return {
+          tool: tool === undefined ? "unknown" : tool === "codex" ? "codex" : "claude",
+          verdict,
+        };
+      });
+    },
+  };
+}
 
 /** Both stores share one migrated connection for atomic profile/account capacity reservations. */
 export function createProfileStores(
@@ -238,6 +429,7 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
   return {
     sendCommand,
     tasks: createTaskCommands(),
+    overview: createOverviewCommands(),
     logs: createLogCommands(),
     installation: {
       initialize: async (input) =>
@@ -280,12 +472,26 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
     },
     launchSession: launchWindowsSession,
     readStdin: () => readStandardInput(process.stdin),
+    readText: (path) => readBoundedText(path, 65_536),
     defaultSocketPath: options.socketPath,
     timeoutMs: options.timeoutMs ?? 5_000,
     version: readPackageVersion(),
     stdout: options.stdout,
     stderr: options.stderr,
   };
+}
+
+export function createWorkerCommandUseCases(
+  deps: CommitWorkerDeps & { readonly reports: WorkerReportReader },
+) {
+  return {
+    readWorkerReport: (input: unknown) => readWorkerReport(deps, input),
+    commitWorker: (input: unknown) => commitWorker(deps, input),
+  };
+}
+
+export function createReviewCommentUseCase(deps: PostReviewCommentDeps) {
+  return (input: unknown) => postReviewComment(deps, input);
 }
 
 /**
@@ -380,6 +586,7 @@ export type RunCommandUseCases = Pick<
 >;
 
 export interface RunCommandWiring {
+  readonly readTask?: (taskId: string) => Promise<DispatchTask>;
   /** The runtime's claimed project-owner session; every run state change goes through it. */
   readonly session: ProjectSession;
   readonly runs: RecoveryRunReader & ActiveRunReader;
@@ -419,8 +626,9 @@ export function createRunCommandUseCases(wiring: RunCommandWiring): RunCommandUs
   };
   return {
     planRun: (input) =>
-      planRun(
+      (wiring.readTask === undefined ? planRun : planRunWithTask)(
         {
+          readTask: wiring.readTask ?? (() => Promise.reject(new Error("TASK_READER_REQUIRED"))),
           tasks: plans,
           workflows,
           ...(wiring.defaultWorkflowId === undefined
@@ -541,6 +749,9 @@ export async function createProjectRunCommandUseCases(
         resumeRun: refuse,
         deliverRun: refuse,
         handoffCoordinator: refuse,
+        readWorkerReport: refuse,
+        commitWorker: refuse,
+        postReviewComment: refuse,
       },
       drain: () => Promise.resolve(),
       resourceWakeup: undefined,
@@ -615,6 +826,7 @@ export async function createProjectRunCommandUseCases(
     profiles: profiles.registry,
     selections: profiles.selections,
     task: (taskId) => taskReader.read(taskId),
+    qualityRound: (stepRunId) => attempts.qualityHistory?.(stepRunId).round ?? 1,
     nextAttemptNumber: (stepRunId) => attempts.nextNumberForStep(stepRunId),
     cancelReservation: (attemptId) => {
       attempts.setStatus(attemptId, "cancelled");
@@ -822,6 +1034,7 @@ export async function createProjectRunCommandUseCases(
     },
   };
   const commands = createRunCommandUseCases({
+    readTask: (taskId) => taskReader.read(taskId),
     session,
     runs,
     plans,
@@ -838,7 +1051,19 @@ export async function createProjectRunCommandUseCases(
   });
   return {
     runs,
-    commands,
+    commands: {
+      ...commands,
+      ...createWorkerCommandUseCases({
+        ...dispatch,
+        committer: createCliWorkerCommitter(),
+        reports: createSqliteWorkerReportReader(database),
+      }),
+      postReviewComment: createReviewCommentUseCase({
+        ...merge,
+        repository: `${config.project.repository.owner}/${config.project.repository.name}`,
+        hasher: sha256ContentHasher,
+      }),
+    },
     approvals: createApprovalUseCases({
       database,
       subjects: createSqliteTaskApprovalSubjects(database),

@@ -2,10 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   claudeLaunchPayload,
   codexLaunchPayload,
-  curatedSkills,
-  promptWithSkills,
   runsPath,
-  skillPath,
 } from "../../../../tools/coordinator/worker-launch.ts";
 
 const claude = {
@@ -17,57 +14,8 @@ const claude = {
 } as const;
 const codex = { ...claude, model: "gpt-6.1-sol" } as const;
 
-describe("curatedSkills", () => {
-  it("gives a Developer the three skills of OMI-073", () => {
-    expect(curatedSkills("Developer", "feature")).toEqual([
-      "test-driven-development",
-      "minimal-change",
-      "verification-before-completion",
-    ]);
-  });
-
-  it("drops test-driven-development for the docs workflow", () => {
-    expect(curatedSkills("Developer", "docs")).toEqual([
-      "minimal-change",
-      "verification-before-completion",
-    ]);
-  });
-
-  it("gives no skills to a role without a curated worker set", () => {
-    expect(curatedSkills("Reviewer", "feature")).toEqual([]);
-    expect(curatedSkills(null, null)).toEqual([]);
-  });
-});
-
-describe("promptWithSkills", () => {
-  it("appends each skill under the heading omi-next uses, after the prompt", () => {
-    const out = promptWithSkills("Do the task.\n", [
-      { name: "minimal-change", body: "# Minimal\n" },
-      { name: "verification-before-completion", body: "# Verify\n" },
-    ]);
-    expect(out).toBe(
-      "Do the task.\n" +
-        "\n\n## Skill: minimal-change (follow it; report it under Skills applied)\n\n# Minimal\n" +
-        "\n\n## Skill: verification-before-completion (follow it; report it under Skills applied)\n\n# Verify\n",
-    );
-  });
-
-  it("returns the prompt unchanged with no skills", () => {
-    expect(promptWithSkills("x", [])).toBe("x");
-  });
-});
-
-describe("paths", () => {
-  it("names the prompt and the curated skill files", () => {
-    expect(runsPath("077", "prompt.md")).toBe("$HOME/omi-runs/omi-077-prompt.md");
-    expect(skillPath("minimal-change")).toBe(
-      "templates/project/.omi-squad/skills/minimal-change/SKILL.md",
-    );
-  });
-
-  it("rejects a skill name that could leave the skills directory", () => {
-    expect(() => skillPath("../../etc/passwd")).toThrow(/skill/);
-  });
+it("names the transported prompt file", () => {
+  expect(runsPath("077", "prompt.md")).toBe("$HOME/omi-runs/omi-077-prompt.md");
 });
 
 describe("claudeLaunchPayload", () => {

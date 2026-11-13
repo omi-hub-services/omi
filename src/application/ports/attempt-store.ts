@@ -4,6 +4,7 @@ import type { ContextPacket } from "../contracts/context.js";
 import type { Effort, Executor } from "../contracts/model-capability.js";
 import type { AgentAttemptStatus } from "../../domain/runs/agent-attempt.js";
 import type { StepStatus } from "../../domain/runs/step-run.js";
+import type { StepResult } from "../contracts/result.js";
 
 /** The step run row as dispatch and result recording see it. `version` guards state changes. */
 export interface StepRunRecord {
@@ -57,6 +58,13 @@ export interface AttemptRecord {
 
 /** Runtime-owned attempt rows. Implemented over SQLite `agent_attempts` by infrastructure. */
 export interface AttemptStore {
+  /** Latest reservation/attempt for a workflow step; a pending reservation must not expose older evidence. */
+  latestForRunStep?(runId: string, stepId: string): AttemptRecord | undefined;
+  /** Quality rounds exclude operational failovers; verdicts come from recorded runtime events. */
+  qualityHistory?(stepRunId: string): {
+    readonly round: number;
+    readonly previousVerdict?: StepResult;
+  };
   create(record: AttemptRecord): void;
   /** Selection reservations have no complete dispatch record yet. */
   reservedNumber?(attemptId: string): number | undefined;

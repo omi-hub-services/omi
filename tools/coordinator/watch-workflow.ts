@@ -1,19 +1,19 @@
-// Workflow-template view of the watch (OMI-088, ADR-0014): the diagram is drawn from the steps and
-// gates of `templates/project/workflows/<id>.yaml`, parsed with the runtime's own `workflowSchema`
-// (no second parser). Everything except `loadTemplate` is pure.
+// Workflow-template view of the watch (OMI-088, OMI-092, ADR-0014): the repo reads
+// `templates/project/workflows/<id>.yaml` with the runtime's own `workflowSchema` (no second
+// parser), maps what it observes (Project Status, worker, PR verdict) to a template position, and
+// hands the framework's diagram code the step statuses. Drawing and layout are the framework's
+// (src/domain/workflows); nothing here decides how a node looks.
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import type { Workflow } from "../../src/application/contracts/workflow.ts";
+import type { StepStatus } from "../../src/domain/runs/step-run.ts";
 import "../register-ts-imports.ts";
 import { clean } from "./watch-core.ts";
-import {
-  extraNodes,
-  type CyclePhase,
-  type DiagramNode,
-  type NodeState,
-  type Step,
-} from "./watch-tasks.ts";
+import type { Step } from "./watch-tasks.ts";
+
+// dynamic: the register hook above must run before src/ (`.js` specifiers) is resolved
+const { orderDiagramNodes } = await import("../../src/domain/workflows/workflow-diagram.ts");
 
 export type TemplateRead =
   | { readonly ok: true; readonly workflow: Workflow }
@@ -23,14 +23,17 @@ const TEMPLATE_DIR = fileURLToPath(new URL("../../templates/project/workflows/",
 const WORKFLOW_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 /** Never throws: an unreadable or invalid template becomes `ok: false` with the first line why. */
-export async function loadTemplate(id: string, dir: string = TEMPLATE_DIR): Promise<TemplateRead> {
+export async function loadTemplate(
+  id: string,
+  dir: string = TEMPLATE_DIR,
+  read: (path: string) => Promise<string> = (path) => readFile(path, "utf8"),
+): Promise<TemplateRead> {
   const name = id.trim().toLowerCase();
   if (!WORKFLOW_ID.test(name))
     return { ok: false, reason: `no template for Workflow "${clean(id)}"` };
   try {
-    // dynamic: the register hook above must run before src/ (`.js` specifiers) is resolved
     const { workflowSchema } = await import("../../src/application/contracts/workflow.ts");
-    const text = await readFile(`${dir}/${name}.yaml`, "utf8");
+    const text = await read(`${dir}/${name}.yaml`);
     const parsed = workflowSchema.safeParse(parse(text));
     if (parsed.success) return { ok: true, workflow: parsed.data };
     const issue = parsed.error.issues[0];
@@ -44,42 +47,12 @@ export async function loadTemplate(id: string, dir: string = TEMPLATE_DIR): Prom
   }
 }
 
-export interface TemplateNode {
-  readonly id: string;
-  readonly kind: "step" | "gate";
-  readonly role?: string;
-  readonly skills: readonly string[];
-  readonly rules: readonly string[];
-}
-
-/** Steps ordered by `needs` (stable, file order among equals); each gate sits before/after its step. */
-export function orderNodes(w: Workflow): TemplateNode[] {
-  const left = [...w.steps];
-  const done = new Set<string>();
-  const out: TemplateNode[] = [];
-  const gates = (key: "before" | "after", step: string) =>
-    w.gates
-      .filter((g) => g[key] === step)
-      .map((g): TemplateNode => ({ id: g.id, kind: "gate", skills: [], rules: [] }));
-  while (left.length > 0) {
-    const i = left.findIndex((s) => s.needs.every((n) => done.has(n)));
-    const [s] = left.splice(i === -1 ? 0 : i, 1); // a cycle falls back to file order
-    if (!s) break;
-    done.add(s.id);
-    out.push(
-      ...gates("before", s.id),
-      { id: s.id, kind: "step", role: s.role, skills: s.skills, rules: s.rules },
-      ...gates("after", s.id),
-    );
-  }
-  return out;
-}
-
 /** Developer steps of one workflow run in one worker session, so the last is the one shown. */
 export function workStepId(w: Workflow): string {
-  const devs = orderNodes(w).filter((n) => n.kind === "step" && n.role === "developer");
+  const nodes = orderDiagramNodes(w);
+  const devs = nodes.filter((n) => n.kind === "step" && n.role === "developer");
   const first = w.gates.find((g) => g.id === "scope-approved")?.before;
-  return devs.at(-1)?.id ?? first ?? orderNodes(w).find((n) => n.kind === "step")?.id ?? "";
+  return devs.at(-1)?.id ?? first ?? nodes.find((n) => n.kind === "step")?.id ?? "";
 }
 
 export type TemplatePos =
@@ -92,7 +65,8 @@ export type TemplatePos =
  * Pure: where an observed lifecycle step stands in the template. Analyst steps are done once the
  * Issue is Ready (the Coordinator writes the spec); a worker is the developer step; the Coordinator
  * check is the qa step; the review subagent / VERDICT is the reviewer step; PASS is the
- * `ready-to-merge` gate. A workflow with no matching step is `unknown` with the reason.
+ * `ready-to-merge` gate. A workflow with no matching step is `unknown` with the reason. A running
+ * worker's own step comes from its prompt header instead (watch-tasks.ts), never from here.
  */
 export function mapTemplatePos(w: Workflow, step: Step): TemplatePos {
   const byRole = (role: string): TemplatePos => {
@@ -123,79 +97,54 @@ export function mapTemplatePos(w: Workflow, step: Step): TemplatePos {
   }
 }
 
+export interface Standing {
+  /** Status of each step the task has reached; a step not reached is absent. */
+  readonly steps: ReadonlyMap<string, StepStatus>;
+  /** The gate the task stands at, when it stands at a gate and not at a step. */
+  readonly atGate?: string;
+}
+
+export interface StandingInput {
+  readonly workflow: Workflow;
+  readonly pos: TemplatePos;
+  /** A worker runs at the position. */
+  readonly running: boolean;
+  /** Coordinator FAIL verdicts so far. */
+  readonly fails: number;
+  /** The Architect is the next call (review failed, no solution yet). */
+  readonly architect: boolean;
+}
+
 /**
- * Pure: the template diagram's nodes, then the Architect / Ask PO extras of the cycle. `holdSub`
- * draws the node the task stands at as blocked; `reworkSub` labels the work step; `architectStep`
- * makes the reviewer step done and Architect current.
+ * Pure: the step statuses the framework's diagram needs, from where the task stands. Steps before
+ * the position are done; the position runs (a worker) or is ready; the review step reads failed
+ * while rework is still on its way back to it.
  */
-export function templateNodes(
-  w: Workflow,
-  pos: TemplatePos,
-  cycle: CyclePhase,
-  holdSub?: string,
-  reworkSub?: string,
-  architectStep = false,
-): DiagramNode[] {
-  const order = orderNodes(w);
-  const work = order.findIndex((n) => n.id === workStepId(w));
-  const at =
-    pos.kind === "before"
-      ? work
-      : pos.kind === "node"
-        ? order.findIndex((n) => n.id === pos.id)
-        : -1;
-  const main = order.map((n, i): DiagramNode => {
-    let state: NodeState = "todo";
-    if (pos.kind === "done" || (at !== -1 && i < at)) state = "done";
-    else if (at !== -1 && i === at && pos.kind !== "before") {
-      state = architectStep ? "done" : "current";
-    }
-    let sub = n.role;
-    if (i === at && pos.kind === "node") {
-      if (holdSub !== undefined) {
-        state = "blocked";
-        sub = holdSub;
-      } else if (reworkSub !== undefined && n.id === workStepId(w)) sub = reworkSub;
-    }
-    return {
-      id: n.id,
-      label: n.id,
-      state,
-      sub: sub ?? "gate",
-      kind: n.kind,
-      ...(n.role === undefined ? {} : { role: n.role }),
-      skills: n.skills,
-      rules: n.rules,
-    };
+export function standingOf(input: StandingInput): Standing {
+  const { workflow, pos } = input;
+  const order = orderDiagramNodes(workflow);
+  const steps = new Map<string, StepStatus>();
+  if (pos.kind === "unknown") return { steps };
+  if (pos.kind === "done") {
+    for (const node of order) if (node.kind === "step") steps.set(node.id, "succeeded");
+    return { steps };
+  }
+  const devIndex = order.findIndex((node) => node.id === workStepId(workflow));
+  const at = pos.kind === "before" ? devIndex : order.findIndex((node) => node.id === pos.id);
+  if (at === -1) return { steps };
+  order.forEach((node, index) => {
+    if (index < at && node.kind === "step") steps.set(node.id, "succeeded");
   });
-  return [...main, ...extraNodes(architectStep ? "Architect" : "Work", cycle)];
-}
-
-export interface SkillCheck {
-  /** Skills the template gives the current step. */
-  readonly expected: readonly string[];
-  /** In the template step but not loaded into the prompt. */
-  readonly missing: readonly string[];
-  /** Loaded but not in the template step; `template` is the step that does list it, or null. */
-  readonly extra: readonly { readonly name: string; readonly template: string | null }[];
-}
-
-/** Pure: loaded skills against the template step's skills; null when `stepId` is not a step. */
-export function compareLoaded(
-  w: Workflow,
-  stepId: string,
-  loaded: readonly string[],
-): SkillCheck | null {
-  const step = w.steps.find((s) => s.id === stepId);
-  if (!step) return null;
-  return {
-    expected: step.skills,
-    missing: step.skills.filter((s) => !loaded.includes(s)),
-    extra: loaded
-      .filter((s) => !step.skills.includes(s))
-      .map((name) => ({
-        name,
-        template: w.steps.find((o) => o.skills.includes(name))?.id ?? null,
-      })),
-  };
+  const here = order[at];
+  let atGate: string | undefined;
+  if (pos.kind === "node" && here !== undefined) {
+    if (here.kind === "step") steps.set(here.id, input.running ? "running" : "ready");
+    else atGate = here.id;
+  }
+  const reviewer =
+    order.filter((node) => node.kind === "step" && node.role === "reviewer").at(-1) ??
+    order.filter((node) => node.kind === "step").at(-1);
+  if (reviewer !== undefined && (input.architect || (input.fails > 0 && at <= devIndex)))
+    steps.set(reviewer.id, "failed");
+  return { steps, ...(atGate === undefined ? {} : { atGate }) };
 }

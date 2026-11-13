@@ -85,3 +85,18 @@ export const workflowSchema = z
     });
   });
 export type Workflow = z.infer<typeof workflowSchema>;
+
+/** Runtime-owned projection saved in the run.planned event; original template hash stays pinned. */
+export const workflowQualityPlanSchema = z.strictObject({
+  workflow: workflowSchema,
+  packets: z.record(slugSchema, z.array(workflowStepSchema).min(1)),
+  scopeEvidence: z.string().min(1).optional(),
+});
+export type WorkflowQualityPlan = z.infer<typeof workflowQualityPlanSchema>;
+
+export const stepQualitySchema = z.strictObject({
+  policy: slugSchema,
+  step: slugSchema,
+  steps: z.array(slugSchema).min(1),
+  round: z.number().int().positive(),
+});

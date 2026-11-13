@@ -310,8 +310,13 @@ export async function readQuota(
 }
 
 // ── profile choice (pure) ────────────────────────────────────────────────────
-export type WorkerKind = "claude" | "codex" | "claude+codex-live";
-export const WORKER_KINDS: readonly WorkerKind[] = ["claude", "codex", "claude+codex-live"];
+export type WorkerKind = "claude" | "codex" | "claude+codex-live" | "quality";
+export const WORKER_KINDS: readonly WorkerKind[] = [
+  "claude",
+  "codex",
+  "claude+codex-live",
+  "quality",
+];
 
 export interface Candidate {
   readonly tool: WorkerProfile["tool"];
@@ -461,6 +466,21 @@ export function pickProfile(
   probed = false,
   model: string | null = null,
 ): PickResult {
+  if (kind === "quality") {
+    const ranked = rankCandidates(
+      quotas.map((q) => evaluate(q, settings, now, probed, q.tool === "claude" ? model : null)),
+    );
+    const best = ranked.find((c) => c.blocked === null);
+    const resets = ranked.flatMap((c) => (c.blockedUntil === null ? [] : [c.blockedUntil]));
+    return best === undefined
+      ? {
+          ok: false,
+          reason: "no eligible quality worker profile",
+          earliestReset: resets.length === 0 ? null : Math.min(...resets),
+          ranked,
+        }
+      : { ok: true, chosen: [best], ranked };
+  }
   const tools: WorkerProfile["tool"][] =
     kind === "claude+codex-live" ? ["claude", "codex"] : [kind];
   const chosen: Candidate[] = [];

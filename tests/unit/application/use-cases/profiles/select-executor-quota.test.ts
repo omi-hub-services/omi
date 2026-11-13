@@ -47,6 +47,7 @@ const blocked: QuotaVerdict = {
   freshness: "fresh",
   fiveHourLeft: 2,
   sevenDayLeft: 50,
+  fiveHourResetsAt: null,
   score: 2,
   blocked: ["FIVE_HOUR_BELOW_THRESHOLD"],
   blockedUntil: 5000,

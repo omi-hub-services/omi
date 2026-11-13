@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   countAcceptanceCriteria,
+  extractAcceptanceCriteria,
   parseAcLines,
   tickAcceptanceCriteria,
 } from "../../../../tools/coordinator/acceptance-criteria.ts";
@@ -131,6 +132,23 @@ describe("tickAcceptanceCriteria", () => {
 });
 
 describe("countAcceptanceCriteria", () => {
+  it.each(["\n", "\r\n"])(
+    "extracts the same criteria in verdict order with %j endings",
+    (ending) => {
+      const text = BODY.replaceAll("\n", ending);
+      const criteria = extractAcceptanceCriteria(text);
+      expect(criteria).toEqual([
+        "`flow.ts merge` refuses",
+        "already ticked",
+        "fourth line, AC-3",
+        "AC-4",
+      ]);
+      expect(criteria).toHaveLength(countAcceptanceCriteria(text));
+      expect(
+        extractAcceptanceCriteria("## Acceptance criteria\n- [X] one\n## Next\n- [ ] ignored"),
+      ).toEqual(["one"]);
+    },
+  );
   it("shares the closing convention for nested, fenced, checked and sub-heading boxes", () => {
     expect(countAcceptanceCriteria(BODY)).toBe(4);
     expect(countAcceptanceCriteria(BODY.replaceAll("\n", "\r\n"))).toBe(4);

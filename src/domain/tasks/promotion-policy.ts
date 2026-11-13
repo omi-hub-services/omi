@@ -52,14 +52,16 @@ export function judgePromotion(task: PromotionCandidate): Promotion {
     : { kind: "promote" };
 }
 
-/** Issues `judgePromotion` accepts, ordered by Priority, milestone title, then Issue number. */
+/** The one task order: Priority, milestone title (none last), then Issue number. */
+export function compareTaskOrder(a: PromotionCandidate, b: PromotionCandidate): number {
+  return (
+    priorityRank(a.priority) - priorityRank(b.priority) ||
+    compareMilestone(a.milestone, b.milestone) ||
+    a.number - b.number
+  );
+}
+
+/** Issues `judgePromotion` accepts, ordered by `compareTaskOrder`. */
 export function selectPromotable(tasks: readonly PromotionCandidate[]): PromotionCandidate[] {
-  return tasks
-    .filter((task) => judgePromotion(task).kind === "promote")
-    .sort(
-      (a, b) =>
-        priorityRank(a.priority) - priorityRank(b.priority) ||
-        compareMilestone(a.milestone, b.milestone) ||
-        a.number - b.number,
-    );
+  return tasks.filter((task) => judgePromotion(task).kind === "promote").sort(compareTaskOrder);
 }

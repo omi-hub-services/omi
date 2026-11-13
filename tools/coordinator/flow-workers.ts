@@ -4,6 +4,9 @@
 // worker-report.ts, worker-commit.ts and review-verdict.ts. Same contract as the other
 // subcommands: "refused:" and exit 1 for a gate, --dry-run changes nothing.
 import { countAcceptanceCriteria } from "./acceptance-criteria.ts";
+import "../register-ts-imports.ts";
+import { stepQualitySchema } from "../../src/application/contracts/workflow.ts";
+import { resolveQualityPolicy } from "../../src/domain/workflows/workflow-policy.ts";
 import type { Complexity } from "./effort-policy.ts";
 import {
   COORDINATOR_LOGIN,
@@ -26,10 +29,8 @@ import { judgeCommit, STAGE_PATHS } from "./worker-commit.ts";
 import {
   claudeLaunchPayload,
   codexLaunchPayload,
-  curatedSkills,
-  promptWithSkills,
+  NATIVE_RESUME_HEADER,
   runsPath,
-  skillPath,
 } from "./worker-launch.ts";
 import {
   formatReport,
@@ -70,7 +71,7 @@ export interface DispatchInput {
 }
 
 /**
- * Writes the prompt (plus the role's curated skills, not again on resume) to WSL
+ * Writes the rendered prompt unchanged to WSL
  * `~/omi-runs/omi-NNN-prompt.md`, then runs the worker in the foreground; the Coordinator's
  * harness backgrounds this command.
  */
@@ -90,32 +91,55 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
     );
   }
   if (input.prompt.trim() === "") return refuse(label, "the prompt file is empty");
+  if (input.resume === null && input.prompt.startsWith(NATIVE_RESUME_HEADER)) {
+    return refuse(
+      label,
+      "findings-only packets require --resume; render a full packet for a fresh worker",
+    );
+  }
 
-  const { model, effort } = EFFORT_POLICY[kind][input.complexity];
+  let level = input.complexity;
+  const packet = input.prompt.startsWith(`${NATIVE_RESUME_HEADER}\n\n`)
+    ? input.prompt.slice(NATIVE_RESUME_HEADER.length + 2)
+    : input.prompt;
+  if (packet.startsWith("<!-- omi-quality")) {
+    try {
+      const raw = /^<!-- omi-quality (.+) -->\r?\n/.exec(packet)?.[1];
+      const quality = stepQualitySchema.parse(JSON.parse(raw ?? "") as unknown);
+      if (input.resume !== null && ["analyze", "verify", "review"].includes(quality.step)) {
+        return refuse(label, "analysis, QA and review require fresh independent workers");
+      }
+      const decision = resolveQualityPolicy({
+        qualityPolicy: quality.policy,
+        complexity: input.complexity,
+        step: quality.step,
+        round: quality.round,
+        risks: { security: false, gates: false, data: false },
+      });
+      if (quality.steps.length > 1 && !decision.combineVerifyReview) {
+        return refuse(label, "current policy/complexity requires separate verify/review packets");
+      }
+      level = decision.effort === "low" || decision.effort === "medium" ? decision.effort : "high";
+    } catch {
+      return refuse(label, "invalid quality packet metadata");
+    }
+  }
+  const { model, effort } = EFFORT_POLICY[kind][level];
   const spec = { task, profile: input.profile, model, effort, resume: input.resume };
   const launch = wslCommand(
     kind === "claude" ? claudeLaunchPayload(spec) : codexLaunchPayload(spec),
     ctx.target,
     WORKER_TIMEOUT_MS,
   );
-  const skills = input.resume === null ? curatedSkills(input.role, input.workflow) : [];
-  const bodies = [];
-  for (const name of skills) {
-    const body = await runChecked(
-      ctx.run,
-      wslCommand(`cat ${skillPath(name)}`, ctx.target, 30_000),
-    );
-    bodies.push({ name, body });
-  }
   const write: Command = {
     ...wslCommand(
       `mkdir -p $HOME/omi-runs; cat > ${runsPath(task, "prompt.md")}`,
       ctx.target,
       30_000,
     ),
-    input: promptWithSkills(input.prompt, bodies),
+    input: input.prompt,
   };
-  const note = `${kind} ${input.profile} ${model} ${effort}${input.resume === null ? "" : ` resume ${input.resume}`}; skills: ${skills.join(", ") || "none"}`;
+  const note = `${kind} ${input.profile} ${model} ${effort}${input.resume === null ? "" : ` resume ${input.resume}`}`;
 
   if (input.dryRun) {
     console.log(`${label}: ${note}`);
@@ -184,11 +208,15 @@ export async function commitWorkerCommand(
   const label = `commit-worker ${input.branch}`;
   assertTaskBranch(input.branch);
   if (input.message.trim() === "") return refuse(label, "the commit message is empty");
-  const git = wslGit(ctx.target);
+  const git = (args: readonly string[]): Command =>
+    wslGit(ctx.target)(["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args]);
   const current = (await runChecked(ctx.run, git(["rev-parse", "--abbrev-ref", "HEAD"]))).trim();
   const add = git(["add", "-A", "--", ...STAGE_PATHS]);
   const staged = git(["diff", "--cached", "--name-only"]);
-  const commit: Command = { ...git(["commit", "-F", "-"]), input: input.message };
+  const commit: Command = {
+    ...git(["commit", "-F", "-"]),
+    input: input.message,
+  };
   // The branch is checked before anything is staged; the staged paths are judged after.
   if (current !== input.branch) {
     return refuse(label, `the checkout is on "${current}", not on ${input.branch}`);

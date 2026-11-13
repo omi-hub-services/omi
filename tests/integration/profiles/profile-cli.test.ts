@@ -65,9 +65,12 @@ it("registers, lists and probes native profiles through the real runtime without
   child.stdout?.on("data", (chunk: Buffer) => {
     ready += chunk.toString();
   });
-  await vi.waitFor(() => {
-    expect(ready).toContain("ready\n");
-  });
+  await vi.waitFor(
+    () => {
+      expect(ready).toContain("ready\n");
+    },
+    { timeout: 5000 },
+  );
   const cli = (args: string[]) =>
     spawnSync(
       process.execPath,

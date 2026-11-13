@@ -33,6 +33,24 @@ export const commandSchema = z
       command: z.literal("dispatch"),
       runId: identifierSchema,
       stepId: slugSchema,
+      notes: z.string().trim().min(1).max(2000).optional(),
+    }),
+    z.strictObject({
+      ...envelope,
+      command: z.literal("worker-report"),
+      attemptId: identifierSchema,
+    }),
+    z.strictObject({
+      ...envelope,
+      command: z.literal("commit-worker"),
+      attemptId: identifierSchema,
+      message: z.string().trim().min(1).max(2000),
+    }),
+    z.strictObject({
+      ...envelope,
+      command: z.literal("review-comment"),
+      prNumber: z.number().int().positive(),
+      body: z.string().min(1).max(60_000),
     }),
     z.strictObject({
       ...envelope,
