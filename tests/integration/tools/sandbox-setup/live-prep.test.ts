@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { runtimeLayout } from "../../../../tools/sandbox-setup/runtime-layout.ts";
 import { requestApproval } from "../../../../src/application/use-cases/approvals/request-approval.ts";
 import type { GithubTaskReader } from "../../../../src/application/ports/github-task-reader.ts";
 import { sha256ContentHasher } from "../../../../src/infrastructure/artifacts/sha256-content-hasher.ts";
@@ -76,7 +77,7 @@ async function setup() {
 }
 
 const query = <T>(stateDir: string, sql: string): T[] => {
-  const db = openReadOnlyStateDatabase(join(stateDir, "state.db"));
+  const db = openReadOnlyStateDatabase(runtimeLayout(stateDir).database);
   try {
     return db.prepare(sql).all() as T[];
   } finally {
@@ -100,7 +101,7 @@ describe("live-prep", () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]?.id).toBe("task-7");
-    expect(readFileSync(join(stateDir, "project.yaml"), "utf8")).toContain(
+    expect(readFileSync(runtimeLayout(stateDir).configFile, "utf8")).toContain(
       "target_environment: sandbox",
     );
     const config = liveConfig(stateDir);
@@ -117,14 +118,15 @@ describe("live-prep", () => {
   it("is idempotent: a rerun changes no file and writes no new event", async () => {
     const { stateDir, deps, flags } = await setup();
     await runLivePrep(deps, flags);
-    const files = ["project.yaml", "live-lifecycle-config.json"].map((f) =>
-      readFileSync(join(stateDir, f), "utf8"),
-    );
+    const files = [
+      runtimeLayout(stateDir).configFile,
+      join(stateDir, "live-lifecycle-config.json"),
+    ].map((f) => readFileSync(f, "utf8"));
     const events = query(stateDir, "SELECT sequence FROM events");
     await runLivePrep(deps, flags);
     expect(
-      ["project.yaml", "live-lifecycle-config.json"].map((f) =>
-        readFileSync(join(stateDir, f), "utf8"),
+      [runtimeLayout(stateDir).configFile, join(stateDir, "live-lifecycle-config.json")].map((f) =>
+        readFileSync(f, "utf8"),
       ),
     ).toEqual(files);
     expect(query(stateDir, "SELECT sequence FROM events")).toEqual(events);
@@ -132,12 +134,12 @@ describe("live-prep", () => {
 
   it("writes nothing on --dry-run", async () => {
     const { stateDir, deps, flags } = await setup();
-    const before = readFileSync(join(stateDir, "project.yaml"), "utf8");
+    const before = readFileSync(runtimeLayout(stateDir).configFile, "utf8");
     const result = await runLivePrep(deps, { ...flags, dryRun: true });
     expect(result.lines.join("\n")).toContain("DRY RUN");
     expect(query(stateDir, "SELECT id FROM task_snapshots")).toEqual([]);
     expect(existsSync(join(stateDir, "live-lifecycle-config.json"))).toBe(false);
-    expect(readFileSync(join(stateDir, "project.yaml"), "utf8")).toBe(before);
+    expect(readFileSync(runtimeLayout(stateDir).configFile, "utf8")).toBe(before);
   });
 
   it("refuses a state directory that is not prepared or lies inside the repository", async () => {
@@ -152,6 +154,19 @@ describe("live-prep", () => {
     );
   });
 
+  it("refuses a directory still in the legacy top-level layout, and does not move it", async () => {
+    const { stateDir, deps, flags } = await setup();
+    const layout = runtimeLayout(stateDir);
+    renameSync(layout.configFile, join(stateDir, "project.yaml"));
+    renameSync(layout.database, join(stateDir, "state.db"));
+    renameSync(layout.artifactsRoot, join(stateDir, "artifacts"));
+    rmSync(join(stateDir, ".omi-squad"), { recursive: true });
+    await expect(runLivePrep(deps, flags)).rejects.toThrow(
+      /local state incomplete \(move project\.yaml .*move state\.db to \.omi-squad\/local\/state\/state\.sqlite/,
+    );
+    expect(existsSync(join(stateDir, "state.db"))).toBe(true);
+  });
+
   it("refuses an Issue that is not an importable item of the sandbox Project", async () => {
     const { deps, flags } = await setup();
     await expect(
@@ -163,7 +178,7 @@ describe("live-prep", () => {
     const { stateDir, deps, flags } = await setup();
     await runLivePrep(deps, flags);
     const baselineHash = liveConfig(stateDir)["baselineHash"] as string;
-    const db = openStateDatabase(join(stateDir, "state.db"));
+    const db = openStateDatabase(runtimeLayout(stateDir).database);
     let requested;
     try {
       requested = requestApproval(
@@ -198,7 +213,7 @@ describe("live-prep", () => {
     await expect(runLivePrep(deps, { ...flags, businessApprovalId: "missing" })).rejects.toThrow(
       /business approval missing not found/,
     );
-    const db = openStateDatabase(join(stateDir, "state.db"));
+    const db = openStateDatabase(runtimeLayout(stateDir).database);
     let id = "";
     try {
       const made = requestApproval(
@@ -226,7 +241,7 @@ describe("live-prep", () => {
 
   // The runtime builds this subject from project.yaml deploy_targets (ADR-0037).
   const requestDeploy = (stateDir: string, artifactDigest: string): string => {
-    const db = openStateDatabase(join(stateDir, "state.db"));
+    const db = openStateDatabase(runtimeLayout(stateDir).database);
     try {
       const made = requestApproval(
         {

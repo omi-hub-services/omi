@@ -1,5 +1,5 @@
 // Prepares the OMI-042 live acceptance run (AC-3) in a dedicated state directory:
-//   1. imports the sandbox task Issue into state.db (importTask + storeTaskSnapshots, ADR-0037),
+//   1. imports the sandbox task Issue into the runtime state database (importTask + storeTaskSnapshots, ADR-0037),
 //   2. adds the sandbox `deploy_targets` entry to project.yaml,
 //   3. writes live-lifecycle-config.json with every known fact and explicit placeholders.
 // It never creates, records or simulates an approval: requests come from `approvals request` on a
@@ -23,6 +23,7 @@ import { createSqliteStateUnitOfWork } from "../../src/infrastructure/persistenc
 import { assertOutsideDirectory, inspectLocalState, prepareLocalState } from "./local-state.ts";
 import type { LocalStateInput } from "./local-state.ts";
 import { CHECK_NAME } from "./model.ts";
+import { runtimeLayout } from "./runtime-layout.ts";
 
 type DeployPipeline = z.infer<typeof deployPipelineSchema>;
 
@@ -125,10 +126,9 @@ export function nextSteps(input: {
 }): string[] {
   return [
     "Next steps (this script never creates or decides an approval):",
-    "1. Start the runtime for a project whose config and state are this state directory.",
-    `   NOTE: the runtime reads <project>/.omi-squad/config/project.yaml and`,
-    `   <project>/.omi-squad/local/state/state.sqlite, while ${input.stateDir} holds project.yaml and state.db.`,
-    "   Link or move them yourself; no command here does it.",
+    `1. Start the runtime with ${input.stateDir} as its project directory (its config and state are there).`,
+    "   The runtime also needs models.yaml, roles, rules and workflows under .omi-squad/ (omi init",
+    "   installs them); live-prep does not create them.",
     `2. omi approvals request ${input.taskId} --kind business    (prints the request id)`,
     `3. omi approvals request ${input.deployTargetId} --kind deploy    (prints the request id)`,
     `4. As ${input.reviewer}, comment the decision on the sandbox pipeline Issue #${String(input.pipelineIssue)}.`,
@@ -158,7 +158,7 @@ export interface LivePrepDeps {
 }
 
 function readOnly<T>(stateDir: string, read: (db: StateDatabase) => T): T {
-  const db = openReadOnlyStateDatabase(join(stateDir, "state.db"));
+  const db = openReadOnlyStateDatabase(runtimeLayout(stateDir).database);
   try {
     return read(db);
   } finally {
@@ -294,7 +294,7 @@ export async function runLivePrep(
     return { code: 0, lines };
   }
 
-  const db = openStateDatabase(join(stateDir, "state.db"));
+  const db = openStateDatabase(runtimeLayout(stateDir).database);
   try {
     const stored = storeTaskSnapshots(
       {

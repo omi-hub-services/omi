@@ -34,6 +34,7 @@ import { createSqlitePrMappingStore } from "../../../src/infrastructure/persiste
 import { createSqliteStateUnitOfWork } from "../../../src/infrastructure/persistence/sqlite/sqlite-state-unit-of-work.ts";
 import { openStateDatabase } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
 import { assertLifecycleApiCall } from "./lifecycle-api-guard.ts";
+import { runtimeLayout } from "../../../tools/sandbox-setup/runtime-layout.ts";
 import { assertSandboxTarget } from "./probe-model.ts";
 
 const config = process.env["OMI_LIVE_LIFECYCLE_CONFIG"];
@@ -75,9 +76,10 @@ it.skipIf(config === undefined)(
     );
     if (review.review === undefined) throw new Error("independent review required");
     const stateDir = resolve(c.stateDirectory);
-    if (!existsSync(join(stateDir, "state.db")) || !existsSync(join(stateDir, "artifacts")))
+    const layout = runtimeLayout(stateDir);
+    if (!existsSync(layout.database) || !existsSync(layout.artifactsRoot))
       throw new Error("prepare migrated sandbox state and authenticated approvals first");
-    const db = openStateDatabase(join(stateDir, "state.db"));
+    const db = openStateDatabase(layout.database);
     const state = createSqliteStateUnitOfWork(db);
     const leases = createSqliteLeaseStore(db);
     const approvals = createSqliteApprovalStore(db);
@@ -118,7 +120,7 @@ it.skipIf(config === undefined)(
       leaseMs: 60000,
     });
     const deps = {
-      artifacts: createLocalArtifactStore(join(stateDir, "artifacts"), db),
+      artifacts: createLocalArtifactStore(layout.artifactsRoot, db),
       outbox: createSqliteOutboxStore(db),
       unitOfWork: state,
       github: createGithubRemote(rest),

@@ -73,8 +73,8 @@ Repeating the same rollback request reuses its intent, including across restart 
 Changing the runbook reference or its approval ID also identifies a separate rollback intent.
 
 The opt-in live test reads `OMI_LIVE_DEPLOY_CONFIG`, a JSON file containing `request`, `pipeline`,
-`stateDirectory` and optional `runbooks` (records above). Prepare a dedicated migrated state.db
-and artifacts directory with approvals authenticated through the existing lifecycle. The test
+`stateDirectory` and optional `runbooks` (records above). Prepare a dedicated migrated state database
+and artifacts directory (runtime layout, see `local-state` below) with approvals authenticated through the existing lifecycle. The test
 does not import decisions from JSON. It dispatches only to a sandbox-named repository and
 writes evidence under `.tmp/live/omi-041-deploy-evidence.json`. It waits up to ten minutes for
 the PO's native approval. If dispatch is still unconfirmed, retain state and rerun to reconcile.
@@ -127,7 +127,13 @@ Local state, outside this repository:
 node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts local-state --state-dir <dir> --image <repo> --digest sha256:<hex>
 ```
 
-creates `state.db` (migrated), the project row, `project.yaml`, `artifacts/` and is repeatable.
+treats `<dir>` as the runtime's project directory and creates, where the runtime reads them,
+`<dir>/.omi-squad/local/state/state.sqlite` (migrated, with the project row),
+`<dir>/.omi-squad/config/project.yaml` and `<dir>/.omi-squad/local/runs/` (artifacts). It is
+repeatable. A directory from an earlier version, with `project.yaml`, `state.db` (+ `-wal`,
+`-shm`) and `artifacts/` at the top level, is moved into that layout by this command; `--dry-run`
+lists the moves first, and the command refuses, moving nothing, when both layouts exist. Stop any
+process using the old `state.db` before it runs.
 `--dry-run` lists what it would create without writing anything; `--verify` exits 1 while
 anything is missing. The directory must resolve (through symlinks) to outside this repository.
 Add `--deploy-approval-id <id>` once the deploy approval exists to write `deploy-config.json`
@@ -188,7 +194,7 @@ sandbox Project. `live-prep` refuses any repository other than `omi-hub-services
 (even with `--repo`), and its transport allows only one `GET` of a sandbox Issue and GraphQL
 queries. It then, idempotently:
 
-1. imports the Issue with `importTask` and `storeTaskSnapshots` into `state.db` (task id
+1. imports the Issue with `importTask` and `storeTaskSnapshots` into the runtime state database (task id
    `task-<n>`; the business baseline is the snapshot `content_hash`),
 2. adds `deploy_targets` entry `sandbox-<acceptance-id>` (`sandbox`, the digest) to `project.yaml`,
    keeping other entries, and
@@ -198,9 +204,9 @@ queries. It then, idempotently:
 `--dry-run` reads GitHub and prints the plan, writing nothing. `live-prep` never creates, records or
 simulates an approval. It then prints the next steps; the approval ids come from the runtime:
 
-1. Start the runtime for this state. It reads `<project>/.omi-squad/config/project.yaml` and
-   `<project>/.omi-squad/local/state/state.sqlite`, whereas `local-state` writes `project.yaml` and
-   `state.db` directly in `<dir>`; make the runtime see the same files (no command does it).
+1. Start the runtime with `<dir>` as its project directory: it finds the config and state that
+   `local-state` and `live-prep` wrote. The runtime also needs `models.yaml`, roles, rules and
+   workflows under `.omi-squad/` (`omi init` installs them); `live-prep` does not create them.
 2. `omi approvals request task-<n> --kind business` and
    `omi approvals request sandbox-<acceptance-id> --kind deploy` print the request ids.
 3. As **ttin-omihub**, comment the decision on the sandbox pipeline Issue, then record it with
@@ -266,8 +272,7 @@ use cases; do not start another acceptance just to bypass an unknown dispatch.
 
 Open product decisions: `omi init` exists (`src/interfaces/cli/commands/installation-commands.ts`),
 and approval requests and task import are covered by ADR-0037 and `live-prep`; there is no
-`login/run/retry` command. The runtime's project layout differs from `local-state`'s (see step 1
-above), and creating the sandbox task branch is manual. There is no release merge use case (the
+`login/run/retry` command. Creating the sandbox task branch is manual. There is no release merge use case (the
 harness performs the pinned native API merge after the gate). Whether a future deploy approval
 workflow can combine the durable digest decision with the native environment approval requires a
 product decision. None of these gaps is implemented by this acceptance change.

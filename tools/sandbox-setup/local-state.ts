@@ -1,5 +1,7 @@
-// Local, idempotent state for the OMI-042 live harness (OMI-089): a dedicated directory with a
-// migrated state.db, the project row, project.yaml, artifacts/ and the harness config JSON.
+// Local, idempotent state for the OMI-042 live harness (OMI-089): a dedicated directory that is the
+// runtime's projectDir. Files sit where the runtime reads them (runtime-layout.ts): a migrated
+// state database, the project row, project.yaml and the artifact root; the harness config JSON
+// stays at the top level. An earlier top-level layout is moved into place (or refused).
 // It holds no credential and records no approval; decisions go through the runtime lifecycle.
 import { createHash } from "node:crypto";
 import {
@@ -27,6 +29,12 @@ import {
   openReadOnlyStateDatabase,
   openStateDatabase,
 } from "../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
+import {
+  applyLayoutMigration,
+  describeMove,
+  planLayoutMigration,
+  runtimeLayout,
+} from "./runtime-layout.ts";
 
 export interface DeployFacts {
   readonly environment: string;
@@ -152,16 +160,19 @@ export function assertOutsideDirectory(root: string, target: string): void {
 export async function inspectLocalState(input: LocalStateInput): Promise<{ missing: string[] }> {
   const missing: string[] = [];
   const stateDir = resolve(input.stateDir);
-  if (!existsSync(join(stateDir, "artifacts"))) missing.push("artifacts/");
+  const layout = runtimeLayout(stateDir);
+  const moves = planLayoutMigration(stateDir);
+  if (moves.length > 0) return { missing: moves.map((move) => describeMove(stateDir, move)) };
+  if (!existsSync(layout.artifactsRoot)) missing.push("artifacts/");
 
   let configOk = false;
-  if (existsSync(stateDir)) {
-    const current = await (await createProjectConfigStore(stateDir)).read();
+  if (existsSync(layout.configDir)) {
+    const current = await (await createProjectConfigStore(layout.configDir)).read();
     configOk = current !== undefined && configMatches(current, input);
   }
   if (!configOk) missing.push("project.yaml");
 
-  const databasePath = join(stateDir, "state.db");
+  const databasePath = layout.database;
   let migrated = false;
   let hasProject = false;
   if (existsSync(databasePath)) {
@@ -205,13 +216,18 @@ export async function prepareLocalState(input: LocalStateInput): Promise<{ chang
   const stateDir = resolve(input.stateDir);
 
   mkdirSync(stateDir, { recursive: true });
-  const artifacts = join(stateDir, "artifacts");
-  if (!existsSync(artifacts)) {
-    mkdirSync(artifacts);
+  const layout = runtimeLayout(stateDir);
+  // Before anything is created, so a directory holding both layouts is refused untouched.
+  const moves = planLayoutMigration(stateDir);
+  applyLayoutMigration(moves);
+  changed.push(...moves.map((move) => describeMove(stateDir, move)));
+  if (!existsSync(layout.artifactsRoot)) {
+    mkdirSync(layout.artifactsRoot, { recursive: true });
     changed.push("artifacts/");
   }
 
-  const configStore = await createProjectConfigStore(stateDir);
+  mkdirSync(layout.configDir, { recursive: true });
+  const configStore = await createProjectConfigStore(layout.configDir);
   if ((await configStore.create(desiredConfig(input))) === "created") changed.push("project.yaml");
   else {
     const current = await configStore.read();
@@ -223,14 +239,15 @@ export async function prepareLocalState(input: LocalStateInput): Promise<{ chang
       withoutTargets(current) === withoutTargets(desiredConfig(input, current))
     ) {
       const next = desiredConfig(input, current);
-      unlinkSync(join(stateDir, "project.yaml"));
+      unlinkSync(layout.configFile);
       await configStore.create(next);
       changed.push("project.yaml");
     }
   }
   const config = desiredConfig(input);
 
-  const databasePath = join(stateDir, "state.db");
+  const databasePath = layout.database;
+  mkdirSync(layout.stateDir, { recursive: true, mode: 0o700 });
   const created = !existsSync(databasePath);
   const db = openStateDatabase(databasePath);
   try {

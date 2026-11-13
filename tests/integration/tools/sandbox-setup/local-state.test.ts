@@ -4,12 +4,15 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { runtimeLayout } from "../../../../tools/sandbox-setup/runtime-layout.ts";
 import { parse } from "yaml";
 import { projectConfigSchema } from "../../../../src/application/contracts/project-config.ts";
 import {
@@ -54,8 +57,8 @@ describe("sandbox local state", () => {
   it("creates a migrated state.db, project row, project.yaml and artifacts directory", async () => {
     const stateDir = tempState();
     await prepareLocalState({ ...base, stateDir });
-    expect(existsSync(join(stateDir, "artifacts"))).toBe(true);
-    const db = openReadOnlyStateDatabase(join(stateDir, "state.db"));
+    expect(existsSync(runtimeLayout(stateDir).artifactsRoot)).toBe(true);
+    const db = openReadOnlyStateDatabase(runtimeLayout(stateDir).database);
     try {
       expect(db.prepare("SELECT repo_identity FROM projects").all()).toEqual([
         { repo_identity: "omi-hub-services/omi-sandbox" },
@@ -65,7 +68,7 @@ describe("sandbox local state", () => {
       db.close();
     }
     const config = projectConfigSchema.parse(
-      parse(readFileSync(join(stateDir, "project.yaml"), "utf8")),
+      parse(readFileSync(runtimeLayout(stateDir).configFile, "utf8")),
     );
     expect(config.policies.github_approval_actors).toEqual(["ttin-omihub"]);
     expect(config.branches).toEqual({ integration: "develop", release: "main" });
@@ -151,7 +154,7 @@ describe("sandbox local state", () => {
     const moved = { ...target, artifactDigest: `sha256:${"d".repeat(64)}` };
     await prepareLocalState({ ...base, stateDir, deployTarget: moved });
     const config = projectConfigSchema.parse(
-      parse(readFileSync(join(stateDir, "project.yaml"), "utf8")),
+      parse(readFileSync(runtimeLayout(stateDir).configFile, "utf8")),
     );
     expect(config.deploy_targets?.map((t) => [t.id, t.artifact_digest])).toEqual([
       ["sandbox-a", moved.artifactDigest],
@@ -160,6 +163,65 @@ describe("sandbox local state", () => {
     // A later run without a target neither reports the targets as drift nor removes them.
     expect((await inspectLocalState({ ...base, stateDir })).missing).toEqual([]);
     expect((await prepareLocalState({ ...base, stateDir })).changed).toEqual([]);
+  });
+
+  it("writes only the runtime layout, nothing at the top level of the directory", async () => {
+    const stateDir = tempState();
+    await prepareLocalState({ ...base, stateDir });
+    expect(readdirSync(stateDir)).toEqual([".omi-squad"]);
+    const layout = runtimeLayout(stateDir);
+    expect(existsSync(layout.configFile)).toBe(true);
+    expect(existsSync(layout.database)).toBe(true);
+    expect(existsSync(layout.artifactsRoot)).toBe(true);
+  });
+
+  // Emulates what an earlier version wrote: everything at the top level of the directory.
+  const makeLegacy = async (stateDir: string) => {
+    await prepareLocalState({ ...base, stateDir });
+    const layout = runtimeLayout(stateDir);
+    renameSync(layout.configFile, join(stateDir, "project.yaml"));
+    renameSync(layout.database, join(stateDir, "state.db"));
+    renameSync(layout.artifactsRoot, join(stateDir, "artifacts"));
+    rmSync(join(stateDir, ".omi-squad"), { recursive: true });
+  };
+
+  it("lists the legacy move on inspect, writes nothing, then moves it on prepare", async () => {
+    const stateDir = tempState();
+    await makeLegacy(stateDir);
+    const { missing } = await inspectLocalState({ ...base, stateDir });
+    expect(missing).toEqual([
+      "move project.yaml to .omi-squad/config/project.yaml",
+      "move state.db to .omi-squad/local/state/state.sqlite",
+      "move artifacts to .omi-squad/local/runs",
+    ]);
+    expect(existsSync(join(stateDir, "state.db"))).toBe(true);
+    expect(existsSync(join(stateDir, ".omi-squad"))).toBe(false);
+
+    const { changed } = await prepareLocalState({ ...base, stateDir });
+    expect(changed).toEqual(missing);
+    expect(readdirSync(stateDir)).toEqual([".omi-squad"]);
+    expect((await inspectLocalState({ ...base, stateDir })).missing).toEqual([]);
+    const db = openReadOnlyStateDatabase(runtimeLayout(stateDir).database);
+    try {
+      expect(db.prepare("SELECT repo_identity FROM projects").all()).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+    expect((await prepareLocalState({ ...base, stateDir })).changed).toEqual([]);
+  });
+
+  it("refuses, and moves nothing, when the legacy and runtime layouts both exist", async () => {
+    const stateDir = tempState();
+    await makeLegacy(stateDir);
+    await prepareLocalState({ ...base, stateDir });
+    writeFileSync(join(stateDir, "state.db"), "stray");
+    await expect(inspectLocalState({ ...base, stateDir })).rejects.toThrow(
+      /both the legacy layout/,
+    );
+    await expect(prepareLocalState({ ...base, stateDir })).rejects.toThrow(
+      /both the legacy layout/,
+    );
+    expect(readFileSync(join(stateDir, "state.db"), "utf8")).toBe("stray");
   });
 
   it("rejects a state directory inside the repository, also through a symlink", () => {
