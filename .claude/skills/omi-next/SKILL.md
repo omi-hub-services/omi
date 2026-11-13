@@ -196,8 +196,9 @@ and commits authorized changes via commit-worker, then runs the fixed-head check
 node "$coordinatorPin/tools/coordinator/flow.ts" commit-worker <branch> --message-file <local-file>
 ```
 
-Native resume is the sole exception to the full packet. Generate a findings-only packet and send
-it only to the original implementer's native session/thread:
+Native resume is the sole exception to the full packet. Generate a compact resume packet (the step's skills and rules plus `receiving-code-review`, then
+the findings; no long notes/scope) and send it only to the original implementer's native
+session/thread:
 
 ```
 node "$coordinatorPin/tools/coordinator/flow.ts" prompt N --step <work-step-id> --findings <findings.md> --out <resume.md>
