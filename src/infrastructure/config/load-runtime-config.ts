@@ -7,6 +7,51 @@ import { assertCredentialFree } from "../../application/contracts/credential-inp
 import { createProjectConfigStore } from "./project-config-store.js";
 import { loadWorkflowCatalog } from "./load-workflow-catalog.js";
 import { loadResolutionCatalog } from "./load-resolution-catalog.js";
+import { configDiagnostics } from "./config-diagnostics.js";
+import type { Workflow } from "../../application/contracts/workflow.js";
+import type { CatalogRole } from "../../application/contracts/resolution-catalog.js";
+import type {
+  ConfigValidationError,
+  WorkflowValidationCatalog,
+} from "../../application/contracts/workflow-validation.js";
+
+/** Loads installed workflow assets without project settings, state, models or IPC. */
+export async function loadWorkflowValidationCatalog(
+  squadDir: string,
+): Promise<WorkflowValidationCatalog> {
+  const errors: ConfigValidationError[] = [];
+  const roleFiles = new Map<CatalogRole, string>();
+  const catalog = loadResolutionCatalog(squadDir, errors, roleFiles);
+  const roles = [...roleFiles].map(([role, file]) => ({ definition: role.definition, file }));
+  const workflows: {
+    file: string;
+    workflow: Workflow;
+  }[] = [];
+  const directory = join(squadDir, "workflows");
+  let files: string[];
+  try {
+    files = readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".yaml"))
+      .map((entry) => entry.name)
+      .sort();
+  } catch (error) {
+    errors.push(...configDiagnostics(directory, error));
+    return { catalog, roles, workflows, errors };
+  }
+  for (const name of files) {
+    const file = join(directory, name);
+    try {
+      const id = name.slice(0, -5);
+      const loaded = await loadWorkflowCatalog(directory, [id]);
+      const workflow = loaded.byId(id)?.workflow;
+      if (workflow === undefined) throw new Error("Workflow unavailable");
+      workflows.push({ file, workflow });
+    } catch (error) {
+      errors.push(...configDiagnostics(file, error));
+    }
+  }
+  return { catalog, roles, workflows, errors };
+}
 
 export async function loadRuntimeConfig(squadDir: string) {
   const project = await (await createProjectConfigStore(join(squadDir, "config"))).read();

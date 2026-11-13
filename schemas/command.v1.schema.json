@@ -198,6 +198,34 @@
     {
       "type": "object",
       "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "rejected",
+            "expired",
+            "invalidated"
+          ]
+        },
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "command": {
+          "type": "string",
+          "const": "approval.list"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "schemaVersion": {
           "type": "number",
           "const": 1

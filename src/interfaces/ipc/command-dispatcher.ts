@@ -35,6 +35,7 @@ export interface DispatchedUseCases {
   handoffCoordinator?: RunUseCase;
   registerProfile?: RunUseCase;
   listProfiles?: RunUseCase;
+  listApprovals?: RunUseCase;
   probeProfile?: RunUseCase;
 }
 
@@ -77,6 +78,8 @@ export function createCommandDispatcher(useCases: DispatchedUseCases): CommandHa
         );
         return presentApprovalResult(useCases.requestApproval(requestApprovalSchema.parse(input)));
       }
+      case "approval.list":
+        return run(useCases.listApprovals, "approval listing", command);
       case "approval.decide": {
         if (useCases.recordApproval === undefined) return notImplemented("approval decisions");
         const input = Object.fromEntries(

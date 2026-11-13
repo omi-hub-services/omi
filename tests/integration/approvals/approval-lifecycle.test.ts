@@ -11,7 +11,11 @@ import {
   recordApproval,
   type RecordApprovalDependencies,
 } from "../../../src/application/use-cases/approvals/record-approval.ts";
-import { createRuntimeIpcServer } from "../../../src/bootstrap/container.ts";
+import {
+  createApprovalUseCases,
+  createRuntimeIpcServer,
+} from "../../../src/bootstrap/container.ts";
+import { createCommandDispatcher } from "../../../src/interfaces/ipc/command-dispatcher.ts";
 import {
   approvalSubjectHash,
   type ApprovalKind,
@@ -156,6 +160,55 @@ function counts() {
 
 // AC-1: pinned subjects, optimistic versioning, approve/reject/stale and durable audit.
 describe("versioned approval lifecycle with SQLite", () => {
+  it("lists persisted summaries with filtering and never exposes decision evidence", async () => {
+    const first = requested();
+    requested("deploy");
+    await recordApproval(deps, decision(first));
+    const handler = createCommandDispatcher({
+      ...createApprovalUseCases({
+        database: db,
+        subjects: deps.subjects,
+        repository: "acme/app",
+        allowedGitHubActors: ["po"],
+      }),
+      inspectRuntime: () => {
+        throw new Error("unused");
+      },
+    });
+    const list = (status?: string) =>
+      handler(
+        commandSchema.parse({
+          schemaVersion: 1,
+          command: "approval.list",
+          ...(status === undefined ? {} : { status }),
+        }),
+      );
+    expect(await list("approved")).toEqual({
+      ok: true,
+      result: {
+        approvals: [
+          {
+            id: first.id,
+            kind: "business",
+            subjectId: "business",
+            status: "approved",
+            version: 1,
+            requestedAt: now,
+            decidedAt: now,
+          },
+        ],
+      },
+    });
+    const all = await list();
+    expect(all).toMatchObject({
+      ok: true,
+      result: { approvals: [expect.any(Object), expect.any(Object)] },
+    });
+    expect(JSON.stringify(all)).not.toMatch(
+      /subjectHash|baselineHash|actor|evidenceRef|terminal-confirmation/,
+    );
+    expect(await list("rejected")).toEqual({ ok: true, result: { approvals: [] } });
+  });
   it.each<ApprovalKind>(["business", "cost", "release", "deploy"])(
     "pins and approves a %s request with actor/source/hash",
     async (kind) => {

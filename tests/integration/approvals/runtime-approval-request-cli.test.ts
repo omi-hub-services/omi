@@ -112,4 +112,28 @@ it("creates pending business and deploy requests through the runtime and never a
     { kind: "business", status: "pending", decision: null },
     { kind: "deploy", status: "pending", decision: null },
   ]);
+  const listed = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      resolve("tools/register-ts-imports.ts"),
+      resolve("src/bootstrap/cli.ts"),
+      "approvals",
+      "list",
+      "--status",
+      "pending",
+      "--json",
+    ],
+    { cwd: project, encoding: "utf8", timeout: 10000 },
+  );
+  expect(listed.status, listed.stdout + listed.stderr).toBe(0);
+  expect(JSON.parse(listed.stdout)).toMatchObject({
+    result: {
+      approvals: [
+        { version: 0, status: "pending", decidedAt: null },
+        { version: 0, status: "pending", decidedAt: null },
+      ],
+    },
+  });
+  expect(listed.stdout).not.toMatch(/subjectHash|baselineHash|artifactDigest|evidenceRef|actor/);
 }, 30_000);
