@@ -22,6 +22,7 @@ describe("command dispatcher", () => {
 
   it("answers NOT_IMPLEMENTED, never success, for commands without a use case yet", async () => {
     const commands: Command[] = [
+      { schemaVersion: 1, command: "task.import", issueNumbers: [1] },
       { schemaVersion: 1, command: "plan", issueNumber: 1 },
       { schemaVersion: 1, command: "dispatch", runId: "run-1", stepId: "implement" },
       { schemaVersion: 1, command: "wait", runId: "run-1", timeoutSeconds: 5 },
@@ -35,4 +36,17 @@ describe("command dispatcher", () => {
       if (!outcome.ok) expect(outcome.error.code).toBe("NOT_IMPLEMENTED");
     }
   });
+});
+it("routes task import to the runtime-owned use case", async () => {
+  const useCases = {
+    inspectRuntime: () => inspectRuntime(identity),
+    importTasks: (input: unknown) => ({ ok: true as const, received: input }),
+  };
+  expect(
+    await createCommandDispatcher(useCases)({
+      schemaVersion: 1,
+      command: "task.import",
+      issueNumbers: [1],
+    }),
+  ).toEqual({ ok: true, result: { received: { issueNumbers: [1] } } });
 });

@@ -150,9 +150,10 @@ Subjects come only from trusted records (ADR-0037), never from the caller:
 
 - **business**: the subject id is the local task id `task-<Issue number>` of an imported task, and
   the approval baseline is that snapshot's `content_hash` (the reviewed Issue content), scope = that
-  task. Import must run **before** the runtime session starts, because only the runtime holds the
-  state lease: call `importTask` then `storeTaskSnapshots` (`src/application/use-cases/tasks/`)
-  in-process against the migrated `state.db`, then start the session. There is no import IPC or CLI.
+  task. Start the runtime session, then run `omi import-task <Issue number> [Issue number ...]`
+  from the installed project. The CLI sends `task.import` over IPC; the runtime calls `importTask`
+  then `storeTaskSnapshots` under its state lease and prints task ids and `content_hash` values.
+  Repository and Project come from `project.yaml`; no approval is created or decided by import.
   Re-running is idempotent; a changed Issue stores a new `content_hash` and makes older requests stale.
 - **deploy**: the subject id is the `id` of an entry in `project.yaml` `deploy_targets`
   (`{id, target_environment, artifact_digest}`). Each release edits that entry and restarts the session;
@@ -164,13 +165,14 @@ The rollback runbook's business approval above (`baselineHash = revisionHash`, `
 
 ## Reconciliation boundary (2026-11-13)
 
-The built CLI exposes `approvals request` and `approvals decide`; it has no deploy, release,
-rollback or import command in v0.1. Deployment above is the application/live-test integration,
+The built CLI exposes `import-task`, `approvals request` and `approvals decide`; it has no deploy,
+release or rollback command in v0.1. Deployment above is the application/live-test integration,
 not a CLI recipe. [CLI verification](cli-verification.md) records help checks only for those
 approval pathways; no live request, decision, GitHub write or deploy was run in this audit.
 `tools/sandbox-setup/main.ts` exposes `github`, `local-state` and `live-prep` (repository
-tooling, below); the import is in-process (`importTask` + `storeTaskSnapshots`), not a product
-CLI command. Sandbox setup is repository tooling; its GitHub/admin
+tooling, below); its dedicated harness preparation still imports in-process before its runtime
+starts. Installed projects use `import-task` through the running runtime. Sandbox setup is
+repository tooling; its GitHub/admin
 operations require the separate authorization above.
 
 ## Full lifecycle acceptance (OMI-042, build now / run live later)
@@ -324,7 +326,8 @@ branch, no PO approval on the merged head) stops with an error; do not guess, ha
 inspect GitHub. Do not start another acceptance just to bypass an unknown dispatch.
 
 Open product decisions: `omi init` exists (`src/interfaces/cli/commands/installation-commands.ts`),
-and approval requests and task import are covered by ADR-0037 and `live-prep`; there is no
+and approval requests and task import are covered by ADR-0037 (`approvals request` and
+`import-task` in installed projects, `live-prep` for this harness); there is no
 `login/run/retry` command. Creating the sandbox task branch is manual. There is no release merge use case (the
 harness performs the pinned native API merge after the gate). Whether a future deploy approval
 workflow can combine the durable digest decision with the native environment approval requires a

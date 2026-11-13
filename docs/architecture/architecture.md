@@ -92,7 +92,7 @@ Không tạo `common/`, `helpers/`, `utils/`, `manager.ts` chung chung. Hàm ch�
 | Đường dẫn | Nội dung |
 |---|---|
 | `src/application/use-cases/project/` | `initialize-project.ts`, `inspect-project.ts` |
-| `src/application/use-cases/tasks/` | `import-task.ts`, `select-ready-tasks.ts`, `create-issue-from-spec.ts`, `promote-task.ts`, `set-task-status.ts` |
+| `src/application/use-cases/tasks/` | `import-task.ts`, `import-task-snapshots.ts`, `store-task-snapshots.ts`, `select-ready-tasks.ts`, `create-issue-from-spec.ts`, `promote-task.ts`, `set-task-status.ts` |
 | `src/application/use-cases/runs/` | `plan-run.ts`, `dispatch-step.ts`, `record-step-result.ts`, `pause-run.ts`, `resume-run.ts` |
 | `src/application/use-cases/profiles/` | `probe-profile.ts`, `select-executor.ts`, `failover-step.ts` |
 | `src/application/use-cases/approvals/` | `request-approval.ts`, `record-approval.ts` |
@@ -448,6 +448,7 @@ v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch 
 | `omi new-issue --project <path> --file <file> [--apply]`, `omi promote --project <path> [issue]`, `omi set-status --project <path> <issue> <status>` | Intake/readiness; xem handbook §9 và help cho flag bắt buộc |
 | `omi watch --project <path>`, `omi coordinator switch --to <profile>` | Read-only watch và handoff Coordinator |
 | `omi approvals request <subject-id> --kind <business\|deploy>` | Tạo request `pending` qua runtime IPC (`approval.request`), in request id và version; không có cờ quyết định (ADR-0037) |
+| `omi import-task <issue-number> [issue-number ...]` | Import Issue từ repository/Project trong `project.yaml` qua runtime IPC (`task.import`); in task id và `content_hash`, idempotent; không tạo/quyết approval |
 | `omi approvals decide <id> --expected-version <n> --decision <approved\|rejected> [--github-comment <id>]` | Chỉ runtime TTY hoặc GitHub actor được allowlist, theo ADR-0026 |
 
 `login`, `approvals list`, `workflows validate`, `sync` chưa có trong v0.1. `init` dùng nhánh local codebase của ADR-0029; mapping/copy GitHub Project vẫn là use case, chưa có CLI. Baseline JSON do caller cung cấp tường minh; không đoán repository, Project, branch, policy hay capability model. `models.yaml` do project cấu hình riêng trước khi chạy runtime.
@@ -521,4 +522,6 @@ Folder map §3 được đối chiếu với `src/application/use-cases/`,
 §4 bridge project không phải bridge bảo trì source: `templates/bridges/repository/` là nguồn
 của skills repo; ADR-0036 yêu cầu chạy tooling từ clone pin ngoài checkout, không nạp moving
 develop. `tools/sandbox-setup/` là công cụ chuẩn bị sandbox, không phải CLI product; ADR-0037
-quy định import snapshot trước session và deploy subject từ config, không từ Issue text.
+quy định business baseline từ snapshot và deploy subject từ config, không từ Issue text.
+OMI-104 bổ sung `import-task` qua IPC khi runtime giữ lease; `live-prep` vẫn chuẩn bị riêng harness
+trước session.
