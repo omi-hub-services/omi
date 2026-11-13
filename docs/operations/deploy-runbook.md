@@ -243,7 +243,9 @@ the PR is closed. Have the Coordinator inspect completed stages and reconcile th
 use cases; do not start another acceptance just to bypass an unknown dispatch.
 
 Open product decisions: the PO records decisions with `approvals decide` (previous section);
-there is no CLI generator for `project.yaml` and no `init/login/run/retry` command. Branch/work
+`omi init` exists (`src/interfaces/cli/commands/installation-commands.ts`), but no CLI command
+creates approval requests or imports a task into `state.db`, and there is no `login/run/retry`
+command. Branch/work
 preparation and authenticated approval-store setup therefore require the existing application
 boundaries and an operator, not undocumented CLI commands. There is no release merge use case
 (the harness performs the pinned native API merge after the gate). Whether a future deploy
