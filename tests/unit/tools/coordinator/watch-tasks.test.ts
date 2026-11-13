@@ -371,6 +371,26 @@ describe("parsePromptProbe / readPrompts", () => {
     expect(Object.keys(probe)).toHaveLength(3);
   });
 
+  it("keeps the newest full packet of a resume under that resume's own key", () => {
+    const probe = parsePromptProbe(
+      [
+        "@@packet omi-074-resume-verify-1-r2.md",
+        "## Skill: receiving-code-review",
+        "@@full omi-074-resume-verify-1-r2.md",
+        "# Workflow feature · step verify · role qa",
+        "## Skill: qa-verification",
+        "@@full ../../bad.md",
+        "## Skill: leaked",
+      ].join("\n"),
+    );
+    expect(probe["full:omi-074-resume-verify-1-r2.md"]?.skills).toEqual(["qa-verification"]);
+    expect(workerPrompt(probe, "omi-074-resume-verify-1-r2.md")?.skills).toEqual([
+      "qa-verification",
+      "receiving-code-review",
+    ]);
+    expect(Object.keys(probe)).toHaveLength(2);
+  });
+
   it("runs one WSL command for validated plan keys and degrades to {} on failure", async () => {
     const seen: Command[] = [];
     const ok = await readPrompts(
@@ -886,11 +906,12 @@ describe("template position, worker step and hold of a task view", () => {
 
     it("adds the resume packet's skills to the newest full packet of the same step and attempt", () => {
       const all = {
-        // newest first, as the probe lists them
-        "omi-074-resume-verify-1-ccc333.md": info("receiving-code-review", "verify", "qa"),
-        "omi-074-prompt-verify-2-ddd444.md": info("other-round", "verify", "qa"),
-        "omi-074-prompt-verify-1-eee555.md": info("qa-verification", "verify", "qa"),
+        // an older full packet of the same step and round, ahead of the resume in key order
         "omi-074-prompt-verify-1-aaa111.md": info("older-same-round", "verify", "qa"),
+        "omi-074-prompt-verify-2-ddd444.md": info("other-round", "verify", "qa"),
+        "omi-074-resume-verify-1-ccc333.md": info("receiving-code-review", "verify", "qa"),
+        // the probe's newest full packet for that resume, keyed to it
+        "full:omi-074-resume-verify-1-ccc333.md": info("qa-verification", "verify", "qa"),
       };
       const merged = workerPrompt(all, "omi-074-resume-verify-1-ccc333.md");
       expect(merged?.skills).toEqual(["qa-verification", "receiving-code-review"]);

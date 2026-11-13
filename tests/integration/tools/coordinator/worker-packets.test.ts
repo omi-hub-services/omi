@@ -72,6 +72,11 @@ describe("collector to snapshot: each running worker shows its own packet", () =
         });
         return child.pid;
       };
+      // an OLDER full packet of the same step and round, read by a worker that is collected BEFORE
+      // the resume worker: the resume must still merge the newest full packet, not this one
+      const oldFull = "omi-004-prompt-implement-1-old000.md";
+      await put(oldFull, packet("implement", "developer", "older-full"), 6000);
+      const oldWorker = await spawnWorker(oldFull, "omi-004-test-20261113-070000.jsonl");
       const resumed = await spawnWorker(newestResume, "omi-004-test-20261113-100000.jsonl");
       const older = await spawnWorker(verify, "omi-004-test-20261113-090000.jsonl");
       const unknown = await spawnWorker(null, "omi-004-test-20261113-080000.jsonl");
@@ -86,6 +91,7 @@ describe("collector to snapshot: each running worker shows its own packet", () =
             code: 0,
             stderr: "",
             stdout: `@@ps\n${[
+              [oldWorker, 40],
               [resumed, 30],
               [older, 20],
               [unknown, 10],
@@ -98,6 +104,7 @@ describe("collector to snapshot: each running worker shows its own packet", () =
       const target = { viaWslExe: false, distro: "unused", repoDir: root };
       const workers = await readWorkers(run, target);
       expect(workers.available && workers.processes.map((p) => p.packet)).toEqual([
+        oldFull, // collected first
         newestResume,
         verify,
         null,
@@ -144,13 +151,14 @@ describe("collector to snapshot: each running worker shows its own packet", () =
         profiles: [],
       });
 
-      expect(snapshot.tasks).toHaveLength(3);
+      expect(snapshot.tasks).toHaveLength(4);
+      const byPid = (pid: number | undefined) =>
+        snapshot.tasks.find((c) => c.runId === `OMI-004#${String(pid)}`);
       const byStep = (step: string | undefined) => snapshot.tasks.find((c) => c.who?.step === step);
-      // the newest of 17 resumes merges the original full packet of the SAME step and round
-      expect(byStep("implement")?.loaded?.skills).toEqual([
-        "minimal-change",
-        "receiving-code-review",
-      ]);
+      // the newest of 17 resumes merges the NEWEST full packet of the SAME step and round, even
+      // though a worker on an older full packet of that step and round was collected first
+      expect(byPid(resumed)?.loaded?.skills).toEqual(["minimal-change", "receiving-code-review"]);
+      expect(byPid(oldWorker)?.loaded?.skills).toEqual(["older-full"]);
       expect(byStep("verify")?.loaded?.skills).toEqual(["qa-verification"]);
       // a worker whose packet is unknown shows nothing, never another worker's skills or rules
       const none = snapshot.tasks.find((c) => c.who?.step === null);
@@ -158,7 +166,7 @@ describe("collector to snapshot: each running worker shows its own packet", () =
       expect(none?.notes.join(" ")).toContain("packet unknown");
       expect(none?.skillCheck).toBeNull();
       expect(none?.who?.step).toBeNull();
-      expect(new Set(snapshot.tasks.map((c) => c.runId)).size).toBe(3);
+      expect(new Set(snapshot.tasks.map((c) => c.runId)).size).toBe(4);
     },
     30_000,
   );

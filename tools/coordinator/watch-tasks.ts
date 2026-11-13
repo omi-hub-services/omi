@@ -339,7 +339,7 @@ function promptPayload(numbers: readonly string[], packets: readonly string[]): 
     const prefix = `${base[1] ?? ""}-prompt-${base[2] ?? ""}-`;
     return (
       `${read}; g=$(ls -t ${d}/${prefix}*.md 2>/dev/null | grep -E '${prefix}[a-z0-9]+[.]md$' | head -n 1); ` +
-      `if [ -n $g ]; then echo @@packet $(basename $g); ${GREP} $g | head -n 80; fi`
+      `if [ -n $g ]; then echo @@full ${name}; ${GREP} $g | head -n 80; fi`
     );
   };
   return [task, ...packets.map(one)].join("; ");
@@ -359,10 +359,12 @@ export function parsePromptProbe(stdout: string): Record<string, PromptInfo | nu
     lines = [];
   };
   for (const line of stdout.split("\n")) {
-    const m = /^@@(prompt|missing|packet) (\d{1,4}|\S+)$/.exec(line.trim());
+    const m = /^@@(prompt|missing|packet|full) (\d{1,4}|\S+)$/.exec(line.trim());
     if (m?.[1] && m[2]) {
       flush();
       if (m[1] === "packet") key = PACKET_FILE.test(m[2]) ? m[2] : null;
+      // the newest full packet of a resume worker, stored under that resume's own name
+      else if (m[1] === "full") key = PACKET_FILE.test(m[2]) ? `full:${m[2]}` : null;
       else if (!/^\d{1,4}$/.test(m[2])) key = null;
       else if (m[1] === "missing") out[`OMI-${m[2]}`] = null;
       else key = `OMI-${m[2]}`;
@@ -546,12 +548,9 @@ export function workerPrompt(
 ): PromptInfo | null {
   const own = prompts[packet] ?? null;
   if (!packet.includes("-resume-")) return own;
-  // newest full packet of the same step and attempt: `prompts` keeps the probe's newest-first order
-  const base = packet.replace("-resume-", "-prompt-").replace(/-[a-z0-9]+\.md$/, "-");
-  const fullName = Object.keys(prompts).find(
-    (name) => name.startsWith(base) && /^[a-z0-9]+\.md$/.test(name.slice(base.length)),
-  );
-  const full = fullName === undefined ? null : (prompts[fullName] ?? null);
+  // the probe stores this resume's newest full packet (same task, step, attempt) under its own
+  // key, so no other worker's packet and no map order can take its place
+  const full = prompts[`full:${packet}`] ?? null;
   if (full === null) return own;
   const merge = (a: readonly string[], b: readonly string[]) => [...new Set([...a, ...b])];
   return {
