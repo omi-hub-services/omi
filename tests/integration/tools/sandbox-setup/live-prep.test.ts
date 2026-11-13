@@ -1,0 +1,226 @@
+import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { requestApproval } from "../../../../src/application/use-cases/approvals/request-approval.ts";
+import type { GithubTaskReader } from "../../../../src/application/ports/github-task-reader.ts";
+import { sha256ContentHasher } from "../../../../src/infrastructure/artifacts/sha256-content-hasher.ts";
+import { createSqliteStateUnitOfWork } from "../../../../src/infrastructure/persistence/sqlite/sqlite-state-unit-of-work.ts";
+import {
+  openReadOnlyStateDatabase,
+  openStateDatabase,
+} from "../../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
+import { prepareLocalState } from "../../../../tools/sandbox-setup/local-state.ts";
+import { runLivePrep, type LivePrepDeps } from "../../../../tools/sandbox-setup/live-prep.ts";
+
+const dirs: string[] = [];
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+const repository = "omi-hub-services/omi-sandbox";
+const digest = `sha256:${"b".repeat(64)}`;
+const issue = {
+  id: "I_kwDOtask7",
+  number: 7,
+  repository: { owner: "omi-hub-services", name: "omi-sandbox" },
+  title: "Acceptance task",
+  body: "## Acceptance criteria\n- [ ] x",
+  state: "OPEN" as const,
+  updatedAt: "2026-11-12T00:00:00Z",
+  milestoneId: null,
+  blockedBy: [],
+};
+const reader: GithubTaskReader = {
+  items: () =>
+    Promise.resolve([
+      { id: "PVTI_1", kind: "Issue", issueId: issue.id, archived: false, iterations: [] },
+    ]),
+  issue: () => Promise.resolve(issue),
+};
+const base = {
+  repository,
+  projectNumber: 2,
+  reviewer: "ttin-omihub",
+  now: () => Date.parse("2026-11-12T00:00:00Z"),
+  newId: () => "project-1",
+};
+
+async function setup() {
+  const root = mkdtempSync(join(tmpdir(), "omi-042-prep-"));
+  dirs.push(root);
+  const stateDir = join(root, "state");
+  await prepareLocalState({ ...base, stateDir });
+  let n = 0;
+  const deps: LivePrepDeps = {
+    ...base,
+    root: join(root, "repo"),
+    environment: "sandbox",
+    artifactDigest: digest,
+    projectNodeId: "PVT_kwDOproject",
+    issueNodeId: () => Promise.resolve(issue.id),
+    reader,
+    hasher: sha256ContentHasher,
+    newId: () => `id-${String((n += 1))}`,
+    pipeline: {
+      workflow: "sandbox-deploy.yml",
+      ref: "sandbox-deploy-r1",
+      workflowSha: "c".repeat(40),
+      issueNumber: 3,
+      allowedActors: ["ttin-omihub"],
+      authorActor: "minibox-claude-code",
+    },
+  };
+  const flags = { stateDir, acceptanceId: "acceptance-042-a", issue: 7, dryRun: false };
+  return { stateDir, deps, flags };
+}
+
+const query = <T>(stateDir: string, sql: string): T[] => {
+  const db = openReadOnlyStateDatabase(join(stateDir, "state.db"));
+  try {
+    return db.prepare(sql).all() as T[];
+  } finally {
+    db.close();
+  }
+};
+const liveConfig = (stateDir: string) =>
+  JSON.parse(readFileSync(join(stateDir, "live-lifecycle-config.json"), "utf8")) as Record<
+    string,
+    unknown
+  >;
+
+describe("live-prep", () => {
+  it("stores the task snapshot, adds the deploy target and writes the config without any approval", async () => {
+    const { stateDir, deps, flags } = await setup();
+    const result = await runLivePrep(deps, flags);
+    expect(result.code).toBe(0);
+    const rows = query<{ id: string; content_hash: string }>(
+      stateDir,
+      "SELECT id, content_hash FROM task_snapshots",
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe("task-7");
+    expect(readFileSync(join(stateDir, "project.yaml"), "utf8")).toContain(
+      "target_environment: sandbox",
+    );
+    const config = liveConfig(stateDir);
+    expect(config).toMatchObject({
+      taskId: "task-7",
+      baselineHash: rows[0]?.content_hash,
+      artifactDigest: digest,
+      projectId: "project-1",
+    });
+    expect(query(stateDir, "SELECT id FROM approvals")).toEqual([]);
+    expect(result.lines.join("\n")).toContain("approvals request task-7 --kind business");
+  });
+
+  it("is idempotent: a rerun changes no file and writes no new event", async () => {
+    const { stateDir, deps, flags } = await setup();
+    await runLivePrep(deps, flags);
+    const files = ["project.yaml", "live-lifecycle-config.json"].map((f) =>
+      readFileSync(join(stateDir, f), "utf8"),
+    );
+    const events = query(stateDir, "SELECT sequence FROM events");
+    await runLivePrep(deps, flags);
+    expect(
+      ["project.yaml", "live-lifecycle-config.json"].map((f) =>
+        readFileSync(join(stateDir, f), "utf8"),
+      ),
+    ).toEqual(files);
+    expect(query(stateDir, "SELECT sequence FROM events")).toEqual(events);
+  });
+
+  it("writes nothing on --dry-run", async () => {
+    const { stateDir, deps, flags } = await setup();
+    const before = readFileSync(join(stateDir, "project.yaml"), "utf8");
+    const result = await runLivePrep(deps, { ...flags, dryRun: true });
+    expect(result.lines.join("\n")).toContain("DRY RUN");
+    expect(query(stateDir, "SELECT id FROM task_snapshots")).toEqual([]);
+    expect(existsSync(join(stateDir, "live-lifecycle-config.json"))).toBe(false);
+    expect(readFileSync(join(stateDir, "project.yaml"), "utf8")).toBe(before);
+  });
+
+  it("refuses a state directory that is not prepared or lies inside the repository", async () => {
+    const { deps, flags } = await setup();
+    const fresh = join(mkdtempSync(join(tmpdir(), "omi-042-empty-")), "state");
+    dirs.push(fresh);
+    await expect(runLivePrep(deps, { ...flags, stateDir: fresh })).rejects.toThrow(
+      /local state incomplete/,
+    );
+    await expect(runLivePrep({ ...deps, root: flags.stateDir }, flags)).rejects.toThrow(
+      /outside this repository/,
+    );
+  });
+
+  it("refuses an Issue that is not an importable item of the sandbox Project", async () => {
+    const { deps, flags } = await setup();
+    await expect(
+      runLivePrep({ ...deps, reader: { ...reader, items: () => Promise.resolve([]) } }, flags),
+    ).rejects.toThrow(/not an importable item/);
+  });
+
+  it("fills in a pending approval id after verifying its subject, and leaves it pending", async () => {
+    const { stateDir, deps, flags } = await setup();
+    await runLivePrep(deps, flags);
+    const baselineHash = liveConfig(stateDir)["baselineHash"] as string;
+    const db = openStateDatabase(join(stateDir, "state.db"));
+    let requested;
+    try {
+      requested = requestApproval(
+        {
+          subjects: {
+            read: () => ({ kind: "business", baselineHash, scopeIds: ["task-7"] }),
+          },
+          unitOfWork: createSqliteStateUnitOfWork(db),
+          now: Date.now,
+          nextId: (() => {
+            let i = 0;
+            return () => `req-${String((i += 1))}`;
+          })(),
+        },
+        { schemaVersion: 1, subjectId: "task-7", kind: "business" },
+      );
+    } finally {
+      db.close();
+    }
+    expect(requested.ok).toBe(true);
+    const id = requested.ok ? requested.request.id : "";
+    await runLivePrep(deps, { ...flags, businessApprovalId: id });
+    expect(liveConfig(stateDir)["businessApprovalId"]).toBe(id);
+    expect(query<{ status: string }>(stateDir, "SELECT status FROM approvals")).toEqual([
+      { status: "pending" },
+    ]);
+  });
+
+  it("refuses an approval id that does not exist or names another subject", async () => {
+    const { stateDir, deps, flags } = await setup();
+    await runLivePrep(deps, flags);
+    await expect(runLivePrep(deps, { ...flags, businessApprovalId: "missing" })).rejects.toThrow(
+      /business approval missing not found/,
+    );
+    const db = openStateDatabase(join(stateDir, "state.db"));
+    let id = "";
+    try {
+      const made = requestApproval(
+        {
+          subjects: {
+            read: () => ({ kind: "business", baselineHash: "f".repeat(64), scopeIds: ["task-7"] }),
+          },
+          unitOfWork: createSqliteStateUnitOfWork(db),
+          now: Date.now,
+          nextId: (() => {
+            let i = 0;
+            return () => `other-${String((i += 1))}`;
+          })(),
+        },
+        { schemaVersion: 1, subjectId: "task-7", kind: "business" },
+      );
+      if (made.ok) id = made.request.id;
+    } finally {
+      db.close();
+    }
+    await expect(runLivePrep(deps, { ...flags, businessApprovalId: id })).rejects.toThrow(
+      /does not match/,
+    );
+  });
+});

@@ -128,6 +128,40 @@ describe("sandbox local state", () => {
     ]);
   });
 
+  it("adds and updates a deploy target in an existing project.yaml, idempotently, keeping others", async () => {
+    const stateDir = tempState();
+    await prepareLocalState({ ...base, stateDir });
+    const target = {
+      id: "sandbox-a",
+      targetEnvironment: "sandbox",
+      artifactDigest: deploy.artifactDigest,
+    };
+    const other = {
+      id: "sandbox-b",
+      targetEnvironment: "sandbox",
+      artifactDigest: deploy.artifactDigest,
+    };
+    expect((await prepareLocalState({ ...base, stateDir, deployTarget: target })).changed).toEqual([
+      "project.yaml",
+    ]);
+    await prepareLocalState({ ...base, stateDir, deployTarget: other });
+    expect((await prepareLocalState({ ...base, stateDir, deployTarget: target })).changed).toEqual(
+      [],
+    );
+    const moved = { ...target, artifactDigest: `sha256:${"d".repeat(64)}` };
+    await prepareLocalState({ ...base, stateDir, deployTarget: moved });
+    const config = projectConfigSchema.parse(
+      parse(readFileSync(join(stateDir, "project.yaml"), "utf8")),
+    );
+    expect(config.deploy_targets?.map((t) => [t.id, t.artifact_digest])).toEqual([
+      ["sandbox-a", moved.artifactDigest],
+      ["sandbox-b", other.artifactDigest],
+    ]);
+    // A later run without a target neither reports the targets as drift nor removes them.
+    expect((await inspectLocalState({ ...base, stateDir })).missing).toEqual([]);
+    expect((await prepareLocalState({ ...base, stateDir })).changed).toEqual([]);
+  });
+
   it("rejects a state directory inside the repository, also through a symlink", () => {
     const root = mkdtempSync(join(tmpdir(), "omi-089-root-"));
     dirs.push(root);

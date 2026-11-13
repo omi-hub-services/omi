@@ -173,44 +173,45 @@ accepted: the authenticated GitHub login must match `pipeline.authorActor`, and 
 from `ttin-omihub`. The guard allows only `omi-hub-services/omi-sandbox` and never posts reviews,
 environment approvals or protection changes. It consumes real GitHub quota when enabled.
 
-Prepare this JSON locally (never credentials):
+Prepare the dedicated state and the harness config with `live-prep` (never credentials):
 
-```json
-{
-  "repository": "omi-hub-services/omi-sandbox",
-  "acceptanceId": "acceptance-042-a",
-  "stateDirectory": "/absolute/dedicated/sandbox-state",
-  "projectId": "sandbox-project",
-  "taskId": "omi-042-acceptance-a",
-  "idea": "Add the sandbox acceptance marker",
-  "issueBody": "## Acceptance criteria\n- [ ] Marker meets the approved baseline.\n- [ ] Independent review and checks pass.",
-  "baselineHash": "<64 lowercase hex SHA-256 of the reviewed requirements>",
-  "businessApprovalId": "<authenticated business approval ID>",
-  "head": "task/omi-042-acceptance-a",
-  "evidence": ["<first criterion artifact reference>", "<second criterion artifact reference>"],
-  "reviewFile": "/absolute/independent-review-evidence.json",
-  "requiredChecks": ["ci"],
-  "release": "acceptance-042-a",
-  "artifactDigest": "sha256:<64 lowercase hex>",
-  "deployApprovalId": "<authenticated deploy approval ID>",
-  "pipeline": {
-    "workflow": "sandbox-deploy.yml",
-    "ref": "reviewed-pipeline-tag",
-    "workflowSha": "<40 lowercase hex reviewed workflow commit>",
-    "issueNumber": 123,
-    "allowedActors": ["ttin-omihub"],
-    "authorActor": "minibox-claude-code"
-  },
-  "timeoutSeconds": 600
-}
+```sh
+node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts live-prep \
+  --state-dir <dir> --acceptance-id <id> --issue <task Issue number> \
+  --image <repo> --digest sha256:<hex> [--dry-run]
 ```
 
+Run `local-state` (previous section) first: `live-prep` refuses unless the directory is outside
+this repository, migrated, and has the project row, and it needs the `github` step's pipeline
+Issue and tag. The task Issue must exist in `omi-hub-services/omi-sandbox` and be an item of the
+sandbox Project; all reads go through a sandbox-only guard. It then, idempotently:
+
+1. imports the Issue with `importTask` and `storeTaskSnapshots` into `state.db` (task id
+   `task-<n>`; the business baseline is the snapshot `content_hash`),
+2. adds `deploy_targets` entry `sandbox-<acceptance-id>` (`sandbox`, the digest) to `project.yaml`,
+   keeping other entries, and
+3. writes `<dir>/live-lifecycle-config.json` (mode 0600) with every known fact and the sandbox
+   pipeline block, and lists the fields still to fill. A rerun keeps what you filled in.
+
+`--dry-run` reads GitHub and prints the plan, writing nothing. `live-prep` never creates, records or
+simulates an approval. It then prints the next steps; the approval ids come from the runtime:
+
+1. Start the runtime for this state. It reads `<project>/.omi-squad/config/project.yaml` and
+   `<project>/.omi-squad/local/state/state.sqlite`, whereas `local-state` writes `project.yaml` and
+   `state.db` directly in `<dir>`; make the runtime see the same files (no command does it).
+2. `omi approvals request task-<n> --kind business` and
+   `omi approvals request sandbox-<acceptance-id> --kind deploy` print the request ids.
+3. As **ttin-omihub**, comment the decision on the sandbox pipeline Issue, then record it with
+   `approvals decide <request-id> --expected-version 0 --decision approved --github-comment <id>`.
+4. Rerun `live-prep` with `--business-approval-id <id> --deploy-approval-id <id>`. It checks that
+   each id exists with exactly the prepared subject (and reports its status) before writing it.
+5. Fill the remaining placeholders by hand: `head` (pushed sandbox task branch from `develop`
+   with green `sandbox-check`), `evidence` (one reference per top-level AC) and `reviewFile` (an
+   actual independent review). Creating that branch is not automated.
+
 `acceptanceId` identifies the durable Issue creation intent and evidence file; use a unique value
-for a fresh acceptance, and never change the meaning of an existing intent. `projectId` must
-exist in the dedicated migrated `state.db`, alongside `artifacts/`. The pipeline/report Issue
-must already exist in the sandbox. `head` must be a pushed task branch based on develop with
-the intended change and green named checks. `evidence` has one reference per top-level AC.
-`reviewFile` must be an actual independent worker result exported as the validated
+for a fresh acceptance, and never change the meaning of an existing intent. `reviewFile` must be
+an actual independent worker result exported as the validated
 `mergeEvidenceSchema` shape: `review` (`reviewerRunId`, `reviewerAgentId`, `headSha`, `baseSha`,
 `verdict`, `body` with one `AC-n: met` line per criterion), `authorRunIds`, `authorAgentIds`,
 `unresolvedMandatoryFindings`, `workflowGatesPassed`. Do not invent review evidence or decisions.
@@ -225,12 +226,12 @@ image digest represents the intended task/release; there is no build-artifact pr
 linking a Git commit to a container digest yet. Existing unrelated develop changes can enter
 the release task list: inspect and isolate the sandbox before acceptance.
 
-The PO must also supply **real, already authenticated** business and deploy decisions in the
-dedicated ApprovalStore through `requestApproval`/`recordApproval` with the trusted CLI or
-GitHub-comment decision source. Business subject is `{kind:"business", baselineHash,
-scopeIds:[taskId]}`; deploy subject is `{kind:"deploy", artifactDigest, environment:"sandbox"}`.
-A JSON config field or database edit is not authentication. These durable decisions are
-additional to the two native GitHub gates; the harness never creates approvals itself.
+The PO must also supply **real** business and deploy decisions, requested and recorded as
+described above through `approvals request` and `approvals decide` with the trusted GitHub-comment
+decision source. Business subject is `{kind:"business", baselineHash, scopeIds:[taskId]}`; deploy
+subject is `{kind:"deploy", artifactDigest, environment:"sandbox"}`. A JSON config field or
+database edit is not authentication. These durable decisions are additional to the two native
+GitHub gates; the harness never creates approvals itself.
 
 The live order and PO actions are:
 
@@ -258,14 +259,12 @@ This is not a general resume command: after task merge, `preparePr` may refuse a
 the PR is closed. Have the Coordinator inspect completed stages and reconcile through existing
 use cases; do not start another acceptance just to bypass an unknown dispatch.
 
-Open product decisions: the PO records decisions with `approvals decide` (previous section);
-`omi init` exists (`src/interfaces/cli/commands/installation-commands.ts`), but no CLI command
-creates approval requests or imports a task into `state.db`, and there is no `login/run/retry`
-command. Branch/work
-preparation and authenticated approval-store setup therefore require the existing application
-boundaries and an operator, not undocumented CLI commands. There is no release merge use case
-(the harness performs the pinned native API merge after the gate). Whether a future deploy
-approval workflow can combine the durable digest decision with the native environment approval
-requires a product decision. None of these gaps is implemented by this acceptance change.
+Open product decisions: `omi init` exists (`src/interfaces/cli/commands/installation-commands.ts`),
+and approval requests and task import are covered by ADR-0037 and `live-prep`; there is no
+`login/run/retry` command. The runtime's project layout differs from `local-state`'s (see step 1
+above), and creating the sandbox task branch is manual. There is no release merge use case (the
+harness performs the pinned native API merge after the gate). Whether a future deploy approval
+workflow can combine the durable digest decision with the native environment approval requires a
+product decision. None of these gaps is implemented by this acceptance change.
 A successful offline scenario is not evidence of the real PO approvals: the live run remains
 unverified until the PO schedules and participates in it.
