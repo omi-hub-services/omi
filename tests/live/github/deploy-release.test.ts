@@ -21,6 +21,7 @@ import { createSqliteApprovalStore } from "../../../src/infrastructure/persisten
 import { openStateDatabase } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
 import { createSqliteOutboxStore } from "../../../src/infrastructure/persistence/sqlite/sqlite-outbox-store.ts";
 import { createSqliteStateUnitOfWork } from "../../../src/infrastructure/persistence/sqlite/sqlite-state-unit-of-work.ts";
+import { runtimeLayout } from "../../../tools/sandbox-setup/runtime-layout.ts";
 import { assertSandboxTarget } from "./probe-model.ts";
 
 const config = process.env["OMI_LIVE_DEPLOY_CONFIG"];
@@ -43,10 +44,11 @@ it.skipIf(config === undefined)(
       throw new Error("sandbox repository required");
     assertSandboxTarget({ repo: request.repository, projectOwner: owner, projectNumber: 2 });
     const stateDir = resolve(parsed.stateDirectory);
+    const layout = runtimeLayout(stateDir);
     // Use a dedicated state directory with existing, authenticated approvals; never import decisions from JSON.
-    if (!existsSync(join(stateDir, "state.db")) || !existsSync(join(stateDir, "artifacts")))
+    if (!existsSync(layout.database) || !existsSync(layout.artifactsRoot))
       throw new Error("prepare dedicated live state and authenticated approvals first");
-    const db = openStateDatabase(join(stateDir, "state.db"));
+    const db = openStateDatabase(layout.database);
     const transport = createGhApiTransport();
     const base = `repos/${request.repository}`;
     const rest = createGithubRestClient({
@@ -79,7 +81,7 @@ it.skipIf(config === undefined)(
       const result = await deployRelease(
         {
           session,
-          artifacts: createLocalArtifactStore(join(stateDir, "artifacts"), db),
+          artifacts: createLocalArtifactStore(layout.artifactsRoot, db),
           outbox: createSqliteOutboxStore(db),
           unitOfWork: createSqliteStateUnitOfWork(db),
           approvals: createSqliteApprovalStore(db),
