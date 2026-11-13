@@ -39,22 +39,24 @@ it("previews init without writes, applies config through onboarding, and keeps u
   expect(JSON.parse(preview.stdout)).toMatchObject({ result: { status: "preview" } });
   expect(await readdir(project)).toEqual([]);
   expect(cli(project, [...args, "--apply"]).status).toBe(0);
+  const modelsTarget = join(project, ".omi-squad/config/models.yaml");
+  const defaultModels = await readFile(
+    resolve("templates/project/.omi-squad/config/models.yaml"),
+    "utf8",
+  );
+  expect(await readFile(modelsTarget, "utf8")).toBe(defaultModels);
+  const customModels = `# project model override\n${defaultModels}`;
+  await writeFile(modelsTarget, customModels);
   const target = join(project, ".omi-squad/config/project.yaml");
   const content = await readFile(target, "utf8");
   await writeFile(target, `# user comment\n${content}`);
   expect(cli(project, [...args, "--apply"]).status).toBe(0);
   expect(await readFile(target, "utf8")).toBe(`# user comment\n${content}`);
-  // Supply the installed templates and project-owned model catalog; init does not guess capabilities.
-  await cp(resolve("templates/project/.omi-squad"), join(project, ".omi-squad"), {
-    recursive: true,
-  });
+  expect(await readFile(modelsTarget, "utf8")).toBe(customModels);
+  // Supply the test workflow used to exercise command refusal without an imported task.
   await cp(
     resolve("tests/fixtures/workflows/minimal-delivery.yaml"),
     join(project, ".omi-squad/workflows/minimal-delivery.yaml"),
-  );
-  await writeFile(
-    join(project, ".omi-squad/config/models.yaml"),
-    "schema_version: 1\nmodels: {}\ncapability_profiles: {}\nverified_models: {}\n",
   );
   expect(spawnSync("git", ["init", "--initial-branch=develop"], { cwd: project }).status).toBe(0);
   const child = spawn(

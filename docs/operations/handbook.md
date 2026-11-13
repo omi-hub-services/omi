@@ -146,11 +146,23 @@ including user comments; repeating apply is safe. Init never contacts GitHub or 
 commands. Invalid baseline/path/variant returns exit 2 without echoing the input. Existing-project
 mapping and Project-template copy use cases remain outside this local CLI path (ADR-0029).
 
-Configure project-owned `.omi-squad/config/models.yaml` with verified aliases, capability profiles,
-and `verified_models` before starting the runtime (schema: `models-config.v1.schema.json`). Init does not
-guess model capabilities. Start/restart the managed session after configuration changes. The runtime
+Init/install supplies `.omi-squad/config/models.yaml` with Claude Code (`claude-sonnet-5-5`,
+`claude-opus-5-5`) and Codex (`gpt-6.1-sol`) defaults for the workflow capability profiles.
+Existing project edits are preserved by init and the installer's three-way merge; divergent
+upstream/local changes report a conflict before writing. The runtime
 now passes the `PROJECT_NOT_CONFIGURED` gate; missing imported tasks, models, profiles or approvals
 can still refuse plan/dispatch with their own typed reasons.
+
+### Change models
+
+Edit the project-owned `.omi-squad/config/models.yaml` (schema: `models-config.v1.schema.json`).
+Under `models`, change the CLI `model` ID and its verified `supported_efforts`, keeping the correct
+`executor` (`claude-code` or `codex`). Keep the capability profile IDs referenced by workflows
+(`analysis`, `coding`, `testing`, `review`); `min_effort` is a floor, while task/step policy chooses
+the effort. Update each profile's `verified_models` alias list when adding/removing aliases.
+Only list models and efforts available to your subscription, and register ready worker profiles
+whose model allowlists include those CLI IDs (see Login below). The catalog supplies no login or
+quota. Start/restart the managed session after configuration changes so the runtime reloads them.
 
 ## 2. Login (profiles)
 

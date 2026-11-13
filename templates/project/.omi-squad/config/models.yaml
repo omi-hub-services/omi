@@ -1,5 +1,30 @@
-# Verify model aliases and capabilities before dispatching workers.
+# Change model IDs/efforts here and update verified_models plus each profile's model allowlist.
+# Keep capability profile IDs used by workflows; restart the managed session after changes.
 schema_version: 1
-models: {}
-capability_profiles: {}
-verified_models: {}
+models:
+  claude-sonnet:
+    executor: claude-code
+    model: claude-sonnet-5-5
+    supported_efforts: [low, medium]
+  claude-opus:
+    executor: claude-code
+    model: claude-opus-5-5
+    supported_efforts: [high]
+  codex-sol:
+    executor: codex
+    model: gpt-6.1-sol
+    supported_efforts: [low, medium, high]
+capability_profiles:
+  analysis:
+    min_effort: low
+  coding:
+    min_effort: low
+  testing:
+    min_effort: low
+  review:
+    min_effort: low
+verified_models:
+  analysis: [claude-sonnet, claude-opus, codex-sol]
+  coding: [claude-sonnet, claude-opus, codex-sol]
+  testing: [claude-sonnet, claude-opus, codex-sol]
+  review: [claude-sonnet, claude-opus, codex-sol]
