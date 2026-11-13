@@ -334,6 +334,33 @@
       ],
       "additionalProperties": false
     },
+    "deploy_targets": {
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          },
+          "target_environment": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          },
+          "artifact_digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "id",
+          "target_environment",
+          "artifact_digest"
+        ],
+        "additionalProperties": false
+      }
+    },
     "policies": {
       "type": "object",
       "properties": {

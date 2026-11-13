@@ -57,6 +57,18 @@ export const projectFieldMappingSchema = z.record(
   }),
 );
 
+/**
+ * A release's immutable artifact and environment, edited by the project with each release. It is
+ * the trusted source of a deploy approval subject (ADR-0037); callers never supply these values.
+ */
+export const deployTargetSchema = z.strictObject({
+  id: identifierSchema,
+  // Not `environment`: the credential-input guard rejects that key name in config.
+  target_environment: identifierSchema,
+  artifact_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/, "must be a sha256 artifact digest"),
+});
+export type DeployTarget = z.infer<typeof deployTargetSchema>;
+
 /** `.omi-squad/config/project.yaml`: repo, Project, branches, limits, policies. No secrets. */
 export const projectConfigSchema = z
   .strictObject({
@@ -87,6 +99,13 @@ export const projectConfigSchema = z
     /** Worker log retention (OMI-080). Absent block = defaults. */
     log_retention: logRetentionConfigSchema.optional(),
     workspace: z.strictObject({ worktree_root: absolutePathSchema }).optional(),
+    deploy_targets: z
+      .array(deployTargetSchema)
+      .max(50)
+      .refine((targets) => new Set(targets.map((t) => t.id)).size === targets.length, {
+        message: "deploy target ids must be unique",
+      })
+      .optional(),
     policies: z.strictObject({
       /** Gates that always need a human; a runtime field must not remove them. */
       mandatory_approvals: z.array(slugSchema),
