@@ -441,11 +441,12 @@ v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch 
 | `omi resume --run <id>` | Reconcile rồi tiếp tục |
 | `omi profiles register <id> --tool <claude-code\|codex> --profile-home <path> --account-group <id> [--model <name> ...]` | Đăng ký metadata vào registry SQLite qua runtime; trạng thái unknown đến khi probe |
 | `omi profiles list` / `omi profiles probe <id>` | Liệt kê/probe qua adapter hiện có; login dùng native CLI với CLAUDE_CONFIG_DIR/CODEX_HOME |
+| `omi approvals request <subject-id> --kind <business\|deploy>` | Tạo request `pending` qua runtime IPC (`approval.request`), in request id và version; không có cờ quyết định (ADR-0037) |
 | `omi approvals decide <id> --expected-version <n> --decision <approved\|rejected> [--github-comment <id>]` | Chỉ runtime TTY hoặc GitHub actor được allowlist, theo ADR-0026 |
 
 `login`, `approvals list`, `workflows validate`, `sync` chưa có trong v0.1. `init` dùng nhánh local codebase của ADR-0029; mapping/copy GitHub Project vẫn là use case, chưa có CLI. Baseline JSON do caller cung cấp tường minh; không đoán repository, Project, branch, policy hay capability model. `models.yaml` do project cấu hình riêng trước khi chạy runtime.
 
-Runtime approval composition đọc business subject từ `content_hash` của task snapshot đã import, scope là task ID; một revision import mới làm request cũ stale. Các subject cost/release/deploy cần reader của workflow sở hữu chúng và không được suy ra từ request/agent text. GitHub pathway mặc định từ chối mọi actor; `policies.github_approval_actors` trong project.yaml cấu hình allowlist. Terminal pathway vẫn yêu cầu TTY thật của runtime.
+Runtime approval composition đọc business subject từ `content_hash` của task snapshot đã import (use case `storeTaskSnapshots` ghi `task_snapshots` qua `StateUnitOfWork`, task ID `task-<số Issue>`), scope là task ID; một revision import mới làm request cũ stale. Subject deploy lấy từ `deploy_targets` trong `project.yaml` (ADR-0037); đổi digest hoặc environment làm hash đổi. Subject cost/release cần reader của workflow sở hữu chúng và không được suy ra từ request/agent text. GitHub pathway mặc định từ chối mọi actor; `policies.github_approval_actors` trong project.yaml cấu hình allowlist. Terminal pathway vẫn yêu cầu TTY thật của runtime.
 
 CLI command nhận argument có kiểu, không nối prompt/Issue body thành shell string. JSON output phải có schema/version, exit code và error classification ổn định.
 

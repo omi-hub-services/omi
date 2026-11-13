@@ -26,7 +26,7 @@ JSON document `{"schemaVersion":1,"ok":…,"exitCode":…,"result"|"error":…}`
 SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<drive>`).
 
 **What the v0.1 CLI really has.** `--help` lists: `init`, `install`, `update`, `doctor`, `profiles {register,list,probe}`, `status`,
-`session {new,start}`, `approvals decide`, `plan`, `dispatch`, `wait`, `pause`, `resume`, `deliver`,
+`session {new,start}`, `approvals {request,decide}`, `plan`, `dispatch`, `wait`, `pause`, `resume`, `deliver`,
 `coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9), and `watch`.
 
 | Job            | v0.1 command                                      | Notes                                                              |
@@ -237,10 +237,27 @@ supervised/headless runtimes use GitHub. There is no agent-text or `--yes` appro
 Refusals use `APPROVAL_REFUSED` (exit 4), including `SOURCE_NOT_AUTHENTICATED`, `ACTOR_NOT_ALLOWED`,
 `GITHUB_COMMENT_EDITED`, `STALE_VERSION`, and `STALE_REVISION`.
 
-The shipped subject reader resolves business requests against the current imported task snapshot
-(`subjectId` = task ID, baseline = `content_hash`, scope = that task). Re-import a changed revision
-before approval; requests pin that revision. Cost/release/deploy require their owning workflow's
-authoritative subject reader and fail closed when unavailable. No subject is inferred from agent
+Create the pending request first, through the running runtime:
+
+```sh
+<cli> approvals request <subject-id> --kind business|deploy
+```
+
+It prints the request id and version (`--json`: the whole pending request). It has no decision
+flag and never writes `approved`; a refused subject answers `APPROVAL_REFUSED: SUBJECT_NOT_FOUND`.
+
+The shipped subject readers (ADR-0037) are:
+
+- **business**: the current imported task snapshot (`subjectId` = local task id
+  `task-<Issue number>`, baseline = `content_hash`, scope = that task). Task import is not a CLI
+  command: store the snapshots with the `storeTaskSnapshots` use case before the session starts
+  (deploy runbook). Re-import a changed revision before approval; requests pin that revision.
+- **deploy**: an entry of `deploy_targets` in `project.yaml`
+  (`[{ "id": "sandbox-r1", "target_environment": "sandbox", "artifact_digest": "sha256:<64 hex>" }]`,
+  unique ids). Edit the entry for each release and restart the session; changing the digest or
+  environment makes older approvals stale.
+
+Cost and release have no subject reader yet and fail closed. No subject is inferred from agent
 claims or copied from the approval request.
 
 ## 4. Pause

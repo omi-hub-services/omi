@@ -134,8 +134,24 @@ Add `--deploy-approval-id <id>` once the deploy approval exists to write `deploy
 (`request`, `pipeline`, `stateDirectory`; no credential, no decision) for
 `OMI_LIVE_DEPLOY_CONFIG`.
 
-**Approvals are the PO's.** A workflow requests the business, release and deploy approvals
-(`requestApproval`); the PO records the decision through the runtime (`recordApproval`) with
+**Approvals are the PO's.** Requests are created through the running runtime, never by this
+script: `approvals request <subject-id> --kind business|deploy` creates a pending request and
+prints its id and version. It takes no decision flag. The PO records the decision with
 `approvals decide <request-id> --expected-version 0 --decision approved --github-comment <id>`
-(handbook, approvals). `approvals decide` is implemented in the v0.1 CLI; commands whose use case
-is missing answer `NOT_IMPLEMENTED`. Nothing here, and no agent, fills in a decision.
+(handbook, approvals). Nothing here, and no agent, fills in a decision.
+
+Subjects come only from trusted records (ADR-0037), never from the caller:
+
+- **business**: the subject id is the local task id `task-<Issue number>` of an imported task, and
+  the approval baseline is that snapshot's `content_hash` (the reviewed Issue content), scope = that
+  task. Import must run **before** the runtime session starts, because only the runtime holds the
+  state lease: call `importTask` then `storeTaskSnapshots` (`src/application/use-cases/tasks/`)
+  in-process against the migrated `state.db`, then start the session. There is no import IPC or CLI.
+  Re-running is idempotent; a changed Issue stores a new `content_hash` and makes older requests stale.
+- **deploy**: the subject id is the `id` of an entry in `project.yaml` `deploy_targets`
+  (`{id, target_environment, artifact_digest}`). Each release edits that entry and restarts the session;
+  a different digest or environment is a different subject hash, so an approval for the old one
+  is refused as `STALE_REVISION`.
+
+The rollback runbook's business approval above (`baselineHash = revisionHash`, `scopeIds =
+[reference]`) is a different subject and has no request command yet; it is not part of OMI-095.

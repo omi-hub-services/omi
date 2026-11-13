@@ -1,5 +1,8 @@
 import type { Command } from "commander";
-import { recordApprovalSchema } from "../../../application/contracts/approval.js";
+import {
+  recordApprovalSchema,
+  requestApprovalSchema,
+} from "../../../application/contracts/approval.js";
 import {
   presentFailure,
   presentSuccess,
@@ -8,10 +11,45 @@ import {
 import { formatOf } from "./command-context.js";
 import type { CliContext, GlobalOptions } from "./command-context.js";
 
+function approvalRequestText(result: unknown): string {
+  const { id, version, status } = (result ?? {}) as Record<string, unknown>;
+  return `approval request ${String(id)} version ${String(version)} ${String(status)}`;
+}
+
 export function registerApprovalCommands(program: Command, context: CliContext): void {
-  program
-    .command("approvals")
-    .description("Versioned PO decisions")
+  const approvals = program.command("approvals").description("Versioned PO decisions");
+  approvals
+    .command("request <subject-id>")
+    .description(
+      "create a pending approval request for a trusted subject; it never records a decision",
+    )
+    .requiredOption("--kind <kind>", "business or deploy")
+    .action(async (subjectId: string, options: { kind: string }, command: Command) => {
+      const globals = command.optsWithGlobals<GlobalOptions>();
+      const format = formatOf(globals);
+      const parsed = requestApprovalSchema.safeParse({
+        schemaVersion: 1,
+        subjectId,
+        kind: options.kind,
+      });
+      if (!parsed.success || (parsed.data.kind !== "business" && parsed.data.kind !== "deploy")) {
+        context.emit(
+          presentUsageError("invalid approval subject id or --kind business|deploy", format),
+        );
+        return;
+      }
+      const outcome = await context.sendCommand({
+        socketPath: globals.socket ?? context.defaultSocketPath,
+        timeoutMs: context.timeoutMs,
+        command: { ...parsed.data, command: "approval.request" },
+      });
+      context.emit(
+        outcome.ok
+          ? presentSuccess(outcome.result, approvalRequestText(outcome.result), format)
+          : presentFailure(outcome.error, format),
+      );
+    });
+  approvals
     .command("decide <approval-id>")
     .requiredOption("--expected-version <version>", "expected request version")
     .requiredOption("--decision <decision>", "approved or rejected")

@@ -3,8 +3,22 @@ import type { ReworkState } from "../../domain/runs/rework-policy.js";
 import type { RunStatus } from "../../domain/runs/workflow-run.js";
 import type { StepStatus } from "../../domain/runs/step-run.js";
 
+/** One imported Issue revision. `id` is the local task id; the project row must already exist. */
+export interface TaskSnapshotRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly issueNodeId: string;
+  readonly issueNumber: number;
+  readonly contentHash: string;
+  readonly remoteUpdatedAt: string;
+  /** JSON text of the import scope. */
+  readonly scope: string;
+}
+
 /** The state row to move, guarded by compare-and-swap on its `version`. */
 export type StateTarget =
+  /** Upsert by (project, Issue node). Same hash is `UNCHANGED`; an Issue-number clash is `CONFLICT`. */
+  | { readonly kind: "task_snapshot"; readonly snapshot: TaskSnapshotRecord }
   /** Init may queue a remote intent before a project/run row exists. Requires `outbox`. */
   | { readonly kind: "outbox_intent" }
   | { readonly kind: "session_event" }
@@ -66,7 +80,13 @@ export interface StateChange {
 }
 
 export type StateRejection =
-  "NOT_FOUND" | "STALE_VERSION" | "STALE_LEASE" | "LEASE_EXPIRED" | "ALREADY_EXISTS";
+  | "NOT_FOUND"
+  | "STALE_VERSION"
+  | "STALE_LEASE"
+  | "LEASE_EXPIRED"
+  | "ALREADY_EXISTS"
+  | "UNCHANGED"
+  | "CONFLICT";
 
 export type StateCommitResult =
   | { readonly ok: true; readonly newVersion: number; readonly eventSequence: number }
