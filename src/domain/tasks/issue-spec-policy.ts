@@ -1,4 +1,4 @@
-import { frameworkCounterpartReasons } from "./readiness-gate.js";
+import { frameworkCounterpartReasons, workTypeWorkflowReasons } from "./readiness-gate.js";
 import { acceptanceCriteria } from "./acceptance-criteria.js";
 import { planKeyMarkers } from "./plan-key.js";
 
@@ -11,6 +11,7 @@ export function issueSpecBodyReasons(
   workType: string,
   prefix: string,
   area: string | null = null,
+  workflow: string | null = null,
 ): string[] {
   const reasons: string[] = [];
   // Headings inside a fenced example are not sections.
@@ -28,6 +29,7 @@ export function issueSpecBodyReasons(
     reasons.push(`spec may have at most one ${prefix}-NNN marker`);
   if (body.includes(MARKER_OPENING) && markers.length === 0)
     reasons.push("malformed Plan Key marker");
+  reasons.push(...workTypeWorkflowReasons(body, workType, workflow));
   reasons.push(...frameworkCounterpartReasons(body, area));
   return reasons;
 }

@@ -849,3 +849,15 @@ the five-hour reset, a severity (`critical` when the limit is reached or a windo
 pick-profile threshold, `low` under the threshold) and freshness. A window not read is null and the
 page writes "unknown", never 0% or an empty bar. If GitHub fails after a good read the server keeps
 the last good cards and flags the board as unavailable.
+
+## Work Type / Workflow intake invariant (OMI-112)
+
+New-Issue specs and existing-Issue readiness use `workTypeWorkflowReasons` in
+`src/domain/tasks/readiness-gate.ts` through the shared spec/readiness policies.
+Bug ⇔ `bugfix`, Docs ⇔ `docs`, Release ⇔ `release` or `deploy`; Task/Spike use other
+workflows. Epic containers are exempt from this invariant (new-issue still refuses Epics).
+A Bug needs a non-empty `## Tái hiện` section containing steps, logs or evidence;
+comments and headings inside fenced examples do not satisfy it. A Task with that section
+is refused with a hint to use Bug/bugfix. These reasons also block promote, set-status
+to Ready/In Progress and start-branch/dispatch, and appear in status Attention for
+existing open non-Epic Issues. Correct the Issue fields/body; do not bypass the gate.
