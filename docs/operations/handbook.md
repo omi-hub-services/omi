@@ -148,7 +148,9 @@ When it fails:
 | `INVALID_INSTALLATION_TARGET`                     | The project is the framework source repo or inside it, under `/mnt/<drive>`, a symlinked path, or inside the package dir. Use a project on the Linux filesystem outside this repository. |
 | `UNMANAGED_TOOL_INSTALLATION`                     | `.omi-squad/tool`, `bin/omi` or `bin/omi.cjs` exists without a framework lock. Remove or move it yourself; the installer will not overwrite it. |
 | `Template conflicts: <paths>`                     | See §7.                                                                                                   |
-| `doctor` fails on `interop` / `distribution-version` | Run it from WSL2 with Windows interop enabled and the distro registered as WSL 2 (`wsl.exe --list --verbose`). |
+| `doctor` fails on `interop`                       | No enabled `WSLInterop*` entry in `/proc/sys/fs/binfmt_misc/` (`WSLInterop` or `WSLInterop-late`) or `WSL_INTEROP` is not accessible. Enable `[interop] enabled = true` in `/etc/wsl.conf` and restart the distro. |
+| `doctor` fails on `wsl-exe`                       | `wsl.exe` is on neither PATH nor `/mnt/c/Windows/System32`. Set `[interop] appendWindowsPath = true` in `/etc/wsl.conf` (then `wsl.exe --shutdown`) or add `/mnt/c/Windows/System32` to PATH. `distribution-version` and `windows-launch` then fail only as "cannot be checked"; fix `wsl-exe` first. |
+| `doctor` fails on `distribution-version`          | `wsl.exe` ran but the distro is not WSL 2. Run `wsl.exe --set-version <distro> 2`. |
 
 **Create the project configuration with `init`.** Supply a JSON baseline matching
 `schemas/project-config.v1.schema.json`, for example `baseline.json`:
