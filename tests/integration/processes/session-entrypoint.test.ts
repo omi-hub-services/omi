@@ -59,7 +59,58 @@ function startFailing(projectDir: string) {
   const exit = new Promise<number | null>((resolve) => child.once("close", resolve));
   return { exit, stderr: () => stderr };
 }
+const VALID_PROJECT = `schema_version: 1
+repository: { owner: acme, name: app }
+project: { owner: acme, number: 1 }
+branches: { integration: develop, release: main }
+limits: { max_parallel_workers: 2, step_timeout_seconds: 60, max_rework_cycles: 2 }
+policies: { mandatory_approvals: [] }
+`;
+function writeConfig(models: string) {
+  const config = join(dir, ".omi-squad", "config");
+  mkdirSync(config, { recursive: true });
+  writeFileSync(join(config, "project.yaml"), VALID_PROJECT);
+  writeFileSync(join(config, "models.yaml"), models);
+}
 describe("runtime startup failure", () => {
+  it("maps an unparsable models file to CONFIG_INVALID with its fixed code", async () => {
+    writeConfig("models: [unterminated\n");
+    const failed = startFailing(dir);
+    expect(await failed.exit).toBe(1);
+    expect(failed.stderr()).toContain("[CONFIG_INVALID]: INVALID_MODELS_CONFIG");
+    expect(failed.stderr()).not.toContain("unterminated");
+  }, 10000);
+
+  it("reports a GitWorkspaceError code when the project is not a git checkout", async () => {
+    writeConfig(`schema_version: 1
+models:
+  worker: { executor: claude-code, model: worker, supported_efforts: [medium] }
+capability_profiles: { standard: { min_effort: medium } }
+verified_models: { standard: [worker] }
+`);
+    const squad = join(dir, ".omi-squad");
+    for (const path of ["roles", "rules", "workflows", "provenance"])
+      mkdirSync(join(squad, path), { recursive: true });
+    writeFileSync(join(squad, "provenance/skills.lock.json"), JSON.stringify({ skills: [] }));
+    const failed = startFailing(dir);
+    expect(await failed.exit).toBe(1);
+    expect(failed.stderr()).toContain("[GIT_WORKSPACE_FAILED]: GIT_FAILED");
+  }, 10000);
+
+  it("does not echo an unknown model alias from a models config issue", async () => {
+    writeConfig(`schema_version: 1
+models:
+  worker: { executor: claude-code, model: worker, supported_efforts: [medium] }
+capability_profiles: { standard: { min_effort: medium } }
+verified_models: { standard: [private-corp-alias] }
+`);
+    const failed = startFailing(dir);
+    expect(await failed.exit).toBe(1);
+    expect(failed.stderr()).toContain("[CONFIG_INVALID]");
+    expect(failed.stderr()).toContain("unknown model alias");
+    expect(failed.stderr()).not.toContain("private-corp-alias");
+  }, 10000);
+
   it("prints a classified path error and exits while stdin stays open", async () => {
     const failed = startFailing("relative/dir");
     expect(await failed.exit).toBe(1);

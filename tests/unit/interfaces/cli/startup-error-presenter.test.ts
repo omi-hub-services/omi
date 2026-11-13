@@ -45,6 +45,62 @@ describe("presentStartupError", () => {
     expect(text).not.toContain("node:");
   });
 
+  it("redacts credential-shaped keys in the issue path", () => {
+    const parsed = z.object({ models: z.record(z.string(), z.number()) }).safeParse({
+      models: { api_key_prod: "x", ghp_abcdefghijklmnopqrstuvwxyz0123456789: "x", worker: "x" },
+    });
+    if (parsed.success) throw new Error("expected failure");
+    const text = presentStartupError(parsed.error);
+    expect(text).not.toContain("api_key_prod");
+    expect(text).not.toContain("ghp_");
+    expect(text).toContain("models.[redacted]");
+    expect(text).toContain("models.worker");
+  });
+
+  it("does not echo an interpolated model alias or other quoted value", () => {
+    const parsed = z
+      .string()
+      .superRefine((_, ctx) => {
+        ctx.addIssue({ code: "custom", message: 'unknown model alias "private-corp-alias"' });
+      })
+      .safeParse("x");
+    if (parsed.success) throw new Error("expected failure");
+    const text = presentStartupError(parsed.error);
+    expect(text).toContain("unknown model alias");
+    expect(text).not.toContain("private-corp-alias");
+  });
+
+  it("redacts Bearer tokens in a message", () => {
+    const parsed = z
+      .string()
+      .refine(() => false, { message: "rejected Bearer abcdefghijklmnop1234" })
+      .safeParse("x");
+    if (parsed.success) throw new Error("expected failure");
+    const text = presentStartupError(parsed.error);
+    expect(text).not.toContain("abcdefghijklmnop1234");
+    expect(text).toContain("[redacted]");
+  });
+
+  it("maps fixed-code config errors to CONFIG_INVALID", () => {
+    for (const code of ["INVALID_MODELS_CONFIG", "PROJECT_NOT_CONFIGURED"])
+      expect(presentStartupError(new Error(code))).toBe(
+        `omi runtime startup failed [CONFIG_INVALID]: ${code}\n`,
+      );
+  });
+
+  it("prints other fixed-code errors by code only", () => {
+    expect(presentStartupError(new Error("UNKNOWN_ATTEMPT"))).toContain("UNKNOWN_ATTEMPT");
+  });
+
+  it("does not print the message of a catalog load error", () => {
+    const error = Object.assign(new Error("failed: /home/u/secret-file contents"), {
+      name: "CatalogLoadError",
+    });
+    const text = presentStartupError(error);
+    expect(text).toContain("[CONFIG_INVALID]");
+    expect(text).not.toContain("secret-file");
+  });
+
   it("redacts secret-looking values inside a Zod message", () => {
     const parsed = z
       .string()
