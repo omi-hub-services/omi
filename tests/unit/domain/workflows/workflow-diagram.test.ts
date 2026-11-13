@@ -289,6 +289,15 @@ describe("compareLoadedSkills", () => {
     });
   });
 
+  it("accepts receiving-code-review on a resume packet as expected, not extra", () => {
+    const check = compareLoadedSkills(FEATURE, "implement", [
+      "test-driven-development",
+      "receiving-code-review",
+    ]);
+    expect(check?.extra).toEqual([]);
+    expect(check?.missing).toEqual([]);
+  });
+
   it("reports a template skill that was not loaded", () => {
     expect(compareLoadedSkills(FEATURE, "implement", [])?.missing).toEqual([
       "test-driven-development",

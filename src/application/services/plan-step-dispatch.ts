@@ -6,7 +6,6 @@ import { taskComplexitySchema } from "../contracts/task-complexity.js";
 import type { DispatchPlanner, DispatchPlanRequest } from "../ports/dispatch-planner.js";
 import type { ExecutorSelectionStore } from "../ports/executor-selection-store.js";
 import { earliestQuotaReset, type QuotaVerdict } from "../../domain/profiles/quota-policy.js";
-import { resumeSkills } from "../../domain/workflows/workflow-policy.js";
 import type { ProfileRegistry } from "../ports/profile-registry.js";
 import type { QuotaReader } from "../ports/quota-reader.js";
 import type { RunPlanStore } from "../ports/run-plan-store.js";
@@ -149,7 +148,7 @@ export function createDispatchPlanner(deps: {
       slug: task.workspace.slug,
       owner: deps.nextId(),
       role: step.role,
-      stepSkills: round > 1 ? resumeSkills(step.skills) : step.skills,
+      stepSkills: step.skills,
       stepRules: step.rules,
       requiredChecks: step.required_checks,
       execution: {
