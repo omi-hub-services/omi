@@ -45,16 +45,37 @@ describe("presentStartupError", () => {
     expect(text).not.toContain("node:");
   });
 
-  it("redacts credential-shaped keys in the issue path", () => {
-    const parsed = z.object({ models: z.record(z.string(), z.number()) }).safeParse({
-      models: { api_key_prod: "x", ghp_abcdefghijklmnopqrstuvwxyz0123456789: "x", worker: "x" },
-    });
+  it("prints only array indexes and snake_case field names from the issue path", () => {
+    const parsed = z
+      .object({ model_list: z.array(z.object({ field_name: z.string() })) })
+      .safeParse({ model_list: [{ field_name: 1 }] });
+    if (parsed.success) throw new Error("expected failure");
+    expect(presentStartupError(parsed.error)).toContain("  model_list.0.field_name:");
+  });
+
+  it.each([
+    ["a GitLab token key", "glpat-abcdefghijklmnopqrst"],
+    ["a GitHub token key", "ghp_abcdefghijklmnopqrstuvwxyz0123456789"],
+    ["a dashed alias", "corp-alias"],
+    ["a digit alias", "alias2"],
+    ["an uppercase key", "Alias"],
+  ])("prints %s as <key>", (_label, key) => {
+    const parsed = z
+      .object({ models: z.record(z.string(), z.number()) })
+      .safeParse({ models: { [key]: "x" } });
     if (parsed.success) throw new Error("expected failure");
     const text = presentStartupError(parsed.error);
-    expect(text).not.toContain("api_key_prod");
-    expect(text).not.toContain("ghp_");
-    expect(text).toContain("models.[redacted]");
-    expect(text).toContain("models.worker");
+    expect(text).toContain("models.<key>:");
+    expect(text).not.toContain(key);
+  });
+
+  it("redacts glpat tokens in a message", () => {
+    const parsed = z
+      .string()
+      .refine(() => false, { message: "bad glpat-abcdefghijklmnopqrst" })
+      .safeParse("x");
+    if (parsed.success) throw new Error("expected failure");
+    expect(presentStartupError(parsed.error)).not.toContain("glpat-abcdefghijklmnopqrst");
   });
 
   it("does not echo an interpolated model alias or other quoted value", () => {

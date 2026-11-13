@@ -97,6 +97,19 @@ verified_models: { standard: [worker] }
     expect(failed.stderr()).toContain("[GIT_WORKSPACE_FAILED]: GIT_FAILED");
   }, 10000);
 
+  it("never prints a token-shaped models map key", async () => {
+    writeConfig(`schema_version: 1
+models:
+  glpat-xxxxxxxxxxxxxxxxxxxx: { executor: nope }
+capability_profiles: { standard: { min_effort: medium } }
+verified_models: { standard: [] }
+`);
+    const failed = startFailing(dir);
+    expect(await failed.exit).toBe(1);
+    expect(failed.stderr()).toContain("[CONFIG_INVALID]");
+    expect(failed.stderr()).not.toContain("glpat");
+  }, 10000);
+
   it("does not echo an unknown model alias from a models config issue", async () => {
     writeConfig(`schema_version: 1
 models:

@@ -22,14 +22,13 @@ export class RuntimeStartupError extends Error {
 
 // shortcut: pattern list covers common token shapes only; extend when a new credential kind appears.
 const SECRET_PATTERNS = [
-  /\b(?:gh[pousr]_|github_pat_|sk-|xox[abpr]-)[A-Za-z0-9_-]{8,}/g,
+  /\b(?:gh[pousr]_|github_pat_|sk-|xox[abpr]-|glpat-)[A-Za-z0-9_-]{8,}/g,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi,
 ];
 
 const JWT_PATTERN = /\beyJ[\w-]+\.[\w-]+\.[\w-]+/g;
-const CREDENTIAL_KEY_PART =
-  /token|password|passwd|secret|api[_-]?key|private[_-]?key|credential|authorization|cookie/i;
-const SAFE_PATH_SEGMENT = /^[A-Za-z0-9_-]{1,64}$/;
+// Schema-style field names only; anything else may be a user-chosen map key (alias, token).
+const SAFE_PATH_FIELD = /^[a-z][a-z_]{0,31}$/;
 const FIXED_CODE = /^[A-Z][A-Z0-9_]{2,63}$/;
 const CONFIG_FIXED_CODES = new Set(["INVALID_MODELS_CONFIG", "PROJECT_NOT_CONFIGURED"]);
 
@@ -44,13 +43,10 @@ function redact(text: string): string {
   );
 }
 
-/** Path segments can be user-chosen map keys, so only plain, non-credential-shaped names pass. */
-function redactSegment(segment: string): string {
-  return SAFE_PATH_SEGMENT.test(segment) &&
-    !CREDENTIAL_KEY_PART.test(segment) &&
-    redact(segment) === segment
-    ? segment
-    : "[redacted]";
+/** Allowlist: array indexes and schema-style field names print; every other segment is `<key>`. */
+function presentSegment(segment: PropertyKey): string {
+  if (typeof segment === "number") return String(segment);
+  return typeof segment === "string" && SAFE_PATH_FIELD.test(segment) ? segment : "<key>";
 }
 
 // Duck-typed: the error can come from a second zod copy under the TS loader, failing instanceof.
@@ -80,7 +76,7 @@ export function presentStartupError(error: unknown): string {
       .slice(0, 10)
       .map(
         (issue) =>
-          `  ${issue.path.map((part) => redactSegment(String(part))).join(".") || "(root)"}: ${redact(issue.message)}`,
+          `  ${issue.path.map(presentSegment).join(".") || "(root)"}: ${redact(issue.message)}`,
       );
     return head("CONFIG_INVALID", "") + lines.join("\n") + "\n";
   }
