@@ -748,6 +748,11 @@ revision SHA, status, findings, checks and artifacts. Valid blocked/failed resul
 a valid succeeded result returns 0. Inspect the document even on nonzero exit, and use its
 `revision.headSha` for the fixed-head check. Never treat a summary or schema validity as approval.
 
+Each dispatch has its own log `omi-NNN-<profile>-<ts>-<step>-<attempt>-<stamp>.jsonl` (and `.err`,
+codex `-last.md`), so QA and review can run in parallel on one profile. When several workers of a
+task run, read each with `worker-report <issue> --step verify-1` (or `review-1`); without `--step`
+it returns the newest log of the task.
+
 Product CLI commands and repo `flow.ts` commands have different argument shapes; do not
 interchange them.
 

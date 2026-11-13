@@ -90,10 +90,18 @@ export function parseCodexReport(
 export const isCodexLog = (file: string): boolean =>
   /^omi-\d+-codex-/.test(file.split("/").at(-1) ?? file);
 
-/** WSL payload (no `"`, `\`, newline): the newest jsonl of the task. */
-export const newestLogCommand = (task: string): string => {
+/**
+ * WSL payload (no `"`, `\`, newline): the newest jsonl of the task. `step` (`verify-1`, or a full
+ * packet id) picks the newest log of that step/attempt when parallel workers share the task (OMI-113).
+ */
+export const newestLogCommand = (task: string, step: string | null = null): string => {
   if (!/^\d{1,6}$/.test(task)) throw new Error(`invalid task "${task}"`);
-  return `ls -t $HOME/${RUNS_DIR_FROM_HOME}/omi-${task}-*.jsonl 2>/dev/null | head -n 1`;
+  if (step !== null && !/^[a-z][a-z0-9]*(-[A-Za-z0-9]+)*$/.test(step)) {
+    throw new Error(`invalid step "${step}"`);
+  }
+  const pick = step === null ? "" : `*-${step}-*`;
+  // the "-<step>-" part cannot match a stamp-less legacy log, so those only answer without a step
+  return `ls -t $HOME/${RUNS_DIR_FROM_HOME}/omi-${task}-*${pick}.jsonl 2>/dev/null | head -n 1`;
 };
 
 export function formatReport(r: WorkerReport): string {

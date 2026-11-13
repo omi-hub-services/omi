@@ -206,9 +206,9 @@ export function parseClaudeUsage(usage: unknown, observedAt: number): QuotaReadi
   };
 }
 
-const LOG_NAME = /^omi-\d+-(?:(.+)-)?\d{8}-\d{6}\.jsonl$/;
+const LOG_NAME = /^omi-\d+-(?:(.+)-)?\d{8}-\d{6}(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?\.jsonl$/;
 
-/** Claude profile a worker log belongs to: `omi-NNN-<profile>-<ts>.jsonl`, else the legacy one. */
+/** Claude profile a worker log belongs to: `omi-NNN-<profile>-<ts>[-<packet>].jsonl`, else the legacy one. */
 export function logProfile(
   file: string,
   claudeProfiles: readonly string[],

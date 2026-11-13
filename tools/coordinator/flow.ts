@@ -128,7 +128,8 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] --prompt <file>
                                               WSL: unchanged prompt to ~/omi-runs, then the worker
                                               in the foreground (model/effort from the effort policy)
-  worker-report <issue>                       final report, turns, permission denials, session/thread id
+  worker-report <issue> [--step <step-round>] final report, turns, permission denials, session/thread id
+                                              (--step verify-1: that step's newest log among parallel workers)
   commit-worker <branch> --message-file <f>   WSL: stage source, tooling and managed root files, commit, print SHA
   review-comment <pr> --file <f>              check VERDICT/REVIEWED_HEAD/AC-n lines, post as the Coordinator`;
 
@@ -975,7 +976,11 @@ export async function main(argv: readonly string[], context?: Context): Promise<
     }
     case "worker-report": {
       const issue = await readIssue(ctx, issueNumber(a));
-      return workerReportCommand(ctx, { planKey: issue.planKey, dryRun: dry });
+      return workerReportCommand(ctx, {
+        planKey: issue.planKey,
+        dryRun: dry,
+        step: values.step ?? null,
+      });
     }
     case "commit-worker":
       return commitWorkerCommand(ctx, {

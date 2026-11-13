@@ -112,6 +112,13 @@ describe("isCodexLog / newestLogCommand", () => {
     expect(payload).toContain("ls -t $HOME/omi-runs/omi-077-*.jsonl");
     expect(payload).not.toMatch(/["\\\n\r]/);
   });
+
+  it("selects the newest log of one step among parallel workers (OMI-113)", () => {
+    const payload = newestLogCommand("107", "review-1");
+    expect(payload).toContain("ls -t $HOME/omi-runs/omi-107-**-review-1-*.jsonl");
+    expect(payload).not.toMatch(/["\\\n\r]/);
+    expect(() => newestLogCommand("107", "x; id")).toThrow(/step/);
+  });
 });
 
 describe("formatReport", () => {

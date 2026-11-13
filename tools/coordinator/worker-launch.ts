@@ -57,8 +57,11 @@ export const dispatchStamp = (): string =>
 export const promptFile = (resume: string | null, packet: string): string =>
   `${resume === null ? "prompt" : "resume"}-${packet}.md`;
 
+/** `<stem>-$ts-<packet>`: the packet id (step, round, stamp) keeps same-second dispatches apart (OMI-113). */
+const logStem = (spec: LaunchSpec, stem: string) => `${stem}-$ts-${spec.packet}`;
+
 const redirects = (spec: LaunchSpec, stem: string) =>
-  `< ${runsPath(spec.task, promptFile(spec.resume, spec.packet))} > ${runsPath(spec.task, `${stem}-$ts.jsonl`)} 2> ${runsPath(spec.task, `${stem}-$ts.err`)}; echo exit=$?`;
+  `< ${runsPath(spec.task, promptFile(spec.resume, spec.packet))} > ${runsPath(spec.task, `${logStem(spec, stem)}.jsonl`)} 2> ${runsPath(spec.task, `${logStem(spec, stem)}.err`)}; echo exit=$?`;
 
 export function claudeLaunchPayload(spec: LaunchSpec): string {
   assertSpec(spec);
@@ -115,7 +118,7 @@ export function codexLaunchPayload(spec: LaunchSpec): string {
     TS,
     argv.map(shellQuote).join(" "),
     // next to the log of this dispatch ($ts), so parallel Codex workers never share the file
-    `-o ${runsPath(spec.task, `codex-${spec.profile}-$ts-last.md`)}`,
+    `-o ${runsPath(spec.task, `${logStem(spec, `codex-${spec.profile}`)}-last.md`)}`,
     [...resume, "-"].join(" "),
     redirects(spec, `codex-${spec.profile}`),
   ].join(" ");

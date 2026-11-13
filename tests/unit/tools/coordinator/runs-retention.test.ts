@@ -44,6 +44,19 @@ describe("planRetention (root)", () => {
     ]);
   });
 
+  it("reads packet-suffixed log names: newest per profile, older same-second sibling archived (OMI-113)", () => {
+    const l = listing([
+      file("omi-107-ggtintran-20261113-163149-verify-1-aaa111.jsonl", 9 * HOUR),
+      file("omi-107-ggtintran-20261113-163149-review-1-bbb222.jsonl", 8 * HOUR),
+      file("omi-107-codex-ggtintran-20261113-163149-review-1-ccc333.jsonl", 7 * HOUR),
+    ]);
+    expect(plan(l, "107")).toEqual([
+      "keep omi-107-codex-ggtintran-20261113-163149-review-1-ccc333.jsonl",
+      "keep omi-107-ggtintran-20261113-163149-review-1-bbb222.jsonl",
+      "archive omi-107-ggtintran-20261113-163149-verify-1-aaa111.jsonl",
+    ]);
+  });
+
   it("picks the newest log per profile across all tasks, not only the selected ones", () => {
     const l = listing([
       file("omi-006-minibox-20261110-163807.jsonl", 20 * HOUR),
