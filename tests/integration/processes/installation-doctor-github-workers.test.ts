@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { ProjectConfig } from "../../../src/application/contracts/project-config.js";
 import {
   createInstallationDoctor,
+  detectInterop,
+  WSL_EXE_FALLBACK,
   type WslProbe,
 } from "../../../src/infrastructure/processes/installation-doctor.js";
 import { inspectInstallation } from "../../../src/application/use-cases/project/inspect-installation.js";
@@ -151,5 +153,73 @@ describe("doctor GitHub and worker CLI checks", () => {
     expect(one.status("worker-cli-available")?.ok).toBe(true);
     const none = await run({ "codex --version": undefined, "claude --version": undefined });
     expect(none.status("worker-cli-available")?.ok).toBe(false);
+  });
+});
+
+describe("doctor WSL interop and wsl.exe reachability", () => {
+  const io = (entries: Record<string, string>, hasSocket = true) => ({
+    socket: hasSocket ? "/run/WSL/1_interop" : undefined,
+    access: () => Promise.resolve(),
+    readdir: () => Promise.resolve(Object.keys(entries)),
+    readFile: (path: string) => {
+      const text = entries[path.split("/").at(-1) ?? ""];
+      return text === undefined ? Promise.reject(new Error("ENOENT")) : Promise.resolve(text);
+    },
+  });
+
+  it("accepts an enabled WSLInterop-late entry", async () => {
+    expect(await detectInterop(io({ "WSLInterop-late": "enabled\ninterpreter /init" }))).toBe(true);
+  });
+
+  it("still fails when every WSLInterop entry is disabled", async () => {
+    expect(await detectInterop(io({ "WSLInterop-late": "disabled", WSLInterop: "disabled" }))).toBe(
+      false,
+    );
+  });
+
+  it("fails without WSLInterop entries or without the socket", async () => {
+    expect(await detectInterop(io({ python3: "enabled" }))).toBe(false);
+    expect(await detectInterop(io({ WSLInterop: "enabled" }, false))).toBe(false);
+  });
+
+  it("falls back to the absolute wsl.exe path when PATH lacks it", async () => {
+    const base = probe({}, config);
+    const calls: string[] = [];
+    const p: WslProbe = {
+      ...base,
+      command: (executable, args, cwd) => {
+        calls.push(executable);
+        if (executable === "wsl.exe") return Promise.resolve(undefined);
+        return base.command(executable === WSL_EXE_FALLBACK ? "wsl.exe" : executable, args, cwd);
+      },
+    };
+    const report = await inspectInstallation(createInstallationDoctor(p), request);
+    const status = (name: string) => report.checks.find((c) => c.name === name);
+    expect(calls).toContain(WSL_EXE_FALLBACK);
+    expect(status("wsl-exe")?.ok).toBe(true);
+    expect(status("distribution-version")?.ok).toBe(true);
+    expect(status("windows-launch")?.ok).toBe(true);
+  });
+
+  it("reports wsl.exe as unreachable without blaming the version or the shim", async () => {
+    const base = probe({}, config);
+    const p: WslProbe = {
+      ...base,
+      command: (executable, args, cwd) =>
+        executable === "wsl.exe" || executable === WSL_EXE_FALLBACK
+          ? Promise.resolve(undefined)
+          : base.command(executable, args, cwd),
+    };
+    const report = await inspectInstallation(createInstallationDoctor(p), request);
+    const status = (name: string) => report.checks.find((c) => c.name === name);
+    expect(report.supported).toBe(false);
+    expect(status("wsl-exe")).toMatchObject({ ok: false });
+    expect(status("wsl-exe")?.fix).toContain("appendWindowsPath");
+    for (const name of ["distribution-version", "windows-launch"]) {
+      expect(status(name)?.ok).toBe(false);
+      expect(status(name)?.fix).not.toContain("--set-version");
+      expect(status(name)?.fix).not.toContain("Reinstall");
+      expect(status(name)?.fix).toContain("wsl-exe");
+    }
   });
 });
