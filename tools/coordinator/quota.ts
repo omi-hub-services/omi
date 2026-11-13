@@ -4,7 +4,9 @@
 // and pickProfile are pure. Redaction happens at the parse boundary: a QuotaReading keeps only
 // percentages, reset times, status, plan type, the reset-credit count and the data age, never
 // `accountId`, emails, tokens or credit ids. Temporary dev tooling; OMI-004 runtime replaces it.
+import "../register-ts-imports.ts";
 import {
+  EXPIRY_PROBE_COOLDOWN_MS,
   RUNS_DIR_FROM_HOME,
   QUOTA_MIN_INTERVAL_MS,
   type QuotaSettings,
@@ -20,13 +22,21 @@ import {
   type Runner,
 } from "./process-runner.ts";
 
+// The expiry-probe rule is the framework's (ADR-0033); the collector below embeds its source.
+export const { decideExpiryProbe } = await import("../../src/domain/profiles/quota-policy.ts");
+
 const PROFILE_NAME = /^[A-Za-z0-9_.-]+$/;
+
+/** `false`: usage only. `true`: also one Haiku probe per Claude profile. `"expired"`: usage, plus
+ * one probe for each profile whose token expired, when the shared rule allows it. */
+export type QuotaMode = boolean | "expired";
 
 export function quotaCommand(
   target: WslTarget,
   profiles: readonly WorkerProfile[],
-  probe: boolean,
+  mode: QuotaMode,
 ): Command {
+  const probe = mode !== false;
   const targets = profiles.map((p) => {
     if (!PROFILE_NAME.test(p.profile)) throw new Error(`invalid profile name "${p.profile}"`);
     return `${p.tool}:${p.profile}`;
@@ -37,7 +47,7 @@ export function quotaCommand(
     "--input-type=module",
     "-",
     RUNS_DIR_FROM_HOME,
-    probe ? "1" : "0",
+    mode === "expired" ? "expired" : probe ? "1" : "0",
   ]
     .concat(targets)
     .join(" ");
@@ -78,6 +88,8 @@ export interface QuotaReading {
 export interface ProfileQuota extends WorkerProfile {
   readonly reading: QuotaReading | null;
   readonly note: string | null;
+  /** Unix seconds the OAuth token expired at; null when it is valid or not known to be expired. */
+  readonly tokenExpiresAt: number | null;
 }
 
 const num = (v: unknown): number | null => (typeof v === "number" && isFinite(v) ? v : null);
@@ -219,6 +231,7 @@ export function parseQuotaOutput(
   const usages = new Map<string, QuotaReading>();
   const caches = new Map<string, QuotaReading>();
   const notes = new Map<string, string>();
+  const expired = new Map<string, number>();
   const key = (tool: string, profile: string) => `${tool}:${profile}`;
   const claudeNames = profiles.filter((p) => p.tool === "claude").map((p) => p.profile);
   const lines = stdout.split("\n").flatMap((line) => {
@@ -242,6 +255,9 @@ export function parseQuotaOutput(
         if (owner !== null && !logs.has(owner)) {
           logs.set(owner, parseClaudeRateLimitEvent(o.event, num(o.mtime) ?? 0, "claude-log"));
         }
+      } else if (o.kind === "expired") {
+        const at = num(o.expiresAt);
+        if (at !== null) expired.set(profile, Math.floor(at / 1000));
       } else if (o.kind === "error") {
         notes.set(key(text(o.tool) ?? "", profile), text(o.message) ?? "error");
       }
@@ -274,7 +290,8 @@ export function parseQuotaOutput(
           : null
         : (notes.get(key(p.tool, p.profile)) ??
           (usageNote ? `usage api: ${usageNote}; ${fallback ?? ""}` : fallback));
-      return { ...p, reading, note };
+      const tokenExpiresAt = p.tool === "claude" ? (expired.get(p.profile) ?? null) : null;
+      return { ...p, reading, note, tokenExpiresAt };
     }),
   };
 }
@@ -298,10 +315,10 @@ export async function readQuota(
   target: WslTarget,
   profiles: readonly WorkerProfile[],
   settings: QuotaSettings,
-  probe: boolean,
+  mode: QuotaMode,
 ): Promise<QuotaReport> {
   try {
-    const stdout = await runChecked(run, quotaCommand(target, profiles, probe));
+    const stdout = await runChecked(run, quotaCommand(target, profiles, mode));
     return { available: true, ...parseQuotaOutput(stdout, profiles, settings.legacyLogProfile) };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -331,6 +348,10 @@ export interface Candidate {
   /** When every blocking window has reset (unix seconds), if known. */
   readonly blockedUntil: number | null;
   readonly resetCredits: number | null;
+  /** Why the data may be old: `token expired` or the collector error name; null when none. */
+  readonly note: string | null;
+  /** Seconds since the reading was current; null without a reading. */
+  readonly dataAgeSeconds: number | null;
 }
 
 export type PickResult =
@@ -378,7 +399,13 @@ export function evaluate(
   model: string | null = null,
 ): Candidate {
   const r = q.reading;
-  const base = { tool: q.tool, profile: q.profile, resetCredits: r?.resetCredits ?? null };
+  const base = {
+    tool: q.tool,
+    profile: q.profile,
+    resetCredits: r?.resetCredits ?? null,
+    note: q.tokenExpiresAt == null ? q.note : "token expired",
+    dataAgeSeconds: r ? Math.max(0, now - r.observedAt) : null,
+  };
   if (!r) {
     const none = { fiveHourLeft: null, sevenDayLeft: null, score: null };
     const blocked = probed ? null : "no quota data; rerun pick-profile with --probe";
@@ -541,6 +568,14 @@ function windowText(label: string, w: QuotaWindow | null, now: number): string {
   return `${label} ${String(left)}% left${reset}`;
 }
 
+/** `token expired, data 9h old` for a profile whose token expired; null otherwise. */
+export function tokenExpiredText(q: ProfileQuota, now: number): string | null {
+  if (q.tokenExpiresAt == null) return null;
+  return q.reading
+    ? `token expired, data ${age(now - q.reading.observedAt)} old`
+    : "token expired, no data";
+}
+
 /** Weekly share left per model, e.g. `Fable 99%`; empty without model windows. */
 export function modelLeftText(r: QuotaReading, now: number): string[] {
   return r.modelWindows.flatMap((w) => {
@@ -578,10 +613,14 @@ export function formatQuotaSection(quota: QuotaReport): string[] {
 
 function candidateText(c: Candidate): string {
   const left = (n: number | null) => (n === null ? "-" : `${String(n)}%`);
-  if (c.freshness === "unknown") return `${c.tool} ${c.profile} (no quota data)`;
+  const why =
+    c.note === null
+      ? ""
+      : ` [${c.note}${c.dataAgeSeconds === null ? "" : `, data ${age(c.dataAgeSeconds)} old`}]`;
+  if (c.freshness === "unknown") return `${c.tool} ${c.profile} (no quota data)${why}`;
   return (
     `${c.tool} ${c.profile} score ${c.score === null ? "-" : String(c.score)}` +
-    ` (5h ${left(c.fiveHourLeft)} left, 7d ${left(c.sevenDayLeft)} left, ${c.freshness})`
+    ` (5h ${left(c.fiveHourLeft)} left, 7d ${left(c.sevenDayLeft)} left, ${c.freshness})${why}`
   );
 }
 
@@ -691,7 +730,7 @@ export function quotaCacheDecision(
 // ── remote collector ─────────────────────────────────────────────────────────
 // Plain JavaScript run in WSL as `node --input-type=module -` (source on stdin, so the bash
 // payload stays free of quotes). Emits one JSON line per finding; the host parses them.
-// argv: <runs dir under $HOME> <probe 0|1> <tool:profile>...
+// argv: <runs dir under $HOME> <probe 0|1|expired> <tool:profile>...
 
 export const REMOTE_COLLECTOR = String.raw`
 import { spawn } from "node:child_process";
@@ -716,7 +755,9 @@ const parseClaudeRateLimitEvent = ${parseClaudeRateLimitEvent.toString()};
 const parseCachedReading = ${parseCachedReading.toString()};
 const quotaCacheDecision = ${quotaCacheDecision.toString()};
 const quotaRetryAt = ${quotaRetryAt.toString()};
+const decideExpiryProbe = ${decideExpiryProbe.toString()};
 const minimumSeconds = ${QUOTA_MIN_INTERVAL_MS / 1000};
+const expiryCooldownMs = ${EXPIRY_PROBE_COOLDOWN_MS};
 const cachePath = join(home, runs, ".quota-cache.json");
 const clock = () => Math.floor(Date.now() / 1000);
 function loadCache() {
@@ -823,7 +864,8 @@ function codex(profile) {
   });
 }
 
-function claudeProbe(profile) {
+// quiet: the caller re-reads usage next, so the probe only refreshes the token and the cache.
+function claudeProbe(profile, quiet) {
   return new Promise((resolve) => {
     const env = { ...process.env, CLAUDE_CONFIG_DIR: join(home, ".claude-profiles", profile) };
     delete env.ANTHROPIC_API_KEY;
@@ -835,6 +877,8 @@ function claudeProbe(profile) {
     const finish = async () => {
       if (done) return;
       done = true;
+      // Any probe starts the shared expiry-probe cooldown, whoever ran it.
+      await saveCache(profile, { probeAt: Date.now() });
       const event = lastRateLimitEvent(out);
       if (event) {
         try {
@@ -842,7 +886,7 @@ function claudeProbe(profile) {
           const reading = { ...parseClaudeRateLimitEvent(event, clock(), "claude-probe"), modelWindows: scoped };
           if (reading.fiveHour || reading.sevenDay) await saveCache(profile, { reading });
           // Emit only quota metadata, never other probe event fields.
-          emit({ kind: "probe-reading", profile, reading });
+          if (!quiet) emit({ kind: "probe-reading", profile, reading });
         } catch { fail("claude", profile, "probe returned unreadable quota"); }
       }
       else fail("claude", profile, "probe returned no rate_limit_event");
@@ -862,7 +906,35 @@ function claudeProbe(profile) {
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const usageFail = (profile, message) => emit({ kind: "error", tool: "claude-usage", profile, message });
 
-async function claudeUsage(profile) {
+function readOauth(profile) {
+  try {
+    const raw = JSON.parse(readFileSync(join(home, ".claude-profiles", profile, ".credentials.json"), "utf8"));
+    return raw && raw.claudeAiOauth;
+  } catch { return undefined; }
+}
+
+// A token renews only when claude runs on the profile. The expiry is reported on every read, even
+// inside the five-minute spacing, so the cached numbers never stand in silently.
+function expiredReport(profile, expiresAt) {
+  emit({ kind: "expired", profile, expiresAt });
+  usageFail(profile, "token expired");
+}
+
+// With autoProbe, one probe renews an expired token when the shared rule allows it (it holds the
+// per-profile lock): never the refresh-token grant, only the CLI's own renewal. Usage is then read again.
+async function expiredToken(profile, expiresAt, autoProbe) {
+  const entry = loadCache()[profile] || {};
+  const decision = autoProbe
+    ? decideExpiryProbe({ expiresAt, now: Date.now(), lastProbeAt: num(entry.probeAt), probedForExpiresAt: num(entry.probedForExpiresAt), cooldownMs: expiryCooldownMs })
+    : { probe: false };
+  if (!decision.probe) { expiredReport(profile, expiresAt); cached(profile); return; }
+  // Recorded before the probe, so a crash or a failed probe is never repeated for this expiry.
+  if (!await saveCache(profile, { probedForExpiresAt: expiresAt, nextAllowedAt: clock() + minimumSeconds })) { expiredReport(profile, expiresAt); cached(profile); return; }
+  await claudeProbe(profile, true);
+  if (!await fetchClaudeUsage(profile)) cached(profile);
+}
+
+async function claudeUsage(profile, autoProbe) {
   // A per-profile lock covers the read/reserve step across status, watch and pick-profile.
   // The reservation survives process exit; a crashed lock expires after the fetch timeout.
   try { mkdirSync(join(home, runs), { recursive: true }); }
@@ -874,6 +946,11 @@ async function claudeUsage(profile) {
     fd = openSync(lock, "wx", 0o600);
   } catch { cached(profile); return; }
   try {
+    const oauth = readOauth(profile);
+    if (oauth && typeof oauth.accessToken === "string" && oauth.accessToken !== "" && typeof oauth.expiresAt === "number" && oauth.expiresAt <= Date.now()) {
+      await expiredToken(profile, oauth.expiresAt, autoProbe);
+      return;
+    }
     const entry = loadCache()[profile];
     if (!quotaCacheDecision(entry, clock()).call) { cached(profile); return; }
     if (!await saveCache(profile, { nextAllowedAt: clock() + minimumSeconds })) { cached(profile); return; }
@@ -889,7 +966,7 @@ async function fetchClaudeUsage(profile) {
     oauth = raw && raw.claudeAiOauth;
   } catch { return usageFail(profile, "no readable credentials"); }
   if (!oauth || typeof oauth.accessToken !== "string" || oauth.accessToken === "") return usageFail(profile, "no access token");
-  if (typeof oauth.expiresAt === "number" && oauth.expiresAt <= Date.now()) return usageFail(profile, "token expired");
+  if (typeof oauth.expiresAt === "number" && oauth.expiresAt <= Date.now()) return expiredReport(profile, oauth.expiresAt);
   let res;
   try {
     res = await fetch(USAGE_URL, {
@@ -929,8 +1006,8 @@ logs();
 const jobs = targets.map(async (t) => {
   const [tool, profile] = t.split(":");
   if (tool === "codex") return codex(profile);
-  await claudeUsage(profile);
-  if (probe === "1") await claudeProbe(profile);
+  await claudeUsage(profile, probe === "expired");
+  if (probe === "1") await claudeProbe(profile, false);
 });
 await Promise.all(jobs);
 `;

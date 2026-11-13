@@ -10,7 +10,7 @@ import {
   type WslTarget,
 } from "./coordinator-settings.ts";
 import { createProcessRunner, type Runner } from "./process-runner.ts";
-import { modelLeftText, windowLeft, type QuotaReport } from "./quota.ts";
+import { modelLeftText, tokenExpiredText, windowLeft, type QuotaReport } from "./quota.ts";
 import {
   clean,
   resetText,
@@ -111,7 +111,7 @@ export function renderWatch(screen: WatchScreen): string {
     if (!r) {
       out.push(
         fit(
-          `  ${profile.tool} ${clean(profile.profile)}  ? / ?  reset ?  age ? (${clean(p?.note ?? (quota ? "unavailable" : "loading"))})`,
+          `  ${profile.tool} ${clean(profile.profile)}  ? / ?  reset ?  age ? (${clean((p && tokenExpiredText(p, screen.now)) ?? p?.note ?? (quota ? "unavailable" : "loading"))})`,
         ),
       );
       continue;
@@ -126,10 +126,12 @@ export function renderWatch(screen: WatchScreen): string {
     const models = scoped.length > 0 ? `  ${scoped.join(" ")}` : "";
     const age = ageSeconds < 60 ? "live" : `${String(Math.floor(ageSeconds / 60))} min ago`;
     const reset = resetText(r.fiveHour?.resetsAt, screen.now, true) ?? "?";
+    // Why the numbers may be old: an expired token or the collector error, never silent.
+    const why = clean(tokenExpiredText(p, screen.now) ?? p.note ?? "");
     out.push(
       paint(
         fit(
-          `  ${profile.tool} ${clean(profile.profile)}  ${percent(left5)} / ${percent(left7)}${models}  reset ${reset}  ${age}`,
+          `  ${profile.tool} ${clean(profile.profile)}  ${percent(left5)} / ${percent(left7)}${models}  reset ${reset}  ${age}${why === "" ? "" : ` (${why})`}`,
         ),
         `${low ? ANSI.yellow : ""}${ageSeconds > STALE_AFTER_SECONDS ? ANSI.dim : ""}`,
       ),

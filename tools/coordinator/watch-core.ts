@@ -1,13 +1,14 @@
 // Logic shared by the terminal watch (watch.ts) and the web watch (watch-web.ts): the colour
 // rules, text cleaning and the non-overlapping worker/quota poller (OMI-064, OMI-067, ADR-0014).
 import {
+  EXPIRY_PROBE_COOLDOWN_MS,
   QUOTA_MIN_INTERVAL_MS,
   type QuotaSettings,
   type WorkerProfile,
   type WslTarget,
 } from "./coordinator-settings.ts";
 import type { Runner } from "./process-runner.ts";
-import { localTime, readQuota, type QuotaReport } from "./quota.ts";
+import { decideExpiryProbe, localTime, readQuota, type QuotaReport } from "./quota.ts";
 import type { TasksRead } from "./watch-tasks.ts";
 import { readWorkers, type WorkerLogSummary, type Workers } from "./wsl-workers.ts";
 
@@ -125,6 +126,37 @@ export function createWatchPoller(options: WatchPollerOptions): WatchPoller {
       tasksBusy = false;
     }
   };
+  // Profiles whose token expired get one probe per expiry (the shared framework rule decides; the
+  // collector re-checks it under the profile lock), then their usage is read again.
+  const expiryProbes = new Map<string, { at: number; expiresAt: number }>();
+  const probeExpired = async (report: QuotaReport): Promise<QuotaReport> => {
+    if (!report.available) return report;
+    const now = Date.now();
+    const due = report.profiles.filter((p) => {
+      if (p.tool !== "claude" || p.tokenExpiresAt === null) return false;
+      const last = expiryProbes.get(p.profile);
+      const expiresAt = p.tokenExpiresAt * 1000;
+      const { probe } = decideExpiryProbe({
+        expiresAt,
+        now,
+        lastProbeAt: last?.at ?? null,
+        probedForExpiresAt: last?.expiresAt ?? null,
+        cooldownMs: EXPIRY_PROBE_COOLDOWN_MS,
+      });
+      if (probe) expiryProbes.set(p.profile, { at: now, expiresAt });
+      return probe;
+    });
+    if (due.length === 0) return report;
+    const again = await readQuota(run, target, due, settings, "expired");
+    if (!again.available) return report;
+    return {
+      ...report,
+      now: again.now,
+      profiles: report.profiles.map(
+        (p) => again.profiles.find((a) => a.tool === p.tool && a.profile === p.profile) ?? p,
+      ),
+    };
+  };
   const refreshQuota = async (probe = false): Promise<void> => {
     if (stopped) return;
     if (quotaBusy) {
@@ -136,6 +168,7 @@ export function createWatchPoller(options: WatchPollerOptions): WatchPoller {
     try {
       notify();
       quota = await readQuota(run, target, profiles, settings, probe);
+      if (!probe) quota = await probeExpired(quota);
     } finally {
       quotaBusy = false;
       probing = false;

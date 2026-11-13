@@ -112,3 +112,6 @@ export { wslTarget, type WslTarget } from "./coordinator-target.ts";
 
 /** Shared minimum for usage endpoint calls and watch quota polls (OMI-068). */
 export const QUOTA_MIN_INTERVAL_MS = 300_000;
+
+/** No expiry probe (one Haiku call) within this time of any earlier probe of the same profile. */
+export const EXPIRY_PROBE_COOLDOWN_MS = 3_600_000;

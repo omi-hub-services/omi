@@ -55,6 +55,7 @@ const quotaWith = (r: QuotaReading): QuotaReport => ({
       sharesCoordinatorAccount: false,
       reading: r,
       note: null,
+      tokenExpiresAt: null,
     },
   ],
 });
@@ -98,6 +99,13 @@ describe("watch rendering", () => {
   });
 
   it("shows quota for every configured profile, thresholds, local reset and aging", () => {
+    const plain = quotaWith(reading);
+    const expired: QuotaReport = plain.available
+      ? { ...plain, profiles: plain.profiles.map((p) => ({ ...p, tokenExpiresAt: 5000 })) }
+      : plain;
+    expect(renderWatch({ ...screen, now: 10180, quota: expired })).toContain(
+      "token expired, data 3m old",
+    );
     const output = renderWatch({ ...screen, quota: quotaWith(reading) });
     expect(output).toContain(
       `${ANSI.yellow}  claude test  5% / 80%  reset ${localTime(14400).slice(11, 16)}  live`,

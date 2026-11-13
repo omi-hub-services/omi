@@ -445,6 +445,17 @@ describe("watch page: quota panel", () => {
     expect(page.quotaMeta.textContent).toBe("2 profiles");
   });
 
+  it("shows why a row's numbers are old instead of hiding the note", () => {
+    const page = browser();
+    const [first, second] = QUOTA.rows;
+    if (first === undefined || second === undefined) throw new Error("no rows");
+    const note = "token expired, data 9h old";
+    page.send(frame(snapshot([], { quota: { ...QUOTA, rows: [{ ...first, note }, second] } })));
+    const [withNote, without] = byClass(page.quota, "quota-row");
+    expect(texts(withNote ?? page.quota)).toContain(note);
+    expect(texts(without ?? page.quota)).not.toContain(note);
+  });
+
   it("never turns an unknown reading into 0 or into a filled bar", () => {
     const page = browser();
     page.send(frame(snapshot([])));

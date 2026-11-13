@@ -308,6 +308,26 @@ describe("buildSnapshot: quota rows", () => {
     });
   });
 
+  it("says token expired with the data age on a row whose token expired", () => {
+    const old = { ...reading, observedAt: NOW - 9 * 3600 };
+    const quota: QuotaReport = {
+      available: true,
+      now: NOW,
+      profiles: [
+        {
+          tool: "claude",
+          profile: "test",
+          reading: old,
+          note: "usage api: token expired",
+          tokenExpiresAt: NOW - 8 * 3600,
+        },
+      ] as never,
+    };
+    const row = buildSnapshot(input({ quota })).quota.rows[0];
+    expect(row?.note).toBe("token expired, data 9h old");
+    expect(row?.freshness).toBe("stale");
+  });
+
   it("is critical when the limit is reached or a window is under half its threshold", () => {
     const limited = buildSnapshot(input({ quota: quotaWith({ ...reading, limited: true }) }));
     expect(limited.quota.rows[0]?.severity).toBe("critical");

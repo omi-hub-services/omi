@@ -43,8 +43,15 @@ function assertSpec(spec: LaunchSpec): void {
 }
 
 const TS = "ts=$(date +%Y%m%d-%H%M%S);";
-const redirects = (task: string, stem: string) =>
-  `< ${runsPath(task, "prompt.md")} > ${runsPath(task, `${stem}-$ts.jsonl`)} 2> ${runsPath(task, `${stem}-$ts.err`)}; echo exit=$?`;
+/**
+ * A native resume reads its follow-up from `resume.md`: `prompt.md` keeps the thread's full packet,
+ * which is where the watch reads the skills and rules the thread has (OMI-094).
+ */
+export const promptFile = (resume: string | null): string =>
+  resume === null ? "prompt.md" : "resume.md";
+
+const redirects = (spec: LaunchSpec, stem: string) =>
+  `< ${runsPath(spec.task, promptFile(spec.resume))} > ${runsPath(spec.task, `${stem}-$ts.jsonl`)} 2> ${runsPath(spec.task, `${stem}-$ts.err`)}; echo exit=$?`;
 
 export function claudeLaunchPayload(spec: LaunchSpec): string {
   assertSpec(spec);
@@ -76,7 +83,7 @@ export function claudeLaunchPayload(spec: LaunchSpec): string {
     "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN;",
     TS,
     argv.map(shellQuote).join(" "),
-    redirects(spec.task, spec.profile),
+    redirects(spec, spec.profile),
   ].join(" ");
 }
 
@@ -102,6 +109,6 @@ export function codexLaunchPayload(spec: LaunchSpec): string {
     argv.map(shellQuote).join(" "),
     `-o ${runsPath(spec.task, "codex-last.md")}`,
     [...resume, "-"].join(" "),
-    redirects(spec.task, `codex-${spec.profile}`),
+    redirects(spec, `codex-${spec.profile}`),
   ].join(" ");
 }
