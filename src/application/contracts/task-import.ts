@@ -12,6 +12,18 @@ export const taskScopeSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("list"), issueIds: z.array(githubIdSchema).max(1000) }),
 ]);
+export const importTaskSelectionSchema = z.strictObject({
+  issueNumbers: z.array(z.number().int().positive().max(9_999_999_999)).min(1).max(1000),
+});
+export const storedTaskImportSchema = z.strictObject({
+  snapshots: z.array(
+    z.strictObject({
+      taskId: z.string(),
+      contentHash: sha256Schema,
+      outcome: z.enum(["stored", "unchanged"]),
+    }),
+  ),
+});
 export const taskIssueSchema = z.strictObject({
   id: githubIdSchema,
   number: z.number().int().positive(),

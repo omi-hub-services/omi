@@ -4,6 +4,67 @@ import type { PromoteTaskResult } from "../../../../src/application/use-cases/ta
 import type { SetTaskStatusResult } from "../../../../src/application/use-cases/tasks/set-task-status.ts";
 import { runCli } from "../../../../src/interfaces/cli/commands/create-program.ts";
 import type { TaskCommands } from "../../../../src/interfaces/cli/commands/task-commands.ts";
+import type { Command } from "../../../../src/application/contracts/command.ts";
+import type { IpcOutcome } from "../../../../src/interfaces/ipc/protocol.ts";
+
+it.each<{ outcome: IpcOutcome; code: number }>([
+  {
+    outcome: { ok: false, error: { code: "RUNTIME_UNAVAILABLE", message: "start runtime" } },
+    code: 3,
+  },
+  {
+    outcome: { ok: false, error: { code: "COMMAND_REFUSED", message: "ISSUE_NOT_IMPORTABLE" } },
+    code: 4,
+  },
+  {
+    outcome: {
+      ok: true,
+      result: { snapshots: [{ taskId: "task-1", contentHash: "bad", outcome: "stored" }] },
+    },
+    code: 5,
+  },
+])("reports import IPC failures with exit $code", async ({ outcome, code }) => {
+  let output = "";
+  expect(
+    await runCli(["--json", "import-task", "1"], {
+      sendCommand: () => Promise.resolve(outcome),
+      defaultSocketPath: "/x",
+      timeoutMs: 10,
+      version: "test",
+      stdout: (text) => {
+        output += text;
+      },
+      stderr: () => undefined,
+    }),
+  ).toBe(code);
+  expect(JSON.parse(output)).toMatchObject({ ok: false, exitCode: code });
+});
+
+it("sends import-task selections through IPC and prints task ids with their content hashes", async () => {
+  const calls: Command[] = [];
+  let output = "";
+  const code = await runCli(["import-task", "1", "2"], {
+    sendCommand: (request) => {
+      calls.push(request.command);
+      return Promise.resolve({
+        ok: true,
+        result: {
+          snapshots: [{ taskId: "task-1", contentHash: "a".repeat(64), outcome: "stored" }],
+        },
+      } as const);
+    },
+    defaultSocketPath: "/runtime.sock",
+    timeoutMs: 100,
+    version: "test",
+    stdout: (text) => {
+      output += text;
+    },
+    stderr: () => undefined,
+  });
+  expect(code).toBe(0);
+  expect(calls).toEqual([{ schemaVersion: 1, command: "task.import", issueNumbers: [1, 2] }]);
+  expect(output).toContain(`task-1 content_hash=${"a".repeat(64)} stored`);
+});
 
 const plan = {
   planKey: "OMI-006",
@@ -14,6 +75,35 @@ const plan = {
   epic: 1,
   blockedBy: [2],
 };
+
+it.each(
+  [
+    ["0"],
+    ["1e3"],
+    ["-1"],
+    ["1.5"],
+    ["abc"],
+    [],
+    ["1", "--approved"],
+    Array<string>(1001).fill("1"),
+  ].map((args) => ({ args })),
+)("refuses invalid import-task arguments $args without IPC", async ({ args }) => {
+  let calls = 0;
+  expect(
+    await runCli(["import-task", ...args], {
+      sendCommand: () => {
+        calls++;
+        return Promise.resolve({ ok: true, result: {} });
+      },
+      defaultSocketPath: "/x",
+      timeoutMs: 10,
+      version: "test",
+      stdout: () => undefined,
+      stderr: () => undefined,
+    }),
+  ).toBe(2);
+  expect(calls).toBe(0);
+});
 
 function setup(overrides: Partial<TaskCommands> = {}) {
   const calls: Record<string, unknown[]> = { newIssue: [], promote: [], setStatus: [] };

@@ -220,7 +220,25 @@ a configured project (§1).
    `error[INTERNAL_ERROR]: session failed or runtime stop was not confirmed` (exit 1); then check that
    no runtime/worker process is left before starting again. A second runtime for the same project is
    refused (one project owner).
-2. `<cli> plan --issue <number> [--workflow <id>]` starts a run for an **imported** Issue.
+2. Import the Issues, then plan a run:
+
+   ```sh
+   <cli> import-task 142 144
+   <cli> approvals request task-142 --kind business
+   <cli> plan --issue 142 --workflow feature
+   ```
+
+   `import-task <issue-number> [issue-number ...]` sends `task.import` over runtime IPC.
+   Repository and Project come from `project.yaml`. Run from the installed project, or select
+   its runtime with `--socket <path>`. Each result prints the local task id,
+   `content_hash=<sha256>` and `stored`/`unchanged`; `--json` returns `snapshots` with `taskId`,
+   `contentHash` and `outcome`. Unchanged hashes write no duplicate import event; edited Issues
+   replace their stored baseline. Native dependencies are imported too. Missing, closed, archived
+   or off-Project selected Issues are refused before snapshot writes. The runtime registers or
+   reuses the local project identity under its lease. Import creates or decides no approval.
+   A missing runtime gives exit 3. Re-import edited content before requesting/deciding approval.
+
+   `<cli> plan --issue <number> [--workflow <id>]` starts a run for an **imported** Issue.
 3. `<cli> dispatch --run <id> --step <id>` sends one **ready** step to a worker.
 4. `<cli> wait --run <id> [--timeout <1-3600>]` blocks until no worker of the run is running
    (default 300 s). Use it instead of polling.
@@ -263,9 +281,9 @@ flag and never writes `approved`; a refused subject answers `APPROVAL_REFUSED: S
 The shipped subject readers (ADR-0037) are:
 
 - **business**: the current imported task snapshot (`subjectId` = local task id
-  `task-<Issue number>`, baseline = `content_hash`, scope = that task). Task import is not a CLI
-  command: store the snapshots with the `storeTaskSnapshots` use case before the session starts
-  (deploy runbook). Re-import a changed revision before approval; requests pin that revision.
+  `task-<Issue number>`, baseline = `content_hash`, scope = that task). Use `import-task` through
+  the running runtime before requesting approval. Re-import a changed revision before approval;
+  requests pin that revision.
 - **deploy**: an entry of `deploy_targets` in `project.yaml`
   (`[{ "id": "sandbox-r1", "target_environment": "sandbox", "artifact_digest": "sha256:<64 hex>" }]`,
   unique ids). Edit the entry for each release and restart the session; changing the digest or
@@ -498,7 +516,8 @@ For an initialized project with its Issue imported, approvals recorded and a ses
    use the workflow's recovery/rework path and obtain fresh verification at the new head.
 6. Follow `status --run RUN` and dispatch the independent reviewer step on a fixed revision.
    Prepare/publish the task PR through the project's configured delivery workflow before posting
-   its review. These commands do not introduce a new PR-opening or Issue-import interface.
+   its review. These commands do not introduce a new PR-opening interface; Issue import uses
+   `import-task` (§3).
    `review-comment --pr N --file .tmp/review.md` requires this exact header with the full PR head:
 
    ```text
@@ -545,7 +564,8 @@ listed there is `untested`. This table adds only what the CLI itself depends on:
 
 - No `login`, `run`, `retry`, `approvals list`, `workflows validate`, `sync`.
 - Init uses local onboarding; GitHub Project mapping/template copy still has no CLI.
-- Init needs an explicit baseline; models and task import remain project/workflow configuration.
+- Init needs an explicit baseline; models remain project/workflow configuration. Import tasks
+  explicitly with `import-task` after starting the session.
 - `session` has no `stop`: Ctrl-C on the foreground launcher (or closing the Coordinator) is the stop.
   `session stop --help` prints the `session` help.
 - Codex: one profile; no Codex-to-Codex failover. Per-model limits are seen only after a rejection.

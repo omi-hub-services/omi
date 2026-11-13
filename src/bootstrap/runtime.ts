@@ -101,6 +101,7 @@ export async function runSessionRuntime(
           selections: createProfileStores(database).selections,
           identity: { runtimeVersion: readPackageVersion(), startedAt: session.lease.acquiredAt },
           runs: composition.commands,
+          tasks: composition.tasks,
           activeRuns: composition.runs,
           profiles: createProfileUseCases(database, () => runtime.accepting),
           approvals: composition.approvals,
