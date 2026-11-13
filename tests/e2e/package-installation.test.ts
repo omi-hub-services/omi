@@ -254,6 +254,12 @@ describe("project-local distribution", () => {
     const request = await input("overrides");
     await installProjectTool(store(), request);
     const target = join(request.projectDir, ".omi-squad", textPath);
+    const modelsTarget = join(request.projectDir, ".omi-squad/config/models.yaml");
+    expect(await readFile(modelsTarget, "utf8")).toBe(
+      await readFile(join(artifact, "templates/project/.omi-squad/config/models.yaml"), "utf8"),
+    );
+    const customModels = `# project override\n${await readFile(modelsTarget, "utf8")}`;
+    await writeFile(modelsTarget, customModels);
     await writeFile(target, "# local override\n");
     await rm(join(request.projectDir, ".omi-squad/workflows/ui-ux.yaml"));
     const next = await candidate("next-package");
@@ -262,6 +268,7 @@ describe("project-local distribution", () => {
     const result = await installProjectTool(store(), { ...request, packageDir: next });
     expect(result.status).toBe("installed");
     expect(await readFile(target, "utf8")).toBe("# local override\n");
+    expect(await readFile(modelsTarget, "utf8")).toBe(customModels);
     expect(await readFile(join(request.projectDir, ".omi-squad", changed), "utf8")).toBe(
       "# new upstream version\n",
     );
