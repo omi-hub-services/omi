@@ -6,7 +6,7 @@ it.each(["omi-next", "omi-status", "omi-watch"])(
   (name) => {
     const path = `templates/bridges/repository/${name}/SKILL.md`;
     expect(existsSync(path)).toBe(true);
-    expect(readFileSync(path, "utf8")).toContain("node tools/coordinator/");
+    expect(readFileSync(path, "utf8")).toContain("$coordinatorPin/tools/coordinator/");
   },
 );
 
@@ -35,4 +35,23 @@ it("keeps shared quality instructions in packaged templates", () => {
       "QA judges the supplied script-run check evidence; do not rerun tests.",
     ),
   ).toBe(false);
+});
+
+it.each(["omi-next", "omi-status", "omi-watch"])(
+  "routes %s business commands through the external pin",
+  (name) => {
+    const text = readFileSync(`templates/bridges/repository/${name}/SKILL.md`, "utf8");
+    expect(text).not.toMatch(/node tools\/coordinator\/(?:flow|status|watch-web|watch)\.ts/);
+    expect(text).toContain("$coordinatorPin/tools/coordinator/");
+    expect(text).toContain("{{pin_bootstrap}}");
+    expect(readFileSync("templates/prompts/coordinator-pin-bootstrap.md", "utf8")).toContain(
+      "pinStatus.initialized",
+    );
+  },
+);
+
+it("does not load the working source even to bootstrap an installed pin", () => {
+  const text = readFileSync("templates/prompts/coordinator-pin-bootstrap.md", "utf8");
+  expect(text.includes("node tools/coordinator/")).toBe(false);
+  expect(text).toContain('node "$coordinatorPin/tools/coordinator/pin.ts" status');
 });

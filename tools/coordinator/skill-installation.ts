@@ -1,5 +1,6 @@
 // Coordinator-only native skill installation; never installs runtime state into framework source.
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { PIN_DIRECTORY_NAME } from "./pin-policy.ts";
 import { join, resolve } from "node:path";
 import "../register-ts-imports.ts";
 const { assertPlainParents, readOptional } =
@@ -15,7 +16,17 @@ export async function installCoordinatorSkills(root: string, apply: boolean): Pr
     const target = join(root, ".claude/skills", name, "SKILL.md");
     await assertPlainParents(root, template);
     await assertPlainParents(root, target);
-    const content = await readFile(template, "utf8");
+    let content = await readFile(template, "utf8");
+    if (content.includes("{{pin_bootstrap}}")) {
+      const bootstrap = join(root, "templates/prompts/coordinator-pin-bootstrap.md");
+      await assertPlainParents(root, bootstrap);
+      content = content.replaceAll(
+        "{{pin_bootstrap}}",
+        (await readFile(bootstrap, "utf8"))
+          .trimEnd()
+          .replaceAll("{{pin_directory_name}}", PIN_DIRECTORY_NAME),
+      );
+    }
     if ((await readOptional(target)) === content) continue;
     changes.push(name);
     if (apply) {

@@ -9,17 +9,11 @@
 `src/` and `templates/` own shared behaviour and text. Source must never import tooling.
 Repository adapters may import the authoritative pure policy through the Node registration
 hook, using dynamic imports so plain `node tools/coordinator/flow.ts` continues to work.
-This is an interim development adapter, not the pinned production CLI.
-
-The production Coordinator must use an immutable build from the latest released version,
-or an explicitly selected full `main` SHA when no release exists. Build and pack it in an
-external checkout, install the archive into an external project directory (for example
-`~/omi-coordinator`), and retain the archive plus its SHA-256 and framework installation lock.
-Invoke the external installation’s `bin/omi.cjs` with Windows Node through its absolute
-`\\wsl.localhost\<distro>\home\<user>\omi-coordinator\.omi-squad\bin\omi.cjs` path, or its
-`bin/omi` shim in WSL; run from that external project directory. Never rebuild this installation from the worker's `develop` checkout. Refresh only
-by previewing and applying `install` with a new immutable archive, preserving the previous
-archive and lock for rollback. No runtime, credentials or state goes in this source repo.
+These adapters run from an immutable external tooling checkout, managed by the implemented
+pin mechanism below. Shared `src/` imports and packaged assets resolve within that checkout,
+so a broken work branch cannot change the Coordinator code used to repair it. The checked-in
+pin is a full SHA from main, a release tag, or a develop first-parent merge with green CI
+`check`. Refresh checks provenance and CI and prepares dependencies before activation.
 
 The actual runtime switch is deferred: repository commands use Project/comment-based delivery
 and WSL worker logs, whereas product dispatch/delivery requires runtime-owned run/attempt IDs,
@@ -107,3 +101,63 @@ review presentation, carried PASS, retention, quota and Issue-spec/Plan-Key copi
 `effort-policy.test.ts` retains its exhaustive complexity matrix. Existing watch snapshot,
 workflow and web tests cover the shared observability adapters. Integration tests exercise the
 literal plain-Node flow entry point, skill preview/apply/drift and missing copy evidence.
+
+## Implemented tooling pin (review correction)
+
+The runtime CLI migration above remains deferred, but isolation of the repository tooling is
+implemented now. `tools/coordinator/coordinator-pin.json` is the checked-in desired pin (full
+SHA, source main/develop/release tag, previous SHA/source). `pin.ts` is the thin bootstrap,
+independent of `src/`; `pin-policy.ts` validates records and provenance/CI decisions.
+`coordinator-target.ts` holds the existing WSL defaults for both settings and bootstrap, so
+overlap checks cover the default target too, without importing potentially broken framework
+code. This repository-only bootstrap has no product counterpart: the product installer manages
+runtime project packages/state, not the source repository’s temporary Coordinator clone. The seed
+is a historical develop merge before the plain-flow regression; no checkout is active until
+first-install verifies GitHub provenance, a completed successful `check` from the repository's
+`ci.yml` workflow, dependencies and the literal plain-Node flow smoke command.
+
+`node tools/coordinator/pin.ts status|refresh --to <full-sha>|rollback [--dry-run]` manages a
+standalone clone at sibling `omi-coordinator-pin/` next to the host checkout. Set the absolute
+`OMI_COORDINATOR_PIN_DIR` path to override it. The path cannot overlap the host checkout or the
+configured WSL work checkout; symlink aliases are checked. Run from the host working checkout
+(or pass `--repo <absolute-host-checkout>`). Refresh defaults to the recorded source; use
+`--source main|develop|tag:<release-tag>` to change provenance. Develop candidates must be merge
+commits on develop's first-parent history; a release tag must be an actual GitHub release.
+All candidates, including rollback, require successful CI `check`; unrelated/foreign workflow
+checks, pending, failed, cancelled and absent checks are refused.
+
+Refresh builds a fresh sibling staging clone at exactly the requested SHA, runs
+`npm ci --ignore-scripts` and `node tools/coordinator/flow.ts --help`, then replaces the external
+checkout by rename while retaining the former checkout for recovery. It never checks out or
+builds in the task worktree. An exclusive external lock prevents concurrent pin mutations;
+dirty or mismatched existing installations are refused. Failed preparation leaves the active
+checkout and tracked pin unchanged. The record is atomically updated only with activation;
+activation failure restores the prior checkout. Rollback uses the previous SHA/source and the
+same gates, and swaps the two record entries. Run refresh/rollback between Coordinator commands,
+not while another command is importing code from the pin. Retained previous checkouts are not
+automatically deleted.
+
+Skill installation expands `{{pin_bootstrap}}` from the single packaged
+`templates/prompts/coordinator-pin-bootstrap.md` asset. It resolves the verified external path
+via the external pin’s own `pin.ts status` into PowerShell `$coordinatorPin`, refusing an uninitialized/dirty/mismatched
+checkout. The initial path comes from `OMI_COORDINATOR_PIN_DIR` or the shared default sibling name, rendered by the installer. No moving-source code is loaded by installed skills, even during bootstrap. The installed text is machine-independent, so Windows and CI compare the same bytes. Every
+/omi-* mechanical command invokes its flow/status/watch entry point there, from the host work
+checkout as the current directory. Packaged prompts, workflows, skills and rules resolve from
+the tool's own location; WSL Git/check/dispatch paths still use `OMI_WSL_REPO_DIR`. A pin refresh
+therefore changes code without changing the work target or requiring native configuration edits.
+The Coordinator re-installs the rendered skills after merging template changes. Only skill
+installation writes native skills; pin refresh does not.
+
+First install, after this PR has a green merged develop revision (replace the SHA placeholder):
+
+```text
+node tools/coordinator/pin.ts refresh --to <full-green-develop-merge-sha> --source develop --dry-run
+node tools/coordinator/pin.ts refresh --to <full-green-develop-merge-sha> --source develop
+node tools/coordinator/pin.ts status
+node tools/coordinator/skill-installation.ts install --apply
+```
+
+After first install, omit `--to` to rematerialize the checked-in pin; its provenance and CI are rechecked. The historical seed predates the self-hosted pin bootstrap and cannot be activated: the first install must select a green merged revision containing this mechanism, as shown above. Missing bootstrap entry points are refused before activation. Status is
+read-only and reports an absent checkout as uninitialized, never silently falling back to
+moving develop. A failed first install leaves no active checkout. Refresh changes the tracked
+record for Coordinator review/commit; it never commits, pushes or changes GitHub state.

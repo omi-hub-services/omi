@@ -108,23 +108,7 @@ export const QUOTA_SETTINGS: QuotaSettings = {
   legacyLogProfile: null,
 };
 
-export interface WslTarget {
-  /** true on Windows: steps go through wsl.exe; false inside Linux: run bash directly. */
-  readonly viaWslExe: boolean;
-  readonly distro: string;
-  readonly repoDir: string;
-}
-
-export function wslTarget(
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
-): WslTarget {
-  return {
-    viaWslExe: platform === "win32",
-    distro: env.OMI_WSL_DISTRO ?? "Ubuntu-24.04",
-    repoDir: env.OMI_WSL_REPO_DIR ?? "/home/ttin/github/omi",
-  };
-}
+export { wslTarget, type WslTarget } from "./coordinator-target.ts";
 
 /** Shared minimum for usage endpoint calls and watch quota polls (OMI-068). */
 export const QUOTA_MIN_INTERVAL_MS = 300_000;

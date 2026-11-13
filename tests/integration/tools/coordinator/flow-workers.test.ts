@@ -501,3 +501,18 @@ it("refuses a commit when in-scope unstaged leftovers remain after staging", asy
   expect(f.seen.some((c) => payload(c).includes("commit -F"))).toBe(false);
   expect(err.join("\n")).toContain("unstaged");
 });
+
+it("refuses a commit when in-scope untracked leftovers remain after staging", async () => {
+  const branch = "task/omi-091-single-source";
+  const f = fake((c) => {
+    const command = payload(c);
+    if (command.includes("rev-parse --abbrev-ref")) return { stdout: branch };
+    if (command.includes("diff --cached --name-only")) return { stdout: "src/a.ts\n" };
+    if (command.includes("ls-files --others --exclude-standard --"))
+      return { stdout: "tools/coordinator/untracked.ts\n" };
+    return undefined;
+  });
+  expect(await commitWorkerCommand(f.ctx, { branch, message: "fix", dryRun: false })).toBe(1);
+  expect(f.seen.some((c) => payload(c).includes("commit -F"))).toBe(false);
+  expect(err.join("\n")).toContain("untracked");
+});

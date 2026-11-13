@@ -1,4 +1,4 @@
-import { readFileSync, mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync, existsSync, writeFileSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -34,6 +34,20 @@ function fake(
   } = {},
 ) {
   const seen: Command[] = [];
+  cpSync(resolve("templates"), join(dir, "templates"), { recursive: true });
+  if (options.skeletonMarker) {
+    const skeleton = join(dir, "templates/prompts/worker-prompt.md");
+    writeFileSync(skeleton, options.skeletonMarker + readFileSync(skeleton, "utf8"));
+  }
+  const missing = options.missing;
+  if (missing !== undefined) {
+    const path = missing.endsWith(".md")
+      ? `templates/prompts/${missing}`
+      : missing === "minimal-change"
+        ? `templates/project/.omi-squad/skills/${missing}`
+        : `templates/project/.omi-squad/rules/${missing}.md`;
+    rmSync(join(dir, path), { recursive: true, force: true });
+  }
   const reply = (c: Command) => {
     seen.push(c);
     if (c.file === "gh") {
@@ -129,6 +143,7 @@ function fake(
       target: { viaWslExe: false, distro: "Ubuntu", repoDir: process.cwd() },
       hostCwd: process.cwd(),
       isWindows: false,
+      toolRoot: dir,
     },
   };
 }
@@ -158,7 +173,7 @@ it.each([
   expect(output.join("\n")).toContain(`Workflow ${workflow} · step ${step}`);
 });
 
-it("reads the supplied packaged skeleton in the worker checkout", async () => {
+it("reads pinned tool assets independently of the worker checkout", async () => {
   const f = fake({ skeletonMarker: "PACKAGED MARKER\n" });
   expect(
     await main(
@@ -167,9 +182,7 @@ it("reads the supplied packaged skeleton in the worker checkout", async () => {
     ),
   ).toBe(0);
   expect(output.join("\n")).toContain("PACKAGED MARKER");
-  expect(f.seen.some((c) => c.args.at(-1) === "cat -- templates/prompts/worker-prompt.md")).toBe(
-    true,
-  );
+  expect(f.seen.some((c) => c.args.at(-1)?.startsWith("cat -- "))).toBe(false);
   expect(f.seen.filter((c) => c.file !== "gh").every((c) => c.cwd === dir)).toBe(true);
 });
 

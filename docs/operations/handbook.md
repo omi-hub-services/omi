@@ -627,3 +627,27 @@ reason none applies. New worker packets require the shared v1 JSON result docume
 prints but refuses an old free-text report. Its script-only ids do not create runtime records.
 Commit-worker includes tools and the named managed root files and refuses unstaged in-scope
 leftovers rather than silently omitting them. The existing branch/index gates still apply.
+
+### Pinning repository Coordinator tooling (OMI-091 review correction)
+
+The repository tools now run from a separate immutable clone, even while the product runtime
+state migration remains deferred. See ADR-0036, "Implemented tooling pin", for the full gates
+and first-install sequence. `node tools/coordinator/pin.ts status` is read-only;
+`refresh --to <full-green-merge-sha> --source develop [--dry-run]` checks GitHub-owned CI before
+preparing a standalone sibling checkout, installing with `npm ci --ignore-scripts` and smoking
+the literal plain-Node flow command. `rollback [--dry-run]` uses the previous SHA/source with
+the same gates. No commit or GitHub mutation is performed.
+
+Set `OMI_COORDINATOR_PIN_DIR` to an absolute external path to override sibling
+`omi-coordinator-pin`; its parent directory must already exist. On Windows the bundled npm CLI
+is launched through Node, without a cmd shell. Run pin mutations only between Coordinator
+commands. Failed preparation leaves the old pin untouched; dirty or mismatched pins refuse.
+The historical seed predates this bootstrap, so first install requires a green merge containing
+it rather than activating that older seed.
+
+The skill installer expands the shared pin bootstrap deterministically. Installed skills find
+the external directory without executing source from develop, then call the external pin's
+own status/flow/watch scripts. Keep the host work checkout as cwd and configure
+`OMI_WSL_REPO_DIR` for the task; prompts/workflows/skills/rules come from the pin, while Git,
+checks and workers operate on the WSL target. Reinstall skills from templates after merging
+changes; workers do not edit native skills.

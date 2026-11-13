@@ -24,6 +24,16 @@ it("has a preview/apply/check installer for Coordinator-owned skills", async () 
     expect(await readFile(join(root, ".claude/skills/omi-next/SKILL.md"), "utf8")).toBe(
       "local drift\n",
     );
+    await mkdir(join(root, "templates/prompts"), { recursive: true });
+    await writeFile(
+      join(root, "templates/prompts/coordinator-pin-bootstrap.md"),
+      "PIN BOOTSTRAP {{pin_directory_name}}\n",
+    );
+    await writeFile(join(source, "SKILL.md"), "{{pin_bootstrap}}\ncommands\n");
+    await installCoordinatorSkills(root, true);
+    expect(await readFile(join(root, ".claude/skills/omi-next/SKILL.md"), "utf8")).toBe(
+      "PIN BOOTSTRAP omi-coordinator-pin\ncommands\n",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

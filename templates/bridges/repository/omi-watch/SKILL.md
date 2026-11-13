@@ -7,12 +7,14 @@ Installed from `templates/bridges/repository/omi-watch/SKILL.md`; edit the templ
 
 # /omi-watch
 
+{{pin_bootstrap}}
+
 Launch only; do not read or summarise worker or quota data yourself (the window shows it).
 
 1. From the repository root (Windows), start the server detached so it outlives this session:
 
    ```powershell
-   Start-Process node -ArgumentList 'tools/coordinator/watch-web.ts','--open' -WindowStyle Hidden -WorkingDirectory (Get-Location)
+   Start-Process node -ArgumentList "`"$coordinatorPin/tools/coordinator/watch-web.ts`"",'--open' -WindowStyle Hidden -WorkingDirectory (Get-Location)
    ```
 
    `--open` opens `http://127.0.0.1:4317` as an Edge `--app` window (default browser if Edge
@@ -20,5 +22,5 @@ Launch only; do not read or summarise worker or quota data yourself (the window 
    The server exits by itself 60 s after the last window closes (OMI-067, ADR-0014).
 
 2. Reply with one line: `watch: http://127.0.0.1:4317 (window opened)`. If no window
-   appears, run `node tools/coordinator/watch-web.ts --open` in the foreground once and
-   report its error. Terminal fallback: `node tools/coordinator/watch.ts`.
+   appears, run `node "$coordinatorPin/tools/coordinator/watch-web.ts" --open` in the foreground once and
+   report its error. Terminal fallback: `node "$coordinatorPin/tools/coordinator/watch.ts"`.

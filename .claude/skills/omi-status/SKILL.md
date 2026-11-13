@@ -7,12 +7,34 @@ Installed from `templates/bridges/repository/omi-status/SKILL.md`; edit the temp
 
 # /omi-status
 
+Before any business command, resolve the verified external tooling checkout from the host
+repository root (PowerShell). Keep this directory as the working directory for every command;
+`OMI_WSL_REPO_DIR` still selects the task's WSL work checkout. Do not change it to the pin.
+
+```powershell
+$coordinatorPin = $env:OMI_COORDINATOR_PIN_DIR
+if ([string]::IsNullOrWhiteSpace($coordinatorPin)) {
+  $coordinatorPin = Join-Path (Split-Path (Get-Location).Path -Parent) 'omi-coordinator-pin'
+}
+if (-not [System.IO.Path]::IsPathRooted($coordinatorPin)) { throw 'Coordinator pin path must be absolute' }
+$pinJson = node "$coordinatorPin/tools/coordinator/pin.ts" status
+if ($LASTEXITCODE -ne 0) { throw 'Coordinator pin status refused' }
+$pinStatus = $pinJson | ConvertFrom-Json
+if (-not $pinStatus.initialized) { throw 'Coordinator pin is absent, dirty or mismatched; run the ADR-0036 first-install/refresh procedure' }
+$coordinatorPin = $pinStatus.checkout
+```
+
+The bootstrap executes only the installed pin, including its status command. All business commands below use
+the pin; never fall back to flow/status/watch from the working develop checkout. Resolve the pin
+again after a refresh or rollback. Pin mutations run between commands, never during a live
+Coordinator import. A refusal is a gate, not permission to run the moving source copy.
+
 Data collection is a script; do not re-derive it with `gh`/`git` calls (AGENTS.md §9).
 
 1. From the repository root run:
 
    ```
-   node tools/coordinator/status.ts
+   node "$coordinatorPin/tools/coordinator/status.ts"
    ```
 
    Use `--json` only if you need a field the text omits. If the script fails (e.g. `gh` not
@@ -36,5 +58,5 @@ Data collection is a script; do not re-derive it with `gh`/`git` calls (AGENTS.m
 
 3. Do not change anything. Starting the task is `/omi-next [OMI-xxx]`.
 
-For a live view between status reads, the PO can keep `node tools/coordinator/watch.ts`
+For a live view between status reads, the PO can keep `node "$coordinatorPin/tools/coordinator/watch.ts"`
 (OMI-064) open in a small terminal pane: running workers and quota, refreshed in place.

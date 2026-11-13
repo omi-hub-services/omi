@@ -1,4 +1,6 @@
 // Repository tooling I/O; the packaged skeleton and application renderer are shared with #186.
+import { join } from "node:path";
+import { COORDINATOR_TOOL_ROOT } from "./tool-root.ts";
 import { readFile, writeFile } from "node:fs/promises";
 import "../register-ts-imports.ts";
 const { renderWorkerPrompt, renderQualityInstructions } =
@@ -22,7 +24,7 @@ import {
   optObject,
   optString,
 } from "./json-shape.ts";
-import { runChecked, shellQuote, wslCommand } from "./process-runner.ts";
+import { runChecked, wslCommand } from "./process-runner.ts";
 import { loadTemplate } from "./watch-workflow.ts";
 import { NATIVE_RESUME_HEADER } from "./worker-launch.ts";
 
@@ -176,8 +178,13 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
     }
     const target = { ...ctx.target, repoDir: input.worktree ?? ctx.target.repoDir };
     if (!target.repoDir.trim()) throw new Error("empty --worktree");
-    const read = (path: string) =>
-      runChecked(ctx.run, wslCommand(`cat -- ${shellQuote(path)}`, target));
+    const read = async (path: string) => {
+      try {
+        return await readFile(join(ctx.toolRoot ?? COORDINATOR_TOOL_ROOT, path), "utf8");
+      } catch {
+        throw new Error(`missing packaged content: ${path}`);
+      }
+    };
     const issue = await readPromptIssue(ctx, input.number);
     const route = resolveWorkflowRoute(issue.workflow);
     if (route.kind === "delivery")

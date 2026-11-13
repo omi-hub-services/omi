@@ -7,12 +7,14 @@ Installed from `templates/bridges/repository/omi-status/SKILL.md`; edit the temp
 
 # /omi-status
 
+{{pin_bootstrap}}
+
 Data collection is a script; do not re-derive it with `gh`/`git` calls (AGENTS.md §9).
 
 1. From the repository root run:
 
    ```
-   node tools/coordinator/status.ts
+   node "$coordinatorPin/tools/coordinator/status.ts"
    ```
 
    Use `--json` only if you need a field the text omits. If the script fails (e.g. `gh` not
@@ -36,5 +38,5 @@ Data collection is a script; do not re-derive it with `gh`/`git` calls (AGENTS.m
 
 3. Do not change anything. Starting the task is `/omi-next [OMI-xxx]`.
 
-For a live view between status reads, the PO can keep `node tools/coordinator/watch.ts`
+For a live view between status reads, the PO can keep `node "$coordinatorPin/tools/coordinator/watch.ts"`
 (OMI-064) open in a small terminal pane: running workers and quota, refreshed in place.

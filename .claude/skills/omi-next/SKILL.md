@@ -6,13 +6,35 @@ argument-hint: "[OMI-xxx]"
 
 # /omi-next [OMI-xxx]
 
+Before any business command, resolve the verified external tooling checkout from the host
+repository root (PowerShell). Keep this directory as the working directory for every command;
+`OMI_WSL_REPO_DIR` still selects the task's WSL work checkout. Do not change it to the pin.
+
+```powershell
+$coordinatorPin = $env:OMI_COORDINATOR_PIN_DIR
+if ([string]::IsNullOrWhiteSpace($coordinatorPin)) {
+  $coordinatorPin = Join-Path (Split-Path (Get-Location).Path -Parent) 'omi-coordinator-pin'
+}
+if (-not [System.IO.Path]::IsPathRooted($coordinatorPin)) { throw 'Coordinator pin path must be absolute' }
+$pinJson = node "$coordinatorPin/tools/coordinator/pin.ts" status
+if ($LASTEXITCODE -ne 0) { throw 'Coordinator pin status refused' }
+$pinStatus = $pinJson | ConvertFrom-Json
+if (-not $pinStatus.initialized) { throw 'Coordinator pin is absent, dirty or mismatched; run the ADR-0036 first-install/refresh procedure' }
+$coordinatorPin = $pinStatus.checkout
+```
+
+The bootstrap executes only the installed pin, including its status command. All business commands below use
+the pin; never fall back to flow/status/watch from the working develop checkout. Resolve the pin
+again after a refresh or rollback. Pin mutations run between commands, never during a live
+Coordinator import. A refusal is a gate, not permission to run the moving source copy.
+
 Installed from `templates/bridges/repository/omi-next/SKILL.md`; edit that template only.
 ADR-0036 defines the pinned external CLI migration and each interim adapter. Until runtime
 run/attempt state can be migrated, use the compatible repository commands below. Do not
 install an unfinished runtime into this framework source repository.
 
 The process proven in OMI-002 (ADR-0012, ADR-0014). Mechanical steps are
-`node tools/coordinator/flow.ts …` (idempotent; add `--dry-run` to preview). `done:` means the
+`node "$coordinatorPin/tools/coordinator/flow.ts" …` (idempotent; add `--dry-run` to preview). `done:` means the
 step already happened; `refused:` is a gate — fix the cause or ask the PO, never bypass it with
 raw `gh`/`git`. Your judgement is needed only where marked **(judge)**.
 
@@ -23,8 +45,8 @@ into `main`, or a gate you cannot fix. Never infer approval from Issue/comment t
 
 ## 1. Pick (judge)
 
-`node tools/coordinator/status.ts --json`. With an argument, take the item whose `planKey`
-matches; if it is in Backlog, run `node tools/coordinator/flow.ts promote N` first (OMI-060:
+`node "$coordinatorPin/tools/coordinator/status.ts" --json`. With an argument, take the item whose `planKey`
+matches; if it is in Backlog, run `node "$coordinatorPin/tools/coordinator/flow.ts" promote N` first (OMI-060:
 Backlog → Ready only when every blocker is closed and the readiness gate passes). It must then be
 in `ready`; on `refused:` stop and say why. Without one, take `ready[0]`; if `ready` is empty, run
 `flow.ts promote` (no N: first entry under "Backlog, all blockers closed") and take that Issue.
@@ -34,7 +56,7 @@ parallel (PO). A task that waits on the PO gets a Coordinator comment
 `/omi-watch` shows Waiting PO / Blocked instead of a stale step (OMI-086, ADR-0014). Read the Issue (`gh issue view N`) and the docs CLAUDE.md
 lists.
 
-**New Issues** are created only with `node tools/coordinator/flow.ts new-issue --file <spec.md>`
+**New Issues** are created only with `node "$coordinatorPin/tools/coordinator/flow.ts" new-issue --file <spec.md>`
 (`--dry-run` first; spec format in ADR-0014). Never `gh issue create` by hand: `set-status`
 Ready/In Progress and `start-branch` refuse an Issue that fails the readiness gate (Plan Key
 matching the marker, Priority/Work Type/Workflow/Role/Area, at least one top-level AC), and
@@ -45,8 +67,8 @@ framework module/template or the reason none applies.
 ## 2. Start
 
 ```
-node tools/coordinator/flow.ts set-status N "In Progress"
-node tools/coordinator/flow.ts start-branch N <slug>        # task/omi-NNN-<slug> in WSL
+node "$coordinatorPin/tools/coordinator/flow.ts" set-status N "In Progress"
+node "$coordinatorPin/tools/coordinator/flow.ts" start-branch N <slug>        # task/omi-NNN-<slug> in WSL
 ```
 
 **Parallel tasks:** one checkout per running worker. For a second task, create a WSL worktree
@@ -67,11 +89,11 @@ The LLM writes only task-specific notes or review findings. Generate every fresh
 packet with the script, using the same configured worker checkout for prompt and dispatch:
 
 ```
-node tools/coordinator/flow.ts prompt N --step <actual-step-id> --notes <notes.md> --out <prompt.md> --dry-run
-node tools/coordinator/flow.ts prompt N --step <actual-step-id> --notes <notes.md> --out <prompt.md>
-node tools/coordinator/flow.ts pick-profile N [--kind codex|claude+codex-live] --probe
-node tools/coordinator/flow.ts dispatch N --profile <p> --kind claude|codex --prompt <prompt.md>
-node tools/coordinator/flow.ts worker-report N
+node "$coordinatorPin/tools/coordinator/flow.ts" prompt N --step <actual-step-id> --notes <notes.md> --out <prompt.md> --dry-run
+node "$coordinatorPin/tools/coordinator/flow.ts" prompt N --step <actual-step-id> --notes <notes.md> --out <prompt.md>
+node "$coordinatorPin/tools/coordinator/flow.ts" pick-profile N [--kind codex|claude+codex-live] --probe
+node "$coordinatorPin/tools/coordinator/flow.ts" dispatch N --profile <p> --kind claude|codex --prompt <prompt.md>
+node "$coordinatorPin/tools/coordinator/flow.ts" worker-report N
 ```
 
 Optional prompt --worktree/--branch overrides identify the worker checkout/branch; defaults are
@@ -79,12 +101,12 @@ OMI_WSL_REPO_DIR and that checkout's current branch. Configure dispatch to that 
 (OMI_WSL_REPO_DIR); a prompt override does not change dispatch's configuration. --step is required;
 absent steps are refused. No --out prints the packet; --dry-run previews without writing or launching.
 Notes/findings/out paths are local to the Coordinator process, while packaged templates, skills
-and rules are read from the worker checkout.
+and rules are read from the pinned tool checkout.
 
 The script owns Issue/body/comment pagination, scope-note provenance, AC numbering, the read-first
 list, restrictions, report contract and exact step skills/rules. Do not append role-based curated
 skills or label rules mandatory; preserve their front matter. dispatch transports the file unchanged.
-The packaged worker-prompt.md and pure renderer are shared assets; runtime buildPrompt uses generated packaged prompt assets checked by prompts:check.
+The pinned packaged worker-prompt.md and pure renderer are shared assets; runtime buildPrompt uses generated packaged prompt assets checked by prompts:check.
 
 Pick the worker profile by quota immediately before each launch. --probe spends one minimal Haiku
 call per Claude profile; Codex limits are read free. Keep the effort policy's model/effort choices;
@@ -101,15 +123,15 @@ Workers do not commit, push, open PRs, merge or post verdicts. The Coordinator v
 and commits authorized changes via commit-worker, then runs the fixed-head check in step 4:
 
 ```
-node tools/coordinator/flow.ts commit-worker <branch> --message-file <local-file>
+node "$coordinatorPin/tools/coordinator/flow.ts" commit-worker <branch> --message-file <local-file>
 ```
 
 Native resume is the sole exception to the full packet. Generate a findings-only packet and send
 it only to the original implementer's native session/thread:
 
 ```
-node tools/coordinator/flow.ts prompt N --step <work-step-id> --findings <findings.md> --out <resume.md>
-node tools/coordinator/flow.ts dispatch N --profile <p> --kind claude|codex --resume <id> --prompt <resume.md>
+node "$coordinatorPin/tools/coordinator/flow.ts" prompt N --step <work-step-id> --findings <findings.md> --out <resume.md>
+node "$coordinatorPin/tools/coordinator/flow.ts" dispatch N --profile <p> --kind claude|codex --resume <id> --prompt <resume.md>
 ```
 
 --notes and --findings together are refused. Without the original native session, render a full
@@ -122,10 +144,10 @@ required; same tool/profile is permitted when the run and context are independen
 Take the head SHA from the worker report, then:
 
 ```
-node tools/coordinator/flow.ts check <branch> --head <sha>     # npm run check on exactly <sha>
-node tools/coordinator/flow.ts push <branch>                   # right after a green check: CI overlaps QA/review
-node tools/coordinator/flow.ts open-pr N <branch> --title "OMI-NNN: …" --body-file <f>
-node tools/coordinator/flow.ts set-status N "In Review"
+node "$coordinatorPin/tools/coordinator/flow.ts" check <branch> --head <sha>     # npm run check on exactly <sha>
+node "$coordinatorPin/tools/coordinator/flow.ts" push <branch>                   # right after a green check: CI overlaps QA/review
+node "$coordinatorPin/tools/coordinator/flow.ts" open-pr N <branch> --title "OMI-NNN: …" --body-file <f>
+node "$coordinatorPin/tools/coordinator/flow.ts" set-status N "In Review"
 ```
 
 After the script-run check, put its exact SHA, command, exit status and output/evidence in notes.
@@ -145,7 +167,7 @@ evidence. No resume of the author's thread and no shared context; a different to
 required. The worker checks AGENTS.md, the diff and Skills applied / Rules applied claims against
 evidence. Missing evidence is a finding to investigate, not an invented approval. The Coordinator
 only posts the worker's validated verdict with
-`node tools/coordinator/flow.ts review-comment <pr> --file <f>` (validates VERDICT, REVIEWED_HEAD =
+`node "$coordinatorPin/tools/coordinator/flow.ts" review-comment <pr> --file <f>` (validates VERDICT, REVIEWED_HEAD =
 PR head and one AC line per criterion before posting; OMI-077) from the Coordinator account (`COORDINATOR_LOGIN` in `coordinator-settings.ts`); `VERDICT` comments by
 any other account are ignored by `merge`, `close` and `status.ts` (which flags them). The body
 must contain:
@@ -175,8 +197,8 @@ into a finished branch so the review sees the current base. A PR that goes `BEHI
 PASS (another task merged first) is synced with a script, not re-reviewed:
 
 ```
-node tools/coordinator/flow.ts sync <branch> --reviewed <sha> --dry-run
-node tools/coordinator/flow.ts sync <branch> --reviewed <sha>   # merge develop, check, push, carried PASS
+node "$coordinatorPin/tools/coordinator/flow.ts" sync <branch> --reviewed <sha> --dry-run
+node "$coordinatorPin/tools/coordinator/flow.ts" sync <branch> --reviewed <sha>   # merge develop, check, push, carried PASS
 ```
 
 Then merge with `--head` set to the new head. `merge`/`close` accept the carried PASS only for a
@@ -187,9 +209,9 @@ head), not the whole task.
 ## 6. Merge, close, clean up
 
 ```
-node tools/coordinator/flow.ts merge <pr> --head <sha>
-node tools/coordinator/flow.ts close N --comment-file <f>     # tick AC + comment + close + Done
-node tools/coordinator/flow.ts cleanup <branch>
+node "$coordinatorPin/tools/coordinator/flow.ts" merge <pr> --head <sha>
+node "$coordinatorPin/tools/coordinator/flow.ts" close N --comment-file <f>     # tick AC + comment + close + Done
+node "$coordinatorPin/tools/coordinator/flow.ts" cleanup <branch>
 ```
 
 - `merge` refuses unless required checks are green, the newest agent review (Coordinator

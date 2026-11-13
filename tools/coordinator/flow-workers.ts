@@ -43,6 +43,7 @@ import {
 } from "./worker-report.ts";
 
 export interface WorkerCtx {
+  readonly toolRoot?: string;
   readonly run: Runner;
   readonly target: WslTarget;
 }
