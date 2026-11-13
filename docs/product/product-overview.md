@@ -299,7 +299,7 @@ Các điểm bắt buộc kiểm chứng trước khi chốt release framework: 
 
 Luồng §5 là mục tiêu sản phẩm; CLI hiện chạy từng bước `plan` → `dispatch` → `wait` →
 `worker-report` → `deliver`, `run` ghép plan/dispatch đầu tiên, `retry` qua gate rework/failover và approval (ADR-0040);
-`sync` chưa có trong v0.1. `login` hướng dẫn native login rồi probe; registry dùng `profiles register/list/probe`. Install/update preview mặc định,
+`sync` reconcile, flush outbox đã xếp và import Issue chỉ định. `login` hướng dẫn native login rồi probe; registry dùng `profiles register/list/probe`. Install/update preview mặc định,
 chỉ ghi bằng `--apply`. `commit-worker` commit output attempt đã dừng; `review-comment` kiểm
 verdict độc lập trước khi post; đây không phải PO approval. Business approval yêu cầu snapshot
 đã import; deploy approval gắn digest/environment trong config (ADR-0037).
