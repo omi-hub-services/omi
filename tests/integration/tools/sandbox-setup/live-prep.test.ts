@@ -1,7 +1,18 @@
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { main } from "../../../../tools/sandbox-setup/main.ts";
 import { runtimeLayout } from "../../../../tools/sandbox-setup/runtime-layout.ts";
 import {
   loadRuntimeConfig,
@@ -15,6 +26,9 @@ import {
   openReadOnlyStateDatabase,
   openStateDatabase,
 } from "../../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
+import { claimProjectSession } from "../../../../src/application/services/claim-project-session.ts";
+import { createProjectRunCommandUseCases } from "../../../../src/bootstrap/container.ts";
+import { createSqliteLeaseStore } from "../../../../src/infrastructure/persistence/sqlite/sqlite-lease-store.ts";
 import { prepareLocalState } from "../../../../tools/sandbox-setup/local-state.ts";
 import { runLivePrep, type LivePrepDeps } from "../../../../tools/sandbox-setup/live-prep.ts";
 
@@ -23,6 +37,7 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
+let session_ids = 0;
 const repository = "omi-hub-services/omi-sandbox";
 const digest = `sha256:${"b".repeat(64)}`;
 const issue = {
@@ -107,6 +122,51 @@ describe("live-prep", () => {
     expect(query(stateDir, "SELECT id FROM projects")).toEqual([{ id: "project-1" }]);
   });
 
+  it("starts the runtime composition on the prepared directory without network or workers", async () => {
+    const { stateDir, deps, flags } = await setup();
+    await runLivePrep(deps, flags);
+    // The runtime's git workspace adapter expects the project directory to be a repository.
+    execFileSync("git", ["init", "--initial-branch=develop"], { cwd: stateDir, stdio: "ignore" });
+    const database = openStateDatabase(runtimeLayout(stateDir).database);
+    try {
+      const session = claimProjectSession({
+        leases: createSqliteLeaseStore(database),
+        state: createSqliteStateUnitOfWork(database),
+        owner: "test-runtime",
+        now: Date.now,
+        nextId: () => `session-${String((session_ids += 1))}`,
+        leaseMs: 60_000,
+      });
+      const composition = await createProjectRunCommandUseCases({
+        projectDir: stateDir,
+        database,
+        session,
+        // Any network call or worker start is a bug in this offline test.
+        transport: { send: () => Promise.reject(new Error("unexpected GitHub call")) },
+        startProcess: () => {
+          throw new Error("unexpected worker start");
+        },
+      });
+      // The refusal stub (PROJECT_NOT_CONFIGURED) is returned when project.yaml is missing;
+      // real wiring answers from the durable state instead.
+      const { inspectRun } = composition.commands;
+      const { requestApproval: request } = composition.approvals;
+      if (inspectRun === undefined || request === undefined) throw new Error("not composed");
+      expect(inspectRun({ runId: "absent" })).toEqual({ ok: false, reason: "RUN_NOT_FOUND" });
+      // The business subject is built from the task snapshot live-prep stored in SQL.
+      const requested = request({
+        schemaVersion: 1,
+        subjectId: "task-7",
+        kind: "business",
+      });
+      expect(requested.ok).toBe(true);
+      expect(query(stateDir, "SELECT status FROM approvals")).toEqual([{ status: "pending" }]);
+      await composition.drain();
+    } finally {
+      database.close();
+    }
+  });
+
   it("stores the task snapshot, adds the deploy target and writes the config without any approval", async () => {
     const { stateDir, deps, flags } = await setup();
     const result = await runLivePrep(deps, flags);
@@ -156,6 +216,94 @@ describe("live-prep", () => {
     expect(query(stateDir, "SELECT id FROM task_snapshots")).toEqual([]);
     expect(existsSync(join(stateDir, "live-lifecycle-config.json"))).toBe(false);
     expect(readFileSync(runtimeLayout(stateDir).configFile, "utf8")).toBe(before);
+  });
+
+  // Drives the real command entry: the --verify/--dry-run to read-only mapping lives in main().
+  const cli = async (
+    { stateDir, deps }: Awaited<ReturnType<typeof setup>>,
+    ...extra: string[]
+  ): Promise<{ code: number; out: string }> => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const code = await main(
+        [
+          "live-prep",
+          "--state-dir",
+          stateDir,
+          "--acceptance-id",
+          "acceptance-042-a",
+          "--issue",
+          "7",
+          "--image",
+          "ghcr.io/omi-hub-services/omi-sandbox",
+          "--digest",
+          digest,
+          ...extra,
+        ],
+        {
+          remote: () =>
+            Promise.resolve({
+              projectNodeId: deps.projectNodeId,
+              issueNodeId: deps.issueNodeId,
+              reader: deps.reader,
+              pipeline: deps.pipeline,
+            }),
+        },
+      );
+      return { code, out: log.mock.calls.map((call) => call.join(" ")).join("\n") };
+    } finally {
+      log.mockRestore();
+    }
+  };
+  const fingerprint = (stateDir: string) =>
+    readdirSync(stateDir, { recursive: true, withFileTypes: true })
+      // A read-only open of a WAL database creates empty -shm/-wal sidecars; state.sqlite itself stays.
+      .filter((entry) => entry.isFile() && !/\.sqlite-(shm|wal)$/.test(entry.name))
+      .map((entry) => {
+        const path = join(entry.parentPath, entry.name);
+        const stat = statSync(path);
+        return { path, mtimeMs: stat.mtimeMs, sha: sha256(readFileSync(path)) };
+      })
+      .sort((a, b) => a.path.localeCompare(b.path));
+  const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+  it("live-prep --verify after an apply writes no state row, project.yaml or live-lifecycle-config.json", async () => {
+    const prepared = await setup();
+    const { stateDir } = prepared;
+    expect((await cli(prepared)).code).toBe(0);
+    const before = fingerprint(stateDir);
+    const rows = query(stateDir, "SELECT sequence FROM events");
+    const result = await cli(prepared, "--verify");
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("DRY RUN");
+    expect(fingerprint(stateDir)).toEqual(before);
+    expect(query(stateDir, "SELECT sequence FROM events")).toEqual(rows);
+    expect(before.some((file) => file.path === runtimeLayout(stateDir).configFile)).toBe(true);
+    expect(before.some((file) => file.path.endsWith("live-lifecycle-config.json"))).toBe(true);
+  });
+
+  it("live-prep --verify before any apply creates no snapshot and no live config", async () => {
+    const prepared = await setup();
+    const { stateDir } = prepared;
+    const config = readFileSync(runtimeLayout(stateDir).configFile, "utf8");
+    expect((await cli(prepared, "--verify")).code).toBe(0);
+    expect(query(stateDir, "SELECT id FROM task_snapshots")).toEqual([]);
+    expect(existsSync(join(stateDir, "live-lifecycle-config.json"))).toBe(false);
+    expect(readFileSync(runtimeLayout(stateDir).configFile, "utf8")).toBe(config);
+  });
+
+  it("live-prep --verify with a pending approval id checks it but does not record it", async () => {
+    const prepared = await setup();
+    const { stateDir } = prepared;
+    await cli(prepared);
+    const id = requestDeploy(stateDir, digest);
+    const before = fingerprint(stateDir);
+    const recorded = liveConfig(stateDir)["deployApprovalId"];
+    const result = await cli(prepared, "--verify", "--deploy-approval-id", id);
+    expect(result.out).toContain(`deploy approval ${id}: pending`);
+    expect(liveConfig(stateDir)["deployApprovalId"]).toBe(recorded);
+    expect(recorded).not.toBe(id);
+    expect(fingerprint(stateDir)).toEqual(before);
   });
 
   it("refuses a state directory that is not prepared or lies inside the repository", async () => {

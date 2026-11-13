@@ -17,13 +17,14 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { sha256ContentHasher } from "../../src/infrastructure/artifacts/sha256-content-hasher.ts";
 import { createGhApiTransport } from "../../src/infrastructure/github/gh-api-transport.ts";
 import { createGithubProjectReader } from "../../src/infrastructure/github/github-project-reader.ts";
 import { createGithubRestClient } from "../../src/infrastructure/github/github-rest-client.ts";
 import { createGithubTaskReader } from "../../src/infrastructure/github/github-task-reader.ts";
-import { parseLivePrepFlags, runLivePrep } from "./live-prep.ts";
+import { parseLivePrepFlags, runLivePrep, type LivePrepDeps } from "./live-prep.ts";
 import { assertOutsideDirectory, inspectLocalState, prepareLocalState } from "./local-state.ts";
 import {
   CHECK_WORKFLOW_PATH,
@@ -312,46 +313,38 @@ const PEELED = new Set([
   "--issue",
 ]);
 
+/** The remote reads live-prep needs. The default uses the local `gh` login; tests pass a fake. */
+export interface LivePrepSource {
+  remote(
+    o: SetupOptions,
+  ): Promise<Pick<LivePrepDeps, "projectNodeId" | "issueNodeId" | "reader" | "pipeline">>;
+}
+
 /** Task reads for live-prep: the guard sits on the transport, so only sandbox reads can pass. */
-async function runLivePrepCommand(
-  o: SetupOptions,
-  peeled: Record<string, string | undefined>,
-  dryRun: boolean,
-): Promise<number> {
-  if (o.repository !== LIVE_SANDBOX_REPOSITORY)
-    throw new Error(`refused: live-prep works on ${LIVE_SANDBOX_REPOSITORY} only`);
-  const flags = parseLivePrepFlags(peeled, dryRun);
-  const observed = observe(o);
-  if (observed.pipelineIssue === null || observed.tagSha === null)
-    throw new Error("run the github step first: the pipeline Issue and the tag must exist");
-  const actor = z.looseObject({ login: z.string() }).parse(read(o, "user"));
-  const transport = createGhApiTransport();
-  const client = createGithubRestClient({
-    transport: {
-      send(call) {
-        assertLivePrepApiCall(call, o.repository);
-        return transport.send(call);
+const ghLivePrepSource: LivePrepSource = {
+  async remote(o) {
+    const observed = observe(o);
+    if (observed.pipelineIssue === null || observed.tagSha === null)
+      throw new Error("run the github step first: the pipeline Issue and the tag must exist");
+    const actor = z.looseObject({ login: z.string() }).parse(read(o, "user"));
+    const transport = createGhApiTransport();
+    const client = createGithubRestClient({
+      transport: {
+        send(call) {
+          assertLivePrepApiCall(call, o.repository);
+          return transport.send(call);
+        },
       },
-    },
-    now: Date.now,
-    random: Math.random,
-    sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
-  });
-  const [owner = ""] = o.repository.split("/");
-  const project = await createGithubProjectReader(client).inspect({
-    owner,
-    number: SANDBOX_PROJECT_NUMBER,
-  });
-  const result = await runLivePrep(
-    {
-      repository: o.repository,
-      projectNumber: SANDBOX_PROJECT_NUMBER,
-      reviewer: o.reviewer,
-      environment: o.environment,
-      artifactDigest: o.digest,
-      root: ROOT,
       now: Date.now,
-      newId: randomUUID,
+      random: Math.random,
+      sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+    });
+    const [owner = ""] = o.repository.split("/");
+    const project = await createGithubProjectReader(client).inspect({
+      owner,
+      number: SANDBOX_PROJECT_NUMBER,
+    });
+    return {
       projectNodeId: project.id,
       issueNodeId: async (number) => {
         const response = await client.request({
@@ -367,7 +360,6 @@ async function runLivePrepCommand(
         return issue.node_id;
       },
       reader: createGithubTaskReader(client),
-      hasher: sha256ContentHasher,
       pipeline: {
         workflow: "sandbox-deploy.yml",
         ref: o.tag,
@@ -376,6 +368,32 @@ async function runLivePrepCommand(
         allowedActors: [o.reviewer],
         authorActor: actor.login,
       },
+    };
+  },
+};
+
+async function runLivePrepCommand(
+  o: SetupOptions,
+  peeled: Record<string, string | undefined>,
+  dryRun: boolean,
+  source: LivePrepSource,
+): Promise<number> {
+  if (o.repository !== LIVE_SANDBOX_REPOSITORY)
+    throw new Error(`refused: live-prep works on ${LIVE_SANDBOX_REPOSITORY} only`);
+  const flags = parseLivePrepFlags(peeled, dryRun);
+  const remote = await source.remote(o);
+  const result = await runLivePrep(
+    {
+      repository: o.repository,
+      projectNumber: SANDBOX_PROJECT_NUMBER,
+      reviewer: o.reviewer,
+      environment: o.environment,
+      artifactDigest: o.digest,
+      root: ROOT,
+      now: Date.now,
+      newId: randomUUID,
+      hasher: sha256ContentHasher,
+      ...remote,
     },
     flags,
   );
@@ -383,7 +401,10 @@ async function runLivePrepCommand(
   return result.code;
 }
 
-async function main(argv: string[]): Promise<number> {
+export async function main(
+  argv: string[],
+  source: LivePrepSource = ghLivePrepSource,
+): Promise<number> {
   const [command, ...rest] = argv;
   const flags = new Set(["--dry-run", "--verify"]);
   const mode = rest.includes("--dry-run")
@@ -413,16 +434,18 @@ async function main(argv: string[]): Promise<number> {
     if (stateDir === undefined) throw new Error("--state-dir is required");
     return runLocalState(o, stateDir, peeled["--deploy-approval-id"], mode);
   }
-  if (command === "live-prep") return runLivePrepCommand(o, peeled, mode !== "apply");
+  if (command === "live-prep") return runLivePrepCommand(o, peeled, mode !== "apply", source);
   throw new Error(
     "usage: main.ts <github|local-state|live-prep> --image … --digest … [--dry-run|--verify]",
   );
 }
 
-main(process.argv.slice(2)).then(
-  (code) => process.exit(code),
-  (error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(2);
-  },
-);
+// Importable for tests; runs only when executed as the entry point.
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href)
+  main(process.argv.slice(2)).then(
+    (code) => process.exit(code),
+    (error: unknown) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(2);
+    },
+  );
