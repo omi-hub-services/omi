@@ -17,6 +17,7 @@ import { registerProfileCommands } from "./profile-commands.js";
 import { registerLogCommands, type LogCommands } from "./log-commands.js";
 import { registerTaskCommands, type TaskCommands } from "./task-commands.js";
 import { registerWorkflowCommands, type WorkflowCommands } from "./workflow-commands.js";
+import { registerSyncCommand } from "./sync-command.js";
 
 export interface CliEnvironment extends CliOutput {
   readonly readText?: CliContext["readText"];
@@ -59,6 +60,7 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
   registerRunCommands(program, context);
   registerProfileCommands(program, context);
   registerTaskCommands(program, context, environment.tasks);
+  registerSyncCommand(program, context);
   registerLogCommands(program, context, environment.logs);
   registerWorkflowCommands(program, context, environment.workflows);
   // Keep global flags usable after commands while update owns its --version argument.

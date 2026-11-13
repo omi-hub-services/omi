@@ -20,6 +20,7 @@ const commands: [string, Command, keyof DispatchedUseCases][] = [
     },
     "recordReworkEvent",
   ],
+  ["sync", { schemaVersion: 1, command: "sync", issueNumbers: [235] }, "sync"],
   ["plan", { schemaVersion: 1, command: "plan", issueNumber: 3, workflowId: "demo" }, "planRun"],
   [
     "dispatch",
