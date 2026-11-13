@@ -331,7 +331,7 @@ describe("watch-web cards from the GitHub, worker and prompt reads", () => {
         const payload = c.args.at(-1) ?? "";
         if (c.file === "gh") return out(JSON.stringify(graphql()));
         if (isQuota(c)) return out("");
-        if (payload.includes("-prompt.md"))
+        if (payload.includes("-prompt*.md"))
           return out(
             [
               "@@prompt 074",
@@ -388,7 +388,7 @@ describe("watch-web cards from the GitHub, worker and prompt reads", () => {
             ? Promise.resolve({ code: 1, stdout: "", stderr: "HTTP 502" })
             : out(JSON.stringify(graphql()));
         if (isQuota(c)) return out("");
-        if (payload.includes("-prompt.md")) return out("@@missing 074\n");
+        if (payload.includes("-prompt*.md")) return out("@@missing 074\n");
         return out("@@ps\n@@log\n");
       },
       target,

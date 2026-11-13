@@ -111,8 +111,8 @@ shown with no reason. Rules:
 - `status.ts`, `watch.ts` and `pick-profile` show fresh Claude numbers without a probe.
 - Idle profiles with an expired token fall back to the last good cache, then logs, with `token
   expired` and the data age shown. The watch renews such a token with one probe per expiry.
-- A worker resume writes its follow-up to `omi-NNN-resume.md`, so `omi-NNN-prompt.md` keeps the
-  thread's full packet and the watch shows that packet's skills and rules, not the findings packet's.
+- A worker resume writes its follow-up to `omi-NNN-resume-<step>-<attempt>-<stamp>.md` (ADR-0014, OMI-111),
+  so `omi-NNN-prompt-<step>-<attempt>-<stamp>.md` keeps the thread's full packet and the watch shows that packet's skills and rules, not the findings packet's.
 - Model windows are visible, which closes ADR-0031 decision 4's "invisible until rejected" for
   Claude; whether the product scheduler uses them is left to OMI-018.
 

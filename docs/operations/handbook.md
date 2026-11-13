@@ -658,6 +658,11 @@ node tools/coordinator/flow.ts pick-profile N --step verify,review --round 1 --p
 node tools/coordinator/flow.ts dispatch N --kind <chosen-tool> --profile <chosen-profile> --prompt <prompt.md>
 ```
 
+Each dispatch writes its own packet, `~/omi-runs/omi-NNN-prompt-<step>-<attempt>-<stamp>.md` (a
+native resume: `omi-NNN-resume-…`), so QA and review of one task can run in parallel without
+overwriting each other. The watch shows one card per running worker, with its own skills and rules, and
+`cleanup`/`prune-runs` archive these files like logs.
+
 Use `verify,accept` for docs. A policy refusal means render the actual verify and reviewer steps
 separately. Supply `--risk security,gates,data` (only applicable risks) when the PR touches sensitive
 behaviour even if the declared implementation paths missed it. Review never uses the author's

@@ -30,6 +30,7 @@ import {
   claudeLaunchPayload,
   codexLaunchPayload,
   NATIVE_RESUME_HEADER,
+  dispatchStamp,
   promptFile,
   runsPath,
 } from "./worker-launch.ts";
@@ -75,7 +76,7 @@ export interface DispatchInput {
 
 /**
  * Writes the rendered prompt unchanged to WSL
- * `~/omi-runs/omi-NNN-prompt.md`, then runs the worker in the foreground; the Coordinator's
+ * `~/omi-runs/omi-NNN-prompt-<step>-<attempt>.md`, then runs the worker in the foreground; the Coordinator's
  * harness backgrounds this command.
  */
 export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Promise<number> {
@@ -102,6 +103,7 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
   }
 
   let level = input.complexity;
+  let packetBase = "adhoc"; // a packet without quality metadata has no step or attempt to name it
   const packet = input.prompt.startsWith(`${NATIVE_RESUME_HEADER}\n\n`)
     ? input.prompt.slice(NATIVE_RESUME_HEADER.length + 2)
     : input.prompt;
@@ -109,6 +111,7 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
     try {
       const raw = /^<!-- omi-quality (.+) -->\r?\n/.exec(packet)?.[1];
       const quality = stepQualitySchema.parse(JSON.parse(raw ?? "") as unknown);
+      packetBase = `${quality.step}-${String(quality.round)}`;
       if (input.resume !== null && ["analyze", "verify", "review"].includes(quality.step)) {
         return refuse(label, "analysis, QA and review require fresh independent workers");
       }
@@ -127,16 +130,28 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
       return refuse(label, "invalid quality packet metadata");
     }
   }
+  // the stamp makes the path unique per dispatch, so even the same step and round (or `adhoc`)
+  // never reuses the file of a worker that may still be running
+  const packetId = `${packetBase}-${dispatchStamp()}`;
   const { model, effort } = EFFORT_POLICY[kind][level];
-  const spec = { task, profile: input.profile, model, effort, resume: input.resume };
+  const spec = {
+    task,
+    profile: input.profile,
+    model,
+    effort,
+    resume: input.resume,
+    packet: packetId,
+  };
   const launch = wslCommand(
     kind === "claude" ? claudeLaunchPayload(spec) : codexLaunchPayload(spec),
     ctx.target,
     WORKER_TIMEOUT_MS,
   );
+  const file = runsPath(task, promptFile(input.resume, packetId));
   const write: Command = {
     ...wslCommand(
-      `mkdir -p $HOME/omi-runs; cat > ${runsPath(task, promptFile(input.resume))}`,
+      // atomic: a reader never sees a half-written packet
+      `mkdir -p $HOME/omi-runs; cat > ${file}.tmp && mv -f ${file}.tmp ${file}`,
       ctx.target,
       30_000,
     ),
@@ -188,8 +203,9 @@ export async function workerReportCommand(
   const name = file.split("/").at(-1) ?? file;
   let report: WorkerReport;
   if (isCodexLog(name)) {
+    // the last message of this very log (OMI-111), not of another worker of the task
     const last = await ctx.run(
-      wslCommand(`cat ${runsPath(task, "codex-last.md")}`, ctx.target, 30_000),
+      wslCommand(`cat ${file.replace(/\.jsonl$/, "-last.md")}`, ctx.target, 30_000),
     );
     report = {
       tool: "codex",

@@ -329,7 +329,7 @@ reason on the card.
 | `Merge`     | the Coordinator posted PASS on the current head                                                | `Coordinator`       |
 | `Review`    | In Review, PR open, no VERDICT on the current head (a stale one does not count)                | `Reviewer`          |
 | `Verify/PR` | In Progress, no worker, and a PR without a VERDICT on the head, or the task was dispatched     | `Coordinator`       |
-| `Start`     | In Progress, no worker, no PR and no `omi-NNN-prompt.md` yet (never dispatched)                | `Coordinator`       |
+| `Start`     | In Progress, no worker, no PR and no `omi-NNN-prompt-*.md` yet (never dispatched)                | `Coordinator`       |
 | `unknown`   | anything else, e.g. workers unreadable, Status not In Progress/In Review, In Review with no PR | `-`                 |
 
 A running worker or the VERDICT on the head can decide a step even when the other source is
@@ -389,8 +389,17 @@ The terminal line is `OMI-NNN workflow step phase role tool/profile`, with the p
 `rework:k/2`, `architect:needed`, `architect:called`, `after-architect:k/2` or `ask-po`, for
 example `OMI-075 feature Work rework:1/2 Developer codex/ggtintran`.
 
-**Skills and rules** are read from the worker's real prompt `~/omi-runs/omi-NNN-prompt.md` (one
-WSL call per read; only the lines that match, never the prompt body): skills from the
+**Skills and rules** are read from the worker's real packet (OMI-111): the watch resolves the
+packet file each running worker has open on stdin (`/proc/<pid>/fd/0`, accepted only when it is an
+`omi-NNN-prompt-…` or `omi-NNN-resume-…` name). A task with several running workers (QA and
+review in parallel) gets one row and card per worker, id `OMI-NNN#<pid>`, each with its own
+packet's skills and rules. The watch reads exactly the packet each worker has open (no
+recent-file window); a resume packet also gets the newest full packet of the same task, step and
+attempt, found by a glob over that exact prefix with no count limit, and the follow-up skills
+are added to it. A worker whose packet cannot be resolved shows no skills or rules and the note
+"worker packet unknown"; another worker's or the task's newest packet is never shown instead.
+Whether a task was dispatched at all still uses the newest `omi-NNN-prompt-*.md` (one WSL call per read; only the lines that match, never the
+prompt body): skills from the
 `## Skill: <name>` headings that OMI-073 inlines, rules from the `AGENTS.md`, `CLAUDE.md` and
 `docs/**/*.md` paths the prompt mentions, plus the worker restrictions (no push, PR or merge;
 `gh` read-only). No prompt means `-` with the reason.
@@ -572,8 +581,13 @@ node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
 
 - **`dispatch`** reads the Issue (Plan Key, Role, Workflow and the complexity of the effort
   policy above), refuses a profile that is not a `WORKER_PROFILES` entry of that tool, then:
-  1. writes the rendered prompt file **unchanged**, for fresh and resumed workers, to WSL
-     `~/omi-runs/omi-NNN-prompt.md`. Step skills/rules are owned by `prompt` below; no role-based
+  1. writes the rendered prompt file **unchanged**, for fresh workers, to WSL
+     `~/omi-runs/omi-NNN-prompt-<step>-<attempt>-<stamp>.md` and, for a native resume, to
+     `omi-NNN-resume-<step>-<attempt>-<stamp>.md` (OMI-111; step and attempt come from the
+     packet's `omi-quality` metadata, `adhoc` without it; `<stamp>` is a unique `[a-z0-9]` token
+     per dispatch). No two dispatches ever share a path, not even the same step and attempt, so a
+     file of a worker that may still run is never replaced. The write is atomic (`<file>.tmp`,
+     then `mv -f`). Step skills/rules are owned by `prompt` below; no role-based
      curated skills are inserted. A findings-only packet requires `--resume`; a fresh worker
      requires a full packet;
   2. launches the worker **in the foreground** (an 8-hour limit instead of the runner's 2
@@ -585,7 +599,7 @@ node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
      `CLAUDE_DENIED_TOOLS` in `worker-launch.ts`), the prompt on stdin and the log
      `omi-NNN-<profile>-<ts>.jsonl` (+ `.err`). Codex: `CODEX_HOME` of the profile,
      `codex exec --json -s workspace-write -m <m> -c model_reasoning_effort=<e> -o
-     omi-NNN-codex-last.md [resume <thread>] -`, log `omi-NNN-codex-<profile>-<ts>.jsonl`
+     omi-NNN-codex-<profile>-<ts>-last.md [resume <thread>] -`, log `omi-NNN-codex-<profile>-<ts>.jsonl`
      (the tool in the name keeps a Codex log out of a Claude profile's quota reading). Model and
      effort are the `EFFORT_POLICY` entry of the tool for the complexity; they are not options.
      It prints the worker's `exit=N` and returns 1 for a non-zero exit.
@@ -593,7 +607,7 @@ node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
 - **`worker-report`** takes the newest `omi-NNN-*.jsonl` and prints the report, the turns, the
   permission denials and the id to resume with. Claude: the longest `result` among the result
   events, with turns, denials and `session_id` of the last one. Codex (a `-codex-` log): the
-  `omi-NNN-codex-last.md` text and the `thread_id` of the first line. It exits 1 without a
+  `-last.md` text next to that log (same `<ts>` stem) and the `thread_id` of the first line. It exits 1 without a
   report (the worker still runs, or stopped early), still printing the id.
 - **`commit-worker`** checks that the checkout is on `<branch>` before it stages anything, runs
   `git add -A -- src tests docs templates schemas`, refuses when nothing is staged or the index

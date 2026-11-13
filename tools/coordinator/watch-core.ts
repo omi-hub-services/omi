@@ -61,7 +61,7 @@ export interface WatchPollerOptions {
   /** Opt-in GitHub/prompt read for the Tasks view (OMI-074); runs on the injected runner. */
   readonly tasks?: {
     readonly intervalMs: number;
-    readonly read: (run: Runner) => Promise<TasksRead>;
+    readonly read: (run: Runner, workers: Workers | null) => Promise<TasksRead>;
   };
   /** Called after every refresh and when a probe starts; never after `stop`. */
   readonly onChange: () => void;
@@ -120,7 +120,7 @@ export function createWatchPoller(options: WatchPollerOptions): WatchPoller {
     if (tasksBusy || stopped || !options.tasks) return;
     tasksBusy = true;
     try {
-      tasks = await options.tasks.read(run);
+      tasks = await options.tasks.read(run, workers);
       notify();
     } finally {
       tasksBusy = false;

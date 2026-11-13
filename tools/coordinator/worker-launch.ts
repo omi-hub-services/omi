@@ -1,6 +1,7 @@
 // Pure part of `flow.ts dispatch` (OMI-077): which curated skills a worker prompt gets and the
 // exact `bash -lc` payload that launches Claude or Codex (omi-next step 3). Nothing here runs a
 // process. Payloads contain no `"`, `\` or newline (wsl.exe rewrites them, process-runner.ts).
+import { randomBytes } from "node:crypto";
 import { shellQuote, WSL_NODE_ENV } from "./process-runner.ts";
 import { RUNS_DIR_FROM_HOME } from "./coordinator-settings.ts";
 
@@ -26,6 +27,8 @@ export interface LaunchSpec {
   readonly effort: string;
   /** Claude session id or Codex thread id; null starts a new run. */
   readonly resume: string | null;
+  /** Step, attempt and dispatch stamp (`verify-1-k3x9a1b2c3`); names its own packet file (OMI-111). */
+  readonly packet: string;
 }
 
 const WORD = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -34,7 +37,7 @@ const assertTask = (task: string) => {
 };
 function assertSpec(spec: LaunchSpec): void {
   assertTask(spec.task);
-  for (const key of ["profile", "model", "effort"] as const) {
+  for (const key of ["profile", "model", "effort", "packet"] as const) {
     if (!WORD.test(spec[key])) throw new Error(`invalid ${key} "${spec[key]}"`);
   }
   if (spec.resume !== null && !WORD.test(spec.resume)) {
@@ -44,14 +47,18 @@ function assertSpec(spec: LaunchSpec): void {
 
 const TS = "ts=$(date +%Y%m%d-%H%M%S);";
 /**
- * A native resume reads its follow-up from `resume.md`: `prompt.md` keeps the thread's full packet,
- * which is where the watch reads the skills and rules the thread has (OMI-094).
+ * Every dispatch has its own packet file, so parallel workers of one task (QA and review) never
+ * share one (OMI-111). A native resume reads `resume-<packet>.md`; `prompt-<packet>.md` keeps the
+ * thread's full packet, which is where the watch reads the skills and rules the thread has (OMI-094).
  */
-export const promptFile = (resume: string | null): string =>
-  resume === null ? "prompt.md" : "resume.md";
+export const dispatchStamp = (): string =>
+  `${Date.now().toString(36)}${randomBytes(3).toString("hex")}`; // [a-z0-9] only: no dash
+
+export const promptFile = (resume: string | null, packet: string): string =>
+  `${resume === null ? "prompt" : "resume"}-${packet}.md`;
 
 const redirects = (spec: LaunchSpec, stem: string) =>
-  `< ${runsPath(spec.task, promptFile(spec.resume))} > ${runsPath(spec.task, `${stem}-$ts.jsonl`)} 2> ${runsPath(spec.task, `${stem}-$ts.err`)}; echo exit=$?`;
+  `< ${runsPath(spec.task, promptFile(spec.resume, spec.packet))} > ${runsPath(spec.task, `${stem}-$ts.jsonl`)} 2> ${runsPath(spec.task, `${stem}-$ts.err`)}; echo exit=$?`;
 
 export function claudeLaunchPayload(spec: LaunchSpec): string {
   assertSpec(spec);
@@ -107,7 +114,8 @@ export function codexLaunchPayload(spec: LaunchSpec): string {
     `export CODEX_HOME=$HOME/.codex-profiles/${spec.profile};`,
     TS,
     argv.map(shellQuote).join(" "),
-    `-o ${runsPath(spec.task, "codex-last.md")}`,
+    // next to the log of this dispatch ($ts), so parallel Codex workers never share the file
+    `-o ${runsPath(spec.task, `codex-${spec.profile}-$ts-last.md`)}`,
     [...resume, "-"].join(" "),
     redirects(spec, `codex-${spec.profile}`),
   ].join(" ");

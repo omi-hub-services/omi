@@ -57,6 +57,7 @@ const worker = (over: Partial<WorkerProcess> = {}): WorkerProcess => ({
     isError: false,
     limited: false,
   },
+  packet: `omi-${/\d+/.exec(over.task ?? "OMI-004")?.[0] ?? "004"}-prompt-x-1-abc123.md`,
   ...over,
 });
 const prompt = (step: string | null, role = "developer"): PromptInfo => ({
@@ -89,7 +90,17 @@ const tasksRead = async (
     blockersTruncated: false,
   })),
   pulls: [],
-  prompts,
+  // a worker resolves its own packet by name (OMI-111): mirror each task's prompt under the
+  // packet name the default `worker()` of that task reads
+  prompts: {
+    ...Object.fromEntries(
+      Object.entries(prompts).flatMap(([key, info]) => {
+        const digits = /^OMI-(\d+)$/.exec(key)?.[1];
+        return digits === undefined ? [] : [[`omi-${digits}-prompt-x-1-abc123.md`, info]];
+      }),
+    ),
+    ...prompts,
+  },
   templates: workflow === null ? {} : { [workflow]: await loadTemplate(workflow) },
 });
 const input = (over: Partial<SnapshotInput> = {}): SnapshotInput => ({
@@ -117,6 +128,35 @@ describe("buildSnapshot: the repo's data in the shared WatchSnapshot contract", 
     );
     expect(s.generatedAt).toBe(new Date(NOW * 1000).toISOString());
     expect(s.schemaVersion).toBeGreaterThan(0);
+  });
+
+  // OMI-111 regression: QA and review of one task run in parallel and share the plan key
+  it("keeps a card for both the QA and the review worker of one task, each with its own packet", async () => {
+    const qa = { ...prompt("verify", "qa"), skills: ["qa-verification"] };
+    const review = { ...prompt("review", "reviewer"), skills: ["independent-review"] };
+    const s = buildSnapshot(
+      input({
+        tasks: await tasksRead(["OMI-004"], {
+          "OMI-004": review, // the newest packet of the task must not leak into the QA card
+          "omi-004-prompt-verify-1-aaa111.md": qa,
+          "omi-004-prompt-review-1-bbb222.md": review,
+        }),
+        workers: {
+          available: true,
+          latestLog: null,
+          processes: [
+            worker({ pid: 11, packet: "omi-004-prompt-verify-1-aaa111.md" }),
+            worker({ pid: 12, packet: "omi-004-prompt-review-1-bbb222.md" }),
+          ],
+        },
+      }),
+    );
+    expect(s.tasks).toHaveLength(2);
+    expect(new Set(s.tasks.map((c) => c.runId)).size).toBe(2);
+    expect(s.tasks.map((c) => [c.planKey, c.who?.step, c.who?.role, c.loaded?.skills])).toEqual([
+      ["OMI-004", "verify", "qa", ["qa-verification"]],
+      ["OMI-004", "review", "reviewer", ["independent-review"]],
+    ]);
   });
 
   it("draws the task from its template and puts the QA worker at verify, not at implement", async () => {

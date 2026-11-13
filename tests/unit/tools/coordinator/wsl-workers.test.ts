@@ -250,3 +250,40 @@ it("collapses unrelated processes writing the same log but keeps separate worker
     [300, "other"],
   ]);
 });
+
+it("tells which per-dispatch packet file each parallel worker of one task reads (OMI-111)", async () => {
+  const packets: Record<number, string> = {
+    200: "/runs/omi-068-prompt-verify-2.md",
+    300: "/runs/omi-068-prompt-review-2.md",
+    400: "/runs/stray.md",
+  };
+  const run: Runner = (command) =>
+    Promise.resolve({
+      code: 0,
+      stderr: "",
+      stdout: command.input
+        ? [200, 300, 400]
+            .map((pid) =>
+              JSON.stringify({
+                pid,
+                path: `/runs/omi-068-claude-${String(pid)}-20261111-120000.jsonl`,
+                packet: packets[pid],
+                summary: {
+                  numTurns: 1,
+                  lastAction: null,
+                  finished: false,
+                  isError: false,
+                  limited: false,
+                },
+              }),
+            )
+            .join("\n")
+        : "@@ps\n200 60 1 claude -p\n300 50 1 claude -p\n400 40 1 claude -p\n@@log\n",
+    });
+  const result = await readWorkers(run, windows);
+  expect(result.available && result.processes.map((p) => [p.pid, p.packet])).toEqual([
+    [200, "omi-068-prompt-verify-2.md"],
+    [300, "omi-068-prompt-review-2.md"],
+    [400, null], // not a packet file name: never trusted
+  ]);
+});

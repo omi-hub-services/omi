@@ -12,6 +12,7 @@ import {
   parsePromptText,
   readPrompts,
   taskLine,
+  workerPrompt,
   type StepInput,
   type TasksRead,
 } from "../../../../tools/coordinator/watch-tasks.ts";
@@ -350,6 +351,46 @@ describe("parsePromptProbe / readPrompts", () => {
     });
   });
 
+  it("keeps the info of each packet file of a task under its file name (OMI-111)", () => {
+    const out = [
+      "@@prompt 074",
+      "# Workflow feature · step review · role reviewer",
+      "## Skill: independent-review",
+      "@@packet omi-074-prompt-review-1.md",
+      "# Workflow feature · step review · role reviewer",
+      "## Skill: independent-review",
+      "@@packet omi-074-prompt-verify-1.md",
+      "# Workflow feature · step verify · role qa",
+      "## Skill: qa-verification",
+      "@@packet ../etc-passwd",
+    ].join("\n");
+    const probe = parsePromptProbe(out);
+    expect(probe["omi-074-prompt-review-1.md"]?.skills).toEqual(["independent-review"]);
+    expect(probe["omi-074-prompt-verify-1.md"]?.skills).toEqual(["qa-verification"]);
+    expect(probe["omi-074-prompt-verify-1.md"]?.header?.step).toBe("verify");
+    expect(Object.keys(probe)).toHaveLength(3);
+  });
+
+  it("keeps the newest full packet of a resume under that resume's own key", () => {
+    const probe = parsePromptProbe(
+      [
+        "@@packet omi-074-resume-verify-1-r2.md",
+        "## Skill: receiving-code-review",
+        "@@full omi-074-resume-verify-1-r2.md",
+        "# Workflow feature · step verify · role qa",
+        "## Skill: qa-verification",
+        "@@full ../../bad.md",
+        "## Skill: leaked",
+      ].join("\n"),
+    );
+    expect(probe["full:omi-074-resume-verify-1-r2.md"]?.skills).toEqual(["qa-verification"]);
+    expect(workerPrompt(probe, "omi-074-resume-verify-1-r2.md")?.skills).toEqual([
+      "qa-verification",
+      "receiving-code-review",
+    ]);
+    expect(Object.keys(probe)).toHaveLength(2);
+  });
+
   it("runs one WSL command for validated plan keys and degrades to {} on failure", async () => {
     const seen: Command[] = [];
     const ok = await readPrompts(
@@ -363,11 +404,35 @@ describe("parsePromptProbe / readPrompts", () => {
     expect(ok).toEqual({ "OMI-074": null });
     expect(seen).toHaveLength(1);
     const payload = seen[0]?.args.at(-1) ?? "";
-    expect(payload).toContain("omi-$n-prompt.md");
+    expect(payload).toContain("omi-$n-prompt*.md");
+    expect(payload).not.toContain("@@packet"); // no worker, so no packet is read
     expect(payload).toContain("074");
     expect(payload).toContain("# Workflow ");
     expect(payload).toContain("## Rule: ");
     expect(payload).not.toContain("rm -rf");
+    // OMI-111: exactly the packets the workers read, validated; a resume also looks up the full
+    // packet of its own step and round by prefix, with no count limit on the history
+    const named: Command[] = [];
+    await readPrompts(
+      (c) => {
+        named.push(c);
+        return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+      },
+      { viaWslExe: false, distro: "d", repoDir: "/r" },
+      ["OMI-074"],
+      [
+        "omi-074-resume-implement-1-r17.md",
+        "omi-074-prompt-verify-1-bbb222.md",
+        "../../etc/passwd; rm -rf x",
+      ],
+    );
+    const exact = named[0]?.args.at(-1) ?? "";
+    expect(exact).toContain("omi-runs/omi-074-resume-implement-1-r17.md");
+    expect(exact).toContain("omi-runs/omi-074-prompt-verify-1-bbb222.md");
+    expect(exact).toContain("omi-074-prompt-implement-1-*.md");
+    expect(exact).not.toContain("passwd");
+    expect(exact).not.toContain("rm -rf");
+    expect(exact).not.toMatch(/head -n 1[0-9]/);
     const none = await readPrompts(
       () => Promise.resolve({ code: 1, stdout: "", stderr: "x" }),
       { viaWslExe: false, distro: "d", repoDir: "/r" },
@@ -415,6 +480,7 @@ const openPull = (over: Partial<OpenPull> = {}): OpenPull => ({
   checks: [{ name: "check", state: "pass" }],
   ...over,
 });
+const WORKER_PACKET = "omi-074-prompt-x-1-abc123.md";
 const worker: WorkerProcess = {
   pid: 9,
   tool: "claude",
@@ -424,6 +490,7 @@ const worker: WorkerProcess = {
   profile: "minibox",
   model: "opus-5-5",
   effort: "high",
+  packet: WORKER_PACKET,
   log: {
     numTurns: 12,
     lastAction: "Bash\u001b[2J npm test",
@@ -437,20 +504,26 @@ const available = (processes: WorkerProcess[]): Workers => ({
   processes,
   latestLog: null,
 });
-const read = (over: Partial<Extract<TasksRead, { available: true }>> = {}): TasksRead => ({
-  available: true,
-  items: [item()],
-  pulls: [],
-  prompts: {
+// `read` mirrors the task's prompt under the packet name of the default `worker`, so a test that
+// only names the task's prompt still has its worker resolve it (OMI-111).
+const read = (over: Partial<Extract<TasksRead, { available: true }>> = {}): TasksRead => {
+  const prompts = over.prompts ?? {
     "OMI-074": {
       skills: ["minimal-change"],
       rules: ["AGENTS.md"],
       mandatoryRules: [],
       header: null,
     },
-  },
-  ...over,
-});
+  };
+  const own = prompts["OMI-074"];
+  return {
+    available: true,
+    items: [item()],
+    pulls: [],
+    ...over,
+    prompts: own === undefined ? prompts : { [WORKER_PACKET]: own, ...prompts },
+  };
+};
 
 describe("buildTasks", () => {
   it("is loading before the first GitHub read and carries an unavailable reason", () => {
@@ -767,6 +840,83 @@ describe("template position, worker step and hold of a task view", () => {
       prompts: { "OMI-074": header("ready-to-merge", "qa") },
     });
     expect(gate.workerStep).toBeNull();
+  });
+
+  describe("parallel workers of one task (OMI-111)", () => {
+    const info = (skill: string, step: string, role: string) => ({
+      skills: [skill],
+      rules: ["project-baseline"],
+      mandatoryRules: ["project-baseline"],
+      header: { workflow: "feature", step, role },
+    });
+    const prompts = {
+      "OMI-074": info("independent-review", "review", "reviewer"), // the newest packet of the task
+      "omi-074-prompt-verify-1-aaa111.md": info("qa-verification", "verify", "qa"),
+      "omi-074-prompt-review-1-bbb222.md": info("independent-review", "review", "reviewer"),
+    };
+    const qaWorker = { ...worker, pid: 11, packet: "omi-074-prompt-verify-1-aaa111.md" };
+    const reviewWorker = { ...worker, pid: 12, packet: "omi-074-prompt-review-1-bbb222.md" };
+    const rows = (procs: WorkerProcess[]) => {
+      const view = buildTasks({
+        tasks: read({ items: [item({ workflow: "feature" })], prompts, templates: {} }),
+        workers: available(procs),
+      });
+      if (view.state !== "ok") throw new Error("expected ok");
+      return view.items;
+    };
+
+    it("keeps one row per worker of the task, each with its own packet skills and rules", () => {
+      const items = rows([qaWorker, reviewWorker]);
+      expect(items.map((t) => [t.rowId, t.worker?.pid, t.prompt?.skills])).toEqual([
+        ["OMI-074#11", 11, ["qa-verification"]],
+        ["OMI-074#12", 12, ["independent-review"]],
+      ]);
+    });
+
+    it("gives the same rows when the workers come in the other order", () => {
+      const items = rows([reviewWorker, qaWorker]);
+      expect(items.map((t) => [t.worker?.pid, t.prompt?.skills])).toEqual([
+        [12, ["independent-review"]],
+        [11, ["qa-verification"]],
+      ]);
+    });
+
+    it("keeps the plain plan key for a task with one worker or none", () => {
+      expect(rows([qaWorker]).map((t) => t.rowId)).toEqual(["OMI-074"]);
+      expect(rows([]).map((t) => [t.rowId, t.worker])).toEqual([["OMI-074", null]]);
+    });
+
+    it("shows nothing for a worker whose packet is unknown, never the task's or another worker's", async () => {
+      const unknown = { ...worker, pid: 13, packet: null };
+      const gone = { ...worker, pid: 14, packet: "omi-074-prompt-gone-1-zzz999.md" };
+      for (const w of [unknown, gone]) {
+        const t = (await card("feature", {}, [w], { prompts })).prompt;
+        expect(t).toBeNull();
+      }
+      const t = await card("feature", {}, [unknown], { prompts });
+      expect(t.skills).toEqual([]);
+      expect(t.workerStep).toBeNull();
+    });
+
+    it("takes the step of each row from its own packet header", async () => {
+      const t = await card("feature", {}, [reviewWorker, qaWorker], { prompts });
+      expect(t.worker?.pid).toBe(12);
+      expect(t.workerStep).toEqual({ step: "review", role: "reviewer" });
+    });
+
+    it("adds the resume packet's skills to the newest full packet of the same step and attempt", () => {
+      const all = {
+        // an older full packet of the same step and round, ahead of the resume in key order
+        "omi-074-prompt-verify-1-aaa111.md": info("older-same-round", "verify", "qa"),
+        "omi-074-prompt-verify-2-ddd444.md": info("other-round", "verify", "qa"),
+        "omi-074-resume-verify-1-ccc333.md": info("receiving-code-review", "verify", "qa"),
+        // the probe's newest full packet for that resume, keyed to it
+        "full:omi-074-resume-verify-1-ccc333.md": info("qa-verification", "verify", "qa"),
+      };
+      const merged = workerPrompt(all, "omi-074-resume-verify-1-ccc333.md");
+      expect(merged?.skills).toEqual(["qa-verification", "receiving-code-review"]);
+      expect(workerPrompt(prompts, "omi-074-prompt-gone-1-zzz.md")).toBeNull();
+    });
   });
 
   it("ignores the header when no worker runs, because the prompt file may be an old step's", async () => {

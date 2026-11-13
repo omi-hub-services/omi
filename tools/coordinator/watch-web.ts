@@ -88,7 +88,7 @@ export function createWatchServer(options: WatchServerOptions): WatchServer {
     ...(options.quotaIntervalMs === undefined ? {} : { quotaIntervalMs: options.quotaIntervalMs }),
     tasks: {
       intervalMs: options.tasksIntervalMs ?? TASKS_INTERVAL_MS,
-      read: (run) => readTasks(run, options.target),
+      read: (run, workers) => readTasks(run, options.target, workers),
     },
     onChange: () => {},
     onError: (error) => {

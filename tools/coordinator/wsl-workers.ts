@@ -26,6 +26,8 @@ export interface WorkerProcess {
   readonly effort?: string | null;
   readonly task?: string | null;
   readonly profile?: string | null;
+  /** Base name of the packet file the worker reads on stdin (OMI-111); null when it is not one. */
+  readonly packet?: string | null;
   readonly log?: WorkerLogSummary | null;
 }
 
@@ -224,6 +226,8 @@ import { createInterface } from 'node:readline';
 const advanceWorkerLog = ${advanceWorkerLog.toString()};
 for (const pid of process.argv.slice(2)) {
   try {
+    let packet = null;
+    try { packet = await readlink('/proc/' + pid + '/fd/0'); } catch {}
     const path = await readlink('/proc/' + pid + '/fd/1');
     if (!path.endsWith('.jsonl') || !(await stat(path)).isFile()) continue;
     const stream = createReadStream(path, { encoding: 'utf8' });
@@ -231,14 +235,21 @@ for (const pid of process.argv.slice(2)) {
     const lines = createInterface({ input: stream, crlfDelay: Infinity });
     stream.on('error', () => lines.close());
     for await (const line of lines) summary = advanceWorkerLog(summary, line);
-    console.log(JSON.stringify({ pid: Number(pid), path, summary }));
+    console.log(JSON.stringify({ pid: Number(pid), path, packet, summary }));
   } catch {}
 }
 `;
 }
 
+export const PACKET_FILE = /^omi-\d+-(?:prompt|resume)-[A-Za-z0-9][A-Za-z0-9._-]*\.md$/;
+/** Base name of a worker's stdin when it is a per-dispatch packet file, else null. */
+const packetName = (path: unknown): string | null => {
+  const name = typeof path === "string" ? basename(path) : "";
+  return PACKET_FILE.test(name) ? name : null;
+};
+
 function attachProcessLogs(report: WorkerReport, stdout: string): WorkerReport {
-  const logs = new Map<number, { path: string; log: WorkerLogSummary }>();
+  const logs = new Map<number, { path: string; packet: string | null; log: WorkerLogSummary }>();
   for (const line of stdout.split("\n")) {
     const row = eventOf(line);
     const summary = row?.summary;
@@ -262,6 +273,7 @@ function attachProcessLogs(report: WorkerReport, stdout: string): WorkerReport {
       continue;
     logs.set(row.pid, {
       path: row.path,
+      packet: packetName(row.packet),
       log: {
         numTurns: s.numTurns,
         lastAction: s.lastAction,
@@ -286,7 +298,12 @@ function attachProcessLogs(report: WorkerReport, stdout: string): WorkerReport {
       })
       .map((p) => {
         const entry = logs.get(p.pid);
-        return { ...p, ...workerLogIdentity(entry?.path ?? "", p.tool), log: entry?.log ?? null };
+        return {
+          ...p,
+          ...workerLogIdentity(entry?.path ?? "", p.tool),
+          packet: entry?.packet ?? null,
+          log: entry?.log ?? null,
+        };
       }),
   };
 }
