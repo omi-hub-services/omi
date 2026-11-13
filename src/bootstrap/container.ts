@@ -511,12 +511,22 @@ export function createReviewCommentUseCase(deps: PostReviewCommentDeps) {
   return (input: unknown) => postReviewComment(deps, input);
 }
 
-/** The project repository is runtime configuration; the IPC command never names it. */
-export function createReleaseMergeUseCase(deps: MergeReleaseDeps, repository: string) {
+/**
+ * Repository and PO logins are trusted runtime configuration (`policies.github_approval_actors`,
+ * the same allowlist approvals use); a caller can never supply or override them. No configured PO
+ * refuses before any GitHub read.
+ */
+export function createReleaseMergeUseCase(
+  deps: MergeReleaseDeps,
+  repository: string,
+  poActors: readonly string[],
+) {
   return async (input: unknown) => {
+    if (poActors.length === 0) return { ok: false as const, reason: "PO_ACTORS_NOT_CONFIGURED" };
     const result = await mergeRelease(deps, {
       ...(typeof input === "object" && input !== null ? input : {}),
       repository,
+      poActors: [...poActors],
     });
     if (result.status === "refused")
       return {
@@ -1139,6 +1149,7 @@ export async function createProjectRunCommandUseCases(
       mergeRelease: createReleaseMergeUseCase(
         { ...merge, reader: createGithubReleaseMergeReader(client) },
         `${config.project.repository.owner}/${config.project.repository.name}`,
+        config.project.policies.github_approval_actors ?? [],
       ),
     },
     approvals: createApprovalUseCases({

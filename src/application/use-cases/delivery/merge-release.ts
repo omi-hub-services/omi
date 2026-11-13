@@ -64,8 +64,18 @@ export async function mergeRelease(
   operationMarker(key);
 
   // A lost response of an earlier merge call is found by read-back before anything is decided.
-  await reconcileGithubOperation(deps, key);
-  let pull = await readPull(deps, request);
+  let pull: MergePull;
+  try {
+    await reconcileGithubOperation(deps, key);
+    pull = await readPull(deps, request);
+  } catch (error) {
+    // Same typed refusals as the gate: an unreadable or foreign PR never reaches a merge.
+    return refused("gate", [
+      error instanceof DeliveryError && error.code === "PR_IDENTITY_MISMATCH"
+        ? "PR_IDENTITY_MISMATCH"
+        : "PR_READ_UNAVAILABLE",
+    ]);
+  }
   if (!pull.merged) {
     const decision = await checkReleaseMerge(deps.reader, gateRequest);
     if (!decision.allowed) return refused("gate", decision.reasons);

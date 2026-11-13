@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mergeRelease } from "../../../src/application/use-cases/delivery/merge-release.ts";
 import type { MergeReleaseDeps } from "../../../src/application/use-cases/delivery/merge-release.ts";
+import { createReleaseMergeUseCase } from "../../../src/bootstrap/container.ts";
 import { operationMarker } from "../../../src/domain/delivery/operation-marker.ts";
 import { releasePullKey } from "../../../src/domain/delivery/release-policy.ts";
 import { createGithubReleaseMergeReader } from "../../../src/infrastructure/github/github-release-merge.ts";
@@ -171,5 +172,90 @@ describe("mergeRelease over FakeGithub", () => {
     const result = await s.run({ ...request, expectedHeadSha: OTHER });
     expect(result).toMatchObject({ status: "refused", step: "confirm" });
     expect(s.puts()).toHaveLength(0);
+  });
+
+  it.each([
+    ["unavailable PR data", { type: "status" as const, status: 503 }],
+    ["malformed PR data", { type: "status" as const, status: 200, body: "{}" }],
+  ])("refuses with PR_READ_UNAVAILABLE and no PUT on %s", async (_name, effect) => {
+    const s = setup();
+    s.github.inject({ method: "GET", pathIncludes: "/pulls/5", times: 10, effect });
+    expect(await s.run()).toEqual({
+      status: "refused",
+      step: "gate",
+      reasons: ["PR_READ_UNAVAILABLE"],
+    });
+    expect(s.puts()).toHaveLength(0);
+  });
+
+  it("refuses with PR_IDENTITY_MISMATCH and no PUT when GitHub answers for another PR", async () => {
+    const s = setup();
+    const body = JSON.stringify({
+      number: 6,
+      title: "x",
+      body: "",
+      state: "open",
+      draft: false,
+      merged: false,
+      merge_commit_sha: null,
+      mergeable_state: "clean",
+      user: { login: "agent" },
+      html_url: `https://github.com/${REPO}/pull/6`,
+      head: { ref: "develop", sha: HEAD, repo: { full_name: REPO } },
+      base: { ref: "main", repo: { full_name: REPO } },
+    });
+    s.github.inject({
+      method: "GET",
+      pathIncludes: "/pulls/5",
+      times: 10,
+      effect: { type: "status", status: 200, body },
+    });
+    expect(await s.run()).toEqual({
+      status: "refused",
+      step: "gate",
+      reasons: ["PR_IDENTITY_MISMATCH"],
+    });
+    expect(s.puts()).toHaveLength(0);
+  });
+});
+
+describe("runtime composition of release merge", () => {
+  // Only an ordinary reviewer approved: the caller names them as PO, configuration does not.
+  function reviewerOnly() {
+    const s = setup();
+    s.github.reviews.splice(0, 1, {
+      repo: REPO,
+      pullNumber: 5,
+      login: "reviewer",
+      type: "User",
+      state: "APPROVED",
+      commitId: HEAD,
+    });
+    return s;
+  }
+  const command = {
+    release: request.release,
+    prNumber: request.prNumber,
+    expectedHeadSha: request.expectedHeadSha,
+    requiredChecks: request.requiredChecks,
+  };
+
+  it("ignores caller-named PO actors and keeps the configured allowlist", async () => {
+    const s = reviewerOnly();
+    const run = createReleaseMergeUseCase(s.deps, REPO, ["po"]);
+    const outcome = await run({ ...command, poActors: ["reviewer"] });
+    expect(outcome).toMatchObject({ ok: false, reason: "RELEASE_MERGE_REFUSED" });
+    expect(JSON.stringify(outcome)).toContain("PO_APPROVAL_MISSING");
+    expect(s.puts()).toHaveLength(0);
+  });
+
+  it("fails closed without a configured PO, before any GitHub read", async () => {
+    const s = reviewerOnly();
+    const run = createReleaseMergeUseCase(s.deps, REPO, []);
+    expect(await run({ ...command, poActors: ["reviewer"] })).toEqual({
+      ok: false,
+      reason: "PO_ACTORS_NOT_CONFIGURED",
+    });
+    expect(s.github.requests).toHaveLength(0);
   });
 });

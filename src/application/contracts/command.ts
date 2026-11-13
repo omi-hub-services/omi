@@ -84,9 +84,9 @@ export const commandSchema = z
         minimumNativeApprovals: true,
       }).shape,
     }),
-    // The repository is the project's own; a command never names one.
+    // Repository and PO logins are trusted runtime configuration; a command never names them.
     mergeReleaseSchema
-      .omit({ repository: true })
+      .omit({ repository: true, poActors: true })
       .extend({ ...envelope, command: z.literal("release.merge") }),
     z.strictObject({
       ...envelope,

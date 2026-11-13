@@ -11,8 +11,6 @@ const argv = [
   "5",
   "--head-sha",
   "a".repeat(40),
-  "--po",
-  "po",
   "--check",
   "ci",
 ];
@@ -43,7 +41,6 @@ describe("merge-release command", () => {
         release: "r1",
         prNumber: 5,
         expectedHeadSha: "a".repeat(40),
-        poActors: ["po"],
         requiredChecks: ["ci"],
       },
     ]);
@@ -65,10 +62,10 @@ describe("merge-release command", () => {
     expect(calls).toBe(1);
   });
 
-  it("refuses a missing PO login without IPC", async () => {
+  it("offers no way to name PO logins: the option is a usage error without IPC", async () => {
     let calls = 0;
     const code = await runCli(
-      argv.filter((arg, i) => arg !== "--po" && argv[i - 1] !== "--po"),
+      [...argv, "--po", "reviewer"],
       context(() => {
         calls++;
         return Promise.resolve({ ok: true, result: {} });

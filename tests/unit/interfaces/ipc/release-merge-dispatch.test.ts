@@ -10,7 +10,6 @@ const command: Command = {
   release: "r1",
   prNumber: 5,
   expectedHeadSha: "a".repeat(40),
-  poActors: ["po"],
   requiredChecks: ["ci"],
 };
 

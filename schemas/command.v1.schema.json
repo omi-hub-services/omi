@@ -559,14 +559,6 @@
           "type": "string",
           "pattern": "^[0-9a-f]{40}$"
         },
-        "poActors": {
-          "minItems": 1,
-          "type": "array",
-          "items": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9-]+$"
-          }
-        },
         "requiredChecks": {
           "minItems": 1,
           "maxItems": 50,
@@ -593,7 +585,6 @@
       "required": [
         "prNumber",
         "expectedHeadSha",
-        "poActors",
         "requiredChecks",
         "release",
         "schemaVersion",

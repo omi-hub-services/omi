@@ -243,11 +243,10 @@ export function registerRunCommands(program: Command, context: CliContext): void
       "--head-sha <sha>",
       "the head the PO approved; the native merge is pinned to it",
     )
-    .option("--po <login>", "GitHub login allowed to approve the release (repeatable)", collect, [])
     .option("--check <name>", "required check name (repeatable)", collect, [])
     .action(
       async (
-        options: { release: string; pr: string; headSha: string; po: string[]; check: string[] },
+        options: { release: string; pr: string; headSha: string; check: string[] },
         command: Command,
       ) => {
         await runCommand(
@@ -258,7 +257,6 @@ export function registerRunCommands(program: Command, context: CliContext): void
             release: options.release,
             prNumber: wholeNumber(options.pr),
             expectedHeadSha: options.headSha,
-            poActors: options.po,
             requiredChecks: options.check,
           },
           SLOW_COMMAND_MS,
