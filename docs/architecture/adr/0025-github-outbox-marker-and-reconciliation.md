@@ -103,5 +103,5 @@ commit SHA. The remote identity includes that commit. It does not interpret a cl
 merged or use the marker as approval. Sending uses the same outbox intent and state machine,
 reads before PUT, passes the expected SHA to GitHub and reads back afterwards. A confirmed merge
 requires no further PUT. The workflow must evaluate delivery gates before queueing the intent;
-release merges to `main` remain outside this task path. OMI-023's `mergeTaskPr` queues this same
+release merges to `main` are gated by `mergeRelease` (ADR-0039), not by this task path. OMI-023's `mergeTaskPr` queues this same
 operation after its gates (ADR-0034); the adapter always asks GitHub for a merge commit.

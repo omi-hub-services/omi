@@ -550,6 +550,60 @@
     {
       "type": "object",
       "properties": {
+        "prNumber": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "expectedHeadSha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "poActors": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9-]+$"
+          }
+        },
+        "requiredChecks": {
+          "minItems": 1,
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "release": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "command": {
+          "type": "string",
+          "const": "release.merge"
+        }
+      },
+      "required": [
+        "prNumber",
+        "expectedHeadSha",
+        "poActors",
+        "requiredChecks",
+        "release",
+        "schemaVersion",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "schemaVersion": {
           "type": "number",
           "const": 1
