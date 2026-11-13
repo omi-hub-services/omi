@@ -94,3 +94,47 @@ describe("Issue spec", () => {
     expect(() => nextPlanKey(["OMI-999"])).toThrow(/exhausted/);
   });
 });
+
+describe("Work Type workflow gate", () => {
+  it.each(["Bug", "Docs", "Release", "Task", "Spike"])(
+    "validates spec workflow pairings for %s",
+    (workType) => {
+      for (const workflow of ["feature", "refactor", "bugfix", "docs", "release", "deploy"]) {
+        const suffix = workType === "Bug" ? "\n## Tái hiện\n1. Run failing command." : "";
+        const valid =
+          workType === "Bug"
+            ? workflow === "bugfix"
+            : workType === "Docs"
+              ? workflow === "docs"
+              : workType === "Release"
+                ? ["release", "deploy"].includes(workflow)
+                : !["bugfix", "docs", "release", "deploy"].includes(workflow);
+        const result = parseIssueSpec(
+          source
+            .replace("workType: Task", `workType: ${workType}`)
+            .replace("workflow: feature", `workflow: ${workflow}`) + suffix,
+        );
+        expect(result.kind, `${workType}/${workflow}`).toBe(valid ? "ok" : "refuse");
+        if (!valid && result.kind === "refuse") expect(result.reason).toContain("Work Type");
+      }
+    },
+  );
+  it.each(["", "\n## Tái hiện\n<!-- placeholder -->"])(
+    "refuses Bug spec without evidence (%j)",
+    (suffix) => {
+      expect(
+        parseIssueSpec(
+          source
+            .replace("workType: Task", "workType: Bug")
+            .replace("workflow: feature", "workflow: bugfix") + suffix,
+        ),
+      ).toEqual({ kind: "refuse", reason: "Bug requires non-empty ## Tái hiện" });
+    },
+  );
+  it("refuses Task spec with reproduction and suggests Bug", () => {
+    expect(parseIssueSpec(source + "\n## Tái hiện\n")).toEqual({
+      kind: "refuse",
+      reason: "Task has ## Tái hiện; use Work Type Bug and Workflow bugfix",
+    });
+  });
+});

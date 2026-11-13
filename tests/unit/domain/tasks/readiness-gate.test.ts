@@ -104,3 +104,44 @@ describe("taskReadinessReasons", () => {
     ]);
   });
 });
+
+describe("Work Type workflow gate", () => {
+  it.each(["Bug", "Docs", "Release", "Task", "Spike"])(
+    "checks every workflow pairing for %s",
+    (workType) => {
+      for (const workflow of ["feature", "refactor", "bugfix", "docs", "release", "deploy"]) {
+        const body = workType === "Bug" ? `${BODY}\n## Tái hiện\n1. Run failing command.` : BODY;
+        const valid =
+          workType === "Bug"
+            ? workflow === "bugfix"
+            : workType === "Docs"
+              ? workflow === "docs"
+              : workType === "Release"
+                ? ["release", "deploy"].includes(workflow)
+                : !["bugfix", "docs", "release", "deploy"].includes(workflow);
+        expect(
+          taskReadinessReasons({ ...ready, workType, workflow, body }),
+          `${workType}/${workflow}`,
+        ).toEqual(valid ? [] : [expect.stringContaining("Work Type")]);
+      }
+    },
+  );
+  it.each([
+    "",
+    "\n## Tái hiện\n   ",
+    "\n## Tái hiện\n<!-- placeholder -->\n## Other\nEvidence elsewhere",
+    "\n```md\n## Tái hiện\nexample\n```",
+  ])("refuses Bug without reproduction evidence (%j)", (suffix) => {
+    expect(
+      taskReadinessReasons({ ...ready, workType: "Bug", workflow: "bugfix", body: BODY + suffix }),
+    ).toContain("Bug requires non-empty ## Tái hiện");
+  });
+  it("refuses Task with a reproduction section and suggests Bug", () => {
+    expect(taskReadinessReasons({ ...ready, body: `${BODY}\n## Tái hiện\n` })).toContain(
+      "Task has ## Tái hiện; use Work Type Bug and Workflow bugfix",
+    );
+  });
+  it("exempts Epic from pairing and reproduction rules", () => {
+    expect(taskReadinessReasons({ ...ready, workType: "Epic", workflow: "bugfix" })).toEqual([]);
+  });
+});

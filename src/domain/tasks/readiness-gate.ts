@@ -41,6 +41,7 @@ export function taskReadinessReasons(task: TaskReadinessInput): string[] {
   }
   if (acceptanceCriteria(task.body).length === 0)
     reasons.push("Acceptance criteria needs at least one top-level checkbox");
+  reasons.push(...workTypeWorkflowReasons(task.body, task.workType, task.workflow));
   reasons.push(...frameworkCounterpartReasons(task.body, task.area));
   return reasons;
 }
@@ -79,4 +80,58 @@ export function frameworkCounterpartReasons(body: string, area: string | null): 
   return section?.replace(/<!--[\s\S]*?-->/g, "").trim()
     ? []
     : ["missing ## Framework counterpart with module/template or reason"];
+}
+
+/** Shared intake/readiness invariant; Epic containers do not select a task workflow. */
+export function workTypeWorkflowReasons(
+  body: string,
+  workType: string | null,
+  workflow: string | null,
+): string[] {
+  if (workType === "Epic") return [];
+  const reasons: string[] = [];
+  if (workType?.trim() && workflow?.trim()) {
+    const pairs: Readonly<Record<string, readonly string[]>> = {
+      Bug: ["bugfix"],
+      Docs: ["docs"],
+      Release: ["release", "deploy"],
+    };
+    const allowed = pairs[workType];
+    const owner = Object.entries(pairs).find(([, workflows]) => workflows.includes(workflow))?.[0];
+    if ((allowed && !allowed.includes(workflow)) || (owner && owner !== workType))
+      reasons.push(
+        `Work Type "${workType}" does not match Workflow "${workflow}"; use Bug/bugfix, Docs/docs, Release/release|deploy`,
+      );
+  }
+  let fence: string | undefined;
+  let inSection = false;
+  let found = false;
+  const evidence: string[] = [];
+  for (const line of body.replace(/<!--[\s\S]*?-->/g, "").split(/\r?\n/)) {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence !== undefined) {
+      if (
+        marker?.[1] !== undefined &&
+        marker[1][0] === fence[0] &&
+        marker[1].length >= fence.length &&
+        marker[2]?.trim() === ""
+      )
+        fence = undefined;
+      else if (inSection) evidence.push(line);
+      continue;
+    }
+    if (marker?.[1] !== undefined) {
+      fence = marker[1];
+      continue;
+    }
+    if (/^#{1,2}\s/.test(line)) {
+      inSection = line.trimEnd() === "## Tái hiện";
+      found ||= inSection;
+    } else if (inSection) evidence.push(line);
+  }
+  if (workType === "Bug" && (!found || !evidence.join("\n").trim()))
+    reasons.push("Bug requires non-empty ## Tái hiện");
+  if (workType === "Task" && found)
+    reasons.push("Task has ## Tái hiện; use Work Type Bug and Workflow bugfix");
+  return reasons;
 }

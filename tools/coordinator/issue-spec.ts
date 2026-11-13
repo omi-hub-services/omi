@@ -45,7 +45,13 @@ export function parseIssueSpec(source: string): SpecResult {
       reason: result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
     };
   const body = (match[2] ?? "").trim();
-  const reasons = issueSpecBodyReasons(body, result.data.workType, "OMI", result.data.area);
+  const reasons = issueSpecBodyReasons(
+    body,
+    result.data.workType,
+    "OMI",
+    result.data.area,
+    result.data.workflow,
+  );
   return reasons.length > 0
     ? { kind: "refuse", reason: reasons.join("; ") }
     : { kind: "ok", spec: { ...result.data, body } };
