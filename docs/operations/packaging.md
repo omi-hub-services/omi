@@ -60,6 +60,15 @@ contents. No source files, application dependencies or native Claude/Codex setti
 Ignore `.omi-squad/local/` and `.omi-squad/tool/node_modules/` in the target project's Git setup;
 keep its framework lock, shims, tool manifest/lock/tarball and project template files versioned.
 
+Install and update record the absolute path of the Node.js interpreter running the installer in
+the POSIX shim. This lets `wsl.exe --exec` launch it without a login shell or sourcing nvm.
+The project and runtime package paths still resolve relative to the shim. If the recorded
+interpreter is removed or no longer executable, the shim falls back to `node` on PATH. If neither
+is available, it exits with a message to reinstall omi-squad using a working Node.js or configure
+Node.js on PATH. After removing an nvm version, use the bootstrap steps with the replacement Node.js
+to refresh the recorded path; neither a global Node installation nor application manifest edits
+are required.
+
 From Windows, use the installed shim through its UNC path:
 
 ```powershell

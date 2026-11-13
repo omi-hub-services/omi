@@ -321,7 +321,10 @@ export function createProjectInstallation(options: {
         join(squad, "tool/node_modules/omi-squad/templates/bridges/omi.cjs"),
         "utf8",
       );
-      await write(join(squad, "bin", "omi"), shell);
+      await write(
+        join(squad, "bin", "omi"),
+        shell.replaceAll("__OMI_NODE__", () => `'${process.execPath.replaceAll("'", "'\\''")}'`),
+      );
       await chmod(join(squad, "bin", "omi"), 0o755);
       await write(
         join(squad, "bin", "omi.cjs"),
