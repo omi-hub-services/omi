@@ -34,7 +34,11 @@ import { createSqlitePrMappingStore } from "../../../src/infrastructure/persiste
 import { createSqliteStateUnitOfWork } from "../../../src/infrastructure/persistence/sqlite/sqlite-state-unit-of-work.ts";
 import { openStateDatabase } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
 import { assertLifecycleApiCall } from "./lifecycle-api-guard.ts";
-import { decideReleaseResume, decideTaskResume } from "./lifecycle-resume.ts";
+import {
+  decideReleaseResume,
+  decideTaskResume,
+  resolveReleaseIdentity,
+} from "./lifecycle-resume.ts";
 import { runtimeLayout } from "../../../tools/sandbox-setup/runtime-layout.ts";
 import { assertSandboxTarget } from "./probe-model.ts";
 
@@ -204,7 +208,11 @@ it.skipIf(config === undefined)(
       const mappedPull =
         existing === undefined ? undefined : await reader.pull(c.repository, existing.prNumber);
       const taskResume = decideTaskResume({
-        reviewedHeadSha: review.review.headSha,
+        evidence: review,
+        issueBody:
+          mappedPull?.merged === true
+            ? (await reader.issue(c.repository, issueNumber)).body
+            : undefined,
         pull: mappedPull,
         onDevelop:
           mappedPull?.mergeCommitSha != null
@@ -266,12 +274,25 @@ it.skipIf(config === undefined)(
         expect(taskResult.status).toBe("done");
       }
       const releases = createGithubReleaseReader(rest);
-      const release = await prepareRelease(
-        { ...deps, releases, pulls: createGithubPrDelivery(rest) },
-        { repository: c.repository, release: c.release },
+      const releasePulls = createGithubPrDelivery(rest);
+      const identity = await resolveReleaseIdentity(
+        { pulls: releasePulls, releases },
+        c.repository,
+        c.release,
       );
-      if (release.status !== "verified") throw new Error("release preparation pending");
-      report["releasePlan"] = release;
+      let release: { prNumber: number };
+      if (identity.kind === "merged") {
+        release = { prNumber: identity.prNumber };
+        report["releasePlan"] = { resumed: true, prNumber: identity.prNumber };
+      } else {
+        const prepared = await prepareRelease(
+          { ...deps, releases, pulls: releasePulls },
+          { repository: c.repository, release: c.release },
+        );
+        if (prepared.status !== "verified") throw new Error("release preparation pending");
+        release = prepared;
+        report["releasePlan"] = prepared;
+      }
       save();
       const head = (await reader.pull(c.repository, release.prNumber)).headSha;
       const releaseRequest = {

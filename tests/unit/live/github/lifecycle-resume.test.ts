@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { decideReleaseResume, decideTaskResume } from "../../../live/github/lifecycle-resume.ts";
+import type { MergeEvidence } from "../../../../src/application/contracts/merge-delivery.ts";
+import {
+  decideReleaseResume,
+  decideTaskResume,
+  resolveReleaseIdentity,
+} from "../../../live/github/lifecycle-resume.ts";
 
 const head = "a".repeat(40);
 const merge = "b".repeat(40);
@@ -12,13 +17,34 @@ const pull = (over: Record<string, unknown> = {}) => ({
   mergeCommitSha: merge as string | null,
   ...over,
 });
+const issueBody = "## Acceptance criteria\n- [ ] first\n- [ ] second\n";
+const evidence = (
+  review: Partial<NonNullable<MergeEvidence["review"]>> = {},
+  authors: Partial<MergeEvidence> = {},
+): MergeEvidence => ({
+  review: {
+    reviewerRunId: "review-run",
+    reviewerAgentId: "reviewer",
+    headSha: head,
+    baseSha: "d".repeat(40),
+    verdict: "pass",
+    body: "AC-1: met — done\nAC-2: met — done",
+    ...review,
+  },
+  authorRunIds: ["author-run"],
+  authorAgentIds: ["author"],
+  unresolvedMandatoryFindings: 0,
+  workflowGatesPassed: true,
+  ...authors,
+});
+const merged = { evidence: evidence(), issueBody, pull: pull(), onDevelop: true };
 
 describe("decideTaskResume", () => {
   it("runs normally without a mapping", () => {
-    expect(decideTaskResume({ reviewedHeadSha: head })).toEqual({ action: "run" });
+    expect(decideTaskResume({ evidence: evidence() })).toEqual({ action: "run" });
   });
-  it("skips a PR merged on the reviewed head and present on develop", () => {
-    expect(decideTaskResume({ reviewedHeadSha: head, pull: pull(), onDevelop: true })).toEqual({
+  it("skips a PR merged on the reviewed head, on develop, with an independent passing review", () => {
+    expect(decideTaskResume(merged)).toEqual({
       action: "skip",
       prNumber: 11,
       mergeCommitSha: merge,
@@ -27,46 +53,67 @@ describe("decideTaskResume", () => {
   it("runs normally while the mapped PR is still open", () => {
     expect(
       decideTaskResume({
-        reviewedHeadSha: head,
+        evidence: evidence(),
         pull: pull({ state: "open", merged: false, mergeCommitSha: null }),
       }),
     ).toEqual({ action: "run" });
   });
   it("refuses a PR closed without merge", () => {
     expect(() =>
-      decideTaskResume({
-        reviewedHeadSha: head,
-        pull: pull({ merged: false, mergeCommitSha: null }),
-      }),
+      decideTaskResume({ ...merged, pull: pull({ merged: false, mergeCommitSha: null }) }),
     ).toThrow(/closed without merge/);
   });
   it("refuses a merged PR whose head differs from the review", () => {
-    expect(() =>
-      decideTaskResume({
-        reviewedHeadSha: head,
-        pull: pull({ headSha: "c".repeat(40) }),
-        onDevelop: true,
-      }),
-    ).toThrow(/reviewed head/);
+    expect(() => decideTaskResume({ ...merged, pull: pull({ headSha: "c".repeat(40) }) })).toThrow(
+      /reviewed head/,
+    );
   });
   it("refuses a merged PR into another base", () => {
-    expect(() =>
-      decideTaskResume({ reviewedHeadSha: head, pull: pull({ baseRef: "main" }), onDevelop: true }),
-    ).toThrow(/develop/);
+    expect(() => decideTaskResume({ ...merged, pull: pull({ baseRef: "main" }) })).toThrow(
+      /develop/,
+    );
   });
   it("refuses a merge commit that is not on develop", () => {
-    expect(() =>
-      decideTaskResume({ reviewedHeadSha: head, pull: pull(), onDevelop: false }),
-    ).toThrow(/not on develop/);
+    expect(() => decideTaskResume({ ...merged, onDevelop: false })).toThrow(/not on develop/);
   });
   it("refuses a merged PR without a merge commit", () => {
+    expect(() => decideTaskResume({ ...merged, pull: pull({ mergeCommitSha: null }) })).toThrow(
+      /not on develop/,
+    );
+  });
+  it("refuses a merged PR when there is no review", () => {
+    expect(() =>
+      decideTaskResume({ ...merged, evidence: { ...evidence(), review: undefined } }),
+    ).toThrow(/independent review required/);
+  });
+  it("refuses a failed review", () => {
+    expect(() => decideTaskResume({ ...merged, evidence: evidence({ verdict: "fail" }) })).toThrow(
+      /REVIEW_NOT_PASSED/,
+    );
+  });
+  it("refuses a reviewer who is also an author", () => {
+    expect(() =>
+      decideTaskResume({ ...merged, evidence: evidence({ reviewerAgentId: "author" }) }),
+    ).toThrow(/REVIEW_NOT_INDEPENDENT/);
+    expect(() =>
+      decideTaskResume({ ...merged, evidence: evidence({ reviewerRunId: "author-run" }) }),
+    ).toThrow(/REVIEW_NOT_INDEPENDENT/);
+  });
+  it("refuses blank reviewer identities", () => {
+    expect(() =>
+      decideTaskResume({ ...merged, evidence: evidence({ reviewerRunId: " " }) }),
+    ).toThrow(/REVIEW_NOT_INDEPENDENT/);
+  });
+  it("refuses incomplete or unmet acceptance evidence", () => {
+    expect(() =>
+      decideTaskResume({ ...merged, evidence: evidence({ body: "AC-1: met — done" }) }),
+    ).toThrow(/review not acceptable/);
     expect(() =>
       decideTaskResume({
-        reviewedHeadSha: head,
-        pull: pull({ mergeCommitSha: null }),
-        onDevelop: true,
+        ...merged,
+        evidence: evidence({ body: "AC-1: met — done\nAC-2: not met — missing" }),
       }),
-    ).toThrow(/not on develop/);
+    ).toThrow(/review not acceptable/);
   });
 });
 
@@ -124,5 +171,74 @@ describe("decideReleaseResume", () => {
     expect(() =>
       decideReleaseResume({ pull: rel(), onMain: false, reviews: [approved], poActors: po }),
     ).toThrow(/not on main/);
+  });
+});
+
+describe("resolveReleaseIdentity", () => {
+  const task = (n: number, mergedAt: string) => ({
+    number: n,
+    title: `t${String(n)}`,
+    body: "",
+    head: "task/x",
+    mergedAt,
+  });
+  const releasePr = (n: number, release: string, mergedAt: string) => ({
+    number: n,
+    title: release,
+    body: `Release Issue: #1\nRelease: ${release}\n`,
+    head: "develop",
+    mergedAt,
+  });
+  const fakes = (opts: {
+    open?: boolean;
+    develop?: ReturnType<typeof task>[];
+    releases?: ReturnType<typeof releasePr>[];
+  }) => {
+    const releases = opts.releases ?? [];
+    const last = releases
+      .map((r) => r.mergedAt)
+      .sort()
+      .at(-1);
+    return {
+      pulls: {
+        findOpenPull: () =>
+          Promise.resolve(
+            opts.open === true ? { number: 14, head: "develop", base: "main" } : undefined,
+          ),
+      },
+      releases: {
+        mergedDevelopPulls: () => Promise.resolve(opts.develop ?? []),
+        lastReleaseMergedAt: () => Promise.resolve(last),
+        mergedReleasePulls: () => Promise.resolve(releases),
+      },
+    } as unknown as Parameters<typeof resolveReleaseIdentity>[0];
+  };
+  const repo = "omi-hub-services/omi-sandbox";
+
+  it("prepares as usual while the release PR is open", async () => {
+    expect(await resolveReleaseIdentity(fakes({ open: true }), repo, "v1")).toEqual({
+      kind: "prepare",
+    });
+  });
+  it("prepares as usual when merged tasks still wait for a release", async () => {
+    const deps = fakes({ develop: [task(11, "2026-11-13T10:00:00Z")] });
+    expect(await resolveReleaseIdentity(deps, repo, "v1")).toEqual({ kind: "prepare" });
+  });
+  it("finds the merged release PR on a restart after the release merge", async () => {
+    const deps = fakes({
+      develop: [task(11, "2026-11-13T10:00:00Z")],
+      releases: [
+        releasePr(9, "v0", "2026-11-01T10:00:00Z"),
+        releasePr(14, "v1", "2026-11-13T12:00:00Z"),
+      ],
+    });
+    expect(await resolveReleaseIdentity(deps, repo, "v1")).toEqual({
+      kind: "merged",
+      prNumber: 14,
+    });
+  });
+  it("refuses when no release PR names this release", async () => {
+    const deps = fakes({ releases: [releasePr(9, "v0", "2026-11-01T10:00:00Z")] });
+    await expect(resolveReleaseIdentity(deps, repo, "v1")).rejects.toThrow(/nothing to release/);
   });
 });

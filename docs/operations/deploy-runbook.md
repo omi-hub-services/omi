@@ -310,7 +310,10 @@ approvals, payloads and audit remain in the dedicated state directory. Preserve 
 Rerunning after a stop (OMI-099): keep the same config, state directory and review file, and run the
 same command again. If the task's mapped PR is already merged into `develop` on the `review.headSha`
 (merge commit on `develop`, read back from GitHub), the harness skips `preparePr`/`mergeTaskPr` and
-records `develop` as `done` with `resumed: true`. If the release PR is already merged into `main` on a
+records `develop` as `done` with `resumed: true`; it first re-evaluates the independent review file
+with the same domain check `mergeTaskPr` uses (pass, independent reviewer, every AC `met`). The
+release PR is found before `prepareRelease` runs (open PR, or the merged release PR naming
+`release`). If the release PR is already merged into `main` on a
 head the PO approved natively, it skips the release wait and merge and continues to publish and deploy
 (both idempotent). Every other gate (business, independent review, deploy approval, `sandbox`
 environment) is still checked. Any mismatch (closed unmerged, different head, merge commit not on the
