@@ -413,7 +413,7 @@ async function main(argv: string[]): Promise<number> {
     if (stateDir === undefined) throw new Error("--state-dir is required");
     return runLocalState(o, stateDir, peeled["--deploy-approval-id"], mode);
   }
-  if (command === "live-prep") return runLivePrepCommand(o, peeled, mode === "dry-run");
+  if (command === "live-prep") return runLivePrepCommand(o, peeled, mode !== "apply");
   throw new Error(
     "usage: main.ts <github|local-state|live-prep> --image … --digest … [--dry-run|--verify]",
   );

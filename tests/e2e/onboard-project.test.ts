@@ -85,6 +85,9 @@ describe("onboarding a new or existing project", () => {
       { path: ".omi-squad/workflows/onboarding-takeover.yaml", action: "would-create" },
       { path: ".omi-squad/config/codebase.yaml", action: "would-create" },
       { path: ".omi-squad/config/onboarding-plan.md", action: "would-create" },
+      ...(await deps.onboarding.templates.runtimeFiles())
+        .filter((file) => file.path !== ".omi-squad/workflows/onboarding-takeover.yaml")
+        .map((file) => ({ path: file.path, action: "would-create" })),
     ]);
     expect(await tree(root)).toEqual(before);
   });
@@ -93,13 +96,18 @@ describe("onboarding a new or existing project", () => {
     const fresh = await sandbox("empty-repo");
     const created = await initializeProject(fresh.deps, request("new", true));
     expect(created).toMatchObject({ status: "applied" });
-    expect(await tree(fresh.root)).toEqual([
-      ".omi-squad/config/codebase.yaml",
-      ".omi-squad/config/onboarding-plan.md",
-      ".omi-squad/config/project.yaml",
-      ".omi-squad/workflows/onboarding-empty-repo.yaml",
-      "README.md",
-    ]);
+    expect(await tree(fresh.root)).toEqual(
+      [
+        ...new Set([
+          ".omi-squad/config/codebase.yaml",
+          ".omi-squad/config/onboarding-plan.md",
+          ".omi-squad/config/project.yaml",
+          ".omi-squad/workflows/onboarding-empty-repo.yaml",
+          "README.md",
+          ...(await fresh.deps.onboarding.templates.runtimeFiles()).map((file) => file.path),
+        ]),
+      ].sort(),
+    );
 
     const taken = await sandbox("existing-repo");
     await initializeProject(taken.deps, request("existing", true));
@@ -122,6 +130,9 @@ describe("onboarding a new or existing project", () => {
     const result = await initializeProject(deps, request("existing", true));
     if (result.kind !== "codebase") throw new Error("Expected codebase");
     expect(Object.fromEntries(result.files.map((file) => [file.path, file.action]))).toEqual({
+      ...Object.fromEntries(
+        (await deps.onboarding.templates.runtimeFiles()).map((file) => [file.path, "created"]),
+      ),
       ".omi-squad/config/project.yaml": "created",
       ".omi-squad/workflows/onboarding-takeover.yaml": "kept",
       ".omi-squad/config/codebase.yaml": "kept",

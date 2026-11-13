@@ -1,0 +1,5 @@
+# Verify model aliases and capabilities before dispatching workers.
+schema_version: 1
+models: {}
+capability_profiles: {}
+verified_models: {}

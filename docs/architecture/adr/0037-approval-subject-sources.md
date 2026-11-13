@@ -1,6 +1,6 @@
 # ADR-0037 — Approval subject sources and imported task snapshots
 
-> Status note (2026-11-13 documentation reconciliation): The sandbox `live-prep` example below is an intended setup integration, not an existing command: `tools/sandbox-setup/main.ts` currently accepts only github/local-state. importTask/storeTaskSnapshots exist for in-process integration before the runtime lease starts; there is no import CLI/IPC. Do not treat the example as an executable operator recipe.
+> Status note (2026-11-13, OMI-096): `tools/sandbox-setup/main.ts` now exposes `live-prep`, which calls importTask/storeTaskSnapshots in-process before the runtime lease starts. `local-state` installs missing runtime catalogs through onboarding and synchronizes the runtime config hash; `live-prep` refreshes that hash after adding the deploy target. There is still no import CLI/IPC. See the deploy runbook for the preparation order.
 
 - Status: Accepted
 - Date: 2026-11-13

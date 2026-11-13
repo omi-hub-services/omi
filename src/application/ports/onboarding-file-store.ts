@@ -9,5 +9,6 @@ export interface OnboardingFileStore {
 
 /** Supplies the already schema-validated workflow template text for a variant. */
 export interface OnboardingTemplateSource {
+  runtimeFiles(): Promise<readonly { path: string; content: string }[]>;
   workflow(variant: OnboardingVariant): Promise<string>;
 }

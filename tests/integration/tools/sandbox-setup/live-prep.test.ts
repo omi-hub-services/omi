@@ -3,6 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runtimeLayout } from "../../../../tools/sandbox-setup/runtime-layout.ts";
+import {
+  loadRuntimeConfig,
+  runtimeConfigHash,
+} from "../../../../src/infrastructure/config/load-runtime-config.ts";
 import { requestApproval } from "../../../../src/application/use-cases/approvals/request-approval.ts";
 import type { GithubTaskReader } from "../../../../src/application/ports/github-task-reader.ts";
 import { sha256ContentHasher } from "../../../../src/infrastructure/artifacts/sha256-content-hasher.ts";
@@ -91,6 +95,18 @@ const liveConfig = (stateDir: string) =>
   >;
 
 describe("live-prep", () => {
+  it("loads runtime catalogs and opens the prepared runtime state without GitHub", async () => {
+    const { stateDir, deps, flags } = await setup();
+    await runLivePrep(deps, flags);
+    const config = await loadRuntimeConfig(join(stateDir, ".omi-squad"));
+    expect(config.workflows.byId("feature")).toBeDefined();
+    expect(query(stateDir, "SELECT config_hash FROM projects")).toEqual([
+      { config_hash: runtimeConfigHash(config) },
+    ]);
+    expect(config.catalog.roles.length).toBeGreaterThan(0);
+    expect(query(stateDir, "SELECT id FROM projects")).toEqual([{ id: "project-1" }]);
+  });
+
   it("stores the task snapshot, adds the deploy target and writes the config without any approval", async () => {
     const { stateDir, deps, flags } = await setup();
     const result = await runLivePrep(deps, flags);

@@ -92,6 +92,9 @@ export async function initializeProject(
       { path: ONBOARDING_PATHS.workflow(variant), content: await templates.workflow(variant) },
       { path: ONBOARDING_PATHS.codebase, content: renderCodebaseConfig(detection) },
       { path: ONBOARDING_PATHS.plan, content: renderOnboardingPlan(variant, detection) },
+      ...(await templates.runtimeFiles()).filter(
+        (file) => file.path !== ONBOARDING_PATHS.workflow(variant),
+      ),
     ];
     const reports: OnboardingFileReport[] = [];
     // project.yaml goes through its own store (validation, credential check, exclusive publish).

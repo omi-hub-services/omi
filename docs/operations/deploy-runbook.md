@@ -216,8 +216,21 @@ queries. It then, idempotently:
 simulates an approval. It then prints the next steps; the approval ids come from the runtime:
 
 1. Start the runtime with `<dir>` as its project directory: it finds the config and state that
-   `local-state` and `live-prep` wrote. The runtime also needs `models.yaml`, roles, rules and
-   workflows under `.omi-squad/` (`omi init` installs them); `live-prep` does not create them.
+   `local-state` and `live-prep` wrote. The preparation order is `github` → `local-state` →
+   `live-prep` → `local-state --verify` → runtime start. `local-state` uses framework onboarding
+   in-process to install missing models, roles, rules, skills/provenance and workflows, preserving
+   existing files. Both preparation steps synchronize the project row's `config_hash` with the
+   runtime function after config changes. `local-state --dry-run` and `--verify` list missing
+   catalogs and hash drift without writing; rerun apply to repair drift before starting.
+   The packaged models catalog is empty: configure and verify model capabilities before dispatch.
+   From the built framework checkout, start the runtime in a foreground terminal (keep stdin open):
+
+   ```sh
+   node dist/bootstrap/runtime.js <dir>
+   ```
+
+   Wait for `ready` before issuing approval commands. This starts only the dedicated sandbox;
+   never pass the framework source directory.
 2. `omi approvals request task-<n> --kind business` and
    `omi approvals request sandbox-<acceptance-id> --kind deploy` print the request ids.
 3. As **ttin-omihub**, comment the decision on the sandbox pipeline Issue, then record it with

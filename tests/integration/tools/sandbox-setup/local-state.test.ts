@@ -19,7 +19,14 @@ import {
   deployPipelineSchema,
   deployReleaseSchema,
 } from "../../../../src/application/contracts/deploy-delivery.ts";
-import { openReadOnlyStateDatabase } from "../../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
+import {
+  loadRuntimeConfig,
+  runtimeConfigHash,
+} from "../../../../src/infrastructure/config/load-runtime-config.ts";
+import {
+  openStateDatabase,
+  openReadOnlyStateDatabase,
+} from "../../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
 import {
   assertOutsideDirectory,
   inspectLocalState,
@@ -54,6 +61,51 @@ const deploy = {
 };
 
 describe("sandbox local state", () => {
+  it("preserves existing project config bytes when installing missing catalogs", async () => {
+    const stateDir = tempState();
+    await prepareLocalState({ ...base, stateDir });
+    const layout = runtimeLayout(stateDir);
+    const original = readFileSync(layout.configFile, "utf8") + "# operator comment\n";
+    writeFileSync(layout.configFile, original);
+    rmSync(join(stateDir, ".omi-squad/config/models.yaml"), { force: true });
+    const before = readFileSync(layout.database);
+    expect((await inspectLocalState({ ...base, stateDir })).missing).toContain(
+      ".omi-squad/config/models.yaml",
+    );
+    expect(readFileSync(layout.database)).toEqual(before);
+    expect(existsSync(join(stateDir, ".omi-squad/config/models.yaml"))).toBe(false);
+    await prepareLocalState({ ...base, stateDir });
+    expect(readFileSync(layout.configFile, "utf8")).toBe(original);
+    expect((await prepareLocalState({ ...base, stateDir })).changed).toEqual([]);
+  });
+
+  it("reports a stale project hash without writing and repairs it on apply", async () => {
+    const stateDir = tempState();
+    await prepareLocalState({ ...base, stateDir });
+    const layout = runtimeLayout(stateDir);
+    const db = openStateDatabase(layout.database);
+    db.prepare("UPDATE projects SET config_hash = ?").run("stale");
+    db.close();
+    const before = readFileSync(layout.database);
+    expect((await inspectLocalState({ ...base, stateDir })).missing).toEqual([
+      "project config_hash",
+    ]);
+    expect(readFileSync(layout.database)).toEqual(before);
+    expect((await prepareLocalState({ ...base, stateDir })).changed).toEqual([
+      "project config_hash",
+    ]);
+    const reopened = openReadOnlyStateDatabase(layout.database);
+    try {
+      const config = await loadRuntimeConfig(join(stateDir, ".omi-squad"));
+      expect(reopened.prepare("SELECT config_hash FROM projects").get()).toEqual({
+        config_hash: runtimeConfigHash(config),
+      });
+    } finally {
+      reopened.close();
+    }
+    expect((await inspectLocalState({ ...base, stateDir })).missing).toEqual([]);
+  });
+
   it("creates a migrated state.db, project row, project.yaml and artifacts directory", async () => {
     const stateDir = tempState();
     await prepareLocalState({ ...base, stateDir });
@@ -111,13 +163,18 @@ describe("sandbox local state", () => {
   it("inspect lists everything missing and writes nothing", async () => {
     const stateDir = tempState();
     const missing = await inspectLocalState({ ...base, stateDir, deploy });
-    expect(missing.missing).toEqual([
-      "artifacts/",
-      "project.yaml",
-      "state.db",
-      "project row",
-      "deploy-config.json",
-    ]);
+    expect(missing.missing).toEqual(
+      expect.arrayContaining([
+        "artifacts/",
+        "project.yaml",
+        "state.db",
+        "project row",
+        "deploy-config.json",
+        ".omi-squad/config/models.yaml",
+        ".omi-squad/roles/developer.yaml",
+        ".omi-squad/provenance/skills.lock.json",
+      ]),
+    );
     expect(existsSync(stateDir)).toBe(false);
   });
 
@@ -146,6 +203,7 @@ describe("sandbox local state", () => {
     };
     expect((await prepareLocalState({ ...base, stateDir, deployTarget: target })).changed).toEqual([
       "project.yaml",
+      "project config_hash",
     ]);
     await prepareLocalState({ ...base, stateDir, deployTarget: other });
     expect((await prepareLocalState({ ...base, stateDir, deployTarget: target })).changed).toEqual(
@@ -198,7 +256,8 @@ describe("sandbox local state", () => {
     expect(existsSync(join(stateDir, ".omi-squad"))).toBe(false);
 
     const { changed } = await prepareLocalState({ ...base, stateDir });
-    expect(changed).toEqual(missing);
+    expect(changed.slice(0, missing.length)).toEqual(missing);
+    expect(changed).toContain(".omi-squad/config/models.yaml");
     expect(readdirSync(stateDir)).toEqual([".omi-squad"]);
     expect((await inspectLocalState({ ...base, stateDir })).missing).toEqual([]);
     const db = openReadOnlyStateDatabase(runtimeLayout(stateDir).database);

@@ -127,8 +127,7 @@ export function nextSteps(input: {
   return [
     "Next steps (this script never creates or decides an approval):",
     `1. Start the runtime with ${input.stateDir} as its project directory (its config and state are there).`,
-    "   The runtime also needs models.yaml, roles, rules and workflows under .omi-squad/ (omi init",
-    "   installs them); live-prep does not create them.",
+    "   local-state installed the runtime catalogs; live-prep refreshed the project config hash.",
     `2. omi approvals request ${input.taskId} --kind business    (prints the request id)`,
     `3. omi approvals request ${input.deployTargetId} --kind deploy    (prints the request id)`,
     `4. As ${input.reviewer}, comment the decision on the sandbox pipeline Issue #${String(input.pipelineIssue)}.`,
