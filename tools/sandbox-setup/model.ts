@@ -82,6 +82,23 @@ export function assertSafeApiPath(path: string): void {
     throw new Error(`refused: ${path} contains a dot segment or encoded separator`);
 }
 
+/** The only repository the live harness accepts (`z.literal` in the live test). */
+export const LIVE_SANDBOX_REPOSITORY = "omi-hub-services/omi-sandbox";
+
+/** live-prep reads one sandbox Issue and runs GraphQL queries (the client refuses mutations). */
+export function assertLivePrepApiCall(
+  call: { readonly method: string; readonly path: string },
+  repository: string,
+): void {
+  assertSafeApiPath(call.path);
+  const issueRead =
+    repository === LIVE_SANDBOX_REPOSITORY &&
+    call.method === "GET" &&
+    new RegExp(`^repos/${LIVE_SANDBOX_REPOSITORY}/issues/\\d+$`).test(call.path);
+  if (!issueRead && !(call.method === "POST" && call.path === "graphql"))
+    throw new Error(`refused: ${call.method} ${call.path} is not a sandbox read`);
+}
+
 // ── rulesets (ADR-0015: no bypass, native review on main, named check) ───────────────────────
 interface Rule {
   readonly type: string;

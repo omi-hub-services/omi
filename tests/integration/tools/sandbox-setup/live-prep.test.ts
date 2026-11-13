@@ -223,4 +223,50 @@ describe("live-prep", () => {
       /does not match/,
     );
   });
+
+  // The runtime builds this subject from project.yaml deploy_targets (ADR-0037).
+  const requestDeploy = (stateDir: string, artifactDigest: string): string => {
+    const db = openStateDatabase(join(stateDir, "state.db"));
+    try {
+      const made = requestApproval(
+        {
+          subjects: {
+            read: () => ({ kind: "deploy", artifactDigest, environment: "sandbox" }),
+          },
+          unitOfWork: createSqliteStateUnitOfWork(db),
+          now: Date.now,
+          nextId: (() => {
+            let i = 0;
+            return () => `deploy-${artifactDigest.slice(-4)}-${String((i += 1))}`;
+          })(),
+        },
+        { schemaVersion: 1, subjectId: "sandbox-acceptance-042-a", kind: "deploy" },
+      );
+      if (!made.ok) throw new Error("fixture request failed");
+      return made.request.id;
+    } finally {
+      db.close();
+    }
+  };
+
+  it("fills in a pending deploy approval id after verifying its subject, and leaves it pending", async () => {
+    const { stateDir, deps, flags } = await setup();
+    await runLivePrep(deps, flags);
+    const id = requestDeploy(stateDir, digest);
+    const result = await runLivePrep(deps, { ...flags, deployApprovalId: id });
+    expect(liveConfig(stateDir)["deployApprovalId"]).toBe(id);
+    expect(result.lines.join("\n")).toContain(`deploy approval ${id}: pending`);
+    expect(query<{ status: string }>(stateDir, "SELECT status FROM approvals")).toEqual([
+      { status: "pending" },
+    ]);
+  });
+
+  it("refuses a deploy approval for another digest", async () => {
+    const { stateDir, deps, flags } = await setup();
+    await runLivePrep(deps, flags);
+    const id = requestDeploy(stateDir, `sha256:${"e".repeat(64)}`);
+    await expect(runLivePrep(deps, { ...flags, deployApprovalId: id })).rejects.toThrow(
+      /deploy approval .* does not match/,
+    );
+  });
 });

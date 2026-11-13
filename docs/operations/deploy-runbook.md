@@ -184,7 +184,9 @@ node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts live-pr
 Run `local-state` (previous section) first: `live-prep` refuses unless the directory is outside
 this repository, migrated, and has the project row, and it needs the `github` step's pipeline
 Issue and tag. The task Issue must exist in `omi-hub-services/omi-sandbox` and be an item of the
-sandbox Project; all reads go through a sandbox-only guard. It then, idempotently:
+sandbox Project. `live-prep` refuses any repository other than `omi-hub-services/omi-sandbox`
+(even with `--repo`), and its transport allows only one `GET` of a sandbox Issue and GraphQL
+queries. It then, idempotently:
 
 1. imports the Issue with `importTask` and `storeTaskSnapshots` into `state.db` (task id
    `task-<n>`; the business baseline is the snapshot `content_hash`),
@@ -208,6 +210,9 @@ simulates an approval. It then prints the next steps; the approval ids come from
 5. Fill the remaining placeholders by hand: `head` (pushed sandbox task branch from `develop`
    with green `sandbox-check`), `evidence` (one reference per top-level AC) and `reviewFile` (an
    actual independent review). Creating that branch is not automated.
+
+The imported Issue only provides the business baseline: the harness opens its own new task Issue
+from `idea` and `issueBody`, so the sandbox repository ends up with two Issues for one acceptance.
 
 `acceptanceId` identifies the durable Issue creation intent and evidence file; use a unique value
 for a fresh acceptance, and never change the meaning of an existing intent. `reviewFile` must be

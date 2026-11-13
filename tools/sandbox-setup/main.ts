@@ -26,6 +26,8 @@ import { parseLivePrepFlags, runLivePrep } from "./live-prep.ts";
 import { assertOutsideDirectory, inspectLocalState, prepareLocalState } from "./local-state.ts";
 import {
   CHECK_WORKFLOW_PATH,
+  LIVE_SANDBOX_REPOSITORY,
+  assertLivePrepApiCall,
   DEPLOY_WORKFLOW_PATH,
   PIPELINE_MARKER,
   SANDBOX_PROJECT_NUMBER,
@@ -315,19 +317,18 @@ async function runLivePrepCommand(
   peeled: Record<string, string | undefined>,
   dryRun: boolean,
 ): Promise<number> {
+  if (o.repository !== LIVE_SANDBOX_REPOSITORY)
+    throw new Error(`refused: live-prep works on ${LIVE_SANDBOX_REPOSITORY} only`);
   const flags = parseLivePrepFlags(peeled, dryRun);
   const observed = observe(o);
   if (observed.pipelineIssue === null || observed.tagSha === null)
     throw new Error("run the github step first: the pipeline Issue and the tag must exist");
   const actor = z.looseObject({ login: z.string() }).parse(read(o, "user"));
   const transport = createGhApiTransport();
-  const issuePath = new RegExp(`^repos/${o.repository}/issues/\\d+$`);
   const client = createGithubRestClient({
     transport: {
       send(call) {
-        const issueRead = call.method === "GET" && issuePath.test(call.path);
-        if (!issueRead && !(call.method === "POST" && call.path === "graphql"))
-          throw new Error(`refused: ${call.method} ${call.path} is not a sandbox read`);
+        assertLivePrepApiCall(call, o.repository);
         return transport.send(call);
       },
     },
