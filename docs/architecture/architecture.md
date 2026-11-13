@@ -447,11 +447,13 @@ v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch 
 | `omi prune-logs --project <path> [--task <id...>] [--dry-run]` | Retention log task Done |
 | `omi new-issue --project <path> --file <file> [--apply]`, `omi promote --project <path> [issue]`, `omi set-status --project <path> <issue> <status>` | Intake/readiness; xem handbook §9 và help cho flag bắt buộc |
 | `omi watch --project <path>`, `omi coordinator switch --to <profile>` | Read-only watch và handoff Coordinator |
+| `omi approvals list [--status <pending\|approved\|rejected\|expired\|invalidated>] [--json]` | Read-only runtime IPC (`approval.list`); id, kind, subjectId, status, version, requestedAt và decidedAt (epoch ms hoặc null); không in subject hash, actor hay evidence |
+| `omi workflows validate [--json]` | Offline tại project hiện tại: kiểm `.omi-squad/workflows/*.yaml`, roles/rules/skills qua loader runtime và resolver; mọi lỗi có file + field/path; exit 0 hợp lệ, 1 lỗi; JSON `{ ok, errors: [{ file, path, message }] }` |
 | `omi approvals request <subject-id> --kind <business\|deploy>` | Tạo request `pending` qua runtime IPC (`approval.request`), in request id và version; không có cờ quyết định (ADR-0037) |
 | `omi import-task <issue-number> [issue-number ...]` | Import Issue từ repository/Project trong `project.yaml` qua runtime IPC (`task.import`); in task id và `content_hash`, idempotent; không tạo/quyết approval |
 | `omi approvals decide <id> --expected-version <n> --decision <approved\|rejected> [--github-comment <id>]` | Chỉ runtime TTY hoặc GitHub actor được allowlist, theo ADR-0026 |
 
-`login`, `approvals list`, `workflows validate`, `sync` chưa có trong v0.1. `init` dùng nhánh local codebase của ADR-0029; mapping/copy GitHub Project vẫn là use case, chưa có CLI. Baseline JSON do caller cung cấp tường minh; không đoán repository, Project, branch, policy hay capability model. `models.yaml` do project cấu hình riêng trước khi chạy runtime.
+`login`, `sync` chưa có trong v0.1. `init` dùng nhánh local codebase của ADR-0029; mapping/copy GitHub Project vẫn là use case, chưa có CLI. Baseline JSON do caller cung cấp tường minh; không đoán repository, Project, branch, policy hay capability model. `models.yaml` do project cấu hình riêng trước khi chạy runtime.
 
 Runtime approval composition đọc business subject từ `content_hash` của task snapshot đã import (use case `storeTaskSnapshots` ghi `task_snapshots` qua `StateUnitOfWork`, task ID `task-<số Issue>`), scope là task ID; một revision import mới làm request cũ stale. Subject deploy lấy từ `deploy_targets` trong `project.yaml` (ADR-0037); đổi digest hoặc environment làm hash đổi. Subject cost/release cần reader của workflow sở hữu chúng và không được suy ra từ request/agent text. GitHub pathway mặc định từ chối mọi actor; `policies.github_approval_actors` trong project.yaml cấu hình allowlist. Terminal pathway vẫn yêu cầu TTY thật của runtime.
 

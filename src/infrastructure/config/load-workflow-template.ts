@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseDocument } from "yaml";
+import { parseConfigYaml } from "./config-diagnostics.js";
+import { ZodError } from "zod";
 import { slugSchema } from "../../application/contracts/identifiers.js";
 import { workflowSchema } from "../../application/contracts/workflow.js";
 import { ProjectInitializationError } from "../../application/ports/github-project-reader.js";
@@ -10,11 +11,14 @@ export async function loadWorkflowTemplate(directory: string, id: string): Promi
   if (!slugSchema.safeParse(id).success)
     throw new ProjectInitializationError("INVALID_WORKFLOW_TEMPLATE");
   const text = await readFile(join(directory, `${id}.yaml`), "utf8");
-  const document = parseDocument(text, { uniqueKeys: true, customTags: [], schema: "core" });
-  if (document.errors.length > 0 || document.warnings.length > 0)
-    throw new ProjectInitializationError("INVALID_WORKFLOW_TEMPLATE");
-  const parsed = workflowSchema.safeParse(document.toJS({ maxAliasCount: 0 }));
-  if (!parsed.success || parsed.data.id !== id)
-    throw new ProjectInitializationError("INVALID_WORKFLOW_TEMPLATE");
+  try {
+    const workflow = workflowSchema.parse(parseConfigYaml(text));
+    if (workflow.id !== id)
+      throw new ZodError([
+        { code: "custom", path: ["id"], message: "id must match the workflow filename" },
+      ]);
+  } catch (cause) {
+    throw Object.assign(new ProjectInitializationError("INVALID_WORKFLOW_TEMPLATE"), { cause });
+  }
   return text;
 }

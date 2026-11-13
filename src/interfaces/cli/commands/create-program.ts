@@ -16,6 +16,7 @@ import { registerStatusCommand, type OverviewCommands } from "./status-command.j
 import { registerProfileCommands } from "./profile-commands.js";
 import { registerLogCommands, type LogCommands } from "./log-commands.js";
 import { registerTaskCommands, type TaskCommands } from "./task-commands.js";
+import { registerWorkflowCommands, type WorkflowCommands } from "./workflow-commands.js";
 
 export interface CliEnvironment extends CliOutput {
   readonly readText?: CliContext["readText"];
@@ -29,6 +30,7 @@ export interface CliEnvironment extends CliOutput {
   readonly tasks?: TaskCommands;
   readonly overview?: OverviewCommands;
   readonly logs?: LogCommands;
+  readonly workflows?: WorkflowCommands;
 }
 
 /** Builds the Commander program. Every command is registered here and nowhere else. */
@@ -58,6 +60,7 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
   registerProfileCommands(program, context);
   registerTaskCommands(program, context, environment.tasks);
   registerLogCommands(program, context, environment.logs);
+  registerWorkflowCommands(program, context, environment.workflows);
   // Keep global flags usable after commands while update owns its --version argument.
   function inheritOptions(parent: Command): void {
     for (const child of parent.commands) {

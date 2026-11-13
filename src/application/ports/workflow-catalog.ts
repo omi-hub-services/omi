@@ -1,3 +1,4 @@
+import type { WorkflowValidationCatalog } from "../contracts/workflow-validation.js";
 import type { Workflow } from "../contracts/workflow.js";
 
 export interface PinnedWorkflow {
@@ -10,4 +11,8 @@ export interface PinnedWorkflow {
 export interface WorkflowCatalog {
   byId(id: string): PinnedWorkflow | undefined;
   byHash(hash: string): PinnedWorkflow | undefined;
+}
+
+export interface WorkflowValidationSource {
+  read(): Promise<WorkflowValidationCatalog>;
 }

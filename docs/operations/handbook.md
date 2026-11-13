@@ -27,7 +27,7 @@ JSON document `{"schemaVersion":1,"ok":…,"exitCode":…,"result"|"error":…}`
 SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<drive>`).
 
 **What the v0.1 CLI really has.** `--help` lists: `init`, `install`, `update`, `doctor`, `profiles {register,list,probe}`, `status`,
-`session {new,start}`, `approvals {request,decide}`, `plan`, `dispatch`, `wait`, `pause`, `resume`, `deliver`, `merge-release`,
+`session {new,start}`, `approvals {list,request,decide}`, `workflows validate`, `plan`, `dispatch`, `wait`, `pause`, `resume`, `deliver`, `merge-release`,
 `coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9), `watch`,
 `worker-report`, `commit-worker`, `review-comment`, and `prune-logs`.
 
@@ -42,10 +42,10 @@ SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<d
 | update         | `update`                                          | §7                                                                 |
 | recovery       | `status`, `resume`, `session new`, backups        | §8                                                                 |
 
-Also **not available in v0.1**: `approvals list`, `workflows validate`, `sync` (architecture.md §13).
+Also **not available in v0.1**: `sync` (architecture.md §13).
 
 **Exit codes** (stable, ADR-0020): `0` ok (the command succeeded, not "the task passed"), `1` failure
-inside the CLI or runtime (also `install`/`update` conflicts), `2` usage
+inside the CLI or runtime (also `install`/`update` conflicts and workflow validation errors), `2` usage
 error (nothing sent), `3` no runtime on the socket or timeout, `4` the runtime refused the request
 (`COMMAND_REFUSED`, `NOT_IMPLEMENTED`, …), `5` malformed runtime answer, `6` `DOCTOR_FAILED` (installation checks failed or could not run). Text mode prints errors on
 stderr as `error[CODE]: message`.
@@ -263,7 +263,27 @@ Refusals print `error[COMMAND_REFUSED]: <REASON>[: detail]` (exit 4). Reasons se
 `STEP_NOT_READY`, `NOT_PLANNABLE`, `STATE_REJECTED`, `TASK_NOT_READY` (the Issue fails the readiness
 gate, §9: `dispatch` creates no branch, attempt or worker). A usage error (exit 2) means a missing/invalid
 flag; numbers must be whole (`--issue 1`, not `1e3`). Exit 3: no runtime, start the session.
-Merge and PO-approval gates are in [ADR-0034](../architecture/adr/0034-task-pr-merge-gates.md); an
+Merge and PO-approval gates are in [ADR-0034](../architecture/adr/0034-task-pr-merge-gates.md).
+
+`<cli> approvals list [--status pending|approved|rejected|expired|invalidated] [--json]`
+reads the running runtime over IPC. JSON uses the standard CLI envelope with
+`result.approvals`: each row has `id`, `kind`, `subjectId`, persisted `status`, `version`,
+`requestedAt` (epoch milliseconds), and `decidedAt` (epoch milliseconds or null).
+No subject hashes, actor identities or decision evidence are printed. An empty selection
+returns an empty array. Legacy decisions without versioned request snapshots are excluded.
+Unknown statuses return usage exit 2 without contacting the runtime.
+
+Run `<cli> workflows validate [--json]` from the installed project's root before starting a
+session or after editing workflows, roles, rules or skills. It reads `.omi-squad/workflows/*.yaml`
+and the installed resolution catalog, including skill provenance, with the runtime's loaders;
+it needs neither a running runtime nor `project.yaml`/`models.yaml`. It checks workflow schemas
+and role/rule/skill references, not model capabilities or project check commands. Exit 0 means
+valid; exit 1 means validation failed. Text errors include the file and failing field/path
+(YAML syntax errors include line/column). JSON is exactly
+`{ "ok": false, "errors": [{ "file": "...", "path": "steps.1.role", "message": "..." }] }`
+on failure, or `{ "ok": true, "errors": [] }` on success. All loadable files are checked in
+one invocation, so independent errors can be repaired together.
+
 `approvals decide` uses the runtime approval composition:
 
 ```sh
@@ -572,7 +592,7 @@ listed there is `untested`. This table adds only what the CLI itself depends on:
 
 ## Known limitations
 
-- No `login`, `run`, `retry`, `approvals list`, `workflows validate`, `sync`.
+- No `login`, `run`, `retry`, `sync`.
 - Init uses local onboarding; GitHub Project mapping/template copy still has no CLI.
 - Init needs an explicit baseline; models remain project/workflow configuration. Import tasks
   explicitly with `import-task` after starting the session.
