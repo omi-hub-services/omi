@@ -1,0 +1,41 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Validate release tag and extract notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p .tmp
+          node tools/check-release.ts --tag "$RELEASE_TAG"
+      - run: npm ci
+      - run: npm run check
+      - name: Pack and checksum
+        run: |
+          npm pack --pack-destination .tmp
+          cd .tmp
+          sha256sum omi-squad-*.tgz > release.sha256
+          archive=$(node -p "'omi-squad-' + require('../package.json').version + '.tgz'")
+          mv release.sha256 "$archive.sha256"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" .tmp/omi-squad-*.tgz .tmp/omi-squad-*.tgz.sha256 --verify-tag --title "$RELEASE_TAG" --notes-file .tmp/release-notes.md
