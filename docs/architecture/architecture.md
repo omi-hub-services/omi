@@ -441,6 +441,7 @@ v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch 
 | `omi resume --run <id>` | Reconcile rồi tiếp tục |
 | `omi profiles register <id> --tool <claude-code\|codex> --profile-home <path> --account-group <id> [--model <name> ...]` | Đăng ký metadata vào registry SQLite qua runtime; trạng thái unknown đến khi probe |
 | `omi profiles list` / `omi profiles probe <id>` | Liệt kê/probe qua adapter hiện có; login dùng native CLI với CLAUDE_CONFIG_DIR/CODEX_HOME |
+| `omi login <profile-id> [--json]` | Wrapper CLI-only trên `profile.list` + `profile.probe`: in lệnh native (`CLAUDE_CONFIG_DIR=<home> claude` rồi `/login`, hoặc `CODEX_HOME=<home> codex login`, ADR-0031), probe, báo `ready`/`login-required`/`unavailable`; exit 0 chỉ khi ready, ngược lại 4. omi không spawn login và không đọc credential |
 | `omi worker-report --attempt <id>` | Đọc result và verification đã ghi |
 | `omi commit-worker --attempt <id> --message-file <file>` | Commit output trong phạm vi attempt đã dừng, không chạy hooks |
 | `omi review-comment --pr <number> --file <file>` | Validate verdict độc lập trên live head và AC trước khi post |
@@ -451,7 +452,7 @@ v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch 
 | `omi import-task <issue-number> [issue-number ...]` | Import Issue từ repository/Project trong `project.yaml` qua runtime IPC (`task.import`); in task id và `content_hash`, idempotent; không tạo/quyết approval |
 | `omi approvals decide <id> --expected-version <n> --decision <approved\|rejected> [--github-comment <id>]` | Chỉ runtime TTY hoặc GitHub actor được allowlist, theo ADR-0026 |
 
-`login`, `approvals list`, `workflows validate`, `sync` chưa có trong v0.1. `init` dùng nhánh local codebase của ADR-0029; mapping/copy GitHub Project vẫn là use case, chưa có CLI. Baseline JSON do caller cung cấp tường minh; không đoán repository, Project, branch, policy hay capability model. `models.yaml` do project cấu hình riêng trước khi chạy runtime.
+`approvals list`, `workflows validate`, `sync`, `run`, `retry` chưa có trong v0.1 (`sync` #235, `run` #236, `retry` #237). `init` dùng nhánh local codebase của ADR-0029; mapping/copy GitHub Project vẫn là use case, chưa có CLI. Baseline JSON do caller cung cấp tường minh; không đoán repository, Project, branch, policy hay capability model. `models.yaml` do project cấu hình riêng trước khi chạy runtime.
 
 Runtime approval composition đọc business subject từ `content_hash` của task snapshot đã import (use case `storeTaskSnapshots` ghi `task_snapshots` qua `StateUnitOfWork`, task ID `task-<số Issue>`), scope là task ID; một revision import mới làm request cũ stale. Subject deploy lấy từ `deploy_targets` trong `project.yaml` (ADR-0037); đổi digest hoặc environment làm hash đổi. Subject cost/release cần reader của workflow sở hữu chúng và không được suy ra từ request/agent text. GitHub pathway mặc định từ chối mọi actor; `policies.github_approval_actors` trong project.yaml cấu hình allowlist. Terminal pathway vẫn yêu cầu TTY thật của runtime.
 

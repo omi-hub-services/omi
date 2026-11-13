@@ -34,7 +34,7 @@ SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<d
 | Job            | v0.1 command                                      | Notes                                                              |
 | -------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
 | init           | `install`, `init`, `doctor`                       | Preview first; `--apply` creates files (§1)                       |
-| login/profiles | `profiles register/list/probe`                    | Login with the native tool (§2)                                   |
+| login/profiles | `login`, `profiles register/list/probe`           | Login with the native tool; `login` shows the step and probes (§2) |
 | intake         | `new-issue`, `promote`, `set-status`              | Preview first; readiness gate (§9)                                |
 | run            | `plan` → `dispatch` → `wait` → `status` → `deliver` | `run` **not available in v0.1** (see §3)                         |
 | pause / resume | `pause`, `resume`                                 | §4, §5                                                             |
@@ -202,6 +202,13 @@ Probes reuse ADR-0023: Claude native status, Codex bounded in-memory auth-mode v
 never stored, printed, logged or copied, and auth files are never written by the framework. Probes
 do not make model calls, measure quota or expand the model allowlist. Native login itself remains
 unverified here; tests use fake executables and synthetic profile caches.
+
+`<cli> login <profile-id> [--json]` is a shortcut for the daily check: it looks the registered profile
+up, prints the exact native step (`CLAUDE_CONFIG_DIR=<home> claude` then `/login`, or
+`CODEX_HOME=<home> codex login`), probes it, and reports `ready`, `login-required` or `unavailable`
+(a disabled, cooling-down or stale profile counts as unavailable). Exit 0 only when ready, exit 4
+otherwise or for an unknown profile (`PROFILE_NOT_FOUND`). It starts no login, reads no credential file
+and prints only the profile directory path; run the native step yourself, then run `login` again.
 
 ## 3. Run
 
@@ -572,7 +579,7 @@ listed there is `untested`. This table adds only what the CLI itself depends on:
 
 ## Known limitations
 
-- No `login`, `run`, `retry`, `approvals list`, `workflows validate`, `sync`.
+- No `run`, `retry`, `approvals list`, `workflows validate`, `sync`.
 - Init uses local onboarding; GitHub Project mapping/template copy still has no CLI.
 - Init needs an explicit baseline; models remain project/workflow configuration. Import tasks
   explicitly with `import-task` after starting the session.
