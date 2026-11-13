@@ -49,9 +49,8 @@ export async function lookupPullMerge(
 }
 
 /** The workflow must validate delivery gates before queueing this intent (`mergeTaskPr` does so
- * under the merge lock). Restrict this path to task merges into develop; release merges require
- * the separate PO-approved delivery flow. Reads before the PUT, so a confirmed merge is never sent
- * twice.
+ * under the merge lock for develop; `mergeRelease` runs the PO-approval gate for main). Reads
+ * before the PUT, so a confirmed merge is never sent twice.
  */
 export async function sendPullMerge(
   client: GithubRestClient,

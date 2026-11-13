@@ -14,6 +14,7 @@ import { preparePr } from "../../../src/application/use-cases/delivery/prepare-p
 import { mergeTaskPr } from "../../../src/application/use-cases/delivery/merge-task-pr.ts";
 import { prepareRelease } from "../../../src/application/use-cases/delivery/prepare-release.ts";
 import { checkReleaseMerge } from "../../../src/application/use-cases/delivery/check-release-merge.ts";
+import { mergeRelease } from "../../../src/application/use-cases/delivery/merge-release.ts";
 import { publishRelease } from "../../../src/application/use-cases/delivery/publish-release.ts";
 import { deployRelease } from "../../../src/application/use-cases/delivery/deploy-release.ts";
 import { checkExecutionApprovals } from "../../../src/application/services/check-execution-approvals.ts";
@@ -89,7 +90,6 @@ it.skipIf(config === undefined)(
     const leases = createSqliteLeaseStore(db);
     const approvals = createSqliteApprovalStore(db);
     const transport = createGhApiTransport();
-    const base = `repos/${c.repository}`;
     const report: Record<string, unknown> = {
       acceptanceId: c.acceptanceId,
       repository: c.repository,
@@ -332,15 +332,16 @@ it.skipIf(config === undefined)(
       }
       report["releaseReviews"] = await reader.nativeReviews(c.repository, release.prNumber);
       save();
-      // No product release merge use case exists. This harness performs the head-pinned native merge.
+      // The product use case runs the gate again, merges pinned to the approved head and confirms main.
       if (releaseResume.action !== "skip") {
-        const merge = await rest.request({
-          method: "PUT",
-          path: `${base}/pulls/${String(release.prNumber)}/merge`,
-          body: { sha: head, merge_method: "merge" },
-        });
-        if (merge.kind !== "ok")
-          throw new Error("release merge unconfirmed; inspect GitHub before retry");
+        const merged = await mergeRelease(
+          { ...deps, reader: createGithubReleaseMergeReader(rest) },
+          { ...releaseRequest, release: c.release },
+        );
+        report["releaseMerge"] = merged;
+        save();
+        if (merged.status !== "done")
+          throw new Error("release merge not done; inspect GitHub before retry");
       }
       const published = await publishRelease(
         { ...deps, releases, pulls: reader },

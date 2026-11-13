@@ -2,6 +2,7 @@ import { z } from "zod";
 import { recordApprovalSchema, requestApprovalSchema } from "./approval.js";
 import { identifierSchema, slugSchema } from "./identifiers.js";
 import { mergeTaskPrSchema } from "./merge-delivery.js";
+import { mergeReleaseSchema } from "./release-merge.js";
 import { schemaVersionV1 } from "./schema-version.js";
 import { registerProfileSchema } from "./profile-metadata.js";
 import { importTaskSelectionSchema } from "./task-import.js";
@@ -83,6 +84,10 @@ export const commandSchema = z
         minimumNativeApprovals: true,
       }).shape,
     }),
+    // Repository and PO logins are trusted runtime configuration; a command never names them.
+    mergeReleaseSchema
+      .omit({ repository: true, poActors: true })
+      .extend({ ...envelope, command: z.literal("release.merge") }),
     z.strictObject({
       ...envelope,
       command: z.literal("handoff"),

@@ -27,7 +27,7 @@ JSON document `{"schemaVersion":1,"ok":…,"exitCode":…,"result"|"error":…}`
 SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<drive>`).
 
 **What the v0.1 CLI really has.** `--help` lists: `init`, `install`, `update`, `doctor`, `profiles {register,list,probe}`, `status`,
-`session {new,start}`, `approvals {request,decide}`, `plan`, `dispatch`, `wait`, `pause`, `resume`, `deliver`,
+`session {new,start}`, `approvals {request,decide}`, `plan`, `dispatch`, `wait`, `pause`, `resume`, `deliver`, `merge-release`,
 `coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9), `watch`,
 `worker-report`, `commit-worker`, `review-comment`, and `prune-logs`.
 
@@ -246,6 +246,16 @@ a configured project (§1).
 6. `<cli> deliver --run <id> --pr <n> --head-sha <sha> --check <name> [--check …] [--min-approvals <n>]`
    merges the reviewed head into `develop` and closes the task. `--head-sha` must be the head the
    independent review examined; at least one `--check` is required.
+
+7. `<cli> merge-release --release <label> --pr <n> --head-sha <sha> [--check <name> …]`
+   merges the release PR `develop` → `main` on the head the PO approved natively
+   ([ADR-0039](../architecture/adr/0039-release-merge-and-two-layer-deploy-approval.md)). It runs
+   `checkReleaseMerge` first, pins the native merge to `--head-sha`, and confirms the merge commit on
+   `main`. PO logins come from `policies.github_approval_actors` in `project.yaml` (none configured:
+   `PO_ACTORS_NOT_CONFIGURED`); the command cannot name them. A refusal prints `RELEASE_MERGE_REFUSED: <gate|merge|confirm>: <REASONS>` (exit 4) and
+   merges nothing; the same command is safe to repeat (`pending`, or already merged, sends no second
+   merge). **Two deploy approval layers stay (PO, 2026-11-13):** the durable approval by artifact
+   digest and the native GitHub environment approval; the release merge approval replaces neither.
 
 Refusals print `error[COMMAND_REFUSED]: <REASON>[: detail]` (exit 4). Reasons seen in the code
 (not all reproduced live, see the record): `PROJECT_NOT_CONFIGURED`, `INVALID_INPUT`, `WORKFLOW_REQUIRED`,

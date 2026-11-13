@@ -125,8 +125,9 @@ listed user; team/app membership is not inferred. Locked branches, missing write
 non-clean mergeability refuse. These conservative refusals never request a bypass.
 
 The result is a snapshot, not a stored authorization. Re-run immediately before a merge and use
-the expected SHA as GitHub's merge guard. This task adds no release merge write path; the task
-merge outbox remains restricted to `develop`. GitHub remains authoritative for restrictions and
+the expected SHA as GitHub's merge guard. The product `mergeRelease` use case (OMI-105,
+ADR-0039, `merge-release` command) does exactly that: gate, head-pinned merge, confirmation on
+`main`. GitHub remains authoritative for restrictions and
 credential scopes at the eventual merge. Live merge attempts and server refusal responses are
 not exercised by the read-only probe below.
 
