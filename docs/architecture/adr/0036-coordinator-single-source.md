@@ -190,3 +190,13 @@ including status, revision, findings, checks, artifact references, applied skill
 It exits zero only for a valid succeeded result; valid failed/blocked documents remain visible
 and exit one. Schema validity is a claim, never an approval. Round-trip regressions cover all
 three statuses and ensure that revision and blocker evidence cannot disappear behind a summary.
+
+OMI-110, native-resume packets: `flow.ts prompt --findings` no longer relies on the thread
+remembering the first packet. It renders the step's skills and rules, read from the worker
+checkout's templates, plus `receiving-code-review`, all before the findings section, and still
+omits the first packet's notes and scope. The skill rule lives once, in `resumeSkills`
+(`src/domain/workflows/workflow-policy.ts`). The runtime dispatch (`plan-step-dispatch`, rounds
+after the first) and the script-run tooling both import it; tooling keeps no copy
+(`policy-parity.test.ts`). `watch` reads the `## Skill:` and `## Rule:` headings of the
+resume prompt like any full packet, so it shows what the resumed worker was given. No approval
+requirement is relaxed.

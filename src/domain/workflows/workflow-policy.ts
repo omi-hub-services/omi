@@ -188,6 +188,17 @@ function gateTarget(gate: WorkflowGate): string {
   return "before" in gate ? gate.before : gate.after;
 }
 
+/** Skill every rework or native-resume packet carries on top of the step's own skills. */
+export const REWORK_SKILL = "receiving-code-review";
+
+/**
+ * Skills of a rework/resume packet: the step's skills plus `receiving-code-review`. Single rule
+ * shared by the runtime rework dispatch and the script-run `flow.ts prompt --findings`.
+ */
+export function resumeSkills(stepSkills: readonly string[]): readonly string[] {
+  return stepSkills.includes(REWORK_SKILL) ? stepSkills : [...stepSkills, REWORK_SKILL];
+}
+
 export type GateStatus = "open" | "passed" | "failed";
 
 export interface StepStartability {

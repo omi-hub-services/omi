@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateRunCompletion,
   evaluateStepStartability,
+  resumeSkills,
   validateWorkflowGraph,
 } from "../../../../src/domain/workflows/workflow-policy.ts";
 import type { WorkflowGraph } from "../../../../src/domain/workflows/workflow-policy.ts";
@@ -168,5 +169,12 @@ describe("evaluateRunCompletion", () => {
       "STEPS_NOT_SUCCEEDED",
       "MANDATORY_GATE_NOT_PASSED",
     ]);
+  });
+});
+
+describe("resumeSkills", () => {
+  it("appends receiving-code-review once, after the step skills", () => {
+    expect(resumeSkills(["a", "b"])).toEqual(["a", "b", "receiving-code-review"]);
+    expect(resumeSkills(["receiving-code-review", "a"])).toEqual(["receiving-code-review", "a"]);
   });
 });

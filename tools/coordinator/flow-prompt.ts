@@ -10,7 +10,8 @@ const { planWorkflowQuality, taskQualityFacts, qualityStepId } =
 const { implementationPaths } =
   await import("../../src/application/services/resolve-dispatch-task.ts");
 const { taskComplexitySchema } = await import("../../src/application/contracts/task-complexity.ts");
-const { resolveWorkflowRoute } = await import("../../src/domain/workflows/workflow-policy.ts");
+const { resolveWorkflowRoute, resumeSkills } =
+  await import("../../src/domain/workflows/workflow-policy.ts");
 import { extractAcceptanceCriteria } from "./acceptance-criteria.ts";
 import { OWNER, PROJECT_NUMBER, REPO } from "./coordinator-settings.ts";
 import type { WorkerCtx } from "./flow-workers.ts";
@@ -286,6 +287,21 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
             `--- BEGIN COMMENT by ${c.author ?? "[deleted]"} · ${c.url}${/scope.note|SCOPE-APPROVED/i.test(c.body) ? " · scope-note candidate" : ""} ---\n${c.body}\n--- END COMMENT ---`,
         ),
       ].join("\n\n");
+    const skillsText = (
+      await Promise.all(
+        packetSteps.map(
+          async (s) =>
+            `## Step ${s.id} · role ${s.role}\n\n${await sections("skills", resume ? resumeSkills(s.skills) : s.skills)}`,
+        ),
+      )
+    ).join("\n\n");
+    const rulesText = (
+      await Promise.all(
+        packetSteps.map(
+          async (s) => `## Step ${s.id} rules\n\n${await sections("rules", s.rules)}`,
+        ),
+      )
+    ).join("\n\n");
     const text = renderWorkerPrompt(await read("templates/prompts/worker-prompt.md"), {
       identity: `${resume ? `${NATIVE_RESUME_HEADER}\n\n` : ""}<!-- omi-quality ${JSON.stringify(quality)} -->\n# Workflow ${template.workflow.id} · step ${packetSteps.map((s) => s.id).join(" + ")} · role ${step.role}`,
       workspace: `## Workspace\nWork only in ${target.repoDir}\nBranch: ${branch}`,
@@ -296,29 +312,13 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       notes:
         `${evidence.join("\n\n")}\n\n` +
         (resume
-          ? `## Review findings (native resume only)\n\n${await readFile(input.findings, "utf8")}`
+          ? // Resume: skills and rules ride in this slot so they come before the findings.
+            `${skillsText}\n\n${rulesText}\n\n## Review findings (native resume only)\n\n${await readFile(input.findings, "utf8")}`
           : input.notes === undefined
             ? ""
             : `## Coordinator notes\n\n${await readFile(input.notes, "utf8")}`),
-      skills: resume
-        ? ""
-        : (
-            await Promise.all(
-              packetSteps.map(
-                async (s) =>
-                  `## Step ${s.id} · role ${s.role}\n\n${await sections("skills", s.skills)}`,
-              ),
-            )
-          ).join("\n\n"),
-      rules: resume
-        ? ""
-        : (
-            await Promise.all(
-              packetSteps.map(
-                async (s) => `## Step ${s.id} rules\n\n${await sections("rules", s.rules)}`,
-              ),
-            )
-          ).join("\n\n"),
+      skills: resume ? "" : skillsText,
+      rules: resume ? "" : rulesText,
       restrictions: (await read("templates/prompts/repository-worker-restrictions.md")).trimEnd(),
       report_contract: (await read("templates/prompts/repository-worker-report.md"))
         .trimEnd()

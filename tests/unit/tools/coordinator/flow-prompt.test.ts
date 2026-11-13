@@ -279,7 +279,11 @@ it("renders findings only for native resume", async () => {
   expect(text).toContain("native resume");
   expect(text).toContain("Rules applied");
   expect(text).not.toContain(body);
-  expect(text).not.toContain("## Skill:");
+  expect(text).toContain("## Skill: minimal-change");
+  expect(text).toContain("## Rule: project-baseline");
+  const review = text.indexOf("## Skill: receiving-code-review");
+  expect(review).toBeGreaterThan(-1);
+  expect(review).toBeLessThan(text.indexOf("fix this"));
 });
 
 it.each([

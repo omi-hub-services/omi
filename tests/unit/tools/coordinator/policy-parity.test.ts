@@ -1,4 +1,5 @@
 // Characterization of transitional copies: transport units differ, policy decisions must agree.
+import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { judgeCarriedHead as productCarry } from "../../../../src/domain/delivery/carried-pass-policy.ts";
 import { judgeCarriedHead as repoCarry } from "../../../../tools/coordinator/carried-pass.ts";
@@ -235,4 +236,10 @@ it("keeps review presentation decisions aligned on canonical full-head comments"
     expect(checkReview(body, { acCount: 1, prHead: head }).ok).toBe(
       reviewCommentRefusals(body, head, 1).length === 0,
     );
+});
+
+it("rework packet skills come from the shared domain policy, not a tooling copy", () => {
+  const source = readFileSync("tools/coordinator/flow-prompt.ts", "utf8");
+  expect(source).toContain("resumeSkills");
+  expect(source).not.toContain("receiving-code-review");
 });
