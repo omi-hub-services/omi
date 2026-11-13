@@ -651,3 +651,14 @@ own status/flow/watch scripts. Keep the host work checkout as cwd and configure
 `OMI_WSL_REPO_DIR` for the task; prompts/workflows/skills/rules come from the pin, while Git,
 checks and workers operate on the WSL target. Reinstall skills from templates after merging
 changes; workers do not edit native skills.
+
+
+The installed pin bootstrap now validates physical checkout/entry-point isolation using an
+embedded Node-built-in guard before executing the configured pin. Host/WSL worktrees and their
+aliases are rejected without invoking the candidate status script. Its status response must
+match the guard's canonical path and cannot redirect later commands.
+
+Repository `worker-report` prints the complete validated JSON result plus log metadata, preserving
+revision SHA, status, findings, checks and artifacts. Valid blocked/failed results return exit 1;
+a valid succeeded result returns 0. Inspect the document even on nonzero exit, and use its
+`revision.headSha` for the fixed-head check. Never treat a summary or schema validity as approval.

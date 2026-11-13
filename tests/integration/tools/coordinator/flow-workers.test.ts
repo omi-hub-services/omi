@@ -208,7 +208,7 @@ describe("workerReportCommand", () => {
     expect(await workerReportCommand(f.ctx, { planKey: "OMI-077", dryRun: false })).toBe(0);
     const text = out.join("\n");
     expect(text).toContain("FINAL REPORT");
-    expect(text).not.toContain("schemaVersion");
+    expect(text).toContain("schemaVersion");
     expect(text).toContain("turns: 12");
     expect(text).toContain("Bash: git push");
     expect(text).toContain("session id: S1");
@@ -516,3 +516,37 @@ it("refuses a commit when in-scope untracked leftovers remain after staging", as
   expect(f.seen.some((c) => payload(c).includes("commit -F"))).toBe(false);
   expect(err.join("\n")).toContain("untracked");
 });
+
+it.each(["succeeded", "blocked", "failed"] as const)(
+  "preserves the complete %s worker result and its outcome",
+  async (status) => {
+    const document = {
+      schemaVersion: 1,
+      runId: "repo-77",
+      stepId: "implement",
+      attemptId: "repo-77-implement-1",
+      status,
+      summary: "Short summary without the evidence below",
+      revision: { headSha: "a".repeat(40), baseSha: "b".repeat(40) },
+      findings: [
+        { id: "missing-input", severity: "blocker", message: "Requires Coordinator input" },
+      ],
+      checks: [{ id: "unit", evidenceRef: ".tmp/check.json" }],
+      artifacts: [{ path: ".tmp/evidence.md", sha256: "c".repeat(64) }],
+      skillsApplied: [{ id: "minimal-change", evidenceRef: ".tmp/evidence.md" }],
+      nextAction: "ask-coordinator",
+    };
+    const f = fake((c) => {
+      if (payload(c).includes("ls -t"))
+        return { stdout: "/home/u/omi-runs/omi-077-ggtintran-20261112-1.jsonl\n" };
+      if (payload(c).startsWith("cat "))
+        return { stdout: JSON.stringify({ type: "result", result: JSON.stringify(document) }) };
+      return undefined;
+    });
+    expect(await workerReportCommand(f.ctx, { planKey: "OMI-077", dryRun: false })).toBe(
+      status === "succeeded" ? 0 : 1,
+    );
+    expect((out[0] ?? "").startsWith("{")).toBe(true);
+    expect(JSON.parse((out[0] ?? "").split("\n\nlog:")[0] ?? "")).toEqual(document);
+  },
+);

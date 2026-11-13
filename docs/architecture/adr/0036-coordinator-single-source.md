@@ -161,3 +161,32 @@ After first install, omit `--to` to rematerialize the checked-in pin; its proven
 read-only and reports an absent checkout as uninitialized, never silently falling back to
 moving develop. A failed first install leaves no active checkout. Refresh changes the tracked
 record for Coordinator review/commit; it never commits, pushes or changes GitHub state.
+
+
+## Bootstrap isolation and complete worker evidence (review correction)
+
+Installed skills embed `templates/prompts/coordinator-pin-guard.cjs` verbatim inside the shared
+PowerShell bootstrap. The embedded program uses only Node built-ins: before spawning the selected
+pin's status entry point, it resolves physical paths for the host checkout, WSL work target,
+configured pin and entry point. Ancestors/descendants, source-pointing symlink aliases and entry
+points outside the pin are refused before any selected checkout code executes. Missing paths
+fail closed. The WSL defaults and pin directory name are supplied by the installer from their
+existing authoritative owners; the guard imports no code from develop or the selected checkout.
+
+After that isolation check, status must report initialized and the same canonical checkout.
+Its response cannot redirect business commands into a worktree: the guard returns its own
+validated path. Regression fixtures contain entry points that write a marker and fabricate
+initialized status; rejected host/WSL paths, aliases, ancestors and escaping entry symlinks never
+execute them. A valid isolated fixture executes, and a forged status redirect is rejected.
+
+AGENTS §1.4 transitional-copy scope: the controller's pure `assertSeparatePin` check remains a
+copy of the guard's canonical containment rule. Importing it before validation would reintroduce
+the trust dependency. This copy is registered in `COPY_PARITY`, with parity exercised against
+canonical host, WSL, alias and independent paths in `pin-bootstrap.test.ts`; extra entry-point
+containment belongs to the embedded guard. No other exemption or approval relaxation is granted.
+
+`worker-report` prints the entire validated v1 JSON document before its log/turn/session metadata,
+including status, revision, findings, checks, artifact references, applied skills and next action.
+It exits zero only for a valid succeeded result; valid failed/blocked documents remain visible
+and exit one. Schema validity is a claim, never an approval. Round-trip regressions cover all
+three statuses and ensure that revision and blocker evidence cannot disappear behind a summary.

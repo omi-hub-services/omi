@@ -45,7 +45,7 @@ it.each(["omi-next", "omi-status", "omi-watch"])(
     expect(text).toContain("$coordinatorPin/tools/coordinator/");
     expect(text).toContain("{{pin_bootstrap}}");
     expect(readFileSync("templates/prompts/coordinator-pin-bootstrap.md", "utf8")).toContain(
-      "pinStatus.initialized",
+      "{{pin_guard}}",
     );
   },
 );
@@ -53,5 +53,6 @@ it.each(["omi-next", "omi-status", "omi-watch"])(
 it("does not load the working source even to bootstrap an installed pin", () => {
   const text = readFileSync("templates/prompts/coordinator-pin-bootstrap.md", "utf8");
   expect(text.includes("node tools/coordinator/")).toBe(false);
-  expect(text).toContain('node "$coordinatorPin/tools/coordinator/pin.ts" status');
+  expect(text).toContain("{{pin_guard}}");
+  expect(text).toContain("node --input-type=commonjs -");
 });

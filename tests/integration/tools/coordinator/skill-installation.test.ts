@@ -27,12 +27,13 @@ it("has a preview/apply/check installer for Coordinator-owned skills", async () 
     await mkdir(join(root, "templates/prompts"), { recursive: true });
     await writeFile(
       join(root, "templates/prompts/coordinator-pin-bootstrap.md"),
-      "PIN BOOTSTRAP {{pin_directory_name}}\n",
+      "PIN BOOTSTRAP {{pin_directory_name}}\n{{pin_guard}}\n",
     );
+    await writeFile(join(root, "templates/prompts/coordinator-pin-guard.cjs"), "TRUSTED GUARD\n");
     await writeFile(join(source, "SKILL.md"), "{{pin_bootstrap}}\ncommands\n");
     await installCoordinatorSkills(root, true);
     expect(await readFile(join(root, ".claude/skills/omi-next/SKILL.md"), "utf8")).toBe(
-      "PIN BOOTSTRAP omi-coordinator-pin\ncommands\n",
+      "PIN BOOTSTRAP omi-coordinator-pin\nTRUSTED GUARD\ncommands\n",
     );
   } finally {
     await rm(root, { recursive: true, force: true });

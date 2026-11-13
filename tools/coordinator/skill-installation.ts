@@ -1,5 +1,6 @@
 // Coordinator-only native skill installation; never installs runtime state into framework source.
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { wslTarget } from "./coordinator-target.ts";
 import { PIN_DIRECTORY_NAME } from "./pin-policy.ts";
 import { join, resolve } from "node:path";
 import "../register-ts-imports.ts";
@@ -20,11 +21,21 @@ export async function installCoordinatorSkills(root: string, apply: boolean): Pr
     if (content.includes("{{pin_bootstrap}}")) {
       const bootstrap = join(root, "templates/prompts/coordinator-pin-bootstrap.md");
       await assertPlainParents(root, bootstrap);
+      const text = await readFile(bootstrap, "utf8");
+      const guard = join(root, "templates/prompts/coordinator-pin-guard.cjs");
+      if (text.includes("{{pin_guard}}")) await assertPlainParents(root, guard);
+      const defaults = wslTarget("linux", {});
       content = content.replaceAll(
         "{{pin_bootstrap}}",
-        (await readFile(bootstrap, "utf8"))
+        text
           .trimEnd()
-          .replaceAll("{{pin_directory_name}}", PIN_DIRECTORY_NAME),
+          .replaceAll("{{pin_directory_name}}", PIN_DIRECTORY_NAME)
+          .replaceAll("{{pin_default_wsl_repo}}", defaults.repoDir)
+          .replaceAll("{{pin_default_wsl_distro}}", defaults.distro)
+          .replaceAll(
+            "{{pin_guard}}",
+            text.includes("{{pin_guard}}") ? (await readFile(guard, "utf8")).trimEnd() : "",
+          ),
       );
     }
     if ((await readOptional(target)) === content) continue;

@@ -5,6 +5,11 @@ import { installCoordinatorSkills } from "./skill-installation.ts";
 
 export const COPY_PARITY = [
   {
+    repo: "tools/coordinator/pin-policy.ts",
+    framework: "templates/prompts/coordinator-pin-guard.cjs",
+    test: "tests/integration/tools/coordinator/pin-bootstrap.test.ts",
+  },
+  {
     repo: "tools/coordinator/review-verdict.ts",
     framework: "src/domain/delivery/acceptance-review.ts",
     test: "tests/unit/tools/coordinator/policy-parity.test.ts",

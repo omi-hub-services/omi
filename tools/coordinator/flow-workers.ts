@@ -202,13 +202,13 @@ export async function workerReportCommand(
   console.log(
     formatReport({
       ...report,
-      report: validated?.success ? validated.data.summary : report.report,
+      report: validated?.success ? JSON.stringify(validated.data, null, 2) : report.report,
     }),
   );
   if (report.report === null) return 1;
   if (!validated?.success)
     return refuse(label, "worker report does not satisfy the framework step-result-v1 contract");
-  return 0;
+  return validated.data.status === "succeeded" ? 0 : 1;
 }
 
 /** Commits a worker's changes (Codex cannot) in the allowed paths only, then prints the SHA. */
