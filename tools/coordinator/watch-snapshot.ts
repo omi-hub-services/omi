@@ -93,12 +93,16 @@ function cardOf(view: TaskView): TaskCard {
           ...(standing.atGate === undefined ? {} : { atGate: standing.atGate }),
         });
   const prompt = view.prompt;
-  const notes = [view.stepReason, template === null ? view.templateReason : null].flatMap((note) =>
-    note === null ? [] : [note],
-  );
+  const notes = [
+    view.stepReason,
+    template === null ? view.templateReason : null,
+    view.worker !== null && prompt === null
+      ? "worker packet unknown: skills and rules not shown"
+      : null,
+  ].flatMap((note) => (note === null ? [] : [note]));
   const worker = view.worker;
   return {
-    runId: view.planKey === "-" ? `issue-${String(view.issue ?? 0)}` : view.planKey,
+    runId: view.planKey === "-" ? `issue-${String(view.issue ?? 0)}` : view.rowId,
     issueNumber: view.issue ?? 0,
     planKey: view.planKey === "-" ? null : view.planKey,
     title: view.title === "-" ? null : view.title,

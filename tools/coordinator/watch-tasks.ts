@@ -30,7 +30,7 @@ import {
   type TemplatePos,
   type TemplateRead,
 } from "./watch-workflow.ts";
-import type { WorkerProcess, Workers } from "./wsl-workers.ts";
+import { PACKET_FILE, type WorkerProcess, type Workers } from "./wsl-workers.ts";
 
 export type Step =
   | "Start"
@@ -319,16 +319,36 @@ export function parsePromptText(text: string): PromptInfo {
 
 const PLAN_KEY = /^OMI-(\d{1,4})$/;
 
-/** One bash payload: per task, the matching lines of its prompt, never the prompt itself. */
-function promptPayload(numbers: readonly string[]): string {
-  const grep = `grep -E '^(# Workflow |## Skill: |## Rule: )'`;
-  return (
-    `for n in ${numbers.join(" ")}; do f=$HOME/${RUNS_DIR_FROM_HOME}/omi-$n-prompt.md; ` +
-    `if [ -f $f ]; then echo @@prompt $n; ${grep} $f | head -n 80; else echo @@missing $n; fi; done`
-  );
+const GREP = `grep -E '^(# Workflow |## Skill: |## Rule: )'`;
+
+/**
+ * One bash payload: per task, the matching lines of its newest full packet (`@@prompt`, only to
+ * tell whether the task was dispatched), then for each running worker exactly the packet it reads
+ * (`@@packet`, OMI-111) and, for a resume packet, the newest full packet of the same task, step
+ * and attempt (a glob over that exact prefix, no count limit). Never the packets themselves.
+ */
+function promptPayload(numbers: readonly string[], packets: readonly string[]): string {
+  const d = `$HOME/${RUNS_DIR_FROM_HOME}`;
+  const task =
+    `for n in ${numbers.join(" ")}; do f=$(ls -t ${d}/omi-$n-prompt*.md 2>/dev/null | head -n 1); ` +
+    `if [ -n $f ]; then echo @@prompt $n; ${GREP} $f | head -n 80; else echo @@missing $n; fi; done`;
+  const one = (name: string) => {
+    const read = `if [ -f ${d}/${name} ]; then echo @@packet ${name}; ${GREP} ${d}/${name} | head -n 80; fi`;
+    const base = /^(omi-\d+)-resume-(.+)-[a-z0-9]+\.md$/.exec(name);
+    if (!base) return read;
+    const prefix = `${base[1] ?? ""}-prompt-${base[2] ?? ""}-`;
+    return (
+      `${read}; g=$(ls -t ${d}/${prefix}*.md 2>/dev/null | grep -E '${prefix}[a-z0-9]+[.]md$' | head -n 1); ` +
+      `if [ -n $g ]; then echo @@full ${name}; ${GREP} $g | head -n 80; fi`
+    );
+  };
+  return [task, ...packets.map(one)].join("; ");
 }
 
-/** Pure: plan key → prompt info, or null when the task has no prompt file. */
+/**
+ * Pure: plan key → prompt info of the task's newest full packet, or null when it has none; each
+ * packet file name → its own info.
+ */
 export function parsePromptProbe(stdout: string): Record<string, PromptInfo | null> {
   const out: Record<string, PromptInfo | null> = {};
   let key: string | null = null;
@@ -339,10 +359,14 @@ export function parsePromptProbe(stdout: string): Record<string, PromptInfo | nu
     lines = [];
   };
   for (const line of stdout.split("\n")) {
-    const m = /^@@(prompt|missing) (\d{1,4})$/.exec(line.trim());
+    const m = /^@@(prompt|missing|packet|full) (\d{1,4}|\S+)$/.exec(line.trim());
     if (m?.[1] && m[2]) {
       flush();
-      if (m[1] === "missing") out[`OMI-${m[2]}`] = null;
+      if (m[1] === "packet") key = PACKET_FILE.test(m[2]) ? m[2] : null;
+      // the newest full packet of a resume worker, stored under that resume's own name
+      else if (m[1] === "full") key = PACKET_FILE.test(m[2]) ? `full:${m[2]}` : null;
+      else if (!/^\d{1,4}$/.test(m[2])) key = null;
+      else if (m[1] === "missing") out[`OMI-${m[2]}`] = null;
       else key = `OMI-${m[2]}`;
     } else if (key !== null) lines.push(line);
   }
@@ -355,6 +379,7 @@ export async function readPrompts(
   run: Runner,
   target: WslTarget,
   planKeys: readonly string[],
+  packets: readonly string[] = [],
 ): Promise<Record<string, PromptInfo | null> | null> {
   const numbers = [
     ...new Set(
@@ -363,7 +388,13 @@ export async function readPrompts(
   ];
   if (numbers.length === 0) return {};
   try {
-    const res = await run(wslCommand(promptPayload(numbers), target, 30_000));
+    const res = await run(
+      wslCommand(
+        promptPayload(numbers, [...new Set(packets.filter((p) => PACKET_FILE.test(p)))]),
+        target,
+        30_000,
+      ),
+    );
     return res.code === 0 ? parsePromptProbe(res.stdout) : null;
   } catch {
     return null;
@@ -394,13 +425,17 @@ const isActive = (i: ProjectItem) =>
 export async function readTasks(
   run: Runner,
   target: WslTarget,
+  workers: Workers | null = null,
   load: (id: string) => Promise<TemplateRead> = loadTemplate,
 ): Promise<TasksRead> {
   try {
     const project = await readProject(run);
     const active = project.items.filter(isActive);
     const keys = active.flatMap((i) => (i.planKey ? [i.planKey] : []));
-    const prompts = (await readPrompts(run, target, keys)) ?? {};
+    const packets = workers?.available
+      ? workers.processes.flatMap((p) => (p.packet ? [p.packet] : []))
+      : [];
+    const prompts = (await readPrompts(run, target, keys, packets)) ?? {};
     const names = [...new Set(active.flatMap((i) => (i.workflow ? [i.workflow] : [])))];
     const templates = Object.fromEntries(
       await Promise.all(names.map(async (n) => [n, await load(n)] as const)),
@@ -435,6 +470,8 @@ export interface TaskPull {
 
 export interface TaskView {
   readonly planKey: string;
+  /** Unique per row: the plan key, plus `#<pid>` when several workers of the task run. */
+  readonly rowId: string;
   readonly issue: number | null;
   readonly title: string;
   readonly workflow: string;
@@ -504,10 +541,32 @@ function roleFor(step: Step, projectRole: string | null): string {
   }
 }
 
+/** A resume's packet adds its follow-up skills/rules to the full packet of the same step and attempt. */
+export function workerPrompt(
+  prompts: Readonly<Record<string, PromptInfo | null>>,
+  packet: string,
+): PromptInfo | null {
+  const own = prompts[packet] ?? null;
+  if (!packet.includes("-resume-")) return own;
+  // the probe stores this resume's newest full packet (same task, step, attempt) under its own
+  // key, so no other worker's packet and no map order can take its place
+  const full = prompts[`full:${packet}`] ?? null;
+  if (full === null) return own;
+  const merge = (a: readonly string[], b: readonly string[]) => [...new Set([...a, ...b])];
+  return {
+    skills: merge(full.skills, own?.skills ?? []),
+    rules: merge(full.rules, own?.rules ?? []),
+    mandatoryRules: merge(full.mandatoryRules, own?.mandatoryRules ?? []),
+    header: full.header ?? own?.header ?? null,
+  };
+}
+
 function taskView(
   item: ProjectItem,
   read: Extract<TasksRead, { available: true }>,
   workers: Workers | null,
+  process: WorkerProcess | null,
+  parallel: boolean,
 ): TaskView {
   const planKey = item.planKey;
   const branchPrefix = planKey ? `task/${planKey.toLowerCase()}-` : null;
@@ -518,24 +577,31 @@ function taskView(
         (branchPrefix !== null && p.headRefName.toLowerCase().startsWith(branchPrefix)),
     ) ?? null;
 
-  let process: WorkerProcess | null = null;
   let lookup: WorkerLookup;
   if (planKey === null) lookup = { kind: "unknown", reason: "task has no Plan Key" };
   else if (workers === null) lookup = { kind: "unknown", reason: "workers not read yet" };
   else if (!workers.available) {
     lookup = { kind: "unknown", reason: `WSL unavailable: ${orDash(workers.reason)}` };
   } else {
-    process = workers.processes.find((p) => p.task === planKey) ?? null;
     lookup = process ? { kind: "running" } : { kind: "none" };
   }
 
-  const prompt = planKey !== null && planKey in read.prompts ? read.prompts[planKey] : undefined;
+  const taskPrompt =
+    planKey !== null && planKey in read.prompts ? read.prompts[planKey] : undefined;
+  // A running worker shows the packet it reads, not the task's newest one (OMI-111).
+  // no packet to resolve means no skills or rules shown: never another worker's (Architect, PR #228)
+  const prompt =
+    process === null
+      ? taskPrompt
+      : process.packet
+        ? workerPrompt(read.prompts, process.packet)
+        : null;
   const comments = pull?.comments ?? [];
   const derived = deriveStep({
     status: item.status,
     worker: lookup,
     pull,
-    dispatched: prompt === undefined ? null : prompt !== null,
+    dispatched: taskPrompt === undefined ? null : taskPrompt !== null,
     blockers: item.blockers,
     issueComments: item.comments ?? [],
   });
@@ -567,8 +633,8 @@ function taskView(
       stands === "unknown"
         ? { kind: "unknown", reason: derived.reason ?? "step unknown" }
         : mapTemplatePos(template, stands);
-    // The prompt file is overwritten at every dispatch, so it names the running worker's step; with
-    // no worker running it may belong to an older step and is ignored. Nothing is guessed.
+    // The packet the running worker reads names its step; with no worker running the newest packet
+    // may belong to an older step and is ignored. Nothing is guessed.
     const header = process !== null && prompt ? prompt.header : null;
     const named =
       header !== null && header.workflow === template.id
@@ -587,6 +653,8 @@ function taskView(
 
   return {
     planKey: orDash(planKey),
+    // parallel workers of one task are separate rows, so each needs its own id (OMI-111)
+    rowId: parallel && process ? `${orDash(planKey)}#${String(process.pid)}` : orDash(planKey),
     issue: item.number,
     title: orDash(item.title),
     workflow: orDash(item.workflow),
@@ -646,7 +714,16 @@ export function buildTasks(input: TasksInput): TasksView {
         rank(a.priority) - rank(b.priority) ||
         (a.number ?? 0) - (b.number ?? 0),
     )
-    .map((item) => taskView(item, tasks, workers));
+    // one row per running worker of a task, each with its own packet skills and rules (OMI-111)
+    .flatMap((item) => {
+      const running =
+        item.planKey !== null && workers?.available
+          ? workers.processes.filter((p) => p.task === item.planKey)
+          : [];
+      return running.length === 0
+        ? [taskView(item, tasks, workers, null, false)]
+        : running.map((p) => taskView(item, tasks, workers, p, running.length > 1));
+    });
   return { state: "ok", items };
 }
 
