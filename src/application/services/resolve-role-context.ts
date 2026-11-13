@@ -37,7 +37,10 @@ export class RoleResolutionError extends Error {
   }
 }
 
-function indexById<T extends CatalogEntry>(kind: string, entries: readonly T[]): Map<string, T> {
+function indexById<T extends { readonly id: string }>(
+  kind: string,
+  entries: readonly T[],
+): Map<string, T> {
   const index = new Map<string, T>();
   for (const entry of entries) {
     if (index.has(entry.id)) {
@@ -54,6 +57,28 @@ function lookup<T>(kind: string, index: Map<string, T>, id: string, source: stri
     throw new RoleResolutionError("UNKNOWN_REFERENCE", `unknown ${kind} "${id}" (${source})`);
   }
   return found;
+}
+
+/** Offline callers supply source paths; lookup and ambiguity rules stay shared with dispatch. */
+export function validateCatalogReferences(
+  catalog: ResolutionCatalog,
+  references: readonly { kind: "role" | "skill" | "rule"; id: string; path: string }[],
+): { path: string; message: string }[] {
+  return references.flatMap((reference) => {
+    try {
+      const entries =
+        reference.kind === "role"
+          ? catalog.roles.map(({ definition }) => ({ id: definition.id }))
+          : reference.kind === "skill"
+            ? catalog.skills
+            : catalog.rules;
+      lookup(reference.kind, indexById(reference.kind, entries), reference.id, reference.path);
+      return [];
+    } catch (error) {
+      if (!(error instanceof RoleResolutionError)) throw error;
+      return [{ path: reference.path, message: error.message }];
+    }
+  });
 }
 
 function toManifest(entries: readonly CatalogEntry[]): Manifest {

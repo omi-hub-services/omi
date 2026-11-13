@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { gitShaSchema, identifierSchema, sha256Schema } from "./identifiers.js";
 import { schemaVersionV1 } from "./schema-version.js";
+import { APPROVAL_STATUSES } from "../../domain/approvals/approval.js";
+
+export const listApprovalsSchema = z.strictObject({
+  status: z.enum(APPROVAL_STATUSES).optional(),
+});
 
 const scopeIds = z
   .array(identifierSchema)

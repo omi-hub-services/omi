@@ -5,6 +5,7 @@ import { createFileRuleSource } from "../infrastructure/config/load-resolution-c
 import { createFileSkillSource } from "../infrastructure/config/file-skill-source.js";
 import {
   loadRuntimeConfig,
+  loadWorkflowValidationCatalog,
   runtimeConfigHash,
 } from "../infrastructure/config/load-runtime-config.js";
 import { createDispatchPlanner } from "../application/services/plan-step-dispatch.js";
@@ -104,6 +105,8 @@ import { launchWindowsSession } from "../infrastructure/processes/windows-sessio
 import { readStandardInput } from "../infrastructure/processes/read-standard-input.js";
 import { randomUUID } from "node:crypto";
 import { requestApproval } from "../application/use-cases/approvals/request-approval.js";
+import { validateWorkflows } from "../application/use-cases/project/validate-workflows.js";
+import { listApprovals } from "../application/use-cases/approvals/list-approvals.js";
 import { recordApproval } from "../application/use-cases/approvals/record-approval.js";
 import type { ApprovalSubjectReader } from "../application/ports/approval-store.js";
 import { composeApprovalSubjects } from "../application/services/compose-approval-subjects.js";
@@ -444,6 +447,12 @@ export function createLogCommands(): LogCommands {
 export function createCliEnvironment(options: CliWiringOptions): CliEnvironment {
   return {
     sendCommand,
+    workflows: {
+      validate: () =>
+        validateWorkflows({
+          read: () => loadWorkflowValidationCatalog(join(process.cwd(), ".omi-squad")),
+        }),
+    },
     tasks: createTaskCommands(),
     overview: createOverviewCommands(),
     logs: createLogCommands(),
@@ -546,7 +555,10 @@ export function createRuntimeIpcServer(options: {
   readonly socketPath: string;
   readonly identity: RuntimeIdentity;
   readonly selections?: Pick<ExecutorSelectionStore, "listSettings">;
-  readonly approvals?: Pick<DispatchedUseCases, "requestApproval" | "recordApproval">;
+  readonly approvals?: Pick<
+    DispatchedUseCases,
+    "requestApproval" | "recordApproval" | "listApprovals"
+  >;
   readonly profiles?: Pick<DispatchedUseCases, "registerProfile" | "listProfiles" | "probeProfile">;
   readonly runs?: RunCommandUseCases;
   readonly tasks?: Pick<DispatchedUseCases, "importTasks">;
@@ -625,7 +637,7 @@ export function createApprovalUseCases(options: {
   readonly repository: string;
   readonly allowedGitHubActors: readonly string[];
   readonly fence?: import("../application/ports/state-unit-of-work.js").LeaseFence;
-}): Pick<DispatchedUseCases, "requestApproval" | "recordApproval"> {
+}): Pick<DispatchedUseCases, "requestApproval" | "recordApproval" | "listApprovals"> {
   const unitOfWork = createSqliteStateUnitOfWork(options.database, options.fence);
   const source = createGitHubApprovalDecisionSource({
     repository: options.repository,
@@ -634,6 +646,7 @@ export function createApprovalUseCases(options: {
   const shared = { subjects: options.subjects, unitOfWork, now: Date.now, nextId: randomUUID };
   return {
     requestApproval: (input) => requestApproval(shared, input),
+    listApprovals: (input) => listApprovals(createSqliteApprovalStore(options.database), input),
     recordApproval: (input) =>
       recordApproval(
         {

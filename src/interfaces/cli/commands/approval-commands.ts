@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import {
   recordApprovalSchema,
+  listApprovalsSchema,
   requestApprovalSchema,
 } from "../../../application/contracts/approval.js";
 import {
@@ -18,6 +19,29 @@ function approvalRequestText(result: unknown): string {
 
 export function registerApprovalCommands(program: Command, context: CliContext): void {
   const approvals = program.command("approvals").description("Versioned PO decisions");
+  approvals
+    .command("list")
+    .description("list approval summaries without decision evidence")
+    .option("--status <status>", "pending, approved, rejected, expired or invalidated")
+    .action(async (options: { status?: string }, command: Command) => {
+      const globals = command.optsWithGlobals<GlobalOptions>();
+      const format = formatOf(globals);
+      const parsed = listApprovalsSchema.safeParse({ status: options.status });
+      if (!parsed.success) {
+        context.emit(presentUsageError("invalid approval status", format));
+        return;
+      }
+      const outcome = await context.sendCommand({
+        socketPath: globals.socket ?? context.defaultSocketPath,
+        timeoutMs: context.timeoutMs,
+        command: { schemaVersion: 1, command: "approval.list", ...parsed.data },
+      });
+      context.emit(
+        outcome.ok
+          ? presentSuccess(outcome.result, JSON.stringify(outcome.result), format)
+          : presentFailure(outcome.error, format),
+      );
+    });
   approvals
     .command("request <subject-id>")
     .description(

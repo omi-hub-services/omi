@@ -29,6 +29,18 @@ function setup(outcome: unknown = { ok: true, result: pending }) {
 }
 
 describe("approvals request", () => {
+  it("lists approvals through IPC with a status filter and preserves versions in JSON", async () => {
+    const s = setup({ ok: true, result: { approvals: [pending] } });
+    expect(await s.run(["approvals", "list", "--status", "invalidated", "--json"])).toBe(0);
+    expect(s.sent).toEqual([{ schemaVersion: 1, command: "approval.list", status: "invalidated" }]);
+    expect(JSON.parse(s.output().out)).toMatchObject({ result: { approvals: [{ version: 0 }] } });
+  });
+
+  it("rejects an unknown list status without IPC", async () => {
+    const s = setup();
+    expect(await s.run(["approvals", "list", "--status", "unknown"])).toBe(2);
+    expect(s.sent).toEqual([]);
+  });
   it.each(["business", "deploy"])(
     "sends a %s request over IPC and prints id and version",
     async (kind) => {

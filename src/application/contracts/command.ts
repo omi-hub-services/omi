@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { recordApprovalSchema, requestApprovalSchema } from "./approval.js";
+import { listApprovalsSchema, recordApprovalSchema, requestApprovalSchema } from "./approval.js";
 import { identifierSchema, slugSchema } from "./identifiers.js";
 import { mergeTaskPrSchema } from "./merge-delivery.js";
 import { mergeReleaseSchema } from "./release-merge.js";
@@ -24,6 +24,7 @@ export const commandSchema = z
       profileId: identifierSchema,
     }),
     requestApprovalSchema.extend({ command: z.literal("approval.request") }),
+    listApprovalsSchema.extend({ ...envelope, command: z.literal("approval.list") }),
     recordApprovalSchema.extend({ command: z.literal("approval.decide") }),
     z.strictObject({
       ...envelope,

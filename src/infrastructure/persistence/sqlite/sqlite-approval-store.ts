@@ -3,6 +3,7 @@ import { approvalSubjectSchema } from "../../../application/contracts/approval.j
 import { identifierSchema } from "../../../application/contracts/identifiers.js";
 import type {
   ApprovalStore,
+  ApprovalListReader,
   ApprovalSubjectReader,
 } from "../../../application/ports/approval-store.js";
 import { isApprovalSubjectCurrent } from "../../../domain/approvals/approval-policy.js";
@@ -50,8 +51,23 @@ export function createSqliteTaskApprovalSubjects(db: StateDatabase): ApprovalSub
   };
 }
 
-export function createSqliteApprovalStore(db: StateDatabase): ApprovalStore {
+export function createSqliteApprovalStore(db: StateDatabase): ApprovalStore & ApprovalListReader {
   return {
+    list(status) {
+      const rows =
+        status === undefined
+          ? db.prepare("SELECT id FROM approvals WHERE request_json IS NOT NULL ORDER BY id").all()
+          : db
+              .prepare(
+                "SELECT id FROM approvals WHERE request_json IS NOT NULL AND status=? ORDER BY id",
+              )
+              .all(status);
+      return rows.flatMap((row) => {
+        const { id } = z.object({ id: identifierSchema }).parse(row);
+        const request = this.get(id);
+        return request === undefined ? [] : [request];
+      });
+    },
     get(id) {
       const row = db
         .prepare(
