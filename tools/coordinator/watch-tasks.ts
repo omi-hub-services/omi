@@ -329,7 +329,7 @@ function promptPayload(numbers: readonly string[]): string {
   return (
     `for n in ${numbers.join(" ")}; do f=$(ls -t ${d}/omi-$n-prompt*.md 2>/dev/null | head -n 1); ` +
     `if [ -n $f ]; then echo @@prompt $n; ${grep} $f | head -n 80; else echo @@missing $n; fi; ` +
-    `for g in $(ls -t ${d}/omi-$n-prompt*.md ${d}/omi-$n-resume*.md 2>/dev/null | head -n 8); ` +
+    `for g in $(ls -t ${d}/omi-$n-prompt*.md ${d}/omi-$n-resume*.md 2>/dev/null | head -n 16); ` +
     `do echo @@packet $(basename $g); ${grep} $g | head -n 80; done; done`
   );
 }
@@ -446,6 +446,8 @@ export interface TaskPull {
 
 export interface TaskView {
   readonly planKey: string;
+  /** Unique per row: the plan key, plus `#<pid>` when several workers of the task run. */
+  readonly rowId: string;
   readonly issue: number | null;
   readonly title: string;
   readonly workflow: string;
@@ -522,7 +524,12 @@ export function workerPrompt(
 ): PromptInfo | null {
   const own = prompts[packet] ?? null;
   if (!packet.includes("-resume-")) return own;
-  const full = prompts[packet.replace("-resume-", "-prompt-")] ?? null;
+  // newest full packet of the same step and attempt: `prompts` keeps the probe's newest-first order
+  const base = packet.replace("-resume-", "-prompt-").replace(/-[a-z0-9]+\.md$/, "-");
+  const fullName = Object.keys(prompts).find(
+    (name) => name.startsWith(base) && /^[a-z0-9]+\.md$/.test(name.slice(base.length)),
+  );
+  const full = fullName === undefined ? null : (prompts[fullName] ?? null);
   if (full === null) return own;
   const merge = (a: readonly string[], b: readonly string[]) => [...new Set([...a, ...b])];
   return {
@@ -537,6 +544,8 @@ function taskView(
   item: ProjectItem,
   read: Extract<TasksRead, { available: true }>,
   workers: Workers | null,
+  process: WorkerProcess | null,
+  parallel: boolean,
 ): TaskView {
   const planKey = item.planKey;
   const branchPrefix = planKey ? `task/${planKey.toLowerCase()}-` : null;
@@ -547,14 +556,12 @@ function taskView(
         (branchPrefix !== null && p.headRefName.toLowerCase().startsWith(branchPrefix)),
     ) ?? null;
 
-  let process: WorkerProcess | null = null;
   let lookup: WorkerLookup;
   if (planKey === null) lookup = { kind: "unknown", reason: "task has no Plan Key" };
   else if (workers === null) lookup = { kind: "unknown", reason: "workers not read yet" };
   else if (!workers.available) {
     lookup = { kind: "unknown", reason: `WSL unavailable: ${orDash(workers.reason)}` };
   } else {
-    process = workers.processes.find((p) => p.task === planKey) ?? null;
     lookup = process ? { kind: "running" } : { kind: "none" };
   }
 
@@ -621,6 +628,8 @@ function taskView(
 
   return {
     planKey: orDash(planKey),
+    // parallel workers of one task are separate rows, so each needs its own id (OMI-111)
+    rowId: parallel && process ? `${orDash(planKey)}#${String(process.pid)}` : orDash(planKey),
     issue: item.number,
     title: orDash(item.title),
     workflow: orDash(item.workflow),
@@ -680,7 +689,16 @@ export function buildTasks(input: TasksInput): TasksView {
         rank(a.priority) - rank(b.priority) ||
         (a.number ?? 0) - (b.number ?? 0),
     )
-    .map((item) => taskView(item, tasks, workers));
+    // one row per running worker of a task, each with its own packet skills and rules (OMI-111)
+    .flatMap((item) => {
+      const running =
+        item.planKey !== null && workers?.available
+          ? workers.processes.filter((p) => p.task === item.planKey)
+          : [];
+      return running.length === 0
+        ? [taskView(item, tasks, workers, null, false)]
+        : running.map((p) => taskView(item, tasks, workers, p, running.length > 1));
+    });
   return { state: "ok", items };
 }
 

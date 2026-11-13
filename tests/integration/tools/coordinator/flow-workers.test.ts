@@ -59,6 +59,20 @@ const dispatchInput = {
   dryRun: false,
 } as const;
 
+/** Packets written by dispatch (`cat > <file>.tmp`), by final file name. */
+const recorder = () => {
+  const files = new Map<string, string>();
+  const find = (prefix: string) =>
+    [...files].filter(([name]) => name.startsWith(prefix)).map(([, text]) => text);
+  return { files, find };
+};
+const record = (files: Map<string, string>, c: Command) => {
+  const written = /cat > \S*\/(omi-\d+-[a-z]+-[a-z0-9-]+\.md)\.tmp/.exec(payload(c))?.[1];
+  if (written !== undefined && c.input !== undefined) files.set(written, c.input);
+};
+const qualityPacket = (step: string) =>
+  `<!-- omi-quality {"policy":"task-default","step":"${step}","steps":["${step}"],"round":2} -->\n# Workflow feature · step ${step} · role qa\n`;
+
 const skillRunner = (c: Command) => {
   const m = /cat templates\/project\/\.omi-squad\/skills\/([a-z-]+)\/SKILL\.md/.exec(payload(c));
   return m ? { stdout: `BODY(${m[1] ?? ""})\n` } : undefined;
@@ -92,10 +106,12 @@ describe("dispatchCommand", () => {
     expect(await dispatchCommand(f.ctx, dispatchInput)).toBe(0);
 
     const write = f.seen.find((c) =>
-      payload(c).includes("cat > $HOME/omi-runs/omi-077-prompt-adhoc.md.tmp"),
+      payload(c).includes("cat > $HOME/omi-runs/omi-077-prompt-adhoc-"),
     );
+    const named = /omi-077-prompt-adhoc-([a-z0-9]+)\.md/.exec(payload(write as Command))?.[0];
+    expect(named).toBeDefined();
     expect(payload(write as Command)).toContain(
-      "mv -f $HOME/omi-runs/omi-077-prompt-adhoc.md.tmp $HOME/omi-runs/omi-077-prompt-adhoc.md",
+      `mv -f $HOME/omi-runs/${named ?? ""}.tmp $HOME/omi-runs/${named ?? ""}`,
     );
     expect(write?.input).toBe(dispatchInput.prompt);
     expect(f.seen.some((c) => /cat templates/.test(payload(c)))).toBe(false);
@@ -144,7 +160,9 @@ describe("dispatchCommand", () => {
     const write = f.seen.find((c) => payload(c).includes("cat > "));
     expect(write?.input).toBe("fix the findings\n");
     // OMI-094: the follow-up goes to its own file; the full packet in omi-077-prompt-*.md stays
-    expect(payload(write as Command)).toContain("cat > $HOME/omi-runs/omi-077-resume-adhoc.md.tmp");
+    expect(payload(write as Command)).toMatch(
+      /cat > \$HOME\/omi-runs\/omi-077-resume-adhoc-[a-z0-9]+\.md\.tmp/,
+    );
     expect(
       f.seen.some((c) => payload(c).includes("omi-077-prompt-") && c.input !== undefined),
     ).toBe(false);
@@ -155,10 +173,9 @@ describe("dispatchCommand", () => {
   });
 
   it("keeps the thread's skills and rules visible to the watch after a findings resume", async () => {
-    const files = new Map<string, string>();
+    const { files, find } = recorder();
     const f = fake((c) => {
-      const written = /cat > \S*\/(omi-\d+-[a-z]+-[a-z0-9-]+\.md)\.tmp/.exec(payload(c))?.[1];
-      if (written !== undefined && c.input !== undefined) files.set(written, c.input);
+      record(files, c);
       return { stdout: "exit=0\n" };
     });
     const full =
@@ -167,9 +184,9 @@ describe("dispatchCommand", () => {
     await dispatchCommand(f.ctx, { ...dispatchInput, prompt: full });
     await dispatchCommand(f.ctx, { ...dispatchInput, resume: "sess-123", prompt: findings });
     // the file the watch reads (omi-NNN-prompt-*.md) is still the full packet
-    expect(files.get("omi-077-prompt-adhoc.md")).toBe(full);
-    expect(files.get("omi-077-resume-adhoc.md")).toBe(findings);
-    const shown = parsePromptText(files.get("omi-077-prompt-adhoc.md") ?? "");
+    expect(find("omi-077-prompt-adhoc-")).toEqual([full]);
+    expect(find("omi-077-resume-adhoc-")).toEqual([findings]);
+    const shown = parsePromptText(find("omi-077-prompt-adhoc-")[0] ?? "");
     expect(shown.skills).toEqual(["minimal-change"]);
     expect(shown.rules).toEqual(["evidence-and-tests"]);
     expect(parsePromptText(findings).skills).toEqual([]);
@@ -183,30 +200,47 @@ describe("dispatchCommand", () => {
     const text = out.join("\n");
     expect(text).toContain("would run:");
     expect(text).toContain("claude -p --disable-slash-commands");
-    expect(text).toContain("omi-077-prompt-adhoc.md");
+    expect(text).toMatch(/omi-077-prompt-adhoc-[a-z0-9]+\.md/);
   });
 
   // OMI-111 regression: QA and review of one task shared omi-077-prompt.md, so the second write
   // replaced the first packet before its worker read it.
   it("writes parallel verify and review packets of one task to different files", async () => {
-    const files = new Map<string, string>();
+    const { files, find } = recorder();
     const reads: string[] = [];
     const f = fake((c) => {
-      const written = /cat > \S*\/(omi-\d+-[a-z]+-[a-z0-9-]+\.md)\.tmp/.exec(payload(c))?.[1];
-      if (written !== undefined && c.input !== undefined) files.set(written, c.input);
+      record(files, c);
       const read = /< \S*\/(omi-\d+-prompt-[a-z0-9-]+\.md)/.exec(payload(c))?.[1];
       if (read !== undefined) reads.push(read);
       return { stdout: "exit=0\n" };
     });
-    const packet = (step: string) =>
-      `<!-- omi-quality {"policy":"task-default","step":"${step}","steps":["${step}"],"round":2} -->\n# Workflow feature · step ${step} · role qa\n`;
-    const qa = packet("verify");
-    const review = packet("review");
+    const qa = qualityPacket("verify");
+    const review = qualityPacket("review");
     await dispatchCommand(f.ctx, { ...dispatchInput, prompt: qa });
     await dispatchCommand(f.ctx, { ...dispatchInput, prompt: review });
-    expect(files.get("omi-077-prompt-verify-2.md")).toBe(qa);
-    expect(files.get("omi-077-prompt-review-2.md")).toBe(review);
-    expect(reads).toEqual(["omi-077-prompt-verify-2.md", "omi-077-prompt-review-2.md"]);
+    expect(find("omi-077-prompt-verify-2-")).toEqual([qa]);
+    expect(find("omi-077-prompt-review-2-")).toEqual([review]);
+    expect(reads).toHaveLength(2);
+    expect(reads[0]).toMatch(/^omi-077-prompt-verify-2-/);
+    expect(reads[1]).toMatch(/^omi-077-prompt-review-2-/);
+  });
+
+  it("never reuses a packet path, even for overlapping dispatches of the same step and round", async () => {
+    const { files, find } = recorder();
+    const f = fake((c) => {
+      record(files, c);
+      return { stdout: "exit=0\n" };
+    });
+    // the same step and round twice, then packets without metadata twice (`adhoc`)
+    const first = qualityPacket("verify");
+    const second = `${first}second\n`;
+    await dispatchCommand(f.ctx, { ...dispatchInput, prompt: first });
+    await dispatchCommand(f.ctx, { ...dispatchInput, prompt: second });
+    await dispatchCommand(f.ctx, { ...dispatchInput, prompt: "## Task\none\n" });
+    await dispatchCommand(f.ctx, { ...dispatchInput, prompt: "## Task\ntwo\n" });
+    expect(find("omi-077-prompt-verify-2-")).toEqual([first, second]);
+    expect(find("omi-077-prompt-adhoc-")).toEqual(["## Task\none\n", "## Task\ntwo\n"]);
+    expect(files.size).toBe(4);
   });
 
   it("returns 1 when the worker process exits non-zero", async () => {

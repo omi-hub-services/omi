@@ -391,8 +391,10 @@ example `OMI-075 feature Work rework:1/2 Developer codex/ggtintran`.
 
 **Skills and rules** are read from the worker's real packet (OMI-111): the watch resolves the
 packet file each running worker has open on stdin (`/proc/<pid>/fd/0`, accepted only when it is an
-`omi-NNN-prompt-<step>-<attempt>.md` or `omi-NNN-resume-…` name), so two parallel workers of one
-task each show their own packet; a worker with no resolvable packet falls back to the newest
+`omi-NNN-prompt-…` or `omi-NNN-resume-…` name). A task with several running workers (QA and
+review in parallel) gets one row and card per worker, id `OMI-NNN#<pid>`, each with its own
+packet's skills and rules. A resume adds its follow-up to the newest full packet of the same
+step and attempt. A worker with no resolvable packet falls back to the newest
 `omi-NNN-prompt-*.md` of the task (one WSL call per read; only the lines that match, never the
 prompt body): skills from the
 `## Skill: <name>` headings that OMI-073 inlines, rules from the `AGENTS.md`, `CLAUDE.md` and
@@ -577,11 +579,12 @@ node tools/coordinator/flow.ts review-comment <pr> --file <f> [--dry-run]
 - **`dispatch`** reads the Issue (Plan Key, Role, Workflow and the complexity of the effort
   policy above), refuses a profile that is not a `WORKER_PROFILES` entry of that tool, then:
   1. writes the rendered prompt file **unchanged**, for fresh workers, to WSL
-     `~/omi-runs/omi-NNN-prompt-<step>-<attempt>.md` and, for a native resume, to
-     `omi-NNN-resume-<step>-<attempt>.md` (OMI-111; step and attempt come from the packet's
-     `omi-quality` metadata, `adhoc` without it). Every dispatch has its own file, so QA and
-     review of one task dispatched in parallel never overwrite each other's packet. The write is
-     atomic (`<file>.tmp`, then `mv -f`). Step skills/rules are owned by `prompt` below; no role-based
+     `~/omi-runs/omi-NNN-prompt-<step>-<attempt>-<stamp>.md` and, for a native resume, to
+     `omi-NNN-resume-<step>-<attempt>-<stamp>.md` (OMI-111; step and attempt come from the
+     packet's `omi-quality` metadata, `adhoc` without it; `<stamp>` is a unique `[a-z0-9]` token
+     per dispatch). No two dispatches ever share a path, not even the same step and attempt, so a
+     file of a worker that may still run is never replaced. The write is atomic (`<file>.tmp`,
+     then `mv -f`). Step skills/rules are owned by `prompt` below; no role-based
      curated skills are inserted. A findings-only packet requires `--resume`; a fresh worker
      requires a full packet;
   2. launches the worker **in the foreground** (an 8-hour limit instead of the runner's 2

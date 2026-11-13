@@ -1,6 +1,7 @@
 // Pure part of `flow.ts dispatch` (OMI-077): which curated skills a worker prompt gets and the
 // exact `bash -lc` payload that launches Claude or Codex (omi-next step 3). Nothing here runs a
 // process. Payloads contain no `"`, `\` or newline (wsl.exe rewrites them, process-runner.ts).
+import { randomBytes } from "node:crypto";
 import { shellQuote, WSL_NODE_ENV } from "./process-runner.ts";
 import { RUNS_DIR_FROM_HOME } from "./coordinator-settings.ts";
 
@@ -26,7 +27,7 @@ export interface LaunchSpec {
   readonly effort: string;
   /** Claude session id or Codex thread id; null starts a new run. */
   readonly resume: string | null;
-  /** Step and attempt of the packet (`verify-1`); names its own packet file (OMI-111). */
+  /** Step, attempt and dispatch stamp (`verify-1-k3x9a1b2c3`); names its own packet file (OMI-111). */
   readonly packet: string;
 }
 
@@ -50,6 +51,9 @@ const TS = "ts=$(date +%Y%m%d-%H%M%S);";
  * share one (OMI-111). A native resume reads `resume-<packet>.md`; `prompt-<packet>.md` keeps the
  * thread's full packet, which is where the watch reads the skills and rules the thread has (OMI-094).
  */
+export const dispatchStamp = (): string =>
+  `${Date.now().toString(36)}${randomBytes(3).toString("hex")}`; // [a-z0-9] only: no dash
+
 export const promptFile = (resume: string | null, packet: string): string =>
   `${resume === null ? "prompt" : "resume"}-${packet}.md`;
 

@@ -119,6 +119,35 @@ describe("buildSnapshot: the repo's data in the shared WatchSnapshot contract", 
     expect(s.schemaVersion).toBeGreaterThan(0);
   });
 
+  // OMI-111 regression: QA and review of one task run in parallel and share the plan key
+  it("keeps a card for both the QA and the review worker of one task, each with its own packet", async () => {
+    const qa = { ...prompt("verify", "qa"), skills: ["qa-verification"] };
+    const review = { ...prompt("review", "reviewer"), skills: ["independent-review"] };
+    const s = buildSnapshot(
+      input({
+        tasks: await tasksRead(["OMI-004"], {
+          "OMI-004": review, // the newest packet of the task must not leak into the QA card
+          "omi-004-prompt-verify-1-aaa111.md": qa,
+          "omi-004-prompt-review-1-bbb222.md": review,
+        }),
+        workers: {
+          available: true,
+          latestLog: null,
+          processes: [
+            worker({ pid: 11, packet: "omi-004-prompt-verify-1-aaa111.md" }),
+            worker({ pid: 12, packet: "omi-004-prompt-review-1-bbb222.md" }),
+          ],
+        },
+      }),
+    );
+    expect(s.tasks).toHaveLength(2);
+    expect(new Set(s.tasks.map((c) => c.runId)).size).toBe(2);
+    expect(s.tasks.map((c) => [c.planKey, c.who?.step, c.who?.role, c.loaded?.skills])).toEqual([
+      ["OMI-004", "verify", "qa", ["qa-verification"]],
+      ["OMI-004", "review", "reviewer", ["independent-review"]],
+    ]);
+  });
+
   it("draws the task from its template and puts the QA worker at verify, not at implement", async () => {
     const s = buildSnapshot(
       input({

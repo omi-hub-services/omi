@@ -98,7 +98,7 @@ function cardOf(view: TaskView): TaskCard {
   );
   const worker = view.worker;
   return {
-    runId: view.planKey === "-" ? `issue-${String(view.issue ?? 0)}` : view.planKey,
+    runId: view.planKey === "-" ? `issue-${String(view.issue ?? 0)}` : view.rowId,
     issueNumber: view.issue ?? 0,
     planKey: view.planKey === "-" ? null : view.planKey,
     title: view.title === "-" ? null : view.title,

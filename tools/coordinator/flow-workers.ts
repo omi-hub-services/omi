@@ -30,6 +30,7 @@ import {
   claudeLaunchPayload,
   codexLaunchPayload,
   NATIVE_RESUME_HEADER,
+  dispatchStamp,
   promptFile,
   runsPath,
 } from "./worker-launch.ts";
@@ -102,7 +103,7 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
   }
 
   let level = input.complexity;
-  let packetId = "adhoc"; // a packet without quality metadata has no step or attempt to name it
+  let packetBase = "adhoc"; // a packet without quality metadata has no step or attempt to name it
   const packet = input.prompt.startsWith(`${NATIVE_RESUME_HEADER}\n\n`)
     ? input.prompt.slice(NATIVE_RESUME_HEADER.length + 2)
     : input.prompt;
@@ -110,7 +111,7 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
     try {
       const raw = /^<!-- omi-quality (.+) -->\r?\n/.exec(packet)?.[1];
       const quality = stepQualitySchema.parse(JSON.parse(raw ?? "") as unknown);
-      packetId = `${quality.step}-${String(quality.round)}`;
+      packetBase = `${quality.step}-${String(quality.round)}`;
       if (input.resume !== null && ["analyze", "verify", "review"].includes(quality.step)) {
         return refuse(label, "analysis, QA and review require fresh independent workers");
       }
@@ -129,6 +130,9 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
       return refuse(label, "invalid quality packet metadata");
     }
   }
+  // the stamp makes the path unique per dispatch, so even the same step and round (or `adhoc`)
+  // never reuses the file of a worker that may still be running
+  const packetId = `${packetBase}-${dispatchStamp()}`;
   const { model, effort } = EFFORT_POLICY[kind][level];
   const spec = {
     task,

@@ -801,36 +801,58 @@ describe("template position, worker step and hold of a task view", () => {
     });
     const prompts = {
       "OMI-074": info("independent-review", "review", "reviewer"), // the newest packet of the task
-      "omi-074-prompt-verify-1.md": info("qa-verification", "verify", "qa"),
-      "omi-074-prompt-review-1.md": info("independent-review", "review", "reviewer"),
+      "omi-074-prompt-verify-1-aaa111.md": info("qa-verification", "verify", "qa"),
+      "omi-074-prompt-review-1-bbb222.md": info("independent-review", "review", "reviewer"),
     };
-    const qaWorker = { ...worker, pid: 11, packet: "omi-074-prompt-verify-1.md" };
-    const reviewWorker = { ...worker, pid: 12, packet: "omi-074-prompt-review-1.md" };
+    const qaWorker = { ...worker, pid: 11, packet: "omi-074-prompt-verify-1-aaa111.md" };
+    const reviewWorker = { ...worker, pid: 12, packet: "omi-074-prompt-review-1-bbb222.md" };
+    const rows = (procs: WorkerProcess[]) => {
+      const view = buildTasks({
+        tasks: read({ items: [item({ workflow: "feature" })], prompts, templates: {} }),
+        workers: available(procs),
+      });
+      if (view.state !== "ok") throw new Error("expected ok");
+      return view.items;
+    };
 
-    it("shows the skills and step of the packet the worker reads, not the newest one", async () => {
-      const t = await card("feature", {}, [qaWorker, reviewWorker], { prompts });
-      expect(t.worker?.pid).toBe(11);
-      expect(t.prompt?.skills).toEqual(["qa-verification"]);
-      expect(t.workerStep).toEqual({ step: "verify", role: "qa" });
+    it("keeps one row per worker of the task, each with its own packet skills and rules", () => {
+      const items = rows([qaWorker, reviewWorker]);
+      expect(items.map((t) => [t.rowId, t.worker?.pid, t.prompt?.skills])).toEqual([
+        ["OMI-074#11", 11, ["qa-verification"]],
+        ["OMI-074#12", 12, ["independent-review"]],
+      ]);
     });
 
-    it("shows the other worker's own packet when it is the one found", async () => {
+    it("gives the same rows when the workers come in the other order", () => {
+      const items = rows([reviewWorker, qaWorker]);
+      expect(items.map((t) => [t.worker?.pid, t.prompt?.skills])).toEqual([
+        [12, ["independent-review"]],
+        [11, ["qa-verification"]],
+      ]);
+    });
+
+    it("keeps the plain plan key for a task with one worker or none", () => {
+      expect(rows([qaWorker]).map((t) => t.rowId)).toEqual(["OMI-074"]);
+      expect(rows([]).map((t) => [t.rowId, t.worker])).toEqual([["OMI-074", null]]);
+    });
+
+    it("takes the step of each row from its own packet header", async () => {
       const t = await card("feature", {}, [reviewWorker, qaWorker], { prompts });
       expect(t.worker?.pid).toBe(12);
-      expect(t.prompt?.skills).toEqual(["independent-review"]);
       expect(t.workerStep).toEqual({ step: "review", role: "reviewer" });
     });
 
-    it("adds the resume packet's skills to the full packet of the same step and attempt", () => {
-      const merged = workerPrompt(
-        {
-          ...prompts,
-          "omi-074-resume-verify-1.md": info("receiving-code-review", "verify", "qa"),
-        },
-        "omi-074-resume-verify-1.md",
-      );
+    it("adds the resume packet's skills to the newest full packet of the same step and attempt", () => {
+      const all = {
+        // newest first, as the probe lists them
+        "omi-074-resume-verify-1-ccc333.md": info("receiving-code-review", "verify", "qa"),
+        "omi-074-prompt-verify-2-ddd444.md": info("other-round", "verify", "qa"),
+        "omi-074-prompt-verify-1-eee555.md": info("qa-verification", "verify", "qa"),
+        "omi-074-prompt-verify-1-aaa111.md": info("older-same-round", "verify", "qa"),
+      };
+      const merged = workerPrompt(all, "omi-074-resume-verify-1-ccc333.md");
       expect(merged?.skills).toEqual(["qa-verification", "receiving-code-review"]);
-      expect(workerPrompt(prompts, "omi-074-prompt-gone-1.md")).toBeNull();
+      expect(workerPrompt(prompts, "omi-074-prompt-gone-1-zzz.md")).toBeNull();
     });
   });
 
