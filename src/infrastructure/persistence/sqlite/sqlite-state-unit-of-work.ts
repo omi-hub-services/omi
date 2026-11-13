@@ -71,7 +71,50 @@ export function createSqliteStateUnitOfWork(
         }
 
         let newVersion: number;
-        if (target.kind === "session_event") {
+        if (target.kind === "task_snapshot") {
+          const s = target.snapshot;
+          if (db.prepare("SELECT 1 FROM projects WHERE id = ?").get(s.projectId) === undefined)
+            return { ok: false, reason: "NOT_FOUND" };
+          const byIssue = db
+            .prepare(
+              "SELECT id, issue_number, content_hash FROM task_snapshots WHERE project_id = ? AND issue_node_id = ?",
+            )
+            .get(s.projectId, s.issueNodeId) as
+            { id: string; issue_number: number; content_hash: string } | undefined;
+          if (byIssue?.content_hash === s.contentHash && byIssue.id === s.id)
+            return { ok: false, reason: "UNCHANGED" };
+          // The id and Issue number must each belong to this Issue only, or be free.
+          const holder = db
+            .prepare(
+              "SELECT issue_node_id FROM task_snapshots WHERE (project_id = ? AND issue_number = ?) OR id = ?",
+            )
+            .all(s.projectId, s.issueNumber, s.id) as { issue_node_id: string }[];
+          if (holder.some((row) => row.issue_node_id !== s.issueNodeId))
+            return { ok: false, reason: "CONFLICT" };
+          if (byIssue !== undefined && byIssue.id !== s.id)
+            return { ok: false, reason: "CONFLICT" };
+          if (byIssue === undefined) {
+            db.prepare(
+              `INSERT INTO task_snapshots (id, project_id, issue_node_id, issue_number, content_hash,
+               remote_updated_at, scope, captured_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            ).run(
+              s.id,
+              s.projectId,
+              s.issueNodeId,
+              s.issueNumber,
+              s.contentHash,
+              s.remoteUpdatedAt,
+              s.scope,
+              change.at,
+            );
+          } else {
+            db.prepare(
+              `UPDATE task_snapshots SET issue_number = ?, content_hash = ?, remote_updated_at = ?,
+               scope = ?, captured_at = ? WHERE id = ?`,
+            ).run(s.issueNumber, s.contentHash, s.remoteUpdatedAt, s.scope, change.at, s.id);
+          }
+          newVersion = 0;
+        } else if (target.kind === "session_event") {
           if (fence === undefined) throw new Error("session_event requires a lease fence");
           newVersion = 0;
         } else if (target.kind === "outbox_intent") {

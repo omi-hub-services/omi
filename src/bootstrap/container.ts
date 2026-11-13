@@ -92,6 +92,8 @@ import { randomUUID } from "node:crypto";
 import { requestApproval } from "../application/use-cases/approvals/request-approval.js";
 import { recordApproval } from "../application/use-cases/approvals/record-approval.js";
 import type { ApprovalSubjectReader } from "../application/ports/approval-store.js";
+import { composeApprovalSubjects } from "../application/services/compose-approval-subjects.js";
+import { createConfigDeploySubjects } from "../infrastructure/config/config-deploy-subjects.js";
 import { createGitHubApprovalDecisionSource } from "../infrastructure/github/github-approval-decision-source.js";
 import { createInteractiveApprovalConfirmation } from "../infrastructure/processes/interactive-approval-decision.js";
 import {
@@ -1066,7 +1068,10 @@ export async function createProjectRunCommandUseCases(
     },
     approvals: createApprovalUseCases({
       database,
-      subjects: createSqliteTaskApprovalSubjects(database),
+      subjects: composeApprovalSubjects({
+        business: createSqliteTaskApprovalSubjects(database),
+        deploy: createConfigDeploySubjects(config.project.deploy_targets),
+      }),
       repository: `${config.project.repository.owner}/${config.project.repository.name}`,
       allowedGitHubActors: config.project.policies.github_approval_actors ?? [],
       fence: session.lease,
