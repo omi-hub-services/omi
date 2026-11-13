@@ -7,6 +7,33 @@ installation is required. Node 24.22.2 and npm must already be available in WSL2
 Node for the installed Windows entrypoint and the existing managed session launcher (ADR-0012,
 ADR-0030). The checkout must be on the Linux filesystem, bound to one named WSL2 distro.
 
+## Download a GitHub Release manually
+
+Releases are distributed at https://github.com/omi-hub-services/omi/releases, starting at
+SemVer 0.1.0. Select a specific version and read its release notes, especially Breaking.
+During 0.x, breaking changes are allowed and must be recorded; version numbers alone do not
+promise compatibility. See [ADR-0038](../architecture/adr/0038-github-release-distribution.md).
+
+Download both assets from the same release into an empty directory in WSL2:
+
+```sh
+curl --fail --location --remote-name https://github.com/omi-hub-services/omi/releases/download/v0.1.0/omi-squad-0.1.0.tgz
+curl --fail --location --remote-name https://github.com/omi-hub-services/omi/releases/download/v0.1.0/omi-squad-0.1.0.tgz.sha256
+sha256sum --check omi-squad-0.1.0.tgz.sha256
+```
+
+Stop if verification fails. Use the verified archive's absolute path in the bootstrap below.
+The checksum detects corruption; it is not an independent signature. The release body contains
+that version's changelog section, including an empty or populated `### Breaking` section.
+No registry publication is involved. Version-based update/download is separate work; the current
+update still takes an extracted package through `--package`.
+
+Maintainers: update package.json and package-lock.json together, add the matching dated changelog
+entry with Breaking, and run `npm run check`. After merge and PO release confirmation, the
+Coordinator pushes the matching version tag. The tag workflow validates it, checks, packs and
+publishes the tarball and checksum using only GITHUB_TOKEN. Do not create a release as part of
+ordinary implementation or treat a tag's existence as PO approval.
+
 ## Bootstrap from a local archive
 
 Perform these commands in WSL2, outside the framework source repository. Supply an absolute
@@ -16,7 +43,7 @@ Do not install the framework globally or change the application's package manife
 
 ```sh
 bootstrap=$(mktemp -d)
-npm install --prefix "$bootstrap" --global=false --no-audit --no-fund /absolute/omi-squad-0.0.0.tgz
+npm install --prefix "$bootstrap" --global=false --no-audit --no-fund /absolute/omi-squad-0.1.0.tgz
 package="$bootstrap/node_modules/omi-squad"
 node "$package/dist/bootstrap/cli.js" install --project /home/user/project --distribution Ubuntu-24.04 --package "$package" --json
 # Review the preview, then apply the same arguments:

@@ -1,6 +1,6 @@
 {
   "name": "omi-squad",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Project-local framework that turns a Claude Code session into a Coordinator for a squad of Claude Code/Codex agents working on GitHub Issues and Projects.",
   "type": "module",
@@ -23,11 +23,12 @@
     "test:e2e": "vitest run tests/e2e",
     "test:stress": "node tools/test-stress.ts",
     "test:live": "vitest run tests/live",
-    "check": "npm run typecheck && npm run build && npm run lint && npm run format:check && npm run check:architecture && npm run check:backlog && npm run schemas:check && npm run prompts:check && npm run check:coordinator-source && npm run test:unit && npm run test:integration && npm run test:contract && npm run test:e2e && npm run pack:check",
+    "check": "npm run check:release && npm run typecheck && npm run build && npm run lint && npm run format:check && npm run check:architecture && npm run check:backlog && npm run schemas:check && npm run prompts:check && npm run check:coordinator-source && npm run test:unit && npm run test:integration && npm run test:contract && npm run test:e2e && npm run pack:check",
     "pack:check": "node tools/check-package.ts",
     "prompts:generate": "node tools/generate-worker-prompts.ts",
     "prompts:check": "node tools/generate-worker-prompts.ts --check",
-    "check:coordinator-source": "node tools/coordinator/source-parity.ts"
+    "check:coordinator-source": "node tools/coordinator/source-parity.ts",
+    "check:release": "node tools/check-release.ts"
   },
   "prettier": {
     "printWidth": 100,
