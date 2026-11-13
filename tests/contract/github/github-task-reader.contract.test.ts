@@ -2,7 +2,11 @@ import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import { importTask } from "../../../src/application/use-cases/tasks/import-task.ts";
 import { selectReadyTasks } from "../../../src/application/use-cases/tasks/select-ready-tasks.ts";
-import { createGithubTaskReader } from "../../../src/infrastructure/github/github-task-reader.ts";
+import {
+  createGithubTaskReader,
+  createGithubTaskImportSource,
+} from "../../../src/infrastructure/github/github-task-reader.ts";
+import { baseline, project } from "../../fixtures/github/project-mapping.ts";
 import { sha256ContentHasher } from "../../../src/infrastructure/artifacts/sha256-content-hasher.ts";
 import { createGithubRestClient } from "../../../src/infrastructure/github/github-rest-client.ts";
 import { createGhApiTransport } from "../../../src/infrastructure/github/gh-api-transport.ts";
@@ -108,6 +112,85 @@ function setup(fault = "", stage = "TaskItems", maxPages = 20) {
 }
 
 describe("GitHub task import read contract", () => {
+  it.each([false, true])(
+    "resolves selected repository Issues and configured Project (mapping=%s)",
+    async (mapped) => {
+      const calls: HttpRequest[] = [];
+      const client = createGithubRestClient({
+        now: () => 0,
+        random: () => 0,
+        sleep: () => Promise.resolve(),
+        transport: {
+          send(request) {
+            calls.push(request);
+            const body =
+              request.method === "GET"
+                ? { number: 1, node_id: "I_1" }
+                : {
+                    data: {
+                      repositoryOwner: {
+                        id: project.owner.id,
+                        login: "acme",
+                        __typename: "Organization",
+                        projectV2: {
+                          id: project.id,
+                          number: 4,
+                          title: "Delivery",
+                          fields: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+                        },
+                      },
+                    },
+                  };
+            return Promise.resolve({ status: 200, headers: {}, body: JSON.stringify(body) });
+          },
+        },
+      });
+      expect(
+        await createGithubTaskImportSource(client).resolve(
+          {
+            ...baseline,
+            project: {
+              ...baseline.project,
+              ...(mapped
+                ? { mapping: { id: project.id, owner_type: "Organization" as const, fields: {} } }
+                : {}),
+            },
+          },
+          [1],
+        ),
+      ).toEqual({ projectId: project.id, issueIds: ["I_1"] });
+      expect(calls.filter((c) => c.method === "POST")).toHaveLength(mapped ? 0 : 1);
+      expect(calls.at(-1)?.path).toBe("/repos/acme/app/issues/1");
+    },
+  );
+
+  it.each([
+    [{ number: 2, node_id: "I_1" }, "INVALID_RESPONSE"],
+    [{ number: 1, node_id: "bad id" }, "INVALID_RESPONSE"],
+    [{ number: 1, node_id: "I_1", pull_request: {} }, "ISSUE_NOT_IMPORTABLE"],
+  ])("refuses invalid Issue resolution %j", async (body, code) => {
+    const client = createGithubRestClient({
+      now: () => 0,
+      random: () => 0,
+      sleep: () => Promise.resolve(),
+      transport: {
+        send: () => Promise.resolve({ status: 200, headers: {}, body: JSON.stringify(body) }),
+      },
+    });
+    await expect(
+      createGithubTaskImportSource(client).resolve(
+        {
+          ...baseline,
+          project: {
+            ...baseline.project,
+            mapping: { id: project.id, owner_type: "Organization", fields: {} },
+          },
+        },
+        [1],
+      ),
+    ).rejects.toMatchObject({ code });
+  });
+
   it("imports all item/iteration/dependency pages and preserves native dependency closure", async () => {
     const h = setup();
     const imported = await importTask(

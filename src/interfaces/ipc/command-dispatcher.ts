@@ -17,6 +17,7 @@ type RunUseCase = (input: unknown) => UseCaseOutcome | Promise<UseCaseOutcome>;
 
 /** The use cases the dispatcher may call. Bootstrap binds them to real dependencies. */
 export interface DispatchedUseCases {
+  importTasks?: RunUseCase;
   inspectRuntime(): RuntimeStatus;
   requestApproval?(input: RequestApprovalInput): RequestApprovalResult;
   recordApproval?(input: RecordApprovalInput): Promise<RecordApprovalResult>;
@@ -60,6 +61,8 @@ export function createCommandDispatcher(useCases: DispatchedUseCases): CommandHa
 
   return async (command) => {
     switch (command.command) {
+      case "task.import":
+        return run(useCases.importTasks, "task import", command);
       case "profile.register":
         return run(useCases.registerProfile, "profile registration", command);
       case "profile.list":

@@ -1,6 +1,6 @@
 # ADR-0037 — Approval subject sources and imported task snapshots
 
-> Status note (2026-11-13, OMI-096): `tools/sandbox-setup/main.ts` now exposes `live-prep`, which calls importTask/storeTaskSnapshots in-process before the runtime lease starts. `local-state` installs missing runtime catalogs through onboarding and synchronizes the runtime config hash; `live-prep` refreshes that hash after adding the deploy target. There is still no import CLI/IPC. See the deploy runbook for the preparation order.
+> Status note (2026-11-13, OMI-104): Installed projects import with `omi import-task` through runtime IPC under the session lease (decision 2 below). The OMI-096 sandbox `live-prep` path still calls importTask/storeTaskSnapshots in-process before its runtime starts. `local-state` installs missing runtime catalogs through onboarding and synchronizes the runtime config hash; `live-prep` refreshes that hash after adding the deploy target. See the deploy runbook for the harness preparation order.
 
 - Status: Accepted
 - Date: 2026-11-13
@@ -25,9 +25,15 @@ caller, or the caller could pick what the PO approves.
    recomputes each hash, so a forged `contentHash` is refused. The local task id is
    `task-<Issue number>`. The project row must already exist (created by session/sandbox setup).
    `task_dependencies` is not written here.
-2. **Who imports.** The import is not an IPC command or CLI. A setup tool (sandbox `live-prep`)
-   calls `importTask` and `storeTaskSnapshots` in-process **before** the runtime session starts,
-   because the session holds the state lease. This order is documented in the deploy runbook.
+2. **Who imports (updated by OMI-104, Issue #214).** Installed projects run
+   `omi import-task <issue-number> [issue-number ...]` through runtime IPC (`task.import`).
+   `importTaskSnapshots` resolves the configured repository/Project and selection, reuses
+   `importTask` and `storeTaskSnapshots`, and returns task ids, content hashes and outcomes.
+   The runtime registers/reuses the local project identity and writes under its existing lease;
+   the CLI never opens SQLite. Missing/unimportable selected Issues fail before snapshot writes.
+   Repeated hashes create no duplicate import event; changed content replaces the baseline.
+   No approval is created or decided. Sandbox `live-prep` retains its dedicated in-process harness
+   preparation before session startup; that order is specific to repository tooling.
 3. **Business baseline** is the snapshot's `content_hash` (the reviewed Issue content), scope = the
    task id. A re-import with changed content makes older requests stale.
 4. **Deploy subject** comes from an optional, strict `deploy_targets: [{id, target_environment,

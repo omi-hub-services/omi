@@ -4,6 +4,7 @@ import { identifierSchema, slugSchema } from "./identifiers.js";
 import { mergeTaskPrSchema } from "./merge-delivery.js";
 import { schemaVersionV1 } from "./schema-version.js";
 import { registerProfileSchema } from "./profile-metadata.js";
+import { importTaskSelectionSchema } from "./task-import.js";
 
 const envelope = { schemaVersion: schemaVersionV1 };
 
@@ -13,6 +14,7 @@ const envelope = { schemaVersion: schemaVersionV1 };
  */
 export const commandSchema = z
   .discriminatedUnion("command", [
+    importTaskSelectionSchema.extend({ ...envelope, command: z.literal("task.import") }),
     registerProfileSchema.extend({ ...envelope, command: z.literal("profile.register") }),
     z.strictObject({ ...envelope, command: z.literal("profile.list") }),
     z.strictObject({

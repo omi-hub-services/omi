@@ -4,9 +4,45 @@ import { taskIssueSchema } from "../../application/contracts/task-import.js";
 import type { TaskIssue, TaskItem } from "../../application/contracts/task-import.js";
 import { TaskImportError } from "../../application/ports/github-task-reader.js";
 import type { GithubTaskReader } from "../../application/ports/github-task-reader.js";
+import type { TaskImportSource } from "../../application/ports/task-import-source.js";
 import { ProjectInitializationError } from "../../application/ports/github-project-reader.js";
-import { readGraphql } from "./github-project-reader.js";
+import { readGraphql, createGithubProjectReader } from "./github-project-reader.js";
 import type { GithubRestClient } from "./github-rest-client.js";
+
+export function createGithubTaskImportSource(client: GithubRestClient): TaskImportSource {
+  return {
+    async resolve(config, issueNumbers) {
+      try {
+        const projectId =
+          config.project.mapping?.id ??
+          (await createGithubProjectReader(client).inspect(config.project)).id;
+        const issueIds: string[] = [];
+        for (const number of issueNumbers) {
+          const response = await client.request({
+            method: "GET",
+            path: `/repos/${config.repository.owner}/${config.repository.name}/issues/${String(number)}`,
+          });
+          if (response.kind !== "ok") throw new TaskImportError(response.code);
+          const issue = z
+            .object({
+              number: z.literal(number),
+              node_id: githubIdSchema,
+              pull_request: z.unknown().optional(),
+            })
+            .safeParse(response.json);
+          if (!issue.success) throw new TaskImportError("INVALID_RESPONSE");
+          if (issue.data.pull_request !== undefined)
+            throw new TaskImportError("ISSUE_NOT_IMPORTABLE");
+          issueIds.push(issue.data.node_id);
+        }
+        return { projectId, issueIds };
+      } catch (error) {
+        if (error instanceof ProjectInitializationError) throw new TaskImportError(error.code);
+        throw error;
+      }
+    },
+  };
+}
 
 const itemQuery = `query TaskItems($id: ID!, $after: String) {
   node(id: $id) { id __typename ... on ProjectV2 {

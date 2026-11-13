@@ -1,10 +1,18 @@
 import type { Command } from "commander";
+import {
+  importTaskSelectionSchema,
+  storedTaskImportSchema,
+} from "../../../application/contracts/task-import.js";
 import { GATED_STATUSES, planKeyPrefixSchema } from "../../../application/contracts/task-intake.js";
 import type { createIssueFromSpec } from "../../../application/use-cases/tasks/create-issue-from-spec.js";
 import type { promoteTask } from "../../../application/use-cases/tasks/promote-task.js";
 import type { setTaskStatus } from "../../../application/use-cases/tasks/set-task-status.js";
 import { EXIT_CODES } from "../presenters/exit-codes.js";
-import { presentFailure, presentUsageError } from "../presenters/result-presenter.js";
+import {
+  presentFailure,
+  presentSuccess,
+  presentUsageError,
+} from "../presenters/result-presenter.js";
 import type { OutputFormat } from "../presenters/result-presenter.js";
 import {
   presentCreateIssue,
@@ -42,6 +50,45 @@ export function registerTaskCommands(
   context: CliContext,
   actions?: TaskCommands,
 ): void {
+  program
+    .command("import-task <issues...>")
+    .description("Import GitHub Issues into the running runtime's business baseline")
+    .action(async (issues: string[], _options: unknown, command: Command) => {
+      const options = command.optsWithGlobals<GlobalOptions>();
+      const format = formatOf(options);
+      const parsed = importTaskSelectionSchema.safeParse({
+        issueNumbers: issues.map(issueNumberOf),
+      });
+      if (!parsed.success) {
+        context.emit(presentUsageError("give 1–1000 whole Issue numbers", format));
+        return;
+      }
+      const outcome = await context.sendCommand({
+        socketPath: options.socket ?? context.defaultSocketPath,
+        timeoutMs: context.timeoutMs,
+        command: { schemaVersion: 1, command: "task.import", ...parsed.data },
+      });
+      if (!outcome.ok) {
+        context.emit(presentFailure(outcome.error, format));
+        return;
+      }
+      const result = storedTaskImportSchema.safeParse(outcome.result);
+      context.emit(
+        result.success
+          ? presentSuccess(
+              result.data,
+              result.data.snapshots
+                .map((s) => `${s.taskId} content_hash=${s.contentHash} ${s.outcome}`)
+                .join("\n"),
+              format,
+            )
+          : presentFailure(
+              { code: "PROTOCOL_ERROR", message: "invalid task import response" },
+              format,
+            ),
+      );
+    });
+
   /** Runs one action and presents it; a failure shows the adapter's fixed code text only. */
   async function run<T>(
     format: OutputFormat,

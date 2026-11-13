@@ -56,6 +56,13 @@ import { createOnboardingFileStore } from "../infrastructure/config/onboarding-f
 import { createOnboardingTemplateSource } from "../infrastructure/config/onboarding-template-source.js";
 import { readOptional } from "../infrastructure/config/package-content.js";
 import { createGithubProjectReader } from "../infrastructure/github/github-project-reader.js";
+import {
+  createGithubTaskReader,
+  createGithubTaskImportSource,
+} from "../infrastructure/github/github-task-reader.js";
+import { createSqliteTaskImportProjectStore } from "../infrastructure/persistence/sqlite/sqlite-task-import-project.js";
+import { importTaskSnapshots } from "../application/use-cases/tasks/import-task-snapshots.js";
+import type { GithubRestClient } from "../infrastructure/github/github-rest-client.js";
 import { inspectInstallation } from "../application/use-cases/project/inspect-installation.js";
 import { createProjectInstallation } from "../infrastructure/config/install-project-package.js";
 import { createInstallationDoctor } from "../infrastructure/processes/installation-doctor.js";
@@ -512,6 +519,7 @@ export function createRuntimeIpcServer(options: {
   readonly approvals?: Pick<DispatchedUseCases, "requestApproval" | "recordApproval">;
   readonly profiles?: Pick<DispatchedUseCases, "registerProfile" | "listProfiles" | "probeProfile">;
   readonly runs?: RunCommandUseCases;
+  readonly tasks?: Pick<DispatchedUseCases, "importTasks">;
   /** Lets `status` list the unfinished runs. */
   readonly activeRuns?: ActiveRunReader;
   readonly idleTimeoutMs?: number;
@@ -524,9 +532,38 @@ export function createRuntimeIpcServer(options: {
       ...options.approvals,
       ...options.profiles,
       ...options.runs,
+      ...options.tasks,
     }),
     ...(options.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: options.idleTimeoutMs }),
   });
+}
+
+export function createTaskImportUseCase(options: {
+  readonly database: StateDatabase;
+  readonly session: ProjectSession;
+  readonly config: ProjectConfig;
+  readonly client: GithubRestClient;
+  readonly now: () => number;
+}) {
+  return (input: unknown) =>
+    importTaskSnapshots(
+      {
+        config: options.config,
+        source: createGithubTaskImportSource(options.client),
+        reader: createGithubTaskReader(options.client),
+        projects: createSqliteTaskImportProjectStore(
+          options.database,
+          options.session.lease,
+          options.now,
+          randomUUID,
+        ),
+        unitOfWork: createSqliteStateUnitOfWork(options.database, options.session.lease),
+        hasher: sha256ContentHasher,
+        now: options.now,
+        nextId: randomUUID,
+      },
+      input,
+    );
 }
 
 export function createProfileUseCases(database: StateDatabase, canSave: () => boolean) {
@@ -747,6 +784,7 @@ export async function createProjectRunCommandUseCases(
     const refuse = () => ({ ok: false as const, reason: "PROJECT_NOT_CONFIGURED" });
     return {
       runs,
+      tasks: { importTasks: refuse },
       commands: {
         planRun: refuse,
         dispatchRunStep: refuse,
@@ -1056,6 +1094,15 @@ export async function createProjectRunCommandUseCases(
   });
   return {
     runs,
+    tasks: {
+      importTasks: createTaskImportUseCase({
+        database,
+        session,
+        config: config.project,
+        client,
+        now,
+      }),
+    },
     commands: {
       ...commands,
       ...createWorkerCommandUseCases({
