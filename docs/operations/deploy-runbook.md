@@ -326,5 +326,6 @@ and approval requests and task import are covered by ADR-0037 and `live-prep`; t
 harness performs the pinned native API merge after the gate). Whether a future deploy approval
 workflow can combine the durable digest decision with the native environment approval requires a
 product decision. None of these gaps is implemented by this acceptance change.
-A successful offline scenario is not evidence of the real PO approvals: the live run remains
-unverified until the PO schedules and participates in it.
+A successful offline scenario is not evidence of the real PO approvals. The real PO-approved
+sandbox run of 2026-11-13 is recorded in
+[docs/operations/acceptance/omi-042-live-run.md](acceptance/omi-042-live-run.md).
