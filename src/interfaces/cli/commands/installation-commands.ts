@@ -61,60 +61,80 @@ export function registerInstallationCommands(
       },
     );
   for (const verb of ["install", "update"]) {
-    program
+    const installation = program
       .command(verb)
       .description("Preview a project-local package installation; --apply writes after backup")
       .requiredOption("--project <path>", "absolute Linux project path")
-      .requiredOption("--package <path>", "absolute path to an extracted omi-squad tarball")
       .requiredOption("--distribution <name>", "bound WSL2 distro")
-      .option("--apply", "apply the previewed installation")
-      .action(async (_options: unknown, command: Command) => {
-        const options = command.optsWithGlobals<
-          GlobalOptions & {
-            project: string;
-            package: string;
-            distribution: string;
-            apply?: boolean;
-          }
-        >();
-        const format = formatOf(options);
-        try {
-          if (actions === undefined) throw new Error("INSTALLATION_NOT_WIRED");
-          const result = await actions.install({
-            projectDir: options.project,
-            packageDir: options.package,
-            distribution: options.distribution,
-            apply: options.apply ?? false,
-          });
-          context.emit(
-            result.status === "conflict"
-              ? presentFailure(
-                  {
-                    code: "INTERNAL_ERROR",
-                    message: `Template conflicts: ${result.conflicts.join(", ")}`,
-                  },
-                  format,
-                  EXIT_CODES.FAILURE,
-                )
-              : presentSuccess(
-                  result,
-                  `${result.status}: ${result.version}; changes: ${result.changes.join(", ") || "none"}`,
-                  format,
-                ),
-          );
-        } catch (error) {
-          context.emit(
-            presentFailure(
-              {
-                code: "INTERNAL_ERROR",
-                message: error instanceof Error ? error.message : "INSTALLATION_FAILED",
-              },
-              format,
-              EXIT_CODES.FAILURE,
-            ),
-          );
+      .option("--apply", "apply the previewed installation");
+    if (verb === "install")
+      installation.requiredOption(
+        "--package <path>",
+        "absolute path to an extracted omi-squad tarball",
+      );
+    else
+      installation
+        .option(
+          "--package <path>",
+          "offline extracted omi-squad package (exclusive with --version)",
+        )
+        .option("--version <x.y.z>", "download a pinned GitHub Release (exclusive with --package)")
+        .option("--accept-breaking", "accept breaking changes when applying a release update");
+    installation.action(async (_options: unknown, command: Command) => {
+      const options = command.optsWithGlobals<
+        GlobalOptions & {
+          project: string;
+          package?: string;
+          version?: string;
+          acceptBreaking?: boolean;
+          distribution: string;
+          apply?: boolean;
         }
-      });
+      >();
+      const format = formatOf(options);
+      try {
+        if (actions === undefined) throw new Error("INSTALLATION_NOT_WIRED");
+        if ((options.package === undefined) === (options.version === undefined))
+          throw new Error("Specify exactly one of --package or --version");
+        if (options.acceptBreaking && options.version === undefined)
+          throw new Error("--accept-breaking requires --version");
+        const result = await actions.install({
+          projectDir: options.project,
+          ...(options.version === undefined
+            ? { packageDir: options.package }
+            : { version: options.version, acceptBreaking: options.acceptBreaking ?? false }),
+          distribution: options.distribution,
+          apply: options.apply ?? false,
+        });
+        context.emit(
+          result.status === "conflict"
+            ? presentFailure(
+                {
+                  code: "INTERNAL_ERROR",
+                  message: `Template conflicts: ${result.conflicts.join(", ")}${result.changelog ? `\n\n${result.changelog}` : ""}`,
+                },
+                format,
+                EXIT_CODES.FAILURE,
+              )
+            : presentSuccess(
+                result,
+                `${result.status}: ${result.version}; changes: ${result.changes.join(", ") || "none"}${result.changelog ? `\n\n${result.changelog}` : ""}`,
+                format,
+              ),
+        );
+      } catch (error) {
+        context.emit(
+          presentFailure(
+            {
+              code: "INTERNAL_ERROR",
+              message: error instanceof Error ? error.message : "INSTALLATION_FAILED",
+            },
+            format,
+            EXIT_CODES.FAILURE,
+          ),
+        );
+      }
+    });
   }
   program
     .command("doctor")

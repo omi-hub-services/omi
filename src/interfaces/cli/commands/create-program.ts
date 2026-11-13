@@ -34,6 +34,7 @@ export interface CliEnvironment extends CliOutput {
 /** Builds the Commander program. Every command is registered here and nowhere else. */
 export function createProgram(context: CliContext, environment: CliEnvironment): Command {
   const program = new Command("omi-squad")
+    .enablePositionalOptions()
     .version(environment.version)
     .description("omi-squad command line (IPC skeleton)")
     .option("--json", "print one machine-readable JSON document")
@@ -57,6 +58,16 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
   registerProfileCommands(program, context);
   registerTaskCommands(program, context, environment.tasks);
   registerLogCommands(program, context, environment.logs);
+  // Keep global flags usable after commands while update owns its --version argument.
+  function inheritOptions(parent: Command): void {
+    for (const child of parent.commands) {
+      for (const option of program.options.filter((option) => option.long !== "--version")) {
+        if (!child.options.some((own) => own.long === option.long)) child.addOption(option);
+      }
+      inheritOptions(child);
+    }
+  }
+  inheritOptions(program);
   return program;
 }
 

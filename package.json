@@ -52,6 +52,7 @@
     "yaml": "2.9.1"
   },
   "files": [
+    "CHANGELOG.md",
     "dist/",
     "templates/",
     "schemas/",
