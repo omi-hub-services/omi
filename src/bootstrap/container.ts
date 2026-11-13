@@ -3,7 +3,10 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { loadWorkflowCatalog } from "../infrastructure/config/load-workflow-catalog.js";
 import { createFileRuleSource } from "../infrastructure/config/load-resolution-catalog.js";
 import { createFileSkillSource } from "../infrastructure/config/file-skill-source.js";
-import { loadRuntimeConfig } from "../infrastructure/config/load-runtime-config.js";
+import {
+  loadRuntimeConfig,
+  runtimeConfigHash,
+} from "../infrastructure/config/load-runtime-config.js";
 import { createDispatchPlanner } from "../application/services/plan-step-dispatch.js";
 import { createDispatchTaskReader } from "../application/services/resolve-dispatch-task.js";
 import { snapshotRunContext } from "../application/services/snapshot-run-context.js";
@@ -837,9 +840,7 @@ export async function createProjectRunCommandUseCases(
     nextId,
   });
   const rework = createSqliteReworkRunReader(database);
-  const configHash = sha256ContentHasher.sha256(
-    JSON.stringify({ project: config.project, models: config.models, catalog: config.catalog }),
-  );
+  const configHash = runtimeConfigHash(config);
   const snapshotDeps = {
     runs,
     rework,

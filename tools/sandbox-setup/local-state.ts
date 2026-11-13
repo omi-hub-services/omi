@@ -1,8 +1,25 @@
-// Local, idempotent state for the OMI-042 live harness (OMI-089): a dedicated directory with a
-// migrated state.db, the project row, project.yaml, artifacts/ and the harness config JSON.
+// Local, idempotent state for the OMI-042 live harness (OMI-089): a dedicated directory that is the
+// runtime's projectDir. Files sit where the runtime reads them (runtime-layout.ts): a migrated
+// state database, the project row, project.yaml and the artifact root; the harness config JSON
+// stays at the top level. An earlier top-level layout is moved into place (or refused).
 // It holds no credential and records no approval; decisions go through the runtime lifecycle.
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { initializeProject } from "../../src/application/use-cases/project/initialize-project.ts";
+import { createCodebaseReader } from "../../src/infrastructure/config/codebase-reader.ts";
+import { createOnboardingFileStore } from "../../src/infrastructure/config/onboarding-file-store.ts";
+import { createOnboardingTemplateSource } from "../../src/infrastructure/config/onboarding-template-source.ts";
+import {
+  loadRuntimeConfig,
+  runtimeConfigHash,
+} from "../../src/infrastructure/config/load-runtime-config.ts";
+import { createOnboardingProjectConfigStore } from "../../src/infrastructure/config/project-config-store.ts";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   deployPipelineSchema,
@@ -20,6 +37,12 @@ import {
   openReadOnlyStateDatabase,
   openStateDatabase,
 } from "../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
+import {
+  applyLayoutMigration,
+  describeMove,
+  planLayoutMigration,
+  runtimeLayout,
+} from "./runtime-layout.ts";
 
 export interface DeployFacts {
   readonly environment: string;
@@ -32,6 +55,13 @@ export interface DeployFacts {
   readonly authorActor: string;
 }
 
+/** A `deploy_targets` entry of project.yaml (ADR-0037); the trusted source of the deploy subject. */
+export interface DeployTargetFacts {
+  readonly id: string;
+  readonly targetEnvironment: string;
+  readonly artifactDigest: string;
+}
+
 export interface LocalStateInput {
   readonly stateDir: string;
   readonly repository: string;
@@ -40,14 +70,32 @@ export interface LocalStateInput {
   readonly now: () => number;
   readonly newId: () => string;
   readonly deploy?: DeployFacts;
+  /** Added to (or updated in) project.yaml's `deploy_targets`; other entries are kept. */
+  readonly deployTarget?: DeployTargetFacts;
   readonly migrationsDir?: string;
 }
 
 const defaultMigrations = (input: LocalStateInput) =>
   input.migrationsDir ?? resolve(import.meta.dirname, "../../migrations");
 
-function desiredConfig(input: LocalStateInput): ProjectConfig {
+function desiredConfig(input: LocalStateInput, current?: ProjectConfig): ProjectConfig {
   const [owner = "", name = ""] = input.repository.split("/");
+  const target = input.deployTarget;
+  const entry =
+    target === undefined
+      ? undefined
+      : {
+          id: target.id,
+          target_environment: target.targetEnvironment,
+          artifact_digest: target.artifactDigest,
+        };
+  const known = current?.deploy_targets ?? [];
+  const targets =
+    entry === undefined
+      ? undefined
+      : known.some((t) => t.id === entry.id)
+        ? known.map((t) => (t.id === entry.id ? entry : t))
+        : [...known, entry];
   return projectConfigSchema.parse({
     schema_version: 1,
     repository: { owner, name },
@@ -58,7 +106,19 @@ function desiredConfig(input: LocalStateInput): ProjectConfig {
       mandatory_approvals: ["release", "deploy"],
       github_approval_actors: [input.reviewer],
     },
+    ...(targets === undefined ? {} : { deploy_targets: targets }),
   });
+}
+
+const withoutTargets = (config: ProjectConfig): string =>
+  JSON.stringify({ ...config, deploy_targets: undefined });
+
+/** Without a target in the input, targets already in the file are not this script's concern. */
+function configMatches(current: ProjectConfig, input: LocalStateInput): boolean {
+  const desired = desiredConfig(input, current);
+  return input.deployTarget === undefined
+    ? withoutTargets(current) === withoutTargets(desired)
+    : JSON.stringify(current) === JSON.stringify(desired);
 }
 
 function deployConfigText(input: LocalStateInput, deploy: DeployFacts): string {
@@ -104,20 +164,66 @@ export function assertOutsideDirectory(root: string, target: string): void {
   if (!climbsOut) throw new Error("--state-dir must be outside this repository");
 }
 
+async function onboard(input: LocalStateInput, apply: boolean): Promise<string[]> {
+  const root = resolve(input.stateDir);
+  const present = existsSync(root);
+  const result = await initializeProject(
+    {
+      github: {
+        inspect: () => Promise.reject(new Error("unexpected GitHub call")),
+        owner: () => Promise.reject(new Error("unexpected GitHub call")),
+      },
+      config: createOnboardingProjectConfigStore(root),
+      onboarding: {
+        codebase: present
+          ? await createCodebaseReader(root)
+          : {
+              rootFiles: () => Promise.resolve([]),
+              readText: () => Promise.resolve(undefined),
+            },
+        files: present
+          ? await createOnboardingFileStore(root)
+          : {
+              exists: () => Promise.resolve(false),
+              create: () => Promise.reject(new Error("preview cannot create files")),
+            },
+        templates: createOnboardingTemplateSource(
+          resolve(import.meta.dirname, "../../templates/project/workflows"),
+        ),
+      },
+    },
+    { config: desiredConfig(input), source: { kind: "codebase", variant: "existing" }, apply },
+  );
+  if (result.kind !== "codebase") throw new Error("expected codebase onboarding");
+  return result.files
+    .filter((file) => file.action !== "kept" && file.path !== ".omi-squad/config/project.yaml")
+    .map((file) => file.path);
+}
+
 /** Read-only: what `prepareLocalState` would create or rewrite. Writes nothing, not even the directory. */
 export async function inspectLocalState(input: LocalStateInput): Promise<{ missing: string[] }> {
   const missing: string[] = [];
   const stateDir = resolve(input.stateDir);
-  if (!existsSync(join(stateDir, "artifacts"))) missing.push("artifacts/");
+  const layout = runtimeLayout(stateDir);
+  const moves = planLayoutMigration(stateDir);
+  if (moves.length > 0) return { missing: moves.map((move) => describeMove(stateDir, move)) };
+  if (!existsSync(layout.artifactsRoot)) missing.push("artifacts/");
 
   let configOk = false;
-  if (existsSync(stateDir)) {
-    const current = await (await createProjectConfigStore(stateDir)).read();
-    configOk = JSON.stringify(current) === JSON.stringify(desiredConfig(input));
+  if (existsSync(layout.configDir)) {
+    const current = await (await createProjectConfigStore(layout.configDir)).read();
+    configOk = current !== undefined && configMatches(current, input);
   }
   if (!configOk) missing.push("project.yaml");
 
-  const databasePath = join(stateDir, "state.db");
+  const catalogs = await onboard(input, false);
+  missing.push(...catalogs);
+  const expectedHash =
+    configOk && catalogs.length === 0
+      ? runtimeConfigHash(await loadRuntimeConfig(join(stateDir, ".omi-squad")))
+      : undefined;
+
+  const databasePath = layout.database;
   let migrated = false;
   let hasProject = false;
   if (existsSync(databasePath)) {
@@ -133,12 +239,15 @@ export async function inspectLocalState(input: LocalStateInput): Promise<{ missi
           n: number;
         };
         migrated = applied.n === loadMigrations(defaultMigrations(input)).length;
-        const rows = db.prepare("SELECT repo_identity FROM projects").all() as {
+        const rows = db.prepare("SELECT repo_identity, config_hash FROM projects").all() as {
           repo_identity: string;
+          config_hash: string;
         }[];
         if (rows.some((p) => p.repo_identity !== input.repository))
           throw new Error("state directory belongs to another repository; use a new --state-dir");
         hasProject = rows.length > 0;
+        if (expectedHash !== undefined && rows.some((row) => row.config_hash !== expectedHash))
+          missing.push("project config_hash");
       }
     } finally {
       db.close();
@@ -161,35 +270,64 @@ export async function prepareLocalState(input: LocalStateInput): Promise<{ chang
   const stateDir = resolve(input.stateDir);
 
   mkdirSync(stateDir, { recursive: true });
-  const artifacts = join(stateDir, "artifacts");
-  if (!existsSync(artifacts)) {
-    mkdirSync(artifacts);
+  const layout = runtimeLayout(stateDir);
+  // Before anything is created, so a directory holding both layouts is refused untouched.
+  const moves = planLayoutMigration(stateDir);
+  applyLayoutMigration(moves);
+  changed.push(...moves.map((move) => describeMove(stateDir, move)));
+  if (!existsSync(layout.artifactsRoot)) {
+    mkdirSync(layout.artifactsRoot, { recursive: true });
     changed.push("artifacts/");
   }
 
-  const config = desiredConfig(input);
-  if ((await (await createProjectConfigStore(stateDir)).create(config)) === "created")
-    changed.push("project.yaml");
+  mkdirSync(layout.configDir, { recursive: true });
+  const configStore = await createProjectConfigStore(layout.configDir);
+  if ((await configStore.create(desiredConfig(input))) === "created") changed.push("project.yaml");
+  else {
+    const current = await configStore.read();
+    // shortcut: the store only creates; unlink + create is not atomic, fine for a local operator tool.
+    if (
+      input.deployTarget !== undefined &&
+      current !== undefined &&
+      !configMatches(current, input) &&
+      withoutTargets(current) === withoutTargets(desiredConfig(input, current))
+    ) {
+      const next = desiredConfig(input, current);
+      unlinkSync(layout.configFile);
+      await configStore.create(next);
+      changed.push("project.yaml");
+    }
+  }
+  changed.push(...(await onboard(input, true)));
+  const hash = runtimeConfigHash(await loadRuntimeConfig(join(stateDir, ".omi-squad")));
 
-  const databasePath = join(stateDir, "state.db");
+  const databasePath = layout.database;
+  mkdirSync(layout.stateDir, { recursive: true, mode: 0o700 });
   const created = !existsSync(databasePath);
   const db = openStateDatabase(databasePath);
   try {
     const migrations = loadMigrations(defaultMigrations(input));
     const applied = applyMigrations(db, migrations).applied.length;
     if (created || applied > 0) changed.push("state.db");
-    const projects = db.prepare("SELECT repo_identity FROM projects").all() as {
+    const projects = db.prepare("SELECT repo_identity, config_hash FROM projects").all() as {
       repo_identity: string;
+      config_hash: string;
     }[];
     if (projects.some((p) => p.repo_identity !== input.repository))
       throw new Error("state directory belongs to another repository; use a new --state-dir");
     if (projects.length === 0) {
       const at = new Date(input.now()).toISOString();
-      const hash = createHash("sha256").update(JSON.stringify(config)).digest("hex");
       db.prepare(
         "INSERT INTO projects (id, repo_identity, config_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
       ).run(input.newId(), input.repository, hash, at, at);
       changed.push("project row");
+    } else if (projects.some((project) => project.config_hash !== hash)) {
+      db.prepare("UPDATE projects SET config_hash = ?, updated_at = ? WHERE repo_identity = ?").run(
+        hash,
+        new Date(input.now()).toISOString(),
+        input.repository,
+      );
+      changed.push("project config_hash");
     }
   } finally {
     db.close();

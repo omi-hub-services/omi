@@ -1,3 +1,4 @@
+import { sha256ContentHasher } from "../artifacts/sha256-content-hasher.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseDocument } from "yaml";
@@ -26,4 +27,11 @@ export async function loadRuntimeConfig(squadDir: string) {
     workflows: await loadWorkflowCatalog(join(squadDir, "workflows"), ids),
     catalog: loadResolutionCatalog(squadDir),
   };
+}
+
+/** The runtime project revision includes parsed defaults and the verified resolution catalog. */
+export function runtimeConfigHash(config: Awaited<ReturnType<typeof loadRuntimeConfig>>): string {
+  return sha256ContentHasher.sha256(
+    JSON.stringify({ project: config.project, models: config.models, catalog: config.catalog }),
+  );
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertLivePrepApiCall,
   assertSafeApiPath,
   desiredEnvironment,
   desiredRulesets,
@@ -316,5 +317,40 @@ describe("effective rules on main", () => {
 
   it("rejects an unreadable answer", () => {
     expect(effectiveRuleFailures({ message: "Not Found" }).length).toBeGreaterThan(0);
+  });
+});
+
+describe("assertLivePrepApiCall", () => {
+  const repo = "omi-hub-services/omi-sandbox";
+  const allowed = [
+    ["GET", `repos/${repo}/issues/7`],
+    ["POST", "graphql"],
+  ] as const;
+  it.each(allowed)("allows %s %s", (method, path) => {
+    expect(() => {
+      assertLivePrepApiCall({ method, path }, repo);
+    }).not.toThrow();
+  });
+  it.each([
+    ["GET", "repos/omi-hub-services/omi/issues/7"],
+    ["GET", `repos/${repo}/issues/7/comments`],
+    ["GET", `repos/${repo}/pulls`],
+    ["GET", `repos/${repo}/issues/../../x/issues/7`],
+    ["POST", `repos/${repo}/issues`],
+    ["PATCH", `repos/${repo}/issues/7`],
+    ["PUT", `repos/${repo}/issues/7`],
+    ["GET", "graphql"],
+  ])("refuses %s %s", (method, path) => {
+    expect(() => {
+      assertLivePrepApiCall({ method, path }, repo);
+    }).toThrow(/refused/);
+  });
+  it("refuses any repository other than the sandbox", () => {
+    expect(() => {
+      assertLivePrepApiCall(
+        { method: "GET", path: "repos/someorg/x-sandbox/issues/7" },
+        "someorg/x-sandbox",
+      );
+    }).toThrow(/refused/);
   });
 });
