@@ -190,6 +190,23 @@ accepted: the authenticated GitHub login must match `pipeline.authorActor`, and 
 from `ttin-omihub`. The guard allows only `omi-hub-services/omi-sandbox` and never posts reviews,
 environment approvals or protection changes. It consumes real GitHub quota when enabled.
 
+Operational notes from the 2026-11-13 live run (OMI-098):
+
+- Rebuild `dist/` (`npm run build`) before starting the runtime; a stale build runs old code.
+- The state dir must be a git checkout of the sandbox repository (clone it), with `.omi-squad/`,
+  the live config and the review file listed in `.git/info/exclude`.
+- The runtime needs one heartbeat line on stdin at least every 10 seconds; keeping stdin open is
+  not enough.
+- Sandbox `develop` must contain the workflows from `main`: the `github` step creates `develop`
+  before committing workflows.
+- Post the PO decision comment on the pipeline Issue, never on the task Issue (that changes the
+  business baseline).
+- Run `live-prep` and the harness as the agent account: `authorActor` comes from the logged-in
+  `gh` account.
+- The release gate reads branch rulesets (approvals, required checks, `update`/`lock_branch`
+  rules) and merges them with classic protection when it exists. A classic-protection 404 counts
+  as "none" only when rulesets were read; if nothing is readable the gate refuses.
+
 Prepare the dedicated state and the harness config with `live-prep` (never credentials):
 
 ```sh
