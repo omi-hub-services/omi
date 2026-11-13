@@ -97,7 +97,7 @@ Không tạo `common/`, `helpers/`, `utils/`, `manager.ts` chung chung. Hàm ch�
 | `src/application/use-cases/profiles/` | `probe-profile.ts`, `select-executor.ts`, `failover-step.ts` |
 | `src/application/use-cases/approvals/` | `request-approval.ts`, `record-approval.ts` |
 | `src/application/use-cases/delivery/` | `prepare-pr.ts`, `merge-task-pr.ts`, `prepare-release.ts`, `deploy-release.ts` |
-| `src/application/use-cases/sync/` | `reconcile-github.ts`, `flush-outbox.ts` |
+| `src/application/use-cases/sync/` | `reconcile-github.ts`, `flush-outbox.ts`, `sync-github.ts` |
 | `src/application/ports/` | Interface cho state store, executor, GitHub, Git workspace, artifact store, clock, logger |
 | `src/application/contracts/` | Zod schemas + type suy ra cho command, workflow, profile metadata, context, result |
 | `src/application/services/` | Context assembly, orchestration dùng chung giữa use case có tên cụ thể |
@@ -439,6 +439,7 @@ v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch 
 | `omi status --json` | Trạng thái máy đọc được; text mặc định cho PO |
 | `omi pause --run <id> --reason <text>` | Dừng có checkpoint |
 | `omi resume --run <id>` | Reconcile rồi tiếp tục |
+| `omi sync [--issues <n...>] [--json]` | IPC `sync` có schemaVersion 1: reconcile theo marker → flush operation đã có trong outbox → import Issue chỉ định; giữ single-writer lease, không tạo intent ghi GitHub mới |
 | `omi profiles register <id> --tool <claude-code\|codex> --profile-home <path> --account-group <id> [--model <name> ...]` | Đăng ký metadata vào registry SQLite qua runtime; trạng thái unknown đến khi probe |
 | `omi profiles list` / `omi profiles probe <id>` | Liệt kê/probe qua adapter hiện có; login dùng native CLI với CLAUDE_CONFIG_DIR/CODEX_HOME |
 | `omi worker-report --attempt <id>` | Đọc result và verification đã ghi |
@@ -453,9 +454,11 @@ v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch 
 | `omi import-task <issue-number> [issue-number ...]` | Import Issue từ repository/Project trong `project.yaml` qua runtime IPC (`task.import`); in task id và `content_hash`, idempotent; không tạo/quyết approval |
 | `omi approvals decide <id> --expected-version <n> --decision <approved\|rejected> [--github-comment <id>]` | Chỉ runtime TTY hoặc GitHub actor được allowlist, theo ADR-0026 |
 
-`login`, `sync` chưa có trong v0.1. `init` dùng nhánh local codebase của ADR-0029; mapping/copy GitHub Project vẫn là use case, chưa có CLI. Baseline JSON do caller cung cấp tường minh; không đoán repository, Project, branch, policy hay capability model. `models.yaml` do project cấu hình riêng trước khi chạy runtime.
+`login` chưa có trong v0.1. `init` dùng nhánh local codebase của ADR-0029; mapping/copy GitHub Project vẫn là use case, chưa có CLI. Baseline JSON do caller cung cấp tường minh; không đoán repository, Project, branch, policy hay capability model. `models.yaml` do project cấu hình riêng trước khi chạy runtime.
 
 Runtime approval composition đọc business subject từ `content_hash` của task snapshot đã import (use case `storeTaskSnapshots` ghi `task_snapshots` qua `StateUnitOfWork`, task ID `task-<số Issue>`), scope là task ID; một revision import mới làm request cũ stale. Subject deploy lấy từ `deploy_targets` trong `project.yaml` (ADR-0037); đổi digest hoặc environment làm hash đổi. Subject cost/release cần reader của workflow sở hữu chúng và không được suy ra từ request/agent text. GitHub pathway mặc định từ chối mọi actor; `policies.github_approval_actors` trong project.yaml cấu hình allowlist. Terminal pathway vẫn yêu cầu TTY thật của runtime.
+
+`sync` dùng `flushOutbox` làm chủ thứ tự reconcile-before-send, retry budget/backoff/jitter và batch size. Report version 1 giữ `reconcile.entries` (succeeded/pending/waiting/unavailable/deferred/stale/unreadable), `attempts` với outcome gốc của outbox, `snapshots` (taskId, contentHash, stored/unchanged), `githubUnavailable` và `stopped`/`code` khi có. Không có `--issues` thì không import; không có import-all theo Project. GitHub không đọc được hoặc rate limit dừng pass trước import và giữ phần kết quả đã có; CLI exit 4, classification `GITHUB_UNAVAILABLE` hoặc `RATE_LIMITED`, JSON lỗi vẫn chứa `result`. Một lần flush là một batch hữu hạn; gọi lại an toàn, snapshot không đổi là unchanged và operation succeeded không gửi lại. Import dùng cùng đường `import-task`, không quyết định hay sửa approval; baseline thay đổi làm approval cũ stale theo policy hiện hành.
 
 CLI command nhận argument có kiểu, không nối prompt/Issue body thành shell string. JSON output phải có schema/version, exit code và error classification ổn định.
 
