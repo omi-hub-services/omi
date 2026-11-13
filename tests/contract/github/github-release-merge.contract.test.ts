@@ -107,7 +107,7 @@ describe("release native approval gate over FakeGithub", () => {
 
   it.each([
     ["/reviews", "REVIEWS_READ_UNAVAILABLE"],
-    ["/rules/", "RULES_READ_UNAVAILABLE"],
+    ["/rules/", "PERMISSIONS_READ_UNAVAILABLE"],
     ["/protection", "PERMISSIONS_READ_UNAVAILABLE"],
     ["/check-runs", "CHECKS_READ_UNAVAILABLE"],
     ["/pulls/5", "PR_READ_UNAVAILABLE"],
@@ -118,14 +118,47 @@ describe("release native approval gate over FakeGithub", () => {
     refused(await s.check(), reason);
   });
 
-  it("refuses ambiguous protection 404 even for admins, and accepts readable protection as a writer", async () => {
+  it("treats a protection 404 as no classic protection only when rulesets are readable", async () => {
     const s = setup();
     s.github.protections.delete(`${REPO}:main`);
-    refused(await s.check(), "PERMISSIONS_READ_UNAVAILABLE");
-    s.github.repositoryPermissions.admin = false;
-    refused(await s.check(), "PERMISSIONS_READ_UNAVAILABLE");
-    s.github.protections.set(`${REPO}:main`, { enforce_admins: { enabled: true } });
     expect(await s.check()).toEqual({ allowed: true });
+    s.github.inject({
+      method: "GET",
+      pathIncludes: "/rules/",
+      effect: { type: "status", status: 403 },
+    });
+    refused(await s.check(), "PERMISSIONS_READ_UNAVAILABLE");
+  });
+
+  it("gates a ruleset-only repository on approvals, checks, push permission, update and lock rules", async () => {
+    const s = setup();
+    s.github.protections.delete(`${REPO}:main`);
+    s.github.rules.set(`${REPO}:main`, [
+      { type: "pull_request", parameters: { required_approving_review_count: 2 } },
+      {
+        type: "required_status_checks",
+        parameters: { required_status_checks: [{ context: "sb" }] },
+      },
+    ]);
+    refused(await s.check(), "NATIVE_APPROVAL_MISSING");
+    refused(await s.check(), "REQUIRED_CHECK_MISSING");
+    s.github.statuses.push({ repo: REPO, sha: HEAD, context: "sb", state: "success" });
+    s.github.reviews.push({
+      repo: REPO,
+      pullNumber: 5,
+      login: "reviewer",
+      type: "User",
+      state: "APPROVED",
+      commitId: HEAD,
+    });
+    expect(await s.check()).toEqual({ allowed: true });
+    s.github.repositoryPermissions.push = false;
+    refused(await s.check(), "MERGE_PERMISSION_DENIED");
+    s.github.repositoryPermissions.push = true;
+    for (const type of ["update", "lock_branch"]) {
+      s.github.rules.set(`${REPO}:main`, [{ type }]);
+      refused(await s.check(), "MERGE_PERMISSION_DENIED");
+    }
   });
 
   it("refuses no write permission, locked branches and unproven push restrictions even for admins", async () => {
@@ -205,7 +238,7 @@ describe("release native approval gate over FakeGithub", () => {
       "INVALID_RELEASE_REQUEST",
     );
     s.github.rules.set(`${REPO}:main`, [{ type: "pull_request", parameters: {} }]);
-    refused(await s.check(), "RULES_READ_UNAVAILABLE");
+    refused(await s.check(), "PERMISSIONS_READ_UNAVAILABLE");
     s.github.protections.set(`${REPO}:main`, {
       enforce_admins: { enabled: true },
       restrictions: {},
