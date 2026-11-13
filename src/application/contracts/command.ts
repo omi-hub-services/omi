@@ -6,6 +6,7 @@ import { mergeReleaseSchema } from "./release-merge.js";
 import { schemaVersionV1 } from "./schema-version.js";
 import { registerProfileSchema } from "./profile-metadata.js";
 import { importTaskSelectionSchema } from "./task-import.js";
+import { syncSelectionSchema } from "./sync.js";
 
 const envelope = { schemaVersion: schemaVersionV1 };
 
@@ -15,6 +16,7 @@ const envelope = { schemaVersion: schemaVersionV1 };
  */
 export const commandSchema = z
   .discriminatedUnion("command", [
+    syncSelectionSchema.extend({ ...envelope, command: z.literal("sync") }),
     importTaskSelectionSchema.extend({ ...envelope, command: z.literal("task.import") }),
     registerProfileSchema.extend({ ...envelope, command: z.literal("profile.register") }),
     z.strictObject({ ...envelope, command: z.literal("profile.list") }),

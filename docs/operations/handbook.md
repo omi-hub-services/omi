@@ -29,7 +29,7 @@ SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<d
 **What the v0.1 CLI really has.** `--help` lists: `init`, `install`, `update`, `doctor`, `profiles {register,list,probe}`, `status`,
 `session {new,start}`, `approvals {list,request,decide}`, `workflows validate`, `plan`, `run`, `dispatch`, `wait`, `pause`, `resume`, `deliver`, `merge-release`,
 `coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9), `watch`,
-`worker-report`, `commit-worker`, `review-comment`, and `prune-logs`.
+`worker-report`, `commit-worker`, `review-comment`, `import-task`, `sync`, and `prune-logs`.
 
 | Job            | v0.1 command                                      | Notes                                                              |
 | -------------- | ------------------------------------------------- | ------------------------------------------------------------------ |
@@ -42,7 +42,38 @@ SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<d
 | update         | `update`                                          | §7                                                                 |
 | recovery       | `status`, `resume`, `session new`, backups        | §8                                                                 |
 
-Also **not available in v0.1**: `sync` (architecture.md §13).
+### Sync GitHub and the outbox
+
+```text
+<cli> sync
+<cli> sync --issues 235 236 --json
+```
+
+Run this against an active session runtime. IPC command `sync` has `schemaVersion: 1` and
+runs under the runtime's single-writer project lease, using the same GitHub adapter as recovery
+and delivery. It reads unknown outcomes by operation marker first, flushes only operations
+already queued in the outbox, then imports the explicit Issue selection through the same path
+as `import-task`. It creates no new GitHub write intent. Without `--issues` it imports nothing;
+there is no import-all option. Existing batch size, retry budget, jitter, backoff and Retry-After
+still apply; another call continues the remaining queue.
+
+Text output lists each reconciled operation and flush attempt, then imported task IDs and
+`content_hash`. JSON includes a versioned `result` with `reconcile.entries`, `attempts`,
+`snapshots` (`taskId`, `contentHash`, `outcome`) and `githubUnavailable`. Reconciliation outcomes
+are `succeeded`, `pending`, `waiting`, `unavailable`, `deferred`, `stale` or `unreadable`;
+flush attempts preserve the outbox's `succeeded`, `rejected_retry`, `failed`, `outcome_unknown`,
+`gave_up` or `skipped` outcomes. `waiting` retains the grace period and `stale` means another
+transition won; neither permits a blind resend.
+
+A failed GitHub read stops flushing and leaves later unknown operations `deferred`. Rate limits
+stop the pass and preserve the retry schedule. Import is skipped in both cases. Exit `4` with
+classification `GITHUB_UNAVAILABLE` or `RATE_LIMITED` identifies these incomplete passes; their
+JSON error envelope retains `result` so partial operation results remain visible. A failed
+requested import also keeps the completed flush report. Exit `0` means the pass completed;
+inspect waiting/stale/failed/unknown outcomes and `stopped` before deciding whether work remains.
+A second pass does not resend succeeded operations, and unchanged snapshots keep their hashes.
+Changed Issue content updates the business baseline, making an old approval stale under the
+existing policy; sync never requests, decides or rewrites an approval.
 
 **Exit codes** (stable, ADR-0020): `0` ok (the command succeeded, not "the task passed"), `1` failure
 inside the CLI or runtime (also `install`/`update` conflicts and workflow validation errors), `2` usage
@@ -608,7 +639,7 @@ listed there is `untested`. This table adds only what the CLI itself depends on:
 
 ## Known limitations
 
-- No `retry`, `sync`.
+- No `retry`.
 - Init uses local onboarding; GitHub Project mapping/template copy still has no CLI.
 - Init needs an explicit baseline; models remain project/workflow configuration. Import tasks
   explicitly with `import-task` after starting the session.

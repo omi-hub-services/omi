@@ -155,6 +155,7 @@ import { createGithubIntake } from "../infrastructure/github/github-intake.js";
 import { createGithubTaskBoard } from "../infrastructure/github/github-task-board.js";
 import type { DispatchedUseCases } from "../interfaces/ipc/command-dispatcher.js";
 import { createCommandDispatcher } from "../interfaces/ipc/command-dispatcher.js";
+import { syncGithub } from "../application/use-cases/sync/sync-github.js";
 import { sendCommand } from "../interfaces/ipc/ipc-client.js";
 import { createIpcServer } from "../interfaces/ipc/ipc-server.js";
 import type { IpcServer } from "../interfaces/ipc/ipc-server.js";
@@ -561,7 +562,7 @@ export function createRuntimeIpcServer(options: {
   >;
   readonly profiles?: Pick<DispatchedUseCases, "registerProfile" | "listProfiles" | "probeProfile">;
   readonly runs?: RunCommandUseCases;
-  readonly tasks?: Pick<DispatchedUseCases, "importTasks">;
+  readonly tasks?: Pick<DispatchedUseCases, "importTasks" | "sync">;
   /** Lets `status` list the unfinished runs. */
   readonly activeRuns?: ActiveRunReader;
   readonly idleTimeoutMs?: number;
@@ -827,7 +828,7 @@ export async function createProjectRunCommandUseCases(
     const refuse = () => ({ ok: false as const, reason: "PROJECT_NOT_CONFIGURED" });
     return {
       runs,
-      tasks: { importTasks: refuse },
+      tasks: { importTasks: refuse, sync: refuse },
       commands: {
         planRun: refuse,
         dispatchRunStep: refuse,
@@ -1136,16 +1137,29 @@ export async function createProjectRunCommandUseCases(
     sleep,
     pollMs: 100,
   });
+  const importTasks = createTaskImportUseCase({
+    database,
+    session,
+    config: config.project,
+    client,
+    now,
+  });
   return {
     runs,
     tasks: {
-      importTasks: createTaskImportUseCase({
-        database,
-        session,
-        config: config.project,
-        client,
-        now,
-      }),
+      importTasks,
+      sync: (input: unknown) =>
+        syncGithub(
+          {
+            ...github,
+            session,
+            importTasks,
+            batchSize: merge.batchSize,
+            jitter: merge.jitter,
+            retryBudget: merge.retryBudget,
+          },
+          input,
+        ),
     },
     commands: {
       ...commands,

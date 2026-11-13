@@ -21,6 +21,34 @@
         },
         "command": {
           "type": "string",
+          "const": "sync"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "issueNumbers": {
+          "minItems": 1,
+          "maxItems": 1000,
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9999999999
+          }
+        },
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "command": {
+          "type": "string",
           "const": "task.import"
         }
       },
