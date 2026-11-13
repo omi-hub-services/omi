@@ -212,7 +212,7 @@ export class FakeGithubBoard implements GithubTransport {
         data: {
           repository: {
             issue: {
-              ...this.content(issue),
+              ...this.content(issue, query),
               projectItems: {
                 nodes:
                   item === undefined
@@ -229,7 +229,7 @@ export class FakeGithubBoard implements GithubTransport {
       const after = Number(variables["after"] ?? 0);
       const nodes = this.items.slice(after, after + this.pageSize).map((item) => ({
         ...this.itemFields(item),
-        content: this.content(this.issue(item.issueNumber)),
+        content: this.content(this.issue(item.issueNumber), query),
       }));
       return this.json({
         data: { node: { items: { nodes, pageInfo: this.pageInfo(after, this.items.length) } } },
@@ -243,8 +243,12 @@ export class FakeGithubBoard implements GithubTransport {
     return { hasNextPage: end < total, endCursor: String(end) };
   }
 
-  private content(issue: BoardIssue) {
-    const nodes = issue.blockedBy.map((n) => ({ number: n, state: this.issue(n).state }));
+  private content(issue: BoardIssue, query: string) {
+    // Like GitHub, return at most the `first: N` the query asked for.
+    const first = Number(/blockedBy\(first: (\d+)/.exec(query)?.[1] ?? Infinity);
+    const nodes = issue.blockedBy
+      .slice(0, first)
+      .map((n) => ({ number: n, state: this.issue(n).state }));
     return {
       __typename: "Issue",
       number: issue.number,
@@ -252,7 +256,7 @@ export class FakeGithubBoard implements GithubTransport {
       state: issue.state,
       body: issue.body,
       milestone: issue.milestone === null ? null : { title: issue.milestone },
-      blockedBy: { totalCount: issue.blockersTotal ?? nodes.length, nodes },
+      blockedBy: { totalCount: issue.blockersTotal ?? issue.blockedBy.length, nodes },
     };
   }
 

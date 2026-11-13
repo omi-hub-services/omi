@@ -211,6 +211,30 @@ describe("GithubTaskBoard with promote and status (fake GitHub)", () => {
     expect(await adapters().board.read(22)).toMatchObject({ blockersTruncated: true });
   });
 
+  it("reads more than 50 closed blockers without marking them truncated", async () => {
+    const ids = Array.from({ length: 60 }, (_, k) => 100 + k);
+    for (const number of ids) github.addIssue({ number, state: "CLOSED" });
+    backlog(40, { blockedBy: ids });
+    const { board } = adapters();
+    expect(await board.read(40)).toMatchObject({ blockersTruncated: false });
+    expect((await board.read(40))?.blockers).toHaveLength(60);
+    const listed = (await board.listBacklog()).find((t) => t.number === 40);
+    expect(listed).toMatchObject({ blockersTruncated: false });
+  });
+
+  it("still marks more than 100 blockers truncated and open blockers open", async () => {
+    const ids = Array.from({ length: 101 }, (_, k) => 200 + k); // 200..300
+    for (const number of ids) github.addIssue({ number, state: "CLOSED" });
+    backlog(41, { blockedBy: ids });
+    expect(await adapters().board.read(41)).toMatchObject({ blockersTruncated: true });
+    github.addIssue({ number: 150 });
+    backlog(42, { blockedBy: [200, 150] });
+    expect((await adapters().board.read(42))?.blockers).toContainEqual({
+      number: 150,
+      state: "OPEN",
+    });
+  });
+
   it("lists only Backlog Issues, across pages", async () => {
     github.pageSize = 1;
     backlog(23);
