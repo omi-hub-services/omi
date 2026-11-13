@@ -307,9 +307,18 @@ Each gate has a bounded `timeoutSeconds` budget (30–1800, default 600), polled
 seconds. Timeout does not approve, cancel, rollback or blindly redispatch anything. Evidence
 is saved after stages and on failure to `.tmp/live/omi-042-<acceptanceId>.json`; durable outbox,
 approvals, payloads and audit remain in the dedicated state directory. Preserve both on failure.
-This is not a general resume command: after task merge, `preparePr` may refuse a rerun because
-the PR is closed. Have the Coordinator inspect completed stages and reconcile through existing
-use cases; do not start another acceptance just to bypass an unknown dispatch.
+Rerunning after a stop (OMI-099): keep the same config, state directory and review file, and run the
+same command again. If the task's mapped PR is already merged into `develop` on the `review.headSha`
+(merge commit on `develop`, read back from GitHub), the harness skips `preparePr`/`mergeTaskPr` and
+records `develop` as `done` with `resumed: true`; it first re-evaluates the independent review file
+with the same domain check `mergeTaskPr` uses (pass, independent reviewer, every AC `met`). The
+release PR is found before `prepareRelease` runs (open PR, or the merged release PR naming
+`release`). If the release PR is already merged into `main` on a
+head the PO approved natively, it skips the release wait and merge and continues to publish and deploy
+(both idempotent). Every other gate (business, independent review, deploy approval, `sandbox`
+environment) is still checked. Any mismatch (closed unmerged, different head, merge commit not on the
+branch, no PO approval on the merged head) stops with an error; do not guess, have the Coordinator
+inspect GitHub. Do not start another acceptance just to bypass an unknown dispatch.
 
 Open product decisions: `omi init` exists (`src/interfaces/cli/commands/installation-commands.ts`),
 and approval requests and task import are covered by ADR-0037 and `live-prep`; there is no
