@@ -34,7 +34,7 @@ export function task(overrides: Partial<PromotionCandidate> = {}): PromotionCand
     workType: "Task",
     workflow: "feature",
     role: "Developer",
-    area: "tooling",
+    area: "domain",
     milestone: "M1",
     blockers: [],
     blockersTruncated: false,
@@ -71,6 +71,8 @@ export const SPEC_BODY = [
   "- [ ] one",
   "## Dependencies",
   "None.",
+  "## Framework counterpart",
+  "src/domain/tasks/issue-spec-policy.ts",
 ].join("\n");
 
 export const FRONTMATTER = {

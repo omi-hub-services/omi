@@ -26,7 +26,7 @@ function context(issues: Fake[]) {
     workType: select(i.workType ?? "Task"),
     workflow: select("feature"),
     role: select(i.role === undefined ? "Developer" : i.role),
-    area: select("tooling"),
+    area: select("domain"),
     planKey: { text: key(i.number) },
   });
   const blockedBy = (i: Fake) => ({

@@ -2,6 +2,8 @@
 // Claude: the longest `result` among the result events of the newest jsonl, with the turns,
 // permission denials and session id of the last result event. Codex: `omi-NNN-codex-last.md`
 // plus the thread id of the first jsonl line. Lines that are not JSON are skipped.
+import "../register-ts-imports.ts";
+const { stepResultSchema } = await import("../../src/application/contracts/result.ts");
 import { RUNS_DIR_FROM_HOME } from "./coordinator-settings.ts";
 
 export interface WorkerReport {
@@ -105,4 +107,15 @@ export function formatReport(r: WorkerReport): string {
     ...r.denials.map((d) => `  ${d}`),
     `${idLabel}: ${r.resumeId ?? "-"}`,
   ].join("\n");
+}
+
+/** Repository reports use the same v1 document as all four runtime output-contract aliases. */
+export function validateWorkerResult(report: string) {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(report);
+  } catch {
+    raw = undefined;
+  }
+  return stepResultSchema.safeParse(raw);
 }

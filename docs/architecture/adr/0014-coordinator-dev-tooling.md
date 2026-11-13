@@ -1,3 +1,5 @@
+> Partially superseded by [ADR-0036](0036-coordinator-single-source.md): shared policy/text ownership and the pinned-build migration. Existing operational gates remain in force.
+
 # ADR-0014 — Coordinator dev tooling lives in `tools/coordinator/`
 
 - Status: Accepted

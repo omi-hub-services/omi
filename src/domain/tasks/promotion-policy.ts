@@ -53,7 +53,10 @@ export function judgePromotion(task: PromotionCandidate): Promotion {
 }
 
 /** The one task order: Priority, milestone title (none last), then Issue number. */
-export function compareTaskOrder(a: PromotionCandidate, b: PromotionCandidate): number {
+export function compareTaskOrder(
+  a: Pick<PromotionCandidate, "priority" | "milestone" | "number">,
+  b: Pick<PromotionCandidate, "priority" | "milestone" | "number">,
+): number {
   return (
     priorityRank(a.priority) - priorityRank(b.priority) ||
     compareMilestone(a.milestone, b.milestone) ||

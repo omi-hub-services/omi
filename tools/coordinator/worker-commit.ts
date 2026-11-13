@@ -1,12 +1,24 @@
 // Pure part of `flow.ts commit-worker` (OMI-077): a Codex worker cannot commit, so the Coordinator
 // commits for it, and only paths a task may change (never `.tmp/`, never `.claude/`).
 
-export const STAGE_PATHS = ["src", "tests", "docs", "templates", "schemas"] as const;
+export const STAGE_PATHS = [
+  "src",
+  "tests",
+  "docs",
+  "templates",
+  "schemas",
+  "tools",
+  "AGENTS.md",
+  "package.json",
+  "package-lock.json",
+] as const;
 
 export type CommitJudgement =
   { readonly kind: "commit" } | { readonly kind: "refuse"; readonly reason: string };
 
-const allowed = (path: string) => STAGE_PATHS.some((dir) => path.startsWith(`${dir}/`));
+const allowed = (path: string) =>
+  STAGE_PATHS.some((dir) => path.startsWith(`${dir}/`)) ||
+  ["AGENTS.md", "package.json", "package-lock.json"].includes(path);
 
 /** `current` is the checked-out branch, `staged` the index after staging the allowed paths. */
 export function judgeCommit(
