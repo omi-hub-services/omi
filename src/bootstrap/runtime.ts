@@ -5,6 +5,10 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  RuntimeStartupError,
+  presentStartupError,
+} from "../interfaces/cli/presenters/startup-error-presenter.js";
 import { claimProjectSession } from "../application/services/claim-project-session.js";
 import { openStateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
 import {
@@ -34,9 +38,10 @@ export async function runSessionRuntime(
   projectDir: string,
   options: RuntimeCompositionOptions & { readonly timer?: ResourceWakeupTimer } = {},
 ): Promise<void> {
-  wslPathSchema.parse(projectDir);
+  if (!wslPathSchema.safeParse(projectDir).success)
+    throw new RuntimeStartupError("PATH_INVALID", "project directory must be an absolute WSL path");
   if (resolve(projectDir) === resolve(import.meta.dirname, "../.."))
-    throw new Error("cannot run inside framework source");
+    throw new RuntimeStartupError("PATH_INVALID", "cannot run inside framework source");
   const stateDir = join(projectDir, ".omi-squad", "local", "state");
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const database = openStateDatabase(join(stateDir, "state.sqlite"));
@@ -118,8 +123,9 @@ export async function runSessionRuntime(
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     await runSessionRuntime(process.argv[2] ?? "");
-  } catch {
-    process.stderr.write("session runtime failed\n");
+  } catch (error) {
     process.exitCode = 1;
+    // Exit explicitly: an open stdin heartbeat channel would otherwise keep the process alive.
+    process.stderr.write(presentStartupError(error), () => process.exit(1));
   }
 }
