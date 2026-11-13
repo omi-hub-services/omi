@@ -1,5 +1,8 @@
 /** Only the ADR-0021 live-tested CLI is supported. Widen after a fresh live capture. */
-export const SUPPORTED_CODEX_RANGE = { description: ">=0.167.0 <0.167.1" } as const;
+export const SUPPORTED_CODEX_RANGE = {
+  min: { major: 0, minor: 167, patch: 0 },
+  description: ">=0.167.0 <0.167.1",
+} as const;
 
 export function checkCodexVersion(output: string): {
   version: string | undefined;

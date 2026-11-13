@@ -1,3 +1,4 @@
+import type { ProjectConfig } from "../../src/application/contracts/project-config.js";
 import { createProjectConfigStore } from "../../src/infrastructure/config/project-config-store.js";
 import { runCli } from "../../src/interfaces/cli/commands/create-program.js";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -574,8 +575,17 @@ describe("packaged command wiring", () => {
         doctor: () =>
           Promise.resolve({
             distribution: request.distribution,
+            version: 1 as const,
             supported: false,
-            checks: [{ name: "interop", ok: false, detail: "not available" }],
+            checks: [
+              {
+                name: "interop",
+                ok: false,
+                status: "fail" as const,
+                detail: "not available",
+                fix: "enable interop",
+              },
+            ],
           }),
       },
     };
@@ -716,9 +726,18 @@ describe("WSL2 doctor", () => {
           install: () => Promise.reject(new Error("unexpected install")),
           doctor: () =>
             Promise.resolve({
+              version: 1 as const,
               supported: false,
               distribution: "Ubuntu",
-              checks: [{ name: "interop", ok: false, detail: "unavailable" }],
+              checks: [
+                {
+                  name: "interop",
+                  ok: false,
+                  status: "fail" as const,
+                  detail: "unavailable",
+                  fix: "enable interop",
+                },
+              ],
             }),
         },
       },
@@ -732,7 +751,30 @@ describe("WSL2 doctor", () => {
       distro: () => "Ubuntu",
       interop: () => Promise.resolve(true),
       canonical: (path) => Promise.resolve(path),
+      projectConfig: () =>
+        Promise.resolve({
+          repository: { owner: "acme", name: "app" },
+          project: { owner: "acme", number: 3 },
+          policies: { mandatory_approvals: [], github_approval_actors: ["po-human"] },
+        } as unknown as ProjectConfig),
       command: (executable, args) => {
+        if (executable === "gh")
+          return Promise.resolve(
+            args[0] === "auth"
+              ? "ok"
+              : JSON.stringify(
+                  {
+                    "api user": { login: "agent-bot" },
+                    "api users/po-human": { type: "User" },
+                    "api repos/acme/app": { permissions: { push: true } },
+                    "api graphql": {
+                      data: { repositoryOwner: { projectV2: { viewerCanUpdate: true } } },
+                    },
+                  }[args.slice(0, 2).join(" ")],
+                ),
+          );
+        if (executable === "claude") return Promise.resolve("2.1.322 (Claude Code)");
+        if (executable === "codex") return Promise.resolve("codex-cli 0.167.0");
         if (executable === "wsl.exe")
           return Promise.resolve(
             args[0] === "--list" ? "  NAME STATE VERSION\n* Ubuntu Running 2" : "0.0.0",

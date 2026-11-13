@@ -152,13 +152,17 @@ export function registerInstallationCommands(
         });
         context.emit(
           result.supported
-            ? presentSuccess(result, "WSL2 installation checks passed", formatOf(options))
+            ? presentSuccess(
+                result,
+                "Installation, GitHub and worker CLI checks passed",
+                formatOf(options),
+              )
             : presentFailure(
                 {
                   code: "DOCTOR_FAILED",
                   message: result.checks
                     .filter((check) => !check.ok)
-                    .map((check) => `${check.name}: ${check.detail}`)
+                    .map((check) => `${check.name}: ${check.detail} (fix: ${check.fix})`)
                     .join("; "),
                 },
                 formatOf(options),
