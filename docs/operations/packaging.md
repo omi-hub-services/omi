@@ -1,7 +1,7 @@
 # Project-local packaging, installation and updates
 
 The distribution is a versioned npm tarball containing `dist/`, `templates/`, `schemas/`,
-`migrations/` and npm's package metadata/README/license. Build before `npm pack`; `npm run check`
+`migrations/`, `CHANGELOG.md` and npm's package metadata/README/license. Build before `npm pack`; `npm run check`
 builds and runs `pack:check` against a real archive. No registry publication or global framework
 installation is required. Node 24.22.2 and npm must already be available in WSL2. Windows needs
 Node for the installed Windows entrypoint and the existing managed session launcher (ADR-0012,
@@ -25,8 +25,8 @@ sha256sum --check omi-squad-0.1.0.tgz.sha256
 Stop if verification fails. Use the verified archive's absolute path in the bootstrap below.
 The checksum detects corruption; it is not an independent signature. The release body contains
 that version's changelog section, including an empty or populated `### Breaking` section.
-No registry publication is involved. Version-based update/download is separate work; the current
-update still takes an extracted package through `--package`.
+No registry publication is involved. Installed projects can download a pinned release with
+`update --version`; `--package` remains available for offline updates.
 
 Maintainers: update package.json and package-lock.json together, add the matching dated changelog
 entry with Breaking, and run `npm run check`. After merge and PO release confirmation, the
@@ -80,7 +80,30 @@ subscription profiles or external tool compatibility.
 
 ## Updates and conflicts
 
-Run the same bootstrap steps with the new archive, replacing `install` with `update`. Both commands
+From an installed project's WSL2 shim, select one release version (not a tag or `latest`):
+
+```sh
+/home/user/project/.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0
+/home/user/project/.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0 --apply
+# Only after reviewing and accepting any breaking entries:
+/home/user/project/.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0 --apply --accept-breaking
+```
+
+These examples assume that version has been released. The updater uses `gh release download`
+with your existing gh authentication against `omi-hub-services/omi`, tag `v0.2.0`, and the exact
+`omi-squad-0.2.0.tgz` and `.tgz.sha256` assets. It stores no token. A missing release/asset,
+invalid checksum, unsafe archive or metadata version mismatch refuses the update. Verified
+archives are extracted privately in the OS temporary directory and removed on success or failure.
+The checksum detects corruption; it is not an independent signature.
+
+`--version` and `--package` are mutually exclusive. Release updates require an existing
+`framework.lock.json`; versions equal to or older than its version are refused. The preview
+prints all changelog version sections after the installed version through the requested version,
+including intermediate breaking entries. JSON includes `changelog` and `breaking`. Missing or
+ambiguous release notes fail closed. A nonempty `### Breaking` section in that range blocks
+`--apply` unless `--accept-breaking` is supplied. Preview always shows those entries.
+
+For offline updates, run the same bootstrap steps with the new archive, replacing `install` with `update`. Both commands
 preview by default and require `--apply` for writes. They share one implementation. Stop the managed
 session first. Live or unreconciled project-owner leases prevent updating; changing a project's distro
 or location is refused. Installers serialize through a private operation directory and compare the
