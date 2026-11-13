@@ -31,6 +31,7 @@ const empty: Observed = {
   mainSha: "m".repeat(40),
   developSha: null,
   files: {},
+  developFiles: {},
   deployWorkflowCommitSha: null,
   tagSha: null,
   rulesets: [],
@@ -47,6 +48,10 @@ function satisfied(): Observed {
     mainSha: "m".repeat(40),
     developSha: "m".repeat(40),
     files: {
+      ".github/workflows/sandbox-deploy.yml": options.deployWorkflow,
+      ".github/workflows/sandbox-check.yml": options.checkWorkflow,
+    },
+    developFiles: {
       ".github/workflows/sandbox-deploy.yml": options.deployWorkflow,
       ".github/workflows/sandbox-check.yml": options.checkWorkflow,
     },
@@ -71,10 +76,10 @@ describe("sandbox setup plan", () => {
   it("plans every object, with files before rulesets and the tag after its commit", () => {
     const order = ids(empty);
     expect(order).toEqual([
-      "branch-develop",
       "file-deploy-workflow",
       "tag-deploy-workflow",
       "file-check-workflow",
+      "branch-develop",
       "variable-image",
       "variable-digest",
       "environment",
@@ -87,6 +92,53 @@ describe("sandbox setup plan", () => {
       (s) => s.id === "tag-deploy-workflow",
     );
     expect(tag?.body).toMatchObject({ sha: "@sha:file-deploy-workflow" });
+    const branch = planSteps(evaluateSandbox(empty, options)).find(
+      (s) => s.id === "branch-develop",
+    );
+    expect(branch?.body).toEqual({ ref: "refs/heads/develop", sha: "@sha:file-check-workflow" });
+  });
+
+  it.each([
+    [".github/workflows/sandbox-deploy.yml", undefined],
+    [".github/workflows/sandbox-check.yml", undefined],
+    [".github/workflows/sandbox-deploy.yml", "name: drift"],
+    [".github/workflows/sandbox-check.yml", "name: drift"],
+  ])("blocks existing develop when %s contains %s", (path, content) => {
+    const observed = satisfied();
+    const developFiles = Object.fromEntries(
+      Object.entries(observed.developFiles).filter(([name]) => name !== path),
+    );
+    if (content !== undefined) developFiles[path] = content;
+    const items = evaluateSandbox({ ...observed, developFiles }, options);
+    expect(items.find((i) => i.id === "branch-develop")?.blocker).toMatch(
+      /develop.*workflow.*main → develop.*PR/,
+    );
+    expect(items.find((i) => i.id === "branch-develop")?.detail).toMatch(/main → develop.*PR/);
+    expect(remainingItemIds(items)).toContain("branch-develop");
+    expect(items.flatMap((i) => i.step ?? [])).toEqual([]);
+    expect(() => planSteps(items)).toThrow(/develop.*workflow/);
+  });
+
+  it.each([
+    ["both", {}, "@sha:file-check-workflow"],
+    [
+      "deploy",
+      { ".github/workflows/sandbox-check.yml": options.checkWorkflow },
+      "@sha:file-deploy-workflow",
+    ],
+    [
+      "check",
+      { ".github/workflows/sandbox-deploy.yml": options.deployWorkflow },
+      "@sha:file-check-workflow",
+    ],
+  ])("branches after missing %s workflows are installed", (_name, files, sha) => {
+    const steps = planSteps(
+      evaluateSandbox({ ...satisfied(), developSha: null, tagSha: null, files }, options),
+    );
+    expect(steps.at(-1)?.body).toEqual({
+      ref: "refs/heads/develop",
+      sha,
+    });
   });
 
   it("plans nothing when everything already matches (idempotent re-run)", () => {

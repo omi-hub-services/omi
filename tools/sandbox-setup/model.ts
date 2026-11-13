@@ -309,6 +309,8 @@ export interface Observed {
   readonly developSha: string | null;
   /** Decoded content on `main`, by path; absent = file missing. */
   readonly files: Readonly<Record<string, string>>;
+  /** Decoded content on develop; absent = file missing. */
+  readonly developFiles: Readonly<Record<string, string>>;
   /** Newest commit on `main` touching the deploy workflow. */
   readonly deployWorkflowCommitSha: string | null;
   readonly tagSha: string | null;
@@ -347,23 +349,6 @@ export function evaluateSandbox(observed: Observed, options: SetupOptions): Item
     detail,
     blocker,
   });
-
-  if (observed.developSha !== null) items.push(done("branch-develop", "branch develop exists"));
-  else if (observed.mainSha === null)
-    items.push(blocked("branch-develop", "develop missing", "main has no commit to branch from"));
-  else
-    items.push(
-      todo(
-        {
-          id: "branch-develop",
-          method: "POST",
-          path: `${base}/git/refs`,
-          body: { ref: "refs/heads/develop", sha: observed.mainSha },
-          summary: "create branch develop from main",
-        },
-        "branch develop missing",
-      ),
-    );
 
   const file = (id: string, path: string, content: string, message: string): Item => {
     const current = observed.files[path];
@@ -427,14 +412,48 @@ export function evaluateSandbox(observed: Observed, options: SetupOptions): Item
       ),
     );
 
-  items.push(
-    file(
-      "file-check-workflow",
-      CHECK_WORKFLOW_PATH,
-      options.checkWorkflow,
-      "ci: add sandbox check workflow (OMI-089)",
-    ),
+  const checkFile = file(
+    "file-check-workflow",
+    CHECK_WORKFLOW_PATH,
+    options.checkWorkflow,
+    "ci: add sandbox check workflow (OMI-089)",
   );
+  items.push(checkFile);
+
+  if (observed.developSha !== null) {
+    const workflowsMatch =
+      observed.developFiles[DEPLOY_WORKFLOW_PATH] === options.deployWorkflow &&
+      observed.developFiles[CHECK_WORKFLOW_PATH] === options.checkWorkflow;
+    items.push(
+      workflowsMatch
+        ? done("branch-develop", "branch develop contains the reviewed workflows")
+        : blocked(
+            "branch-develop",
+            "develop thiếu workflow hoặc khác fixture; đồng bộ main → develop qua PR",
+            "develop thiếu workflow hoặc khác fixture; đồng bộ main → develop qua PR",
+          ),
+    );
+  } else if (observed.mainSha === null)
+    items.push(blocked("branch-develop", "develop missing", "main has no commit to branch from"));
+  else {
+    const branchSha = !checkFile.ok
+      ? "@sha:file-check-workflow"
+      : !deployFile.ok
+        ? "@sha:file-deploy-workflow"
+        : observed.mainSha;
+    items.push(
+      todo(
+        {
+          id: "branch-develop",
+          method: "POST",
+          path: `${base}/git/refs`,
+          body: { ref: "refs/heads/develop", sha: branchSha },
+          summary: "create branch develop after both workflows are committed to main",
+        },
+        "branch develop missing",
+      ),
+    );
+  }
 
   const variable = (id: string, name: string, value: string): Item => {
     const current = observed.variables[name];

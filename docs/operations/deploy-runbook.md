@@ -112,9 +112,9 @@ tag's target) before the live run; later changes to the workflow need a reviewed
 input `artifact_digest` and the deploy approval bound to it; a changed variable alone approves
 or deploys nothing.
 
-Created, in order: branch `develop`; the deploy workflow (fixture `sandbox-deploy.yml`) and a
+Created, in order: the deploy workflow (fixture `sandbox-deploy.yml`) and a
 lightweight tag `sandbox-deploy-r1` at its commit; the `sandbox-check` workflow (the named
-check); repository variables `OMI_SANDBOX_IMAGE` and `OMI_SANDBOX_IMAGE_DIGEST`; environment
+check); branch `develop` at the commit containing both workflows; repository variables `OMI_SANDBOX_IMAGE` and `OMI_SANDBOX_IMAGE_DIGEST`; environment
 `sandbox` (required User reviewer `ttin-omihub`, `prevent_self_review`, `can_admins_bypass:
 false`); rulesets `omi-sandbox-main` (1 native approval, stale approvals dismissed, check
 `sandbox-check`), `omi-sandbox-develop` (PR, 0 approvals, same check) and `omi-sandbox-tags`
@@ -197,8 +197,10 @@ Operational notes from the 2026-11-13 live run (OMI-098):
   the live config and the review file listed in `.git/info/exclude`.
 - The runtime needs one heartbeat line on stdin at least every 10 seconds; keeping stdin open is
   not enough.
-- Sandbox `develop` must contain the workflows from `main`: the `github` step creates `develop`
-  before committing workflows.
+- The `github` step creates `develop` after both workflow commits, at the commit containing both
+  reviewed fixtures. Plan and `--verify` block if an existing `develop` lacks either workflow or
+  differs from its fixture. Synchronize `main` → `develop` through a reviewed PR; setup never
+  writes workflow files directly to `develop`.
 - Post the PO decision comment on the pipeline Issue, never on the task Issue (that changes the
   business baseline).
 - Run `live-prep` and the harness as the agent account: `authorActor` comes from the logged-in
@@ -248,6 +250,7 @@ simulates an approval. It then prints the next steps; the approval ids come from
 
    Wait for `ready` before issuing approval commands. This starts only the dedicated sandbox;
    never pass the framework source directory.
+
 2. `omi approvals request task-<n> --kind business` and
    `omi approvals request sandbox-<acceptance-id> --kind deploy` print the request ids.
 3. As **ttin-omihub**, comment the decision on the sandbox pipeline Issue, then record it with

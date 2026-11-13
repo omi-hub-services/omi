@@ -114,11 +114,20 @@ function observe(o: SetupOptions): Observed {
     const raw = read(o, `${base}/git/ref/${name}`);
     return raw === undefined ? null : refSchema.parse(raw).object.sha;
   };
+  const developSha = sha("heads/develop");
+  const developFiles: Record<string, string> = {};
   const files: Record<string, string> = {};
   for (const path of [DEPLOY_WORKFLOW_PATH, CHECK_WORKFLOW_PATH]) {
     const raw = read(o, `${base}/contents/${path}?ref=main`);
     if (raw !== undefined)
       files[path] = Buffer.from(fileSchema.parse(raw).content, "base64").toString("utf8");
+  }
+  if (developSha !== null) {
+    for (const path of [DEPLOY_WORKFLOW_PATH, CHECK_WORKFLOW_PATH]) {
+      const raw = read(o, `${base}/contents/${path}?ref=${developSha}`);
+      if (raw !== undefined)
+        developFiles[path] = Buffer.from(fileSchema.parse(raw).content, "base64").toString("utf8");
+    }
   }
   const commits = read(o, `${base}/commits?sha=main&path=${DEPLOY_WORKFLOW_PATH}&per_page=1`);
   const rawEnv = read(o, `${base}/environments/${o.environment}`);
@@ -146,7 +155,8 @@ function observe(o: SetupOptions): Observed {
   }
   return {
     mainSha: sha("heads/main"),
-    developSha: sha("heads/develop"),
+    developSha,
+    developFiles,
     files,
     deployWorkflowCommitSha: commitsSchema.parse(commits ?? [])[0]?.sha ?? null,
     tagSha: sha(`tags/${o.tag}`),
