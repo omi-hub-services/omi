@@ -54,9 +54,13 @@ export function planLayoutMigration(projectDir: string): LayoutMove[] {
   const moves = legacyMoves(projectDir);
   if (moves.length === 0) return [];
   const layout = runtimeLayout(projectDir);
-  const present = [layout.configFile, layout.database, layout.artifactsRoot].filter((p) =>
-    existsSync(p),
-  );
+  // Every destination, sidecars included: renameSync would silently replace an existing file.
+  const present = [
+    layout.configFile,
+    layout.database,
+    layout.artifactsRoot,
+    ...moves.map((move) => move.to),
+  ].filter((p, index, all) => all.indexOf(p) === index && existsSync(p));
   if (present.length > 0)
     throw new Error(
       `refused: ${layout.projectDir} has both the legacy layout and the runtime layout (${present

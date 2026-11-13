@@ -58,6 +58,23 @@ describe("legacy layout", () => {
     expect(existsSync(join(dir, "state.db"))).toBe(false);
   });
 
+  it.each(["-wal", "-shm"])(
+    "refuses, and keeps source and destination, when only the destination %s sidecar exists",
+    (suffix) => {
+      const dir = temp();
+      writeFileSync(join(dir, "state.db"), "db");
+      writeFileSync(join(dir, `state.db${suffix}`), "legacy sidecar");
+      const layout = runtimeLayout(dir);
+      mkdirSync(layout.stateDir, { recursive: true });
+      writeFileSync(`${layout.database}${suffix}`, "destination sidecar");
+      expect(() => planLayoutMigration(dir)).toThrow(/both the legacy layout/);
+      expect(readFileSync(join(dir, "state.db"), "utf8")).toBe("db");
+      expect(readFileSync(join(dir, `state.db${suffix}`), "utf8")).toBe("legacy sidecar");
+      expect(readFileSync(`${layout.database}${suffix}`, "utf8")).toBe("destination sidecar");
+      expect(existsSync(layout.database)).toBe(false);
+    },
+  );
+
   it("refuses, and moves nothing, when both layouts exist", () => {
     const dir = temp();
     legacy(dir);
