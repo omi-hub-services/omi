@@ -75,6 +75,21 @@ Effective model/effort fields and quota-event wrappers remain hypothetical; miss
 settings and reset times are left absent. See the [ADR-0023 OMI-014 amendment](../architecture/adr/0023-agent-executor-port-and-claude-adapter.md#omi-014-amendment-production-codex-adapter-2026-11-11-issue-17)
 for the effort mapping, probe gate and remaining live-validation decisions.
 
+## Doctor worker CLI classification (OMI-107)
+
+`doctor` classifies `claude --version` and `codex --version` against the adapters' ranges. The
+ranges exist once in code (`SUPPORTED_CLAUDE_CODE_RANGE`, `SUPPORTED_CODEX_RANGE`); this table
+mirrors them.
+
+| CLI | Supported range | `untested` | `unsupported` |
+| --- | --- | --- | --- |
+| Claude Code | `>=2.1.322 <2.2.0` | `>=2.2.0` (newer, never checked) | `<2.1.322` or unrecognised output |
+| Codex CLI | `>=0.167.0 <0.167.1` | `>0.167.0` (newer, never checked) | `<0.167.0` or unrecognised output |
+
+Only `supported` passes the check, because the worker adapters refuse any other version until the
+range is widened after a fresh live capture. A CLI that is not installed is reported
+`not-installed` and passes, provided the other one is supported.
+
 ## Coordinator environment (Windows)
 
 | Component | Version | Status   | Checked | Evidence                       |

@@ -75,8 +75,23 @@ project/distro/runtime options. Credentials and native modules remain on their r
 `doctor` checks the WSL2 kernel, current and registered distro version, interop registration/socket,
 Linux filesystem checkout, reversible UNC path mapping, and a Windows-to-WSL local shim invocation.
 It fails when evidence is missing. JSON output is versioned and the process returns nonzero on
-failure. This is the packaging diagnostic scope; it does not claim to probe all GitHub permissions,
-subscription profiles or external tool compatibility.
+failure. It also runs read-only checks through the same probe (no writes, no token in output):
+
+| Check | Passes when |
+| --- | --- |
+| `github-auth` | `gh auth status` succeeds (agent account logged in) |
+| `github-agent-identity` | the `gh` login differs (case-insensitively) from every `policies.github_approval_actors` entry |
+| `github-repository-access` | `gh api repos/<owner>/<name>` reports push permission |
+| `github-project-access` | the configured Project reports `viewerCanUpdate` |
+| `github-approval-allowlist` | at least one allowlist entry is a GitHub `User` |
+| `worker-cli-claude`, `worker-cli-codex` | `--version` classified `supported`; a missing CLI is `not-installed` and does not fail |
+| `worker-cli-available` | at least one worker CLI is `supported` |
+
+The GitHub policy checks read `.omi-squad/config/project.yaml`; a missing or invalid file fails
+them. The JSON report has `version` (report shape, currently `1`) and each check has `ok`,
+`status` (`pass`/`fail`), `detail` and `fix` (the operator action); worker CLI checks add
+`classification`. Version ranges are those in [compatibility.md](compatibility.md). The doctor
+does not probe subscription profiles or quota.
 
 ## Updates and conflicts
 
