@@ -11,7 +11,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { main } from "../../../../tools/sandbox-setup/main.ts";
 import { runtimeLayout } from "../../../../tools/sandbox-setup/runtime-layout.ts";
 import {
   loadRuntimeConfig,
@@ -217,7 +218,43 @@ describe("live-prep", () => {
     expect(readFileSync(runtimeLayout(stateDir).configFile, "utf8")).toBe(before);
   });
 
-  // main.ts maps both --dry-run and --verify to `dryRun: true` (mode !== "apply").
+  // Drives the real command entry: the --verify/--dry-run to read-only mapping lives in main().
+  const cli = async (
+    { stateDir, deps }: Awaited<ReturnType<typeof setup>>,
+    ...extra: string[]
+  ): Promise<{ code: number; out: string }> => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const code = await main(
+        [
+          "live-prep",
+          "--state-dir",
+          stateDir,
+          "--acceptance-id",
+          "acceptance-042-a",
+          "--issue",
+          "7",
+          "--image",
+          "ghcr.io/omi-hub-services/omi-sandbox",
+          "--digest",
+          digest,
+          ...extra,
+        ],
+        {
+          remote: () =>
+            Promise.resolve({
+              projectNodeId: deps.projectNodeId,
+              issueNodeId: deps.issueNodeId,
+              reader: deps.reader,
+              pipeline: deps.pipeline,
+            }),
+        },
+      );
+      return { code, out: log.mock.calls.map((call) => call.join(" ")).join("\n") };
+    } finally {
+      log.mockRestore();
+    }
+  };
   const fingerprint = (stateDir: string) =>
     readdirSync(stateDir, { recursive: true, withFileTypes: true })
       // A read-only open of a WAL database creates empty -shm/-wal sidecars; state.sqlite itself stays.
@@ -230,27 +267,40 @@ describe("live-prep", () => {
       .sort((a, b) => a.path.localeCompare(b.path));
   const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
-  it("--verify after an apply writes no state row, project.yaml or live-lifecycle-config.json", async () => {
-    const { stateDir, deps, flags } = await setup();
-    await runLivePrep(deps, flags);
+  it("live-prep --verify after an apply writes no state row, project.yaml or live-lifecycle-config.json", async () => {
+    const prepared = await setup();
+    const { stateDir } = prepared;
+    expect((await cli(prepared)).code).toBe(0);
     const before = fingerprint(stateDir);
     const rows = query(stateDir, "SELECT sequence FROM events");
-    const result = await runLivePrep(deps, { ...flags, dryRun: true });
+    const result = await cli(prepared, "--verify");
     expect(result.code).toBe(0);
+    expect(result.out).toContain("DRY RUN");
     expect(fingerprint(stateDir)).toEqual(before);
     expect(query(stateDir, "SELECT sequence FROM events")).toEqual(rows);
     expect(before.some((file) => file.path === runtimeLayout(stateDir).configFile)).toBe(true);
     expect(before.some((file) => file.path.endsWith("live-lifecycle-config.json"))).toBe(true);
   });
 
-  it("--verify with a pending approval id checks it but does not record it", async () => {
-    const { stateDir, deps, flags } = await setup();
-    await runLivePrep(deps, flags);
+  it("live-prep --verify before any apply creates no snapshot and no live config", async () => {
+    const prepared = await setup();
+    const { stateDir } = prepared;
+    const config = readFileSync(runtimeLayout(stateDir).configFile, "utf8");
+    expect((await cli(prepared, "--verify")).code).toBe(0);
+    expect(query(stateDir, "SELECT id FROM task_snapshots")).toEqual([]);
+    expect(existsSync(join(stateDir, "live-lifecycle-config.json"))).toBe(false);
+    expect(readFileSync(runtimeLayout(stateDir).configFile, "utf8")).toBe(config);
+  });
+
+  it("live-prep --verify with a pending approval id checks it but does not record it", async () => {
+    const prepared = await setup();
+    const { stateDir } = prepared;
+    await cli(prepared);
     const id = requestDeploy(stateDir, digest);
     const before = fingerprint(stateDir);
     const recorded = liveConfig(stateDir)["deployApprovalId"];
-    const result = await runLivePrep(deps, { ...flags, dryRun: true, deployApprovalId: id });
-    expect(result.lines.join("\n")).toContain(`deploy approval ${id}: pending`);
+    const result = await cli(prepared, "--verify", "--deploy-approval-id", id);
+    expect(result.out).toContain(`deploy approval ${id}: pending`);
     expect(liveConfig(stateDir)["deployApprovalId"]).toBe(recorded);
     expect(recorded).not.toBe(id);
     expect(fingerprint(stateDir)).toEqual(before);
