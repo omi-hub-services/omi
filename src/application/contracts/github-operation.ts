@@ -83,8 +83,11 @@ export const githubOperationSchema = z.discriminatedUnion("type", [
     type: z.literal("pull_request.merge"),
     repo: repoSchema,
     pullNumber: positiveInt,
-    /** Task delivery only; release merges use the separate PO-approved flow. */
-    base: z.literal("develop"),
+    /**
+     * `develop` for task PRs (`mergeTaskPr`); `main` only for the release PR, which `mergeRelease`
+     * queues after the PO-approval gate. The adapter itself never decides either gate.
+     */
+    base: z.enum(["develop", "main"]),
     expectedHeadSha: gitShaSchema,
     /** Correlates to the existing PR creation intent; never an approval. */
     prOperationKey: z.string().refine(isValidOperationKey),

@@ -74,6 +74,9 @@ import type { RecoveryRunReader } from "../application/ports/run-recovery.js";
 import type { RunPlanStore } from "../application/ports/run-plan-store.js";
 import type { WorkflowCatalog } from "../application/ports/workflow-catalog.js";
 import { deliverRun } from "../application/use-cases/delivery/deliver-run.js";
+import { mergeRelease } from "../application/use-cases/delivery/merge-release.js";
+import type { MergeReleaseDeps } from "../application/use-cases/delivery/merge-release.js";
+import { createGithubReleaseMergeReader } from "../infrastructure/github/github-release-merge.js";
 import type { MergeTaskPrDeps } from "../application/use-cases/delivery/merge-task-pr.js";
 import { dispatchRunStep } from "../application/use-cases/runs/dispatch-run-step.js";
 import type { DispatchStepDependencies } from "../application/use-cases/runs/dispatch-step.js";
@@ -509,6 +512,33 @@ export function createReviewCommentUseCase(deps: PostReviewCommentDeps) {
 }
 
 /**
+ * Repository and PO logins are trusted runtime configuration (`policies.github_approval_actors`,
+ * the same allowlist approvals use); a caller can never supply or override them. No configured PO
+ * refuses before any GitHub read.
+ */
+export function createReleaseMergeUseCase(
+  deps: MergeReleaseDeps,
+  repository: string,
+  poActors: readonly string[],
+) {
+  return async (input: unknown) => {
+    if (poActors.length === 0) return { ok: false as const, reason: "PO_ACTORS_NOT_CONFIGURED" };
+    const result = await mergeRelease(deps, {
+      ...(typeof input === "object" && input !== null ? input : {}),
+      repository,
+      poActors: [...poActors],
+    });
+    if (result.status === "refused")
+      return {
+        ok: false as const,
+        reason: "RELEASE_MERGE_REFUSED",
+        detail: `${result.step}: ${result.reasons.join(",")}`,
+      };
+    return { ok: true as const, ...result };
+  };
+}
+
+/**
  * Wires the runtime side: IPC server → dispatcher → use cases. It does not start a process or
  * decide when to stop; the runtime lifecycle belongs to OMI-016.
  */
@@ -797,6 +827,7 @@ export async function createProjectRunCommandUseCases(
         readWorkerReport: refuse,
         commitWorker: refuse,
         postReviewComment: refuse,
+        mergeRelease: refuse,
       },
       drain: () => Promise.resolve(),
       resourceWakeup: undefined,
@@ -1115,6 +1146,11 @@ export async function createProjectRunCommandUseCases(
         repository: `${config.project.repository.owner}/${config.project.repository.name}`,
         hasher: sha256ContentHasher,
       }),
+      mergeRelease: createReleaseMergeUseCase(
+        { ...merge, reader: createGithubReleaseMergeReader(client) },
+        `${config.project.repository.owner}/${config.project.repository.name}`,
+        config.project.policies.github_approval_actors ?? [],
+      ),
     },
     approvals: createApprovalUseCases({
       database,

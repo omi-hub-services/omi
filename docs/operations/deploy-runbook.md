@@ -328,10 +328,10 @@ inspect GitHub. Do not start another acceptance just to bypass an unknown dispat
 Open product decisions: `omi init` exists (`src/interfaces/cli/commands/installation-commands.ts`),
 and approval requests and task import are covered by ADR-0037 (`approvals request` and
 `import-task` in installed projects, `live-prep` for this harness); there is no
-`login/run/retry` command. Creating the sandbox task branch is manual. There is no release merge use case (the
-harness performs the pinned native API merge after the gate). Whether a future deploy approval
-workflow can combine the durable digest decision with the native environment approval requires a
-product decision. None of these gaps is implemented by this acceptance change.
+`login/run/retry` command. Creating the sandbox task branch is manual. The release merge is the product `mergeRelease`
+use case (`merge-release`, ADR-0039), which the harness calls. The PO decided on 2026-11-13 to keep
+**both** deploy approval layers, the durable digest approval and the native environment approval;
+they are never combined or substituted. None of the other gaps is implemented by this acceptance change.
 A successful offline scenario is not evidence of the real PO approvals. The real PO-approved
 sandbox run of 2026-11-13 is recorded in
 [docs/operations/acceptance/omi-042-live-run.md](acceptance/omi-042-live-run.md).
