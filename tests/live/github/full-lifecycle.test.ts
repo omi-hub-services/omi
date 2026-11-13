@@ -34,6 +34,7 @@ import { createSqlitePrMappingStore } from "../../../src/infrastructure/persiste
 import { createSqliteStateUnitOfWork } from "../../../src/infrastructure/persistence/sqlite/sqlite-state-unit-of-work.ts";
 import { openStateDatabase } from "../../../src/infrastructure/persistence/sqlite/sqlite-connection.ts";
 import { assertLifecycleApiCall } from "./lifecycle-api-guard.ts";
+import { decideReleaseResume, decideTaskResume } from "./lifecycle-resume.ts";
 import { runtimeLayout } from "../../../tools/sandbox-setup/runtime-layout.ts";
 import { assertSandboxTarget } from "./probe-model.ts";
 
@@ -199,50 +200,71 @@ it.skipIf(config === undefined)(
       report["issue"] = { issueNumber };
       save();
       const mappings = createSqlitePrMappingStore(db);
-      const prepared = await preparePr(
-        { ...deps, mappings, reader: createGithubPrDelivery(rest) },
-        {
-          projectId: c.projectId,
-          taskId: c.taskId,
-          repository: c.repository,
-          issueNumber,
-          head: c.head,
-          title: c.idea,
-          evidence: c.evidence,
-        },
-      );
-      if (prepared.status !== "verified") throw new Error("task PR pending; retain state");
-      let taskStatus: TaskStatus = "in_progress";
-      const taskResult = await mergeTaskPr(
-        {
-          ...deps,
-          mappings,
-          reader,
-          leases,
-          evidence: { read: () => review },
-          tasks: {
-            status: () => taskStatus,
-            complete: (change) => {
-              taskStatus = change.toStatus;
-              return { ok: true };
-            },
+      const existing = mappings.get(c.projectId, c.taskId);
+      const mappedPull =
+        existing === undefined ? undefined : await reader.pull(c.repository, existing.prNumber);
+      const taskResume = decideTaskResume({
+        reviewedHeadSha: review.review.headSha,
+        pull: mappedPull,
+        onDevelop:
+          mappedPull?.mergeCommitSha != null
+            ? await reader.branchContains(c.repository, "develop", mappedPull.mergeCommitSha)
+            : undefined,
+      });
+      if (taskResume.action === "skip") {
+        report["develop"] = {
+          status: "done",
+          resumed: true,
+          prNumber: taskResume.prNumber,
+          mergeCommitSha: taskResume.mergeCommitSha,
+        };
+        save();
+      } else {
+        const prepared = await preparePr(
+          { ...deps, mappings, reader: createGithubPrDelivery(rest) },
+          {
+            projectId: c.projectId,
+            taskId: c.taskId,
+            repository: c.repository,
+            issueNumber,
+            head: c.head,
+            title: c.idea,
+            evidence: c.evidence,
           },
-          mergeLockOwner: "lifecycle-acceptance",
-          mergeLockTtlMs: 60000,
-        },
-        {
-          projectId: c.projectId,
-          taskId: c.taskId,
-          repository: c.repository,
-          issueNumber,
-          prNumber: prepared.mapping.prNumber,
-          reviewedHeadSha: review.review.headSha,
-          requiredChecks: c.requiredChecks,
-        },
-      );
-      report["develop"] = taskResult;
-      save();
-      expect(taskResult.status).toBe("done");
+        );
+        if (prepared.status !== "verified") throw new Error("task PR pending; retain state");
+        let taskStatus: TaskStatus = "in_progress";
+        const taskResult = await mergeTaskPr(
+          {
+            ...deps,
+            mappings,
+            reader,
+            leases,
+            evidence: { read: () => review },
+            tasks: {
+              status: () => taskStatus,
+              complete: (change) => {
+                taskStatus = change.toStatus;
+                return { ok: true };
+              },
+            },
+            mergeLockOwner: "lifecycle-acceptance",
+            mergeLockTtlMs: 60000,
+          },
+          {
+            projectId: c.projectId,
+            taskId: c.taskId,
+            repository: c.repository,
+            issueNumber,
+            prNumber: prepared.mapping.prNumber,
+            reviewedHeadSha: review.review.headSha,
+            requiredChecks: c.requiredChecks,
+          },
+        );
+        report["develop"] = taskResult;
+        save();
+        expect(taskResult.status).toBe("done");
+      }
       const releases = createGithubReleaseReader(rest);
       const release = await prepareRelease(
         { ...deps, releases, pulls: createGithubPrDelivery(rest) },
@@ -260,29 +282,45 @@ it.skipIf(config === undefined)(
         requiredChecks: c.requiredChecks,
       };
       report["releaseRequest"] = releaseRequest;
-      await waitFor(
-        "release",
-        `https://github.com/${c.repository}/pull/${String(release.prNumber)}`,
-        async () => {
-          const result = await checkReleaseMerge(
-            createGithubReleaseMergeReader(rest),
-            releaseRequest,
-          );
-          report["releaseGate"] = result;
-          save();
-          return result.allowed;
-        },
-      );
+      const releasePull = await reader.pull(c.repository, release.prNumber);
+      const releaseResume = decideReleaseResume({
+        pull: releasePull,
+        onMain:
+          releasePull.mergeCommitSha !== null
+            ? await reader.branchContains(c.repository, "main", releasePull.mergeCommitSha)
+            : undefined,
+        reviews: await reader.nativeReviews(c.repository, release.prNumber),
+        poActors: releaseRequest.poActors,
+      });
+      if (releaseResume.action === "skip") {
+        report["releaseGate"] = { resumed: true, mergeCommitSha: releaseResume.mergeCommitSha };
+      } else {
+        await waitFor(
+          "release",
+          `https://github.com/${c.repository}/pull/${String(release.prNumber)}`,
+          async () => {
+            const result = await checkReleaseMerge(
+              createGithubReleaseMergeReader(rest),
+              releaseRequest,
+            );
+            report["releaseGate"] = result;
+            save();
+            return result.allowed;
+          },
+        );
+      }
       report["releaseReviews"] = await reader.nativeReviews(c.repository, release.prNumber);
       save();
       // No product release merge use case exists. This harness performs the head-pinned native merge.
-      const merge = await rest.request({
-        method: "PUT",
-        path: `${base}/pulls/${String(release.prNumber)}/merge`,
-        body: { sha: head, merge_method: "merge" },
-      });
-      if (merge.kind !== "ok")
-        throw new Error("release merge unconfirmed; inspect GitHub before retry");
+      if (releaseResume.action !== "skip") {
+        const merge = await rest.request({
+          method: "PUT",
+          path: `${base}/pulls/${String(release.prNumber)}/merge`,
+          body: { sha: head, merge_method: "merge" },
+        });
+        if (merge.kind !== "ok")
+          throw new Error("release merge unconfirmed; inspect GitHub before retry");
+      }
       const published = await publishRelease(
         { ...deps, releases, pulls: reader },
         { repository: c.repository, release: c.release, prNumber: release.prNumber },
