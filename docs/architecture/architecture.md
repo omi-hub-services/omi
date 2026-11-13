@@ -424,7 +424,7 @@ phải là quyết định cấu trúc đúng request/hash/version (ADR-0026), k
 
 Tên executable là `omi-squad` trong package; project shim gọi bằng `.omi-squad/bin/omi`. Trong các ví dụ sau, `omi` là shorthand của shim, không yêu cầu cài global.
 
-v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch --run --step` → `wait` → `status` → `deliver`. Runtime giữ retry hạ tầng/rework có giới hạn; `resume` chỉ phục hồi run paused/interrupted, không mở lại task blocked. Không thêm alias `run` cho một bước plan hoặc `retry` để bỏ gate PO.
+v0.1 không có lệnh `retry`. `run --issue` là lệnh tiện lợi ghép `plan` rồi `dispatch` step ready đầu tiên qua đúng các command IPC và gate hiện có (approval, profile/quota, lease, `RUN_NOT_RUNNING`, `STEP_NOT_READY`); nó dừng sau dispatch đầu, không chờ, không chạy cả workflow, và trả nguyên mọi refusal. Luồng đầy đủ: `plan --issue` → `dispatch --run --step` → `wait` → `status` → `deliver`. Runtime giữ retry hạ tầng/rework có giới hạn; `resume` chỉ phục hồi run paused/interrupted, không mở lại task blocked. `run` là composition, không phải bypass: không thêm đường tắt hay alias nào (kể cả `retry`) bỏ gate PO.
 
 | Lệnh | Chức năng |
 |---|---|
@@ -433,6 +433,7 @@ v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch 
 | `omi doctor --project <path> --distribution <name>` | Kiểm tra cài đặt WSL2; lỗi `DOCTOR_FAILED`, exit 6 |
 | `omi session start` | Mở runtime và Claude Code Coordinator có quản lý lifecycle |
 | `omi plan --issue <number> [--workflow <id>]` | Lập run cho Issue đã import |
+| `omi run --issue <number> [--workflow <id>] [--step <id>] [--json]` | Ghép `plan` + `dispatch` step ready đầu tiên (hoặc `--step`) qua cùng gate; in runId/stepId/attemptId; dừng sau dispatch đầu |
 | `omi dispatch --run <id> --step <id>` | Dispatch step ready theo gate hiện hành |
 | `omi wait --run <id> [--timeout <seconds>]` | Chờ worker kết thúc |
 | `omi deliver --run <id> --pr <n> --head-sha <sha> --check <name>` | Gate merge bản đã được review độc lập |
@@ -454,7 +455,7 @@ v0.1 không có lệnh `run` hoặc `retry`. Dùng `plan --issue` → `dispatch 
 | `omi import-task <issue-number> [issue-number ...]` | Import Issue từ repository/Project trong `project.yaml` qua runtime IPC (`task.import`); in task id và `content_hash`, idempotent; không tạo/quyết approval |
 | `omi approvals decide <id> --expected-version <n> --decision <approved\|rejected> [--github-comment <id>]` | Chỉ runtime TTY hoặc GitHub actor được allowlist, theo ADR-0026 |
 
-`sync`, `run`, `retry` chưa có trong v0.1 (`sync` #235, `run` #236, `retry` #237). `init` dùng nhánh local codebase của ADR-0029; mapping/copy GitHub Project vẫn là use case, chưa có CLI. Baseline JSON do caller cung cấp tường minh; không đoán repository, Project, branch, policy hay capability model. `models.yaml` do project cấu hình riêng trước khi chạy runtime.
+`sync`, `retry` chưa có trong v0.1 (`sync` #235, `retry` #237). `init` dùng nhánh local codebase của ADR-0029; mapping/copy GitHub Project vẫn là use case, chưa có CLI. Baseline JSON do caller cung cấp tường minh; không đoán repository, Project, branch, policy hay capability model. `models.yaml` do project cấu hình riêng trước khi chạy runtime.
 
 Runtime approval composition đọc business subject từ `content_hash` của task snapshot đã import (use case `storeTaskSnapshots` ghi `task_snapshots` qua `StateUnitOfWork`, task ID `task-<số Issue>`), scope là task ID; một revision import mới làm request cũ stale. Subject deploy lấy từ `deploy_targets` trong `project.yaml` (ADR-0037); đổi digest hoặc environment làm hash đổi. Subject cost/release cần reader của workflow sở hữu chúng và không được suy ra từ request/agent text. GitHub pathway mặc định từ chối mọi actor; `policies.github_approval_actors` trong project.yaml cấu hình allowlist. Terminal pathway vẫn yêu cầu TTY thật của runtime.
 
