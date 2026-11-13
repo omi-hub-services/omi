@@ -336,7 +336,26 @@ node <new-package>/dist/bootstrap/cli.js update --project /home/user/project --p
 node <new-package>/dist/bootstrap/cli.js update … --apply
 ```
 
-`update` takes the same flags as `install` and shares its implementation. Stop the managed session
+For a pinned GitHub Release, use the installed WSL2 shim:
+
+```sh
+.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0
+.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0 --apply
+```
+
+Choose an actually published `x.y.z` version. `gh release download` uses your existing gh login
+for `omi-hub-services/omi`; the updater verifies the exact release tarball against its `.sha256`,
+extracts it privately and removes temporary files after the operation. Missing tags/assets,
+checksum errors and unsafe archives refuse the update. No token is stored.
+
+Release previews print changelog entries after the installed lock version through the target,
+including intermediate `### Breaking` sections. Same-version updates and downgrades are refused.
+A breaking apply requires adding `--accept-breaking` after reviewing those entries. JSON output
+includes `changelog` and `breaking`. Use exactly one of `--version` or offline `--package`;
+`--accept-breaking` applies only to `--version`. Offline `--package` keeps its existing behavior.
+See [packaging.md](packaging.md#updates-and-conflicts) for error and recovery details.
+
+Both update sources share the existing package installation implementation. Stop the managed session
 first (live or unreconciled owner leases refuse the update). The preview prints
 `preview: <version>; changes: <paths>` or lists conflicts and changes nothing; `--apply` takes a SQLite
 backup and a backup of config/templates/shims first.

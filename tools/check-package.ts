@@ -11,6 +11,7 @@ export function validatePackedFiles(files: readonly PackedFile[]): void {
   for (const { path } of files) {
     if (
       !/^(dist|templates|schemas|migrations)\//.test(path) &&
+      path !== "CHANGELOG.md" &&
       !/^(package\.json|README(?:\.[^/]+)?|LICENSE(?:\.[^/]+)?)$/i.test(path)
     )
       throw new Error(`Unexpected package file: ${path}`);
@@ -36,6 +37,7 @@ export function validatePackedFiles(files: readonly PackedFile[]): void {
     throw new Error("Missing executable");
   if (!files.some((file) => file.path === "templates/prompts/worker-prompt.md"))
     throw new Error("Missing shared prompt skeleton: templates/prompts/worker-prompt.md");
+  if (!files.some((file) => file.path === "CHANGELOG.md")) throw new Error("Missing changelog");
 }
 export function packAndCheck(root: string, destination: string): string {
   const parsed: unknown = JSON.parse(
@@ -84,7 +86,7 @@ if (import.meta.main) {
   try {
     packAndCheck(root, temp);
     console.log(
-      "pack:check: clean archive (dist/templates/schemas/migrations and npm metadata only)",
+      "pack:check: clean archive (dist/templates/schemas/migrations, changelog and npm metadata only)",
     );
   } finally {
     rmSync(temp, { recursive: true, force: true });

@@ -8,6 +8,13 @@ export const installationInputSchema = z.strictObject({
   apply: z.boolean().default(false),
 });
 export type InstallationInput = z.infer<typeof installationInputSchema>;
+export const releaseVersionSchema = z.string().regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
+export const releaseInstallationInputSchema = installationInputSchema
+  .omit({ packageDir: true })
+  .extend({
+    version: releaseVersionSchema,
+    acceptBreaking: z.boolean().default(false),
+  });
 const templatePathSchema = z
   .string()
   .regex(

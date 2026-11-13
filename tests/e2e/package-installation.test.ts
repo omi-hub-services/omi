@@ -98,6 +98,56 @@ afterAll(async () => {
 });
 
 describe("project-local distribution", () => {
+  it("updates a release through the package merge, backup and migration path", async () => {
+    const request = await input("release-project");
+    await installProjectTool(store(), request);
+    const packageDir = await candidate("release-package");
+    const metadata = JSON.parse(await readFile(join(packageDir, "package.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({ ...metadata, version: "0.2.0" }),
+    );
+    const template = join(packageDir, "templates/project/workflows/onboarding-empty-repo.yaml");
+    const incoming = `${await readFile(template, "utf8")}\n# release change\n`;
+    await writeFile(template, incoming);
+    const cleanup = vi.fn(async () => {});
+    const releases = {
+      prepare: () =>
+        Promise.resolve({
+          packageDir,
+          changelog: "## [0.2.0] - 2026-11-13\n### Breaking\n- Update config\n",
+          cleanup,
+        }),
+    };
+    const update = {
+      projectDir: request.projectDir,
+      distribution: request.distribution,
+      version: "0.2.0",
+    };
+    const preview = await installProjectTool(store(), update, releases);
+    expect(preview.status).toBe("preview");
+    expect(preview.changes).toContain(textPath);
+    const lockPath = join(request.projectDir, ".omi-squad/framework.lock.json");
+    expect(JSON.parse(await readFile(lockPath, "utf8"))).toMatchObject({ version: packageVersion });
+    await expect(installProjectTool(store(), { ...update, apply: true }, releases)).rejects.toThrow(
+      "BREAKING_CHANGES_REQUIRE_ACCEPTANCE",
+    );
+    const result = await installProjectTool(
+      store(),
+      { ...update, apply: true, acceptBreaking: true },
+      releases,
+    );
+    if (result.status !== "installed") throw new Error("expected installation");
+    expect(await readFile(join(request.projectDir, ".omi-squad", textPath), "utf8")).toBe(incoming);
+    expect(JSON.parse(await readFile(lockPath, "utf8"))).toMatchObject({ version: "0.2.0" });
+    expect(
+      JSON.parse(await readFile(join(result.backupDir, "framework.lock.json"), "utf8")),
+    ).toMatchObject({ version: packageVersion });
+    expect(cleanup).toHaveBeenCalledTimes(3);
+  }, 30_000);
   it("previews the bridge and merges marked instructions while preserving user text and edits", async () => {
     const request = await input("bridge-project");
     await writeFile(join(request.projectDir, "CLAUDE.md"), "# My Claude instructions\n");

@@ -48,6 +48,7 @@ import { ClaudeCodeExecutor } from "../infrastructure/executors/claude-code/clau
 import { CodexExecutor } from "../infrastructure/executors/codex/codex-executor.js";
 import type { startSupervisedProcess } from "../infrastructure/processes/supervised-process.js";
 import { installProjectTool } from "../application/use-cases/project/install-project-tool.js";
+import { createGithubReleasePackage } from "../infrastructure/github/github-release-package.js";
 import { initializeProject } from "../application/use-cases/project/initialize-project.js";
 import { createOnboardingProjectConfigStore } from "../infrastructure/config/project-config-store.js";
 import { createCodebaseReader } from "../infrastructure/config/codebase-reader.js";
@@ -472,6 +473,7 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
             sourceRoot: fileURLToPath(new URL("../..", import.meta.url)),
           }),
           input,
+          createGithubReleasePackage(),
         ),
       doctor: (input) => inspectInstallation(createInstallationDoctor(), input),
     },
