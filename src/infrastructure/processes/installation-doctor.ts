@@ -1,4 +1,4 @@
-import { access, readFile, realpath } from "node:fs/promises";
+import { access, readdir, readFile, realpath } from "node:fs/promises";
 import { z } from "zod";
 import { join } from "node:path";
 import type { ProjectConfig } from "../../application/contracts/project-config.js";
@@ -45,19 +45,46 @@ function parseWith<T>(schema: z.ZodType<T>, text: string | undefined): T | undef
     return undefined;
   }
 }
+/** Used when PATH lacks wsl.exe (wsl.conf `[interop] appendWindowsPath = false`). */
+export const WSL_EXE_FALLBACK = "/mnt/c/Windows/System32/wsl.exe";
+const BINFMT_DIR = "/proc/sys/fs/binfmt_misc";
+
+export interface InteropIo {
+  socket: string | undefined;
+  access(path: string): Promise<void>;
+  readdir(path: string): Promise<string[]>;
+  readFile(path: string): Promise<string>;
+}
+
+/** Interop is on when WSL_INTEROP is reachable and any `WSLInterop*` binfmt entry is enabled
+ * (late-bound distros register `WSLInterop-late` instead of `WSLInterop`). */
+export async function detectInterop(io: InteropIo): Promise<boolean> {
+  if (io.socket === undefined) return false;
+  try {
+    await io.access(io.socket);
+    for (const name of (await io.readdir(BINFMT_DIR)).filter((n) => n.startsWith("WSLInterop"))) {
+      try {
+        if ((await io.readFile(join(BINFMT_DIR, name))).startsWith("enabled")) return true;
+      } catch {
+        /* unreadable entry: try the next */
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  return false;
+}
+
 const systemProbe: WslProbe = {
   kernel: () => readFile("/proc/sys/kernel/osrelease", "utf8"),
   distro: () => process.env["WSL_DISTRO_NAME"],
-  interop: async () => {
-    const socket = process.env["WSL_INTEROP"];
-    if (socket === undefined) return false;
-    try {
-      await access(socket);
-      return (await readFile("/proc/sys/fs/binfmt_misc/WSLInterop", "utf8")).startsWith("enabled");
-    } catch {
-      return false;
-    }
-  },
+  interop: () =>
+    detectInterop({
+      socket: process.env["WSL_INTEROP"],
+      access,
+      readdir: (path) => readdir(path),
+      readFile: (path) => readFile(path, "utf8"),
+    }),
   command: async (executable, args, cwd) => {
     const result = await runCommand({
       executable,
@@ -126,9 +153,21 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
       "Requires WSL interop and an accessible WSL_INTEROP socket",
       "Enable WSL interop (wsl.conf [interop] enabled=true) and restart the distro",
     );
-    const list = (
-      await probe.command("wsl.exe", ["--list", "--verbose"], input.projectDir)
-    )?.replaceAll("\0", "");
+    const listArgs = ["--list", "--verbose"];
+    let wslExe = "wsl.exe";
+    let rawList = await probe.command(wslExe, listArgs, input.projectDir);
+    if (rawList === undefined) {
+      wslExe = WSL_EXE_FALLBACK;
+      rawList = await probe.command(wslExe, listArgs, input.projectDir);
+    }
+    const reachable = rawList !== undefined;
+    check(
+      "wsl-exe",
+      reachable,
+      "wsl.exe must be runnable from PATH or /mnt/c/Windows/System32",
+      "wsl.exe not reachable: set [interop] appendWindowsPath = true in /etc/wsl.conf (then wsl.exe --shutdown), or add /mnt/c/Windows/System32 to PATH",
+    );
+    const list = rawList?.replaceAll("\0", "");
     const rows = list?.split(/\r?\n/).map((line) =>
       line
         .trim()
@@ -139,7 +178,9 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
       "distribution-version",
       rows?.some((row) => row[0] === input.distribution && row.at(-1) === "2") ?? false,
       "Bound distro must be registered as WSL version 2",
-      `Run wsl.exe --set-version ${input.distribution} 2`,
+      reachable
+        ? `Run wsl.exe --set-version ${input.distribution} 2`
+        : "Cannot be checked until the wsl-exe check passes",
     );
     const windowsPath = await probe.command("wslpath", ["-w", input.projectDir], input.projectDir);
     const expected = `\\\\wsl.localhost\\${input.distribution}\\`;
@@ -163,16 +204,28 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
       "Keep the project on the Linux filesystem (not /mnt/<drive>), not behind a symlink",
     );
     const shim = join(input.projectDir, ".omi-squad", "bin", "omi");
-    const reached = await probe.command(
-      "wsl.exe",
-      ["--distribution", input.distribution, "--cd", input.projectDir, "--exec", shim, "--version"],
-      input.projectDir,
-    );
+    const reached = reachable
+      ? await probe.command(
+          wslExe,
+          [
+            "--distribution",
+            input.distribution,
+            "--cd",
+            input.projectDir,
+            "--exec",
+            shim,
+            "--version",
+          ],
+          input.projectDir,
+        )
+      : undefined;
     check(
       "windows-launch",
       reached !== undefined && /^\d+\.\d+\.\d+/.test(reached.trim()),
       "Windows must reach this project's local shim through typed argv",
-      "Reinstall the project shim with omi install --apply",
+      reachable
+        ? "Reinstall the project shim with omi install --apply"
+        : "Cannot be checked until the wsl-exe check passes",
     );
 
     // GitHub identity and permissions. Only the login, user type and permission booleans are read
