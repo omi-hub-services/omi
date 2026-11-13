@@ -57,6 +57,7 @@ const worker = (over: Partial<WorkerProcess> = {}): WorkerProcess => ({
     isError: false,
     limited: false,
   },
+  packet: `omi-${/\d+/.exec(over.task ?? "OMI-004")?.[0] ?? "004"}-prompt-x-1-abc123.md`,
   ...over,
 });
 const prompt = (step: string | null, role = "developer"): PromptInfo => ({
@@ -89,7 +90,17 @@ const tasksRead = async (
     blockersTruncated: false,
   })),
   pulls: [],
-  prompts,
+  // a worker resolves its own packet by name (OMI-111): mirror each task's prompt under the
+  // packet name the default `worker()` of that task reads
+  prompts: {
+    ...Object.fromEntries(
+      Object.entries(prompts).flatMap(([key, info]) => {
+        const digits = /^OMI-(\d+)$/.exec(key)?.[1];
+        return digits === undefined ? [] : [[`omi-${digits}-prompt-x-1-abc123.md`, info]];
+      }),
+    ),
+    ...prompts,
+  },
   templates: workflow === null ? {} : { [workflow]: await loadTemplate(workflow) },
 });
 const input = (over: Partial<SnapshotInput> = {}): SnapshotInput => ({

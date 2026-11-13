@@ -319,19 +319,30 @@ export function parsePromptText(text: string): PromptInfo {
 
 const PLAN_KEY = /^OMI-(\d{1,4})$/;
 
+const GREP = `grep -E '^(# Workflow |## Skill: |## Rule: )'`;
+
 /**
- * One bash payload: per task, the matching lines of its newest full packet (`@@prompt`) and of
- * each of its recent packet files by name (`@@packet`, OMI-111), never the packets themselves.
+ * One bash payload: per task, the matching lines of its newest full packet (`@@prompt`, only to
+ * tell whether the task was dispatched), then for each running worker exactly the packet it reads
+ * (`@@packet`, OMI-111) and, for a resume packet, the newest full packet of the same task, step
+ * and attempt (a glob over that exact prefix, no count limit). Never the packets themselves.
  */
-function promptPayload(numbers: readonly string[]): string {
-  const grep = `grep -E '^(# Workflow |## Skill: |## Rule: )'`;
+function promptPayload(numbers: readonly string[], packets: readonly string[]): string {
   const d = `$HOME/${RUNS_DIR_FROM_HOME}`;
-  return (
+  const task =
     `for n in ${numbers.join(" ")}; do f=$(ls -t ${d}/omi-$n-prompt*.md 2>/dev/null | head -n 1); ` +
-    `if [ -n $f ]; then echo @@prompt $n; ${grep} $f | head -n 80; else echo @@missing $n; fi; ` +
-    `for g in $(ls -t ${d}/omi-$n-prompt*.md ${d}/omi-$n-resume*.md 2>/dev/null | head -n 16); ` +
-    `do echo @@packet $(basename $g); ${grep} $g | head -n 80; done; done`
-  );
+    `if [ -n $f ]; then echo @@prompt $n; ${GREP} $f | head -n 80; else echo @@missing $n; fi; done`;
+  const one = (name: string) => {
+    const read = `if [ -f ${d}/${name} ]; then echo @@packet ${name}; ${GREP} ${d}/${name} | head -n 80; fi`;
+    const base = /^(omi-\d+)-resume-(.+)-[a-z0-9]+\.md$/.exec(name);
+    if (!base) return read;
+    const prefix = `${base[1] ?? ""}-prompt-${base[2] ?? ""}-`;
+    return (
+      `${read}; g=$(ls -t ${d}/${prefix}*.md 2>/dev/null | grep -E '${prefix}[a-z0-9]+[.]md$' | head -n 1); ` +
+      `if [ -n $g ]; then echo @@packet $(basename $g); ${GREP} $g | head -n 80; fi`
+    );
+  };
+  return [task, ...packets.map(one)].join("; ");
 }
 
 /**
@@ -366,6 +377,7 @@ export async function readPrompts(
   run: Runner,
   target: WslTarget,
   planKeys: readonly string[],
+  packets: readonly string[] = [],
 ): Promise<Record<string, PromptInfo | null> | null> {
   const numbers = [
     ...new Set(
@@ -374,7 +386,13 @@ export async function readPrompts(
   ];
   if (numbers.length === 0) return {};
   try {
-    const res = await run(wslCommand(promptPayload(numbers), target, 30_000));
+    const res = await run(
+      wslCommand(
+        promptPayload(numbers, [...new Set(packets.filter((p) => PACKET_FILE.test(p)))]),
+        target,
+        30_000,
+      ),
+    );
     return res.code === 0 ? parsePromptProbe(res.stdout) : null;
   } catch {
     return null;
@@ -405,13 +423,17 @@ const isActive = (i: ProjectItem) =>
 export async function readTasks(
   run: Runner,
   target: WslTarget,
+  workers: Workers | null = null,
   load: (id: string) => Promise<TemplateRead> = loadTemplate,
 ): Promise<TasksRead> {
   try {
     const project = await readProject(run);
     const active = project.items.filter(isActive);
     const keys = active.flatMap((i) => (i.planKey ? [i.planKey] : []));
-    const prompts = (await readPrompts(run, target, keys)) ?? {};
+    const packets = workers?.available
+      ? workers.processes.flatMap((p) => (p.packet ? [p.packet] : []))
+      : [];
+    const prompts = (await readPrompts(run, target, keys, packets)) ?? {};
     const names = [...new Set(active.flatMap((i) => (i.workflow ? [i.workflow] : [])))];
     const templates = Object.fromEntries(
       await Promise.all(names.map(async (n) => [n, await load(n)] as const)),
@@ -568,15 +590,19 @@ function taskView(
   const taskPrompt =
     planKey !== null && planKey in read.prompts ? read.prompts[planKey] : undefined;
   // A running worker shows the packet it reads, not the task's newest one (OMI-111).
-  const prompt = process?.packet
-    ? (workerPrompt(read.prompts, process.packet) ?? taskPrompt)
-    : taskPrompt;
+  // no packet to resolve means no skills or rules shown: never another worker's (Architect, PR #228)
+  const prompt =
+    process === null
+      ? taskPrompt
+      : process.packet
+        ? workerPrompt(read.prompts, process.packet)
+        : null;
   const comments = pull?.comments ?? [];
   const derived = deriveStep({
     status: item.status,
     worker: lookup,
     pull,
-    dispatched: prompt === undefined ? null : prompt !== null,
+    dispatched: taskPrompt === undefined ? null : taskPrompt !== null,
     blockers: item.blockers,
     issueComments: item.comments ?? [],
   });

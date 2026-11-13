@@ -218,7 +218,10 @@ export function runWatch(options: WatchOptions): Promise<void> {
       profiles,
       settings,
       workerIntervalMs: options.intervalMs,
-      tasks: { intervalMs: TASKS_INTERVAL_MS, read: (run) => readTasks(run, target) },
+      tasks: {
+        intervalMs: TASKS_INTERVAL_MS,
+        read: (run, workers) => readTasks(run, target, workers),
+      },
       onChange: draw,
       onError: fail,
     });

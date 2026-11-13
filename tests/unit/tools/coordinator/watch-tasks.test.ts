@@ -385,12 +385,34 @@ describe("parsePromptProbe / readPrompts", () => {
     expect(seen).toHaveLength(1);
     const payload = seen[0]?.args.at(-1) ?? "";
     expect(payload).toContain("omi-$n-prompt*.md");
-    expect(payload).toContain("omi-$n-resume*.md");
-    expect(payload).toContain("@@packet");
+    expect(payload).not.toContain("@@packet"); // no worker, so no packet is read
     expect(payload).toContain("074");
     expect(payload).toContain("# Workflow ");
     expect(payload).toContain("## Rule: ");
     expect(payload).not.toContain("rm -rf");
+    // OMI-111: exactly the packets the workers read, validated; a resume also looks up the full
+    // packet of its own step and round by prefix, with no count limit on the history
+    const named: Command[] = [];
+    await readPrompts(
+      (c) => {
+        named.push(c);
+        return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+      },
+      { viaWslExe: false, distro: "d", repoDir: "/r" },
+      ["OMI-074"],
+      [
+        "omi-074-resume-implement-1-r17.md",
+        "omi-074-prompt-verify-1-bbb222.md",
+        "../../etc/passwd; rm -rf x",
+      ],
+    );
+    const exact = named[0]?.args.at(-1) ?? "";
+    expect(exact).toContain("omi-runs/omi-074-resume-implement-1-r17.md");
+    expect(exact).toContain("omi-runs/omi-074-prompt-verify-1-bbb222.md");
+    expect(exact).toContain("omi-074-prompt-implement-1-*.md");
+    expect(exact).not.toContain("passwd");
+    expect(exact).not.toContain("rm -rf");
+    expect(exact).not.toMatch(/head -n 1[0-9]/);
     const none = await readPrompts(
       () => Promise.resolve({ code: 1, stdout: "", stderr: "x" }),
       { viaWslExe: false, distro: "d", repoDir: "/r" },
@@ -438,6 +460,7 @@ const openPull = (over: Partial<OpenPull> = {}): OpenPull => ({
   checks: [{ name: "check", state: "pass" }],
   ...over,
 });
+const WORKER_PACKET = "omi-074-prompt-x-1-abc123.md";
 const worker: WorkerProcess = {
   pid: 9,
   tool: "claude",
@@ -447,6 +470,7 @@ const worker: WorkerProcess = {
   profile: "minibox",
   model: "opus-5-5",
   effort: "high",
+  packet: WORKER_PACKET,
   log: {
     numTurns: 12,
     lastAction: "Bash\u001b[2J npm test",
@@ -460,20 +484,26 @@ const available = (processes: WorkerProcess[]): Workers => ({
   processes,
   latestLog: null,
 });
-const read = (over: Partial<Extract<TasksRead, { available: true }>> = {}): TasksRead => ({
-  available: true,
-  items: [item()],
-  pulls: [],
-  prompts: {
+// `read` mirrors the task's prompt under the packet name of the default `worker`, so a test that
+// only names the task's prompt still has its worker resolve it (OMI-111).
+const read = (over: Partial<Extract<TasksRead, { available: true }>> = {}): TasksRead => {
+  const prompts = over.prompts ?? {
     "OMI-074": {
       skills: ["minimal-change"],
       rules: ["AGENTS.md"],
       mandatoryRules: [],
       header: null,
     },
-  },
-  ...over,
-});
+  };
+  const own = prompts["OMI-074"];
+  return {
+    available: true,
+    items: [item()],
+    pulls: [],
+    ...over,
+    prompts: own === undefined ? prompts : { [WORKER_PACKET]: own, ...prompts },
+  };
+};
 
 describe("buildTasks", () => {
   it("is loading before the first GitHub read and carries an unavailable reason", () => {
@@ -834,6 +864,18 @@ describe("template position, worker step and hold of a task view", () => {
     it("keeps the plain plan key for a task with one worker or none", () => {
       expect(rows([qaWorker]).map((t) => t.rowId)).toEqual(["OMI-074"]);
       expect(rows([]).map((t) => [t.rowId, t.worker])).toEqual([["OMI-074", null]]);
+    });
+
+    it("shows nothing for a worker whose packet is unknown, never the task's or another worker's", async () => {
+      const unknown = { ...worker, pid: 13, packet: null };
+      const gone = { ...worker, pid: 14, packet: "omi-074-prompt-gone-1-zzz999.md" };
+      for (const w of [unknown, gone]) {
+        const t = (await card("feature", {}, [w], { prompts })).prompt;
+        expect(t).toBeNull();
+      }
+      const t = await card("feature", {}, [unknown], { prompts });
+      expect(t.skills).toEqual([]);
+      expect(t.workerStep).toBeNull();
     });
 
     it("takes the step of each row from its own packet header", async () => {

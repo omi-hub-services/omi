@@ -393,9 +393,12 @@ example `OMI-075 feature Work rework:1/2 Developer codex/ggtintran`.
 packet file each running worker has open on stdin (`/proc/<pid>/fd/0`, accepted only when it is an
 `omi-NNN-prompt-…` or `omi-NNN-resume-…` name). A task with several running workers (QA and
 review in parallel) gets one row and card per worker, id `OMI-NNN#<pid>`, each with its own
-packet's skills and rules. A resume adds its follow-up to the newest full packet of the same
-step and attempt. A worker with no resolvable packet falls back to the newest
-`omi-NNN-prompt-*.md` of the task (one WSL call per read; only the lines that match, never the
+packet's skills and rules. The watch reads exactly the packet each worker has open (no
+recent-file window); a resume packet also gets the newest full packet of the same task, step and
+attempt, found by a glob over that exact prefix with no count limit, and the follow-up skills
+are added to it. A worker whose packet cannot be resolved shows no skills or rules and the note
+"worker packet unknown"; another worker's or the task's newest packet is never shown instead.
+Whether a task was dispatched at all still uses the newest `omi-NNN-prompt-*.md` (one WSL call per read; only the lines that match, never the
 prompt body): skills from the
 `## Skill: <name>` headings that OMI-073 inlines, rules from the `AGENTS.md`, `CLAUDE.md` and
 `docs/**/*.md` paths the prompt mentions, plus the worker restrictions (no push, PR or merge;
