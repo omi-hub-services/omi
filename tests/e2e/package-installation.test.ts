@@ -45,6 +45,7 @@ const root = resolve(import.meta.dirname, "../..");
 let temp: string;
 let artifact: string;
 let archive: string;
+let packageVersion: string;
 // Package sources stay read-only after preparation; share archive bytes instead of copying
 // the full runtime on every fake install. Project state and tool manifests remain independent.
 const provision: ProvisionPackage = async (source, tool) => {
@@ -77,6 +78,15 @@ const textPath = "workflows/onboarding-empty-repo.yaml";
 // Their 30 s budgets cover real filesystem/hash/SQLite work remaining after sharing package bytes.
 
 beforeAll(async () => {
+  const metadata: unknown = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  if (
+    typeof metadata !== "object" ||
+    metadata === null ||
+    !("version" in metadata) ||
+    typeof metadata.version !== "string"
+  )
+    throw new Error("invalid package version");
+  packageVersion = metadata.version;
   temp = await mkdtemp(join(tmpdir(), "omi-packaging-"));
   archive = packAndCheck(root, temp);
   artifact = join(temp, "package");
@@ -198,7 +208,7 @@ describe("project-local distribution", () => {
     await symlink("/usr/bin/dirname", join(bin, "dirname"));
     expect(
       execFileSync(shim, ["--version"], { cwd: temp, env: { PATH: bin }, encoding: "utf8" }).trim(),
-    ).toBe("0.0.0");
+    ).toBe(packageVersion);
     expect(await readFile(join(request.projectDir, "package.json"), "utf8")).toBe(
       '{"name":"user-application"}\n',
     );
@@ -578,12 +588,12 @@ describe("installation failure boundaries", () => {
     const manifest: unknown = JSON.parse(await readFile(join(tool, "package.json"), "utf8"));
     expect(manifest).toMatchObject({
       private: true,
-      dependencies: { "omi-squad": "file:omi-squad-0.0.0.tgz" },
+      dependencies: { "omi-squad": `file:omi-squad-${packageVersion}.tgz` },
     });
     const relocated = join(temp, "relocated-tool");
     await cp(tool, relocated, { recursive: true });
     expect(await readFile(join(relocated, "package-lock.json"), "utf8")).toContain(
-      "file:omi-squad-0.0.0.tgz",
+      `file:omi-squad-${packageVersion}.tgz`,
     );
     expect(
       await readFile(join(relocated, "node_modules/omi-squad/dist/bootstrap/cli.js"), "utf8"),
