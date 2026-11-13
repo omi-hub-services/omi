@@ -1,3 +1,4 @@
+import { dispatchSkills } from "../../../domain/workflows/workflow-policy.js";
 import {
   resolveWorkflowEffort,
   resolveQualityPolicy,
@@ -345,7 +346,12 @@ export async function dispatchStep(
   try {
     resolved = resolveRoleContext(deps.catalog, {
       role: command.role,
-      stepSkills: command.stepSkills,
+      // Common boundary for ordinary and specialist dispatch: an implement rework round resumes with receiving-code-review.
+      stepSkills: [
+        ...(command.quality === undefined
+          ? command.stepSkills
+          : dispatchSkills(command.quality.step, command.stepSkills, command.quality.round)),
+      ],
       stepRules: command.stepRules,
       excludedRules: command.excludedRules,
     });

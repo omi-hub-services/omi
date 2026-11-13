@@ -188,6 +188,37 @@ function gateTarget(gate: WorkflowGate): string {
   return "before" in gate ? gate.before : gate.after;
 }
 
+/** Skill every rework or native-resume packet carries on top of the step's own skills. */
+export const REWORK_SKILL = "receiving-code-review";
+
+/**
+ * Skills of a rework/resume packet: the step's skills plus `receiving-code-review`. Single rule
+ * shared by the runtime rework dispatch and the script-run `flow.ts prompt --findings`.
+ */
+export function resumeSkills(stepSkills: readonly string[]): readonly string[] {
+  return stepSkills.includes(REWORK_SKILL) ? stepSkills : [...stepSkills, REWORK_SKILL];
+}
+
+/** Quality step ids (see qualityStepId): fresh independent runs, never a rework of the author's work. */
+const NON_WORK_STEPS: readonly string[] = ["analyze", "verify", "review", "accept"];
+
+/** A rework dispatch: a work step (not analyze/verify/review/accept) after its first round. */
+export function isReworkDispatch(stepId: string, round: number): boolean {
+  return round > 1 && !NON_WORK_STEPS.includes(stepId);
+}
+
+/**
+ * The one rule for a dispatched step's skills, shared by the runtime dispatch and
+ * `flow.ts prompt`: rework gets `resumeSkills`, everything else the step's own skills.
+ */
+export function dispatchSkills(
+  stepId: string,
+  stepSkills: readonly string[],
+  round: number,
+): readonly string[] {
+  return isReworkDispatch(stepId, round) ? resumeSkills(stepSkills) : stepSkills;
+}
+
 export type GateStatus = "open" | "passed" | "failed";
 
 export interface StepStartability {

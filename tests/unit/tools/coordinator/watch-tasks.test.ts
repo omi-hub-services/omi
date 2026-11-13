@@ -280,6 +280,23 @@ describe("parsePromptText", () => {
     });
   });
 
+  it("reads skills, rules and header of a native resume packet", () => {
+    const resume = [
+      "# Native resume only",
+      "",
+      "# Workflow feature · step implement · role developer",
+      "## Skill: minimal-change",
+      "## Skill: receiving-code-review",
+      "## Rule: project-baseline (mandatory)",
+      "## Review findings (native resume only)",
+    ].join("\n");
+    expect(parsePromptText(resume)).toMatchObject({
+      skills: ["minimal-change", "receiving-code-review"],
+      mandatoryRules: ["project-baseline"],
+      header: { step: "implement", role: "developer" },
+    });
+  });
+
   it("returns empty lists and no header for a prompt with none", () => {
     expect(parsePromptText("hello")).toEqual({
       skills: [],

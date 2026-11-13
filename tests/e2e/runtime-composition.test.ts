@@ -1,5 +1,13 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  readFileSync,
+  copyFileSync,
+  cpSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -123,7 +131,14 @@ async function setup(mode = "good", approval = true, body = issueBody) {
         rules: [],
       }),
     );
-  writeFileSync(join(squad, "provenance/skills.lock.json"), JSON.stringify({ skills: [] }));
+  // Rework packets add receiving-code-review, so the project carries the real template skills.
+  cpSync(resolve("templates/project/.omi-squad/skills"), join(squad, "skills"), {
+    recursive: true,
+  });
+  copyFileSync(
+    resolve("templates/project/.omi-squad/provenance/skills.lock.json"),
+    join(squad, "provenance/skills.lock.json"),
+  );
   copyFileSync(
     resolve("tests/fixtures/workflows/minimal-delivery.yaml"),
     join(squad, "workflows/minimal-delivery.yaml"),
