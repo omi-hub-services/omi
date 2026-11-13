@@ -67,6 +67,80 @@ export function registerRunCommands(program: Command, context: CliContext): void
     });
 
   program
+    .command("run")
+    .description("Plan a run, then dispatch its first ready step (stops after that dispatch)")
+    .requiredOption("--issue <number>", "Issue number")
+    .option("--workflow <id>", "workflow template id")
+    .option("--step <id>", "dispatch this step instead of the first ready one")
+    .action(
+      async (options: { issue: string; workflow?: string; step?: string }, command: Command) => {
+        const globals = command.optsWithGlobals<GlobalOptions>();
+        const format = formatOf(globals);
+        const send = async (candidate: Readonly<Record<string, unknown>>, timeoutMs: number) => {
+          const parsed = commandSchema.safeParse({
+            schemaVersion: CONTRACT_SCHEMA_VERSION,
+            ...candidate,
+          });
+          if (!parsed.success) return undefined;
+          return context.sendCommand({
+            socketPath: globals.socket ?? context.defaultSocketPath,
+            timeoutMs: Math.max(context.timeoutMs, timeoutMs),
+            command: parsed.data,
+          });
+        };
+        const planned = await send(
+          {
+            command: "plan",
+            issueNumber: wholeNumber(options.issue),
+            ...(options.workflow === undefined ? {} : { workflowId: options.workflow }),
+          },
+          context.timeoutMs,
+        );
+        if (planned === undefined) {
+          context.emit(presentUsageError("invalid or missing command arguments", format));
+          return;
+        }
+        if (!planned.ok) {
+          context.emit(presentFailure(planned.error, format));
+          return;
+        }
+        const plan = planned.result as {
+          runId?: string;
+          steps?: readonly { stepId: string; status: string }[];
+        };
+        const stepId = options.step ?? plan.steps?.find((step) => step.status === "ready")?.stepId;
+        if (stepId === undefined) {
+          // The runtime owns readiness; with nothing ready there is no dispatch to ask it about.
+          context.emit(
+            presentFailure({ code: "COMMAND_REFUSED", message: "STEP_NOT_READY" }, format),
+          );
+          return;
+        }
+        const dispatched = await send({ command: "dispatch", runId: plan.runId, stepId }, 60_000);
+        if (dispatched === undefined) {
+          context.emit(presentUsageError("invalid or missing command arguments", format));
+          return;
+        }
+        if (!dispatched.ok) {
+          context.emit(presentFailure(dispatched.error, format));
+          return;
+        }
+        const ids = {
+          runId: plan.runId,
+          stepId,
+          attemptId: (dispatched.result as { attemptId?: string }).attemptId,
+        };
+        context.emit(
+          presentSuccess(
+            ids,
+            `runId=${ids.runId ?? ""} stepId=${ids.stepId} attemptId=${ids.attemptId ?? ""}`,
+            format,
+          ),
+        );
+      },
+    );
+
+  program
     .command("dispatch")
     .description("Dispatch one ready step of a run to a worker")
     .requiredOption("--run <id>", "run id")

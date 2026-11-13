@@ -27,7 +27,7 @@ JSON document `{"schemaVersion":1,"ok":…,"exitCode":…,"result"|"error":…}`
 SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<drive>`).
 
 **What the v0.1 CLI really has.** `--help` lists: `init`, `install`, `update`, `doctor`, `profiles {register,list,probe}`, `status`,
-`session {new,start}`, `approvals {list,request,decide}`, `workflows validate`, `plan`, `dispatch`, `wait`, `pause`, `resume`, `deliver`, `merge-release`,
+`session {new,start}`, `approvals {list,request,decide}`, `workflows validate`, `plan`, `run`, `dispatch`, `wait`, `pause`, `resume`, `deliver`, `merge-release`,
 `coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9), `watch`,
 `worker-report`, `commit-worker`, `review-comment`, `import-task`, `sync`, and `prune-logs`.
 
@@ -36,7 +36,7 @@ SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<d
 | init           | `install`, `init`, `doctor`                       | Preview first; `--apply` creates files (§1)                       |
 | login/profiles | `login`, `profiles register/list/probe`           | Login with the native tool; `login` shows the step and probes (§2) |
 | intake         | `new-issue`, `promote`, `set-status`              | Preview first; readiness gate (§9)                                |
-| run            | `plan` → `dispatch` → `wait` → `status` → `deliver` | `run` **not available in v0.1** (see §3)                         |
+| run            | `run`, or `plan` → `dispatch` → `wait` → `status` → `deliver` | `run` = plan + first dispatch, same gates (see §3)       |
 | pause / resume | `pause`, `resume`                                 | §4, §5                                                             |
 | retry          | none                                              | `retry` **not available in v0.1** (see §6)                         |
 | update         | `update`                                          | §7                                                                 |
@@ -277,6 +277,15 @@ a configured project (§1).
    A missing runtime gives exit 3. Re-import edited content before requesting/deciding approval.
 
    `<cli> plan --issue <number> [--workflow <id>]` starts a run for an **imported** Issue.
+
+   **Shortcut:** `<cli> run --issue <number> [--workflow <id>] [--step <id>] [--json]` sends `plan`,
+   then `dispatch` for the first ready step (or `--step`), and prints
+   `runId=… stepId=… attemptId=…` (`--json`: `result.runId/stepId/attemptId`). It stops after that
+   one dispatch: it does not wait and does not run the rest of the workflow; continue with `wait`.
+   It goes through the same gates as `dispatch` (execution approvals, profile/quota, writer lease,
+   `RUN_NOT_RUNNING`, `STEP_NOT_READY`). Any refusal is printed unchanged as `COMMAND_REFUSED`
+   (exit 4). If `plan` succeeded but `dispatch` was refused, the run exists; fix the cause and use
+   `dispatch --run <id> --step <id>`, since `run` again is refused with `ACTIVE_RUN_EXISTS`.
 3. `<cli> dispatch --run <id> --step <id>` sends one **ready** step to a worker.
 4. `<cli> wait --run <id> [--timeout <1-3600>]` blocks until no worker of the run is running
    (default 300 s). Use it instead of polling.
@@ -630,7 +639,7 @@ listed there is `untested`. This table adds only what the CLI itself depends on:
 
 ## Known limitations
 
-- No `run`, `retry`.
+- No `retry`.
 - Init uses local onboarding; GitHub Project mapping/template copy still has no CLI.
 - Init needs an explicit baseline; models remain project/workflow configuration. Import tasks
   explicitly with `import-task` after starting the session.
