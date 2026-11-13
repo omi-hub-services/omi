@@ -368,7 +368,11 @@ describe("Claude collector shared cache", () => {
     expect(good?.source).toBe("claude-probe");
     expect(good?.modelWindows).toHaveLength(1);
     expect(cache(setup.home).p1?.nextAllowedAt).toBe(now + 1200);
-    expect(collect(setup, now + 500)).toEqual([{ kind: "cache", profile: "p1", reading: good }]);
+    // the 429 from the earlier call stays visible while calls are spaced out
+    expect(collect(setup, now + 500)).toEqual([
+      { kind: "cache", profile: "p1", reading: good },
+      { kind: "error", tool: "claude-usage", profile: "p1", message: "HTTP 429" },
+    ]);
   });
 });
 
@@ -430,7 +434,7 @@ describe("Claude collector expiry probe (OMI-094)", () => {
     const setup = usageSetup(expiredAt);
     fakeClaude(setup.home, true);
     const out = collect(setup, now, "expired");
-    expect(kinds(out)).toEqual(["usage"]);
+    expect(kinds(out)).toEqual(["expiry-probe", "usage"]);
     expect(runs(setup.home)).toBe(1);
     // a later poll with the renewed token neither probes nor reports expiry
     expect(kinds(collect(setup, now + 400, "expired"))).not.toContain("expired");
@@ -464,7 +468,31 @@ describe("Claude collector expiry probe (OMI-094)", () => {
       setup.credPath,
       JSON.stringify({ claudeAiOauth: { accessToken: TOKEN, expiresAt: (now + 500) * 1000 } }),
     );
-    expect(kinds(collect(setup, now + 600, "expired"))).toContain("expired");
+    const refused = kinds(collect(setup, now + 600, "expired"));
+    expect(refused).toContain("expired");
+    // a refusal is not a probe: the poller must stay eligible
+    expect(refused).not.toContain("expiry-probe");
     expect(runs(setup.home)).toBe(1);
+  });
+
+  it("reports expiry when the profile lock is busy, e.g. during a long probe", () => {
+    const setup = usageSetup(Date.now() - 1000);
+    mkdirSync(join(setup.home, "omi-runs"), { recursive: true });
+    writeFileSync(join(setup.home, "omi-runs", ".quota-cache.json.p1.lock"), "");
+    const result = runCollector(setup.home, ["claude:p1"], setup.preload, "", {});
+    expect(kinds(parsed(result.stdout))).toContain("expired");
+  });
+
+  it("keeps the last collector error visible during backoff until a read succeeds", () => {
+    const setup = usageSetup((now + 10_000) * 1000);
+    const at = (t: number, mode = "") =>
+      parsed(runCollector(setup.home, ["claude:p1"], setup.preload, mode, { now: t }).stdout);
+    const error = { kind: "error", tool: "claude-usage", profile: "p1", message: "HTTP 401" };
+    at(now);
+    expect(at(now + 300, "401")).toContainEqual(error);
+    const during = at(now + 400);
+    expect(kinds(during)).toContain("cache");
+    expect(during).toContainEqual(error);
+    expect(at(now + 700)).not.toContainEqual(error);
   });
 });

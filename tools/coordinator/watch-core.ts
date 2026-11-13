@@ -143,12 +143,18 @@ export function createWatchPoller(options: WatchPollerOptions): WatchPoller {
         probedForExpiresAt: last?.expiresAt ?? null,
         cooldownMs: EXPIRY_PROBE_COOLDOWN_MS,
       });
-      if (probe) expiryProbes.set(p.profile, { at: now, expiresAt });
       return probe;
     });
     if (due.length === 0) return report;
     const again = await readQuota(run, target, due, settings, "expired");
     if (!again.available) return report;
+    // Remember an expiry only once the collector really probed it: a shared-cooldown refusal or a
+    // failed read leaves the profile eligible for the next poll.
+    for (const p of again.profiles) {
+      const expiresAt = due.find((d) => d.profile === p.profile)?.tokenExpiresAt;
+      if (p.expiryProbed === true && expiresAt != null)
+        expiryProbes.set(p.profile, { at: now, expiresAt: expiresAt * 1000 });
+    }
     return {
       ...report,
       now: again.now,

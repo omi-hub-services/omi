@@ -196,6 +196,9 @@ export function quotaSeverity(
     : "ok";
 }
 
+/** No expiry probe (one Haiku call) within this time of any earlier probe of the same profile. */
+export const EXPIRY_PROBE_COOLDOWN_MS = 3_600_000;
+
 export interface ExpiryProbeInput {
   /** Epoch ms the OAuth access token expires; null when the credentials do not say. */
   readonly expiresAt: number | null;

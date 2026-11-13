@@ -44,6 +44,8 @@ function fakeWsl(options: { probeRenews: boolean }) {
         usage: { five_hour: { utilization: 20, resets_at: null }, seven_day: null, limits: null },
       });
     if (!probing || payload(command).includes("claude:idle")) {
+      if (probing)
+        rows.push({ kind: "expiry-probe", profile: "idle", expiresAt: (now - 8 * H) * 1000 });
       if (renewed) {
         rows.push({
           kind: "usage",
@@ -103,6 +105,72 @@ describe("watch poller expiry probe (OMI-094)", () => {
     expect(idle?.tokenExpiresAt).toBeNull();
     expect(idle?.reading?.source).toBe("claude-usage-api");
     expect(Math.floor(Date.now() / 1000) - (idle?.reading?.observedAt ?? 0)).toBeLessThan(60);
+    poller.stop();
+  });
+
+  it("stays eligible after a cooldown refusal and probes once the collector allows it", async () => {
+    vi.useFakeTimers();
+    const modes: string[] = [];
+    let expiredReads = 0;
+    const run: Runner = (command) => {
+      if (!isQuota(command)) return Promise.resolve({ code: 127, stdout: "", stderr: "offline" });
+      const now = Math.floor(Date.now() / 1000);
+      const probing = payload(command).includes(" expired ");
+      modes.push(probing ? "expired" : "plain");
+      const rows: object[] = [{ kind: "now", now }];
+      if (probing && ++expiredReads >= 2) {
+        rows.push(
+          { kind: "expiry-probe", profile: "idle", expiresAt: (now - 8 * H) * 1000 },
+          {
+            kind: "usage",
+            profile: "idle",
+            usage: {
+              five_hour: { utilization: 10, resets_at: null },
+              seven_day: null,
+              limits: null,
+            },
+          },
+        );
+      } else if (probing || expiredReads < 2) {
+        // the shared cooldown refused: the collector reports expiry but did not probe
+        rows.push(
+          { kind: "expired", profile: "idle", expiresAt: (now - 8 * H) * 1000 },
+          {
+            kind: "cache",
+            profile: "idle",
+            reading: { ...reading(now - 9 * H), source: "claude-probe" },
+          },
+        );
+      } else {
+        rows.push({
+          kind: "usage",
+          profile: "idle",
+          usage: { five_hour: { utilization: 10, resets_at: null }, seven_day: null, limits: null },
+        });
+      }
+      return Promise.resolve({
+        code: 0,
+        stdout: rows.map((r) => JSON.stringify(r)).join("\n"),
+        stderr: "",
+      });
+    };
+    const poller = createWatchPoller({
+      run,
+      target,
+      profiles: profiles.slice(0, 1),
+      settings: QUOTA_SETTINGS,
+      workerIntervalMs: 60_000,
+      quotaIntervalMs: QUOTA_MIN_INTERVAL_MS,
+      onChange: () => undefined,
+    });
+    poller.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(modes).toEqual(["plain", "expired"]);
+    await vi.advanceTimersByTimeAsync(QUOTA_MIN_INTERVAL_MS);
+    // not recorded as probed, so the next poll asks again and the probe then runs
+    expect(modes.filter((m) => m === "expired")).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(QUOTA_MIN_INTERVAL_MS * 2);
+    expect(modes.filter((m) => m === "expired")).toHaveLength(2);
     poller.stop();
   });
 

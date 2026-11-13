@@ -90,6 +90,8 @@ export interface ProfileQuota extends WorkerProfile {
   readonly note: string | null;
   /** Unix seconds the OAuth token expired at; null when it is valid or not known to be expired. */
   readonly tokenExpiresAt: number | null;
+  /** The collector really ran an expiry probe for this profile in this read. */
+  readonly expiryProbed?: boolean;
 }
 
 const num = (v: unknown): number | null => (typeof v === "number" && isFinite(v) ? v : null);
@@ -232,6 +234,7 @@ export function parseQuotaOutput(
   const caches = new Map<string, QuotaReading>();
   const notes = new Map<string, string>();
   const expired = new Map<string, number>();
+  const expiryProbed = new Set<string>();
   const key = (tool: string, profile: string) => `${tool}:${profile}`;
   const claudeNames = profiles.filter((p) => p.tool === "claude").map((p) => p.profile);
   const lines = stdout.split("\n").flatMap((line) => {
@@ -255,6 +258,8 @@ export function parseQuotaOutput(
         if (owner !== null && !logs.has(owner)) {
           logs.set(owner, parseClaudeRateLimitEvent(o.event, num(o.mtime) ?? 0, "claude-log"));
         }
+      } else if (o.kind === "expiry-probe") {
+        expiryProbed.add(profile);
       } else if (o.kind === "expired") {
         const at = num(o.expiresAt);
         if (at !== null) expired.set(profile, Math.floor(at / 1000));
@@ -291,7 +296,7 @@ export function parseQuotaOutput(
         : (notes.get(key(p.tool, p.profile)) ??
           (usageNote ? `usage api: ${usageNote}; ${fallback ?? ""}` : fallback));
       const tokenExpiresAt = p.tool === "claude" ? (expired.get(p.profile) ?? null) : null;
-      return { ...p, reading, note, tokenExpiresAt };
+      return { ...p, reading, note, tokenExpiresAt, expiryProbed: expiryProbed.has(p.profile) };
     }),
   };
 }
@@ -789,9 +794,14 @@ async function saveCache(profile, patch) {
   } catch { usageFail(profile, "cache write failed"); return false; }
   finally { if (fd !== undefined) { closeSync(fd); unlinkSync(lock); } }
 }
+const failures = new Map();
 function cached(profile) {
-  const reading = parseCachedReading(loadCache()[profile]?.reading);
+  const entry = loadCache()[profile];
+  const reading = parseCachedReading(entry?.reading);
   if (reading) emit({ kind: "cache", profile, reading });
+  // The last collector error stays visible until a read succeeds, also while calls are spaced out.
+  if (typeof entry?.lastError === "string" && !failures.has(profile))
+    emit({ kind: "error", tool: "claude-usage", profile, message: entry.lastError.slice(0, 80) });
 }
 
 
@@ -904,7 +914,13 @@ function claudeProbe(profile, quiet) {
 // api.anthropic.com and never emitted: a failure carries an HTTP status or an error kind, nothing
 // else. The token is not refreshed and nothing is written to the profile directory.
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
-const usageFail = (profile, message) => emit({ kind: "error", tool: "claude-usage", profile, message });
+const usageFail = (profile, message) => { failures.set(profile, message); emit({ kind: "error", tool: "claude-usage", profile, message }); };
+// Expiry is re-derived from the credentials on every read; the cache-write errors are about the cache itself.
+const NOT_PERSISTED = ["token expired", "cache write failed", "cache directory unavailable"];
+async function persistFailure(profile) {
+  const message = failures.get(profile);
+  if (message !== undefined && !NOT_PERSISTED.includes(message)) await saveCache(profile, { lastError: message });
+}
 
 function readOauth(profile) {
   try {
@@ -930,6 +946,8 @@ async function expiredToken(profile, expiresAt, autoProbe) {
   if (!decision.probe) { expiredReport(profile, expiresAt); cached(profile); return; }
   // Recorded before the probe, so a crash or a failed probe is never repeated for this expiry.
   if (!await saveCache(profile, { probedForExpiresAt: expiresAt, nextAllowedAt: clock() + minimumSeconds })) { expiredReport(profile, expiresAt); cached(profile); return; }
+  // Told to the host only now that a probe really runs: a refusal must not count as a probe there.
+  emit({ kind: "expiry-probe", profile, expiresAt });
   await claudeProbe(profile, true);
   if (!await fetchClaudeUsage(profile)) cached(profile);
 }
@@ -944,7 +962,13 @@ async function claudeUsage(profile, autoProbe) {
   try {
     try { if (Date.now() - statSync(lock).mtimeMs > 30000) unlinkSync(lock); } catch {}
     fd = openSync(lock, "wx", 0o600);
-  } catch { cached(profile); return; }
+  } catch {
+    // Busy (e.g. an expiry probe of up to 120 s outlives the 30 s stale limit): still say why the data is old.
+    const busy = readOauth(profile);
+    if (busy && typeof busy.expiresAt === "number" && busy.expiresAt <= Date.now()) expiredReport(profile, busy.expiresAt);
+    cached(profile);
+    return;
+  }
   try {
     const oauth = readOauth(profile);
     if (oauth && typeof oauth.accessToken === "string" && oauth.accessToken !== "" && typeof oauth.expiresAt === "number" && oauth.expiresAt <= Date.now()) {
@@ -956,7 +980,7 @@ async function claudeUsage(profile, autoProbe) {
     if (!await saveCache(profile, { nextAllowedAt: clock() + minimumSeconds })) { cached(profile); return; }
     const success = await fetchClaudeUsage(profile);
     if (!success) cached(profile);
-  } finally { closeSync(fd); unlinkSync(lock); }
+  } finally { await persistFailure(profile); closeSync(fd); unlinkSync(lock); }
 }
 
 async function fetchClaudeUsage(profile) {
@@ -995,7 +1019,7 @@ async function fetchClaudeUsage(profile) {
   const usage = { five_hour: win(body.five_hour), seven_day: win(body.seven_day), limits };
   try {
     const reading = parseClaudeUsage(usage, clock());
-    await saveCache(profile, { reading });
+    await saveCache(profile, { reading, lastError: null });
     emit({ kind: "usage", profile, usage });
     return true;
   } catch { usageFail(profile, "unexpected response shape"); }

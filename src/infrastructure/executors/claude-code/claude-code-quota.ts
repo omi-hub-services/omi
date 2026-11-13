@@ -8,6 +8,7 @@ import type {
 } from "../../../application/ports/quota-reader.js";
 import {
   decideExpiryProbe,
+  EXPIRY_PROBE_COOLDOWN_MS,
   type ModelQuotaWindow,
   type QuotaReading,
   type QuotaWindow,
@@ -21,8 +22,6 @@ const FETCH_TIMEOUT_MS = 10_000;
 const PROBE_TIMEOUT_MS = 120_000;
 /** The endpoint is undocumented: never call a profile more often than this (ADR-0033). */
 const DEFAULT_MIN_INTERVAL_MS = 300_000;
-/** No expiry probe within this time of an earlier probe of the same profile. */
-const EXPIRY_PROBE_COOLDOWN_MS = 3_600_000;
 
 const credentialsSchema = z.object({
   claudeAiOauth: z.object({
