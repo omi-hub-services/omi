@@ -777,7 +777,11 @@ describe("WSL2 doctor", () => {
         if (executable === "codex") return Promise.resolve("codex-cli 0.167.0");
         if (executable === "wsl.exe")
           return Promise.resolve(
-            args[0] === "--list" ? "  NAME STATE VERSION\n* Ubuntu Running 2" : "0.0.0",
+            args[0] === "--list"
+              ? "  NAME STATE VERSION\n* Ubuntu Running 2"
+              : args.includes("--omi-node-exec")
+                ? "v24.0.0"
+                : "0.0.0",
           );
         return Promise.resolve(
           args[0] === "-w"

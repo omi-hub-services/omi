@@ -95,3 +95,30 @@ it.each([true, false])(
   },
   30_000,
 );
+
+it.each([true, false])(
+  "runs a script through the recorded node in --omi-node-exec mode, fallback %s",
+  async (fallback) => {
+    const { shim } = await install(`node-exec-${String(fallback)}`);
+    const script = join(temp, `script-${String(fallback)}.js`);
+    await writeFile(
+      script,
+      "require('node:fs').writeSync(1, JSON.stringify(process.argv.slice(2)));\n",
+    );
+    const shell = await readFile(shim, "utf8");
+    const emptyBin = join(temp, `node-exec-bin-${String(fallback)}`);
+    await mkdir(emptyBin);
+    await symlink("/usr/bin/dirname", join(emptyBin, "dirname"));
+    const args = ["--omi-node-exec", script, "a b", "c"];
+    // PATH has no node, as under a non-login wsl.exe --exec: only the recorded path can work.
+    expect(await execute(shim, args, { env: { PATH: emptyBin } })).toMatchObject({
+      stdout: '["a b","c"]',
+    });
+    await writeFile(shim, shell.replace(process.execPath, join(temp, "removed-node")));
+    if (fallback) await symlink(process.execPath, join(emptyBin, "node"));
+    const result = execute(shim, args, { env: { PATH: emptyBin } });
+    if (fallback) await expect(result).resolves.toMatchObject({ stdout: '["a b","c"]' });
+    else await expect(result).rejects.toMatchObject({ code: 127 });
+  },
+  30_000,
+);

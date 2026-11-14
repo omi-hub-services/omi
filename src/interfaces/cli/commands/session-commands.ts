@@ -75,7 +75,24 @@ export function registerSessionCommands(
         return;
       }
       if (launch === undefined) throw new Error("session launcher is not wired");
-      const result = await launch(input.data);
+      const result = await launch(input.data).catch((error: unknown) => {
+        if (!(error instanceof Error) || error.message !== "RUNTIME_START_FAILED") throw error;
+        return error;
+      });
+      if (result instanceof Error) {
+        context.emit(
+          presentFailure(
+            {
+              code: "RUNTIME_UNAVAILABLE",
+              message:
+                "RUNTIME_START_FAILED: the session runtime did not start in WSL. Run omi doctor (session-runtime-launch); if Node.js is missing, reinstall with omi install --apply using a working Node.js or configure node on PATH",
+            },
+            format,
+            EXIT_CODES.FAILURE,
+          ),
+        );
+        return;
+      }
       context.emit(
         result.exitCode === 0 && result.runtimeStopped
           ? presentSuccess(result, "Session stopped", format)

@@ -10,4 +10,9 @@ if [ ! -x "$node" ]; then
     exit 127
   }
 fi
+# Run another script (the session runtime, the doctor probe) with the same pinned interpreter.
+if [ "${1-}" = --omi-node-exec ]; then
+  shift
+  exec "$node" "$@"
+fi
 exec "$node" "$root/.omi-squad/tool/node_modules/omi-squad/dist/bootstrap/cli.js" "$@"
