@@ -88,7 +88,16 @@ export async function completeRunAttempt(
         ? checkFindings(deps, checkRuns)
         : recorded.failure === "SKILL_EVIDENCE_MISSING"
           ? skillFindings(attempt, reported.success ? reported.data : undefined)
-          : [],
+          : recorded.failure === "REVIEW_AC_LINES_INVALID"
+            ? [
+                {
+                  id: "review-ac-lines-invalid",
+                  severity: "major",
+                  message: `REVIEW_AC_LINES_INVALID: ${recorded.detail ?? ""}. Write exactly one AC-n: met|not met — <evidence> line per criterion, each on its own line starting with AC-n:.`,
+                  location: attempt.artifactRoot,
+                },
+              ]
+            : [],
     );
     if (
       !(reported.success && reported.data.status === "blocked") &&

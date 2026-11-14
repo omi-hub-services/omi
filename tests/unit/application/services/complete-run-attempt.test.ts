@@ -150,6 +150,28 @@ async function finish(
 const stepStatus = (s: ReturnType<typeof setup>) => s.r.steps.rows.get("step-1")?.status;
 
 describe("completeRunAttempt runs the step's required checks itself", () => {
+  it("remembers invalid review AC details for the next attempt and authorizes retry", async () => {
+    const s = setup();
+    const remembered = new Map<string, { id: string; message: string; severity: string }[]>();
+    const findings = {
+      remember: (id: string, entries: { id: string; message: string; severity: string }[]) =>
+        remembered.set(id, entries),
+      recall: (id: string) => remembered.get(id) ?? [],
+    };
+    Object.assign(s.deps, { findings });
+    const attempt = await finish(s, (r, id) => {
+      const row = r.attempts.get(id);
+      if (row === undefined) throw new Error("missing attempt");
+      r.attempts.rows.set(id, { ...row, role: { ...row.role, id: "reviewer" } });
+      return { summary: "Reviewed. AC-1: met — inline" };
+    });
+    expect(stepStatus(s)).toBe("failed");
+    const entries = findings.recall(attempt.stepRunId);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ id: "review-ac-lines-invalid", severity: "major" });
+    expect(entries[0]?.message).toContain("AC_LINE_MISSING");
+    expect(s.sessionEvents).toContain("step.retry_authorized");
+  });
   it("runs the configured check in the attempt's worktree and accepts the step when it passes", async () => {
     const s = setup();
     const attempt = await finish(s);

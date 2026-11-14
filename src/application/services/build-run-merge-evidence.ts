@@ -2,6 +2,11 @@ import type { AttemptRecord } from "../ports/attempt-store.js";
 import type { MergeEvidence } from "../contracts/merge-delivery.js";
 import type { StepResult } from "../contracts/result.js";
 
+/** Preserve the merge gate's artifact precedence when accepting a review result. */
+export function selectReviewBody(reports: readonly string[], summary: string): string {
+  return reports.find((report) => /^AC-\d+:/m.test(report)) ?? summary;
+}
+
 /** Only verified, durably accepted step results may supply review facts to the merge gate. */
 export function buildRunMergeEvidence(
   entries: readonly {
@@ -62,7 +67,7 @@ export function createRunMergeEvidenceReader(
           if (sha256 === undefined) throw new Error("ARTIFACT_HASH_MISSING");
           return new TextDecoder("utf-8", { fatal: true }).decode(artifacts.read({ path, sha256 }));
         });
-        const body = reports.find((report) => /^AC-\d+:/m.test(report)) ?? entry.result.summary;
+        const body = selectReviewBody(reports, entry.result.summary);
         if (body.length > 60_000) throw new Error("REVIEW_REPORT_TOO_LARGE");
         return { ...entry, reviewBody: body };
       });

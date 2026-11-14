@@ -9,6 +9,7 @@
 - Unverified items and open decisions.
 - Proposed commit message ending (OMI-NNN), using the Issue's Plan Key, when changes exist.
 - QA/reviewer: fixed revision, verdict and one AC-n: met|not met — evidence line per top-level AC. Coordinator posts verdicts through review-comment.
+- Each AC-n: line must stand alone at the start of a line, with no preceding prose; never combine multiple AC verdicts on one line. Use this format in reviewer artifacts too.
 
 Finish with only one JSON document satisfying the framework step-result-v1 schema. The workflow's
 analysis-result-v1, implementation-result-v1, verification-result-v1 and review-result-v1
