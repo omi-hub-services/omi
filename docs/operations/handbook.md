@@ -882,8 +882,10 @@ reports each artifact by `path` only: the runtime registers the file, computes i
 records that hash. A `sha256` the worker does add must match, and a missing file, a symlink or a
 path outside the attempt's artifact root still fails the step (`ARTIFACT_INVALID`,
 `ARTIFACT_HASH_MISMATCH`, `PATH_OUTSIDE_ROOT`). `revision` is only a claim: the runtime records its
-own head and merge-base with `develop`; a missing or malformed claim is ignored, while a well-formed
-SHA that differs is refused as `STALE_REVISION`. Diagnostic text keeps 40/64-character lowercase hex
+own head and merge-base with `develop`. A missing or malformed claim is ignored, and a worker's
+`baseSha` is never used; a well-formed `headSha` that differs from the worktree head is refused as
+`STALE_REVISION`. If the runtime cannot compute the merge-base, the step fails closed with
+`REVISION_MISSING`. Diagnostic text keeps 40/64-character lowercase hex
 (git SHAs) and still redacts secret-prefixed and other long tokens.
 
 Each dispatch has its own log `omi-NNN-<profile>-<ts>-<step>-<attempt>-<stamp>.jsonl` (and `.err`,

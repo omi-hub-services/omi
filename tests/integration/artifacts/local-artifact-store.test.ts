@@ -615,6 +615,32 @@ describe("adopt (worker-written files)", () => {
     expect(() => adopt("link.md")).toThrow(ArtifactError);
   });
 
+  const rows = () => (db.prepare("SELECT count(*) AS n FROM artifacts").get() as { n: number }).n;
+
+  it("refuses credential-looking content and registers nothing", () => {
+    fs.writeFileSync(join(root, "leak.md"), "Bearer synthetic-test-credential");
+    expect(() => adopt("leak.md")).toThrow(CredentialInputError);
+    expect(rows()).toBe(0);
+  });
+
+  it("refuses a directory and a FIFO instead of reading them", () => {
+    fs.mkdirSync(join(root, "dir.md"));
+    expect(() => adopt("dir.md")).toThrow(expect.objectContaining({ code: "INVALID_PATH" }));
+    const made = spawnSync("mkfifo", [join(root, "pipe.md")]);
+    expect(made.status).toBe(0);
+    expect(() => adopt("pipe.md")).toThrow(expect.objectContaining({ code: "INVALID_PATH" }));
+    expect(rows()).toBe(0);
+  });
+
+  it("refuses a file reached through a symlinked parent directory", () => {
+    const outside = join(directory, "outside-dir");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(join(outside, "x.md"), "secret");
+    fs.symlinkSync(outside, join(root, "linked"));
+    expect(() => adopt("linked/x.md")).toThrow(ArtifactError);
+    expect(rows()).toBe(0);
+  });
+
   it("refuses a file that changed after it was first registered", () => {
     fs.writeFileSync(join(root, "a.md"), "one");
     adopt("a.md");

@@ -316,7 +316,8 @@ function verify(
   }
 
   // The revision is the runtime's own view of the worktree. The worker's value is only a claim:
-  // absent or malformed (a worker without a shell) is ignored, a well-formed different one is stale.
+  // absent or malformed (a worker without a shell) is ignored, a well-formed different head is stale;
+  // the base always comes from the runtime.
   const claim = report.revision;
   const claimedSha = (value: string | undefined) =>
     value !== undefined && gitShaSchema.safeParse(value).success ? value : undefined;
@@ -329,20 +330,12 @@ function verify(
   } else {
     const headSha = state.value.headSha;
     const base = deps.workspaces.mergeBase?.(attempt.workspace.path);
-    const baseSha = base?.ok === true ? base.value : claimedSha(claim?.baseSha);
     const claimedHead = claimedSha(claim?.headSha);
-    const claimedBase = claimedSha(claim?.baseSha);
-    if (
-      (claimedHead !== undefined && claimedHead !== headSha) ||
-      (base?.ok === true && claimedBase !== undefined && claimedBase !== baseSha)
-    ) {
-      return { refusal: "STALE_REVISION" };
-    }
-    if (baseSha === undefined) {
-      if (attempt.access === "workspace-write") return { failure: "REVISION_MISSING", report };
-    } else {
-      revision = { headSha, baseSha };
-    }
+    if (claimedHead !== undefined && claimedHead !== headSha) return { refusal: "STALE_REVISION" };
+    // The base is never taken from the worker. Merge evidence needs one, so without the runtime's
+    // own merge-base the result fails closed.
+    if (base?.ok !== true) return { failure: "REVISION_MISSING", report };
+    revision = { headSha, baseSha: base.value };
   }
   // Setting revision explicitly (even to undefined) drops the worker's claim.
   const verified: VerifiedResult = { ...report, artifacts, revision };

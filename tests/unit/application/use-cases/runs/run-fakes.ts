@@ -226,7 +226,9 @@ export class FakeWorkspaces implements GitWorkspace {
       },
     };
   }
+  failMergeBase = false;
   mergeBase(): GitWorkspaceResult<string> {
+    if (this.failMergeBase) return { ok: false, error: new GitWorkspaceError("GIT_FAILED") };
     return { ok: true, value: BASE };
   }
   inspect(path: string): GitWorkspaceResult<WorkspaceState> {

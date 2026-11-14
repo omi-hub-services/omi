@@ -214,15 +214,27 @@ describe("recordStepResult", () => {
       }
     });
 
-    it("refuses a well-formed base claim that differs from the runtime's merge-base", async () => {
+    it("ignores a well-formed base claim that differs and records the runtime's merge-base", async () => {
       const r = rig();
       const { attempt, handle } = await started(r);
       const revision = { headSha: HEAD, baseSha: "d".repeat(40) };
-      const result = await record(r, attempt.id, handle, {
-        ...goodResult(r, attempt.id),
-        revision,
+      const claim = { ...goodResult(r, attempt.id), revision };
+      expect(await record(r, attempt.id, handle, claim)).toMatchObject({ stepStatus: "succeeded" });
+      const payload = JSON.parse(r.unitOfWork.commits.at(-1)?.event.payload ?? "{}") as {
+        result: { revision: { headSha: string; baseSha: string } };
+      };
+      expect(payload.result.revision).toEqual({ headSha: HEAD, baseSha: BASE });
+    });
+
+    it("fails closed instead of trusting the worker's base when the merge-base is unavailable", async () => {
+      const r = rig();
+      const { attempt, handle } = await started(r);
+      r.workspaces.failMergeBase = true;
+      const claim = { ...goodResult(r, attempt.id), revision: { headSha: HEAD, baseSha: BASE } };
+      expect(await record(r, attempt.id, handle, claim)).toMatchObject({
+        stepStatus: "failed",
+        failure: "REVISION_MISSING",
       });
-      expect(result).toEqual({ ok: false, reason: "STALE_REVISION" });
     });
 
     it("rejects a result missing a check the step gate requires", async () => {
