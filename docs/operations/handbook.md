@@ -188,7 +188,11 @@ When it fails:
 `checks.project-check` is required for the feature, bugfix and refactor workflows. Workers have no
 shell, so the runtime runs it in the task worktree after `implement` and again at `verify`. A pass
 makes the step succeed even though the worker never ran the tests; a failure fails the step and its
-output is kept as evidence. `command` is an argv array (no shell). Without it every dispatch of
+output is kept as evidence and a bounded summary of it (check id, exit code, last output, artifact
+path) is given to the step's next attempt as `previousFindings` (held by the running runtime; after
+a restart only the evidence artifact remains). Runs already in flight keep the template they were
+pinned to, so only runs created after the update get the `implement` check. `command` is an argv
+array (no shell). Without it every dispatch of
 those workflows is refused with `CHECK_UNCONFIGURED`, and `workflows validate` (run it in a project
 that has `config/project.yaml`) reports `step "implement" requires check "project-check" but
 project.yaml has no checks.project-check`.

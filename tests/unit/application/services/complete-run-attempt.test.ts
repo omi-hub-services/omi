@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { parse } from "yaml";
+import { workflowSchema } from "../../../../src/application/contracts/workflow.ts";
 import type { CheckRunRecord } from "../../../../src/application/contracts/check-run.ts";
 import type { ExecutionResult } from "../../../../src/application/contracts/agent-execution.ts";
 import type {
@@ -99,9 +102,10 @@ async function finish(
   execution: Partial<ExecutionResult> = {},
   quality = false,
   wrap?: (json: string) => string,
+  requiredChecks: string[] = ["unit-tests"],
 ) {
   const input = dispatchInput({
-    requiredChecks: ["unit-tests"],
+    requiredChecks,
     ...(quality
       ? {
           quality: {
@@ -170,6 +174,76 @@ describe("completeRunAttempt runs the step's required checks itself", () => {
     // The existing controller counted a quality failure and authorized a retry of the step.
     expect(s.reworkCommits.length).toBeGreaterThan(0);
     expect(s.sessionEvents).toContain("step.retry_authorized");
+  });
+
+  it("keeps a bounded finding with the failed check's id, exit code, log tail and artifact path for the next attempt", async () => {
+    const remembered = new Map<string, unknown[]>();
+    const s = setup({ check: "failed" });
+    const findings = {
+      remember: (stepRunId: string, entries: unknown[]) => remembered.set(stepRunId, entries),
+      recall: (stepRunId: string) => remembered.get(stepRunId) ?? [],
+    };
+    Object.assign(s.deps, { findings });
+    const attempt = await finish(s);
+    const [finding] = remembered.get(attempt.stepRunId) as {
+      id: string;
+      severity: string;
+      message: string;
+      location: string;
+    }[];
+    expect(finding?.id).toBe("check-unit-tests");
+    expect(finding?.message).toContain("unit-tests");
+    expect(finding?.message).toContain("exit code 1");
+    expect(finding?.message).toContain("output of the check");
+    expect(finding?.message.length).toBeLessThanOrEqual(2000);
+    expect(finding?.location).toBe(`${attempt.artifactRoot}/checks/unit-tests.json`);
+  });
+
+  describe("for a shell-less implement worker under the installed templates", () => {
+    // The worker ran nothing and says so: succeeded, the AC unverified, no checks listed.
+    const unverified = () => ({
+      summary: "Implemented. AC-1: not verified, no shell to run npm test.",
+      checks: [],
+    });
+    const required = (id: string) =>
+      workflowSchema
+        .parse(parse(readFileSync(`templates/project/workflows/${id}.yaml`, "utf8")))
+        .steps.find((step) => step.id === "implement")?.required_checks ?? [];
+
+    it.each(["feature", "bugfix", "refactor"])(
+      "accepts the %s implement step when the runtime's project-check passes",
+      async (id) => {
+        const s = setup();
+        const attempt = await finish(s, unverified, {}, false, undefined, required(id));
+        expect(s.run).toHaveBeenCalledWith(expect.objectContaining({ checkId: "project-check" }));
+        expect(attempt.requiredChecks).toEqual(["project-check"]);
+        expect(stepStatus(s)).toBe("succeeded");
+      },
+    );
+
+    it.each(["feature", "bugfix", "refactor"])(
+      "fails the %s implement step with CHECK_FAILED when project-check fails",
+      async (id) => {
+        const s = setup({ check: "failed" });
+        await finish(s, unverified, {}, false, undefined, required(id));
+        expect(stepStatus(s)).toBe("failed");
+        const failed = s.r.unitOfWork.commits.at(-1)?.event;
+        expect(JSON.parse(failed?.payload ?? "{}")).toMatchObject({ failure: "CHECK_FAILED" });
+      },
+    );
+  });
+
+  it("keeps no check finding when the check passes", async () => {
+    const remembered = new Map<string, unknown[]>();
+    const s = setup();
+    Object.assign(s.deps, {
+      findings: {
+        remember: (id: string, entries: unknown[]) => remembered.set(id, entries),
+        recall: () => [],
+      },
+    });
+    const attempt = await finish(s);
+    expect(remembered.get(attempt.stepRunId) ?? []).toEqual([]);
   });
 
   it("fails the step and hands it to the rework controller when the check times out", async () => {

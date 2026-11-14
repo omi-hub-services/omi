@@ -8,6 +8,7 @@ import {
   loadWorkflowValidationCatalog,
   runtimeConfigHash,
 } from "../infrastructure/config/load-runtime-config.js";
+import { createStepFindingStore } from "../application/ports/step-findings.js";
 import { createDispatchPlanner } from "../application/services/plan-step-dispatch.js";
 import { createDispatchTaskReader } from "../application/services/resolve-dispatch-task.js";
 import { createResumeGate } from "../application/services/resume-gate.js";
@@ -924,7 +925,9 @@ export async function createProjectRunCommandUseCases(
     createSqliteTaskApprovalSubjects(database),
     now,
   );
+  const stepFindings = createStepFindingStore();
   const planner = createDispatchPlanner({
+    findings: stepFindings,
     // Real readers exist only when the project opted in with a `quota` block (ADR-0033); without
     // it nothing here can reach the usage endpoint, `codex app-server` or a probe.
     ...(config.project.quota === undefined
@@ -1071,6 +1074,7 @@ export async function createProjectRunCommandUseCases(
             nextId,
           }),
         }),
+    findings: stepFindings,
     failoversMade: (stepRunId) => attempts.failoversForStep(stepRunId),
     failover,
     selections: profiles.selections,

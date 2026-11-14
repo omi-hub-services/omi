@@ -4,6 +4,8 @@ import { redactDiagnostic } from "../../domain/shared/redact-diagnostic.js";
 import { contextPacketSchema } from "../contracts/context.js";
 import type { ExecutionHandle } from "../contracts/agent-execution.js";
 import type { CheckRunRecord } from "../contracts/check-run.js";
+import type { Finding } from "../contracts/result.js";
+import type { StepFindingStore } from "../ports/step-findings.js";
 import type { CheckRunner } from "../ports/check-runner.js";
 import type { DispatchStepDependencies } from "../use-cases/runs/dispatch-step.js";
 import type { AdvanceRunDependencies } from "../use-cases/runs/advance-run.js";
@@ -25,6 +27,8 @@ export interface CompletionRouting {
   readonly rework?: RecordReworkEventDependencies;
   /** Runs the required checks the project configured; their ids never pass on a worker's word. */
   readonly checks?: CheckRunner;
+  /** Receives a failed check's summary for the step's next attempt. */
+  readonly findings?: Pick<StepFindingStore, "remember">;
   readonly selections?: ExecutorSelectionStore;
   readonly failoversMade?: (stepRunId: string) => number;
 }
@@ -78,6 +82,12 @@ export async function completeRunAttempt(
     const checkRuns = await runRequiredChecks(deps, attempt, execution.outcome, reported);
     const recorded = recordStepResult(deps, { attemptId, execution, result: report, checkRuns });
     if (!recorded.ok) return;
+    deps.findings?.remember(
+      attempt.stepRunId,
+      recorded.failure === "CHECK_FAILED" || recorded.failure === "CHECK_TIMED_OUT"
+        ? checkFindings(deps, checkRuns)
+        : [],
+    );
     if (
       !(reported.success && reported.data.status === "blocked") &&
       recorded.stepStatus === "failed" &&
@@ -134,6 +144,39 @@ export async function completeRunAttempt(
       /* A lost session cannot append audit; recovery retains its durable state. */
     }
   }
+}
+
+const MAX_CHECK_LOG_CHARS = 1200;
+
+/** One bounded finding per check that did not pass; the full log stays in the evidence artifact. */
+function checkFindings(deps: DispatchStepDependencies, runs: readonly CheckRunRecord[]): Finding[] {
+  return runs
+    .filter((run) => run.status !== "passed")
+    .map((run) => {
+      let tail = "";
+      try {
+        const stored = JSON.parse(new TextDecoder().decode(deps.artifacts.read(run.evidence))) as {
+          log?: unknown;
+        };
+        if (typeof stored.log === "string") tail = stored.log.slice(-MAX_CHECK_LOG_CHARS);
+      } catch {
+        /* The path below still tells the worker where the evidence is. */
+      }
+      const outcome =
+        run.status === "timed-out"
+          ? "timed out"
+          : `failed (exit code ${run.exitCode === null ? "none" : String(run.exitCode)})`;
+      return {
+        id: `check-${run.checkId}`.slice(0, 100),
+        severity: "major" as const,
+        message:
+          `Runtime check ${run.checkId} ${outcome}. Fix the cause. Last output:\n${tail}`.slice(
+            0,
+            2000,
+          ),
+        location: run.evidence.path,
+      };
+    });
 }
 
 const MAX_FINAL_MESSAGE_CHARS = 8000;

@@ -83,7 +83,11 @@ function setup(
   profiles: readonly RegisteredProfile[] = [profile],
   readTask = () => Promise.resolve(task),
   registryProfiles = profiles,
-  overrides: { config?: typeof config; workflow?: typeof workflow } = {},
+  overrides: {
+    config?: typeof config;
+    workflow?: typeof workflow;
+    findings?: { recall: (stepRunId: string) => never[] };
+  } = {},
 ) {
   const reservations: string[] = [];
   let attemptNumber = 1;
@@ -124,6 +128,7 @@ function setup(
     profiles: { list: () => registryProfiles, save: () => true },
     selections,
     task: readTask,
+    ...(overrides.findings === undefined ? {} : { findings: overrides.findings }),
     nextAttemptNumber: () => attemptNumber,
     cancelReservation: (attemptId) => cancelled.push(attemptId),
     now: () => 100,
@@ -188,6 +193,28 @@ describe("dispatch planning from a trusted task boundary", () => {
     await r.planner.plan(request);
     expect(reads).toBe(1);
   });
+});
+
+it("gives the next attempt the findings remembered for its step run", async () => {
+  const finding = {
+    id: "check-project-check",
+    severity: "major" as const,
+    message: "Check project-check failed (exit code 1).",
+  };
+  const asked: string[] = [];
+  const { planner } = setup([profile], () => Promise.resolve(task), [profile], {
+    findings: {
+      recall: (stepRunId) => {
+        asked.push(stepRunId);
+        return [finding] as never[];
+      },
+    },
+  });
+  const input = await planner.plan(request);
+  expect(asked).toEqual(["step-1"]);
+  expect((input as { context: { previousFindings: unknown[] } }).context.previousFindings).toEqual([
+    finding,
+  ]);
 });
 
 describe("required checks of a workflow step", () => {
