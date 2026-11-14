@@ -9,6 +9,7 @@ import { importTaskSelectionSchema } from "./task-import.js";
 import { retryStepSchema, reworkRecordSchema } from "./rework.js";
 import { syncSelectionSchema } from "./sync.js";
 import { prepareRunPrSchema } from "./pr-delivery.js";
+import { refreshRunSchema } from "./run-refresh.js";
 
 const envelope = { schemaVersion: schemaVersionV1 };
 
@@ -80,6 +81,7 @@ export const commandSchema = z
       reason: z.string().min(1).max(500),
     }),
     z.strictObject({ ...envelope, command: z.literal("resume"), runId: identifierSchema }),
+    refreshRunSchema.extend({ ...envelope, command: z.literal("refresh") }),
     prepareRunPrSchema.extend({ ...envelope, command: z.literal("prepare-pr") }),
     z.strictObject({
       ...envelope,

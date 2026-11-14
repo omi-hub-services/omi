@@ -87,6 +87,7 @@ import { createGithubReleaseMergeReader } from "../infrastructure/github/github-
 import type { MergeTaskPrDeps } from "../application/use-cases/delivery/merge-task-pr.js";
 import { dispatchRunStep } from "../application/use-cases/runs/dispatch-run-step.js";
 import { retryStep, type RetryStepDependencies } from "../application/use-cases/runs/retry-step.js";
+import { refreshRun } from "../application/use-cases/runs/refresh-run.js";
 import type { DispatchStepDependencies } from "../application/use-cases/runs/dispatch-step.js";
 import { handoffCoordinator } from "../application/use-cases/runs/handoff-coordinator.js";
 import { inspectRun } from "../application/use-cases/runs/inspect-run.js";
@@ -692,6 +693,7 @@ export type RunCommandUseCases = Pick<
   | "inspectRun"
   | "pauseRun"
   | "resumeRun"
+  | "refreshRun"
   | "deliverRun"
   | "prepareRunPr"
   | "handoffCoordinator"
@@ -778,6 +780,19 @@ export function createRunCommandUseCases(wiring: RunCommandWiring): RunCommandUs
           }
         : resumed;
     },
+    refreshRun: (input) =>
+      refreshRun(
+        {
+          runs,
+          plans,
+          workflows,
+          attempts: dispatch.attempts,
+          workspaces: dispatch.workspaces,
+          now: dispatch.now,
+          nextId: dispatch.nextId,
+        },
+        input,
+      ),
     deliverRun: (input) =>
       deliverRun({ runs, plans, merge: wiring.merge, session, nextId: dispatch.nextId }, input),
     prepareRunPr: (input) =>
@@ -883,6 +898,7 @@ export async function createProjectRunCommandUseCases(
         inspectRun: refuse,
         pauseRun: refuse,
         resumeRun: refuse,
+        refreshRun: refuse,
         deliverRun: refuse,
         prepareRunPr: refuse,
         handoffCoordinator: refuse,

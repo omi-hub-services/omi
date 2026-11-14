@@ -164,6 +164,23 @@ export function createCliGitWorkspace(
     );
   }
 
+  /** The newer of local and fetched origin develop by ancestry, never by preference: a stale
+   * origin ref (never fetched) must not hide a current local develop, nor the reverse. Diverged
+   * refs are refused because the merge gate's base cannot be inferred. */
+  function integrationRef(): string {
+    const local = "refs/heads/develop";
+    const origin = "refs/remotes/origin/develop";
+    if (!refExists(origin)) return local;
+    if (!refExists(local)) return origin;
+    const contains = (ancestor: string, descendant: string) =>
+      gitCommand(main, ["merge-base", "--is-ancestor", ancestor, descendant], {
+        allowedCodes: [0, 1],
+      }).code === 0;
+    if (contains(origin, local)) return local;
+    if (contains(local, origin)) return origin;
+    throw new GitWorkspaceError("INTEGRATION_REF_DIVERGED");
+  }
+
   checkRoot();
   return {
     changedPaths(path) {
@@ -171,7 +188,7 @@ export function createCliGitWorkspace(
         const state = inspect(path);
         if (state.dirty) throw new GitWorkspaceError("DIRTY_WORKTREE");
         const base = gitObjectId(
-          gitCommand(state.path, ["merge-base", "refs/heads/develop", state.headSha]).stdout,
+          gitCommand(state.path, ["merge-base", integrationRef(), state.headSha]).stdout,
         );
         const paths = gitCommand(state.path, [
           "diff",
@@ -190,7 +207,7 @@ export function createCliGitWorkspace(
       return attempt(() => {
         const state = inspect(path);
         return gitObjectId(
-          gitCommand(state.path, ["merge-base", "refs/heads/develop", state.headSha]).stdout,
+          gitCommand(state.path, ["merge-base", integrationRef(), state.headSha]).stdout,
         );
       });
     },
@@ -211,6 +228,40 @@ export function createCliGitWorkspace(
         ]).stdout;
         if (diff.length > 100_000) throw new GitWorkspaceError("GIT_FAILED");
         return diff;
+      });
+    },
+    developHead(path) {
+      return attempt(() => {
+        const state = inspect(path);
+        gitCommand(state.path, ["fetch", "--quiet", "origin", "develop"]);
+        return gitObjectId(
+          gitCommand(state.path, ["rev-parse", "refs/remotes/origin/develop"]).stdout,
+        );
+      });
+    },
+    mergeDevelop(path) {
+      return attempt(() => {
+        const state = inspect(path);
+        if (state.dirty) throw new GitWorkspaceError("DIRTY_WORKTREE");
+        gitCommand(state.path, ["fetch", "--quiet", "origin", "develop"]);
+        // Any failed merge (conflict or e.g. missing identity) must not leave a half-done merge.
+        const abort = () => attempt(() => gitCommand(state.path, ["merge", "--abort"]));
+        let code: number;
+        try {
+          code = gitCommand(
+            state.path,
+            ["merge", "--no-edit", "--no-verify", "refs/remotes/origin/develop"],
+            { allowedCodes: [0, 1] },
+          ).code;
+        } catch (error) {
+          abort();
+          throw error;
+        }
+        if (code !== 0) {
+          abort();
+          throw new GitWorkspaceError("MERGE_CONFLICT");
+        }
+        return { headSha: inspect(path).headSha };
       });
     },
     createTask(request) {

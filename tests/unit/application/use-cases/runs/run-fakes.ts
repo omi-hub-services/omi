@@ -231,9 +231,15 @@ export class FakeWorkspaces implements GitWorkspace {
       },
     };
   }
-  failMergeBase = false;
+  failMergeBase: boolean | "INTEGRATION_REF_DIVERGED" = false;
   mergeBase(): GitWorkspaceResult<string> {
-    if (this.failMergeBase) return { ok: false, error: new GitWorkspaceError("GIT_FAILED") };
+    if (this.failMergeBase)
+      return {
+        ok: false,
+        error: new GitWorkspaceError(
+          this.failMergeBase === true ? "GIT_FAILED" : this.failMergeBase,
+        ),
+      };
     return { ok: true, value: BASE };
   }
   inspect(path: string): GitWorkspaceResult<WorkspaceState> {

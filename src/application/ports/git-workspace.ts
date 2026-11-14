@@ -52,6 +52,8 @@ export type GitWorkspaceErrorCode =
   | "LEASE_EXPIRED"
   | "UNMERGED_WORK"
   | "UNPUSHED_WORK"
+  | "MERGE_CONFLICT"
+  | "INTEGRATION_REF_DIVERGED"
   | "GIT_FAILED"
   | "GIT_TIMEOUT"
   | "IO_FAILED";
@@ -78,6 +80,12 @@ export interface GitWorkspace {
   mergeBase?(worktreePath: string): GitWorkspaceResult<string>;
   /** Bounded committed delta on a clean task worktree, with external diff/textconv disabled. */
   diffSince?(worktreePath: string, headSha: string): GitWorkspaceResult<string>;
+  /** Fetches `develop` from origin and returns the head of `origin/develop`; the worktree is untouched. */
+  developHead?(worktreePath: string): GitWorkspaceResult<string>;
+  /** Caller holds the writer lease. Fetches origin/develop and merges it into a clean task worktree:
+   * no hooks, no push. A conflict is aborted (`MERGE_CONFLICT`) and leaves the worktree clean.
+   */
+  mergeDevelop?(worktreePath: string): GitWorkspaceResult<{ readonly headSha: string }>;
   /** Creates from local develop, or reconciles an existing matching branch/worktree on retry.
    * Refuses a dirty main checkout. Operations reserve the same lease as task writers.
    */

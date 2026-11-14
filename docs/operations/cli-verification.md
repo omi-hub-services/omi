@@ -941,3 +941,13 @@ order. The IPC dispatcher integration uses real SQLite/outbox and fake GitHub to
 one PR, persist its mapping and deliver to Done; absent or mismatched mappings return
 `COMMAND_REFUSED: MAPPING_MISMATCH`. The Unix socket variant is present but this sandbox refuses
 `listen` with `EPERM`; successful socket transport and live GitHub delivery remain unverified here.
+
+## refresh syntax check — 2026-11-14 (OMI-141)
+
+`refresh --run <id>` merges `origin/develop` into the task branch of a finished run whose review is
+stale, then reopens verify and review. CLI options: `--run <id>`, `--json`, `--socket <path>`.
+Verified by tests, not live: the unit test checks the IPC payload (`{command: "refresh", runId}`),
+the use-case unit tests cover the named refusals, and the git integration tests (real temp repository
+and bare origin) cover the clean merge (no hook run, nothing pushed), the aborted conflict
+(clean worktree, unchanged head) and the dirty worktree. Live GitHub delivery after a refresh and
+the Unix socket transport remain unverified here.

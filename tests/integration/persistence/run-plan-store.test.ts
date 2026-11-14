@@ -161,6 +161,70 @@ describe("SQLite run plan store", () => {
   });
 });
 
+describe("OMI-141 reopening finished steps as a new iteration", () => {
+  const fence = { resourceKey: "project-owner", owner: "runtime-1", generation: 1 };
+  const reopen = (suffix: string) => ({
+    runId: "run-1",
+    steps: [
+      { stepRunId: `a${suffix}`, stepId: "a", status: "ready" as const },
+      { stepRunId: `b${suffix}`, stepId: "b", status: "pending" as const },
+    ],
+    at: AT,
+    eventId: `refresh-${suffix}`,
+    headSha: "c".repeat(40),
+  });
+  function finished() {
+    const db = setup();
+    createSqliteRunPlanStore(db).createRun(plan("run-1"));
+    db.prepare("UPDATE step_runs SET status='succeeded'").run();
+    db.prepare(
+      "INSERT INTO leases (resource_key, owner, generation, acquired_at, expires_at) VALUES ('project-owner', 'runtime-1', 1, ?, '2099-01-01T00:00:00.000Z')",
+    ).run(AT);
+    return db;
+  }
+
+  it("inserts iteration 2, shows only the newest iteration and records one event", () => {
+    const db = finished();
+    const store = createSqliteRunPlanStore(db, { fence, now: () => Date.parse(AT) });
+    expect(store.reopenSteps?.(reopen("2"))).toEqual({ ok: true });
+    expect(
+      createSqliteRecoveryRunReader(db)
+        .listSteps("run-1")
+        .map((step) => [step.id, step.stepId, step.status]),
+    ).toEqual([
+      ["a2", "a", "ready"],
+      ["b2", "b", "pending"],
+    ]);
+    expect(
+      db.prepare("SELECT iteration FROM step_runs WHERE id IN ('a2','b2') ORDER BY id").all(),
+    ).toEqual([{ iteration: 2 }, { iteration: 2 }]);
+    expect(createSqliteStepRunReader(db).get("run-1-a")).toMatchObject({ status: "succeeded" });
+    expect(db.prepare("SELECT kind FROM events WHERE event_id='refresh-2'").all()).toEqual([
+      { kind: "run.refreshed" },
+    ]);
+    expect(store.reopenSteps?.(reopen("3"))).toEqual({ ok: false, reason: "STEPS_NOT_FINISHED" });
+    db.prepare("UPDATE step_runs SET status='succeeded'").run();
+    expect(store.reopenSteps?.(reopen("3"))).toEqual({ ok: true });
+    expect(db.prepare("SELECT max(iteration) AS n FROM step_runs").get()).toEqual({ n: 3 });
+  });
+
+  it("writes nothing when a step is not finished or the lease is lost", () => {
+    const db = finished();
+    db.prepare("UPDATE step_runs SET status='failed' WHERE id='run-1-b'").run();
+    const store = createSqliteRunPlanStore(db, { fence, now: () => Date.parse(AT) });
+    expect(store.reopenSteps?.(reopen("2"))).toEqual({ ok: false, reason: "STEPS_NOT_FINISHED" });
+    db.prepare("UPDATE step_runs SET status='succeeded'").run();
+    db.prepare("UPDATE leases SET generation=2").run();
+    expect(store.reopenSteps?.(reopen("2"))).toEqual({ ok: false, reason: "PROJECT_LOCK_LOST" });
+    expect(db.prepare("SELECT count(*) AS n FROM step_runs").get()).toEqual({ n: 2 });
+    expect(db.prepare("SELECT count(*) AS n FROM events WHERE kind='run.refreshed'").get()).toEqual(
+      {
+        n: 0,
+      },
+    );
+  });
+});
+
 it("retains the resolved quality graph when the plan store is reopened", async () => {
   const { workflowSchema } = await import("../../../src/application/contracts/workflow.ts");
   const { planWorkflowQuality } =

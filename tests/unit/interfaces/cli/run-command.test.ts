@@ -32,6 +32,14 @@ it("prepares a run PR with evidence in AC order through IPC", async () => {
   ]);
 });
 
+it("refreshes a finished run through IPC with only its run id", async () => {
+  const r = await run(["refresh", "--run", "run-1", "--json"], {
+    refresh: { ok: true, result: { headSha: "a".repeat(40), reopened: ["verify", "review"] } },
+  });
+  expect(r.code).toBe(0);
+  expect(r.sent).toEqual([{ schemaVersion: 1, command: "refresh", runId: "run-1" }]);
+});
+
 const PLAN_OK: Outcome = {
   ok: true,
   result: {

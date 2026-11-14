@@ -427,7 +427,14 @@ export async function dispatchStep(
         }).combineVerifyReview
       ) {
         release();
-        return { ok: false, reason: "CONTEXT_REJECTED", detail: "RISK_REQUIRES_SEPARATE_WORKERS" };
+        return {
+          ok: false,
+          reason: "CONTEXT_REJECTED",
+          detail:
+            !changed.ok && changed.error.code === "INTEGRATION_REF_DIVERGED"
+              ? "INTEGRATION_REF_DIVERGED"
+              : "RISK_REQUIRES_SEPARATE_WORKERS",
+        };
       }
     }
     // The worktree exists and no writer runs yet, so this is the stable point to snapshot before

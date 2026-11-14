@@ -27,7 +27,7 @@ JSON document `{"schemaVersion":1,"ok":…,"exitCode":…,"result"|"error":…}`
 SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<drive>`).
 
 **What the v0.1 CLI really has.** `--help` lists: `init`, `install`, `update`, `doctor`, `profiles {register,list,probe}`, `status`,
-`session {new,start}`, `approvals {list,request,decide}`, `workflows validate`, `plan`, `run`, `dispatch`, `wait`, `pause`, `resume`, `prepare-pr`, `deliver`, `merge-release`,
+`session {new,start}`, `approvals {list,request,decide}`, `workflows validate`, `plan`, `run`, `dispatch`, `wait`, `pause`, `resume`, `refresh`, `prepare-pr`, `deliver`, `merge-release`,
 `coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9), `watch`,
 `worker-report`, `commit-worker`, `review-comment`, `import-task`, `sync`, and `prune-logs`.
 
@@ -334,6 +334,25 @@ a configured project (§1).
    merges the reviewed head into `develop` and closes the task. `--head-sha` must be the head the
    independent review examined; at least one `--check` is required. Missing or mismatched PR
    mappings refuse `COMMAND_REFUSED: MAPPING_MISMATCH` (exit 4); prepare the run's PR first.
+   When `develop` moved after the review, `deliver` refuses `MERGE_REFUSED: merge: STALE_REVISION`.
+   The gate stays as it is; do **not** retry `deliver`. Use `refresh` (next item).
+   8a. `<cli> refresh --run <id>` is for a run whose steps all succeeded and whose recorded review
+   was made against a `develop` head that is no longer current. Under the writer lease it fetches
+   `origin/develop` and merges it into the task branch in the run's worktree (no hooks, **no
+   push**), then reopens `verify` and `review` as a new iteration (verify `ready`; review
+   `pending` until verify succeeds). `implement` does not run again. Refusals are named:
+   `REFRESH_CONFLICT` (the merge was aborted, the worktree is clean and no step changed; resolve
+   the conflict through rework), `REVIEW_CURRENT` (the review already matches `develop`),
+   `RUN_NOT_FINISHED`, `RUN_NOT_RUNNING`, `REVIEW_REVISION_MISSING`, `DIRTY_WORKTREE`,
+   `WORKSPACE_MISMATCH`, `DEVELOP_UNAVAILABLE`. A refresh is not a failure: it does not count
+   toward the rework limit. Pushing the branch is the Coordinator's job. The review base is the
+   newer of local `develop` and the fetched `origin/develop` by ancestry (what `deliver` pins after
+   a refresh), so local `develop` need not be updated. If the two diverged, recording the result
+   refuses `INTEGRATION_REF_DIVERGED`; reconcile `develop` first.
+   Run: `refresh` → push →
+   `dispatch` verify (`wait`) → `dispatch` review on the new head (delta review from the previous
+   verdict) → `review-comment` → `deliver`. `prepare-pr` accepts the already mapped PR again; it
+   follows the branch, so the new head is used.
 
 9. `<cli> merge-release --release <label> --pr <n> --head-sha <sha> [--check <name> …]`
    merges the release PR `develop` → `main` on the head the PO approved natively
@@ -710,6 +729,10 @@ For an initialized project with its Issue imported, approvals recorded and a ses
 7. Once the workflow and recorded independent review pass, use
    `deliver --run RUN --pr N --head-sha HEAD --check REQUIRED` (§3). Retry pending delivery, resolve
    refusals, and only report Done after delivery confirms it. Observe bounded rework (§6).
+   If `deliver` answers `STALE_REVISION` because `develop` moved, do not loosen anything: run
+   `refresh --run RUN` (§3 item 8a), push the task branch, dispatch verify then review, post a new
+   `review-comment` for the new head, then `deliver` again with that head. A `REFRESH_CONFLICT`
+   refusal leaves the worktree clean; resolve it through the rework path, not with raw Git.
 8. `watch --project .` serves the existing loopback monitor; open the printed URL and stop its
    terminal process when finished. Use `pause`/`resume` (§4–5) for checkpoint handoffs, or
    `session new` / `coordinator switch --to PROFILE` to end the Coordinator session cleanly.

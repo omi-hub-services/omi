@@ -33,6 +33,7 @@ export interface DispatchedUseCases {
   inspectRun?: RunUseCase;
   pauseRun?: RunUseCase;
   resumeRun?: RunUseCase;
+  refreshRun?: RunUseCase;
   deliverRun?: RunUseCase;
   prepareRunPr?: RunUseCase;
   mergeRelease?: RunUseCase;
@@ -120,6 +121,8 @@ export function createCommandDispatcher(useCases: DispatchedUseCases): CommandHa
         return run(useCases.pauseRun, 'command "pause"', command);
       case "resume":
         return run(useCases.resumeRun, 'command "resume"', command);
+      case "refresh":
+        return run(useCases.refreshRun, 'command "refresh"', command);
       case "deliver":
         return run(useCases.deliverRun, 'command "deliver"', command);
       case "prepare-pr":
