@@ -3,14 +3,17 @@ import type { z } from "zod";
 import type { stepQualitySchema } from "../contracts/workflow.js";
 
 /** Shared instructions for repository and installed-runtime packets. */
-export function renderQualityInstructions(quality: z.infer<typeof stepQualitySchema>): string {
+export function renderQualityInstructions(
+  quality: z.infer<typeof stepQualitySchema>,
+  deltaReview: boolean = quality.round > 1,
+): string {
   const qualityWorker = quality.step === "verify" || quality.step === "review";
   return [
     `Workflow packet: ${quality.steps.join(" + ")} · round ${String(quality.round)} · policy ${quality.policy}`,
     ...(qualityWorker
       ? [
           workerPromptAssets.qualityWorker,
-          ...(quality.round > 1 ? [workerPromptAssets.qualityDelta] : []),
+          ...(deltaReview ? [workerPromptAssets.qualityDelta] : []),
         ]
       : []),
   ].join("\n");

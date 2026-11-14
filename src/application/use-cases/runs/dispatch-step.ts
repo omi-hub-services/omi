@@ -218,7 +218,9 @@ function buildPrompt(
     workspace: "",
     read_first: "",
     notes: [
-      ...(packet.quality === undefined ? [] : [renderQualityInstructions(packet.quality)]),
+      ...(packet.quality === undefined
+        ? []
+        : [renderQualityInstructions(packet.quality, packet.reviewDelta !== undefined)]),
       ...checkLogs,
     ].join("\n"),
     task_context: [
@@ -472,15 +474,18 @@ export async function dispatchStep(
         previousHead === undefined
           ? undefined
           : deps.workspaces.diffSince?.(created.value.path, previousHead);
-      if (previousVerdict === undefined || delta?.ok !== true || delta.value.length > 100_000) {
-        release();
-        return {
-          ok: false,
-          reason: "CONTEXT_REJECTED",
-          detail: "PREVIOUS_VERDICT_OR_DELTA_MISSING",
-        };
+      // No verdict (earlier attempt was RESULT_INVALID/MISSING) means a full review, as in round 1.
+      if (previousVerdict !== undefined) {
+        if (delta?.ok !== true || delta.value.length > 100_000) {
+          release();
+          return {
+            ok: false,
+            reason: "CONTEXT_REJECTED",
+            detail: "PREVIOUS_VERDICT_OR_DELTA_MISSING",
+          };
+        }
+        reviewDelta = { previousVerdict, diff: delta.value };
       }
-      reviewDelta = { previousVerdict, diff: delta.value };
     }
     const checkEvidence: CheckRunRecord[] = [];
     const qaInputs: ArtifactReference[] = [];
