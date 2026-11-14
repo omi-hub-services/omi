@@ -379,7 +379,13 @@ describe("dispatchStep", () => {
     const r = rig();
     r.executor.failStart = true;
     const result = await dispatchStep(r.deps, dispatchInput());
-    expect(result).toEqual({ ok: false, reason: "EXECUTOR_START_FAILED", detail: "SPAWN_FAILED" });
+    expect(result).toEqual({
+      ok: false,
+      reason: "EXECUTOR_START_FAILED",
+      detail: expect.stringMatching(
+        /SPAWN_FAILED.*executable.*not found.*omi install --apply/,
+      ) as unknown,
+    });
     expect(r.attempts.get("id-1")?.status).toBe("failed");
     expect(r.steps.rows.get("step-1")?.status).toBe("failed");
     expect(r.workspaces.released).toEqual([1]);

@@ -54,6 +54,19 @@ const loginRequired: IpcOutcome = {
 };
 
 describe("login command", () => {
+  it.each([{ flags: [] }, { flags: ["--json"] }])(
+    "includes the unavailable probe diagnostic with flags $flags",
+    async ({ flags }) => {
+      const diagnostic =
+        "codex executable not found; run omi install --apply after installing codex";
+      const h = harness({
+        ok: true,
+        result: { outcome: "probed", status: "unavailable", diagnostic },
+      });
+      expect(await h.run(["login", "worker-b", ...flags])).toBe(4);
+      expect(h.out.join("")).toContain(diagnostic);
+    },
+  );
   it("prints the native Claude command, probes, and exits 0 when ready", async () => {
     const h = harness(ready);
     expect(await h.run(["login", "worker-a"])).toBe(0);

@@ -112,7 +112,14 @@ async function loginProfile(context: CliContext, command: Command, id: string): 
   const reported = probe["outcome"] === "probed" ? probe["status"] : undefined;
   const status: ProfileStatus =
     reported === "ready" || reported === "login-required" ? reported : "unavailable";
-  const result = { profileId: id, tool, status, login };
+  const diagnostic = typeof probe["diagnostic"] === "string" ? probe["diagnostic"] : undefined;
+  const result = {
+    profileId: id,
+    tool,
+    status,
+    login,
+    ...(diagnostic === undefined ? {} : { diagnostic }),
+  };
   const exitCode = status === "ready" ? EXIT_CODES.OK : EXIT_CODES.REQUEST_REJECTED;
   if (format === "json") {
     const doc = { schemaVersion: CONTRACT_SCHEMA_VERSION, ok: exitCode === 0, exitCode, result };
@@ -121,6 +128,7 @@ async function loginProfile(context: CliContext, command: Command, id: string): 
   }
   const text = [
     `profile ${id} (${tool}): ${status}`,
+    ...(diagnostic === undefined ? [] : [diagnostic]),
     `native login: ${login.steps}`,
     "omi runs no login and reads no credential; log in with the native tool, then re-run this command.",
   ].join("\n");

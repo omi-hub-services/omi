@@ -781,7 +781,11 @@ describe("WSL2 doctor", () => {
               ? "  NAME STATE VERSION\n* Ubuntu Running 2"
               : args.includes("--omi-node-version")
                 ? "v24.0.0"
-                : "0.0.0",
+                : args.includes("--omi-worker-version")
+                  ? args.at(-1) === "claude"
+                    ? "2.1.322 (Claude Code)"
+                    : "codex-cli 0.167.0"
+                  : "0.0.0",
           );
         return Promise.resolve(
           args[0] === "-w"

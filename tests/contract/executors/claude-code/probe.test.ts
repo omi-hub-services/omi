@@ -151,7 +151,11 @@ describe("probe", () => {
   it("is unavailable when the CLI is not installed or --version fails", async () => {
     expect(
       await probeWith({}, join(root, "no-such-claude")).executor.probe({ profileHome: profile }),
-    ).toMatchObject({ status: "unavailable", compatibility: "unknown" });
+    ).toMatchObject({
+      status: "unavailable",
+      compatibility: "unknown",
+      diagnostic: expect.stringMatching(/executable.*not found.*omi install --apply/) as unknown,
+    });
     const failing = probeWith({ versionOutput: "2.1.322", versionExitCode: 3 });
     expect(await failing.executor.probe({ profileHome: profile })).toMatchObject({
       status: "unavailable",

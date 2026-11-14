@@ -138,6 +138,7 @@ describe("Codex probe (no model calls)", () => {
     expect(await absent.executor.probe({ profileHome: profile })).toMatchObject({
       status: "unavailable",
       compatibility: "unknown",
+      diagnostic: expect.stringMatching(/executable.*not found.*omi install --apply/) as unknown,
     });
     expect(
       await harness({ versionExitCode: 1 }).executor.probe({ profileHome: profile }),

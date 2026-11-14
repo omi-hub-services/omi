@@ -721,7 +721,14 @@ export async function dispatchStep(
         },
       });
       release();
-      return { ok: false, reason: "EXECUTOR_START_FAILED", detail: error.code };
+      return {
+        ok: false,
+        reason: "EXECUTOR_START_FAILED",
+        detail:
+          error.code === "SPAWN_FAILED"
+            ? "SPAWN_FAILED: worker CLI executable not found or not runnable; install the CLI, run omi install --apply (or update --apply) from a working WSL shell, then restart the session"
+            : error.code,
+      };
     }
   } catch (error) {
     release();

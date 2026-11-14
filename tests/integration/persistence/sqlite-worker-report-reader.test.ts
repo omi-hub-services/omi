@@ -37,7 +37,13 @@ it("reads a startup failure dispatched into SQLite as a failure report", async (
         { ...r.deps, unitOfWork: createSqliteStateUnitOfWork(db) },
         dispatchInput(),
       ),
-    ).toEqual({ ok: false, reason: "EXECUTOR_START_FAILED", detail: "SPAWN_FAILED" });
+    ).toEqual({
+      ok: false,
+      reason: "EXECUTOR_START_FAILED",
+      detail: expect.stringMatching(
+        /SPAWN_FAILED.*executable.*not found.*omi install --apply/,
+      ) as unknown,
+    });
     expect(
       readWorkerReport(
         { attempts: r.attempts, reports: createSqliteWorkerReportReader(db) },

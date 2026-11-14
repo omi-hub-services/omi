@@ -6,7 +6,7 @@ const { pathToFileURL } = require("node:url");
 const distribution = "__OMI_DISTRO__";
 const project = Buffer.from("__OMI_PROJECT_BASE64__", "base64").toString("utf8");
 const args = process.argv.slice(2);
-if (/^--omi-(?:runtime|node-version)$/.test(args[0] ?? "")) {
+if (/^--omi-(?:runtime|node-version|worker-version)$/.test(args[0] ?? "")) {
   process.stderr.write("Internal launcher modes are not available from Windows.\n");
   process.exitCode = 2;
 } else if (args[0] === "session" && args[1] === "start") {

@@ -22,7 +22,10 @@ export async function probeCodex(options: {
       ...base,
       status: "unavailable",
       compatibility: "unknown",
-      diagnostic: "codex --version did not run successfully",
+      diagnostic:
+        run.kind === "spawn-failed"
+          ? "codex executable not found or not runnable; install codex, then run omi install --apply (or update --apply) from a WSL shell where codex is on PATH and restart the session"
+          : "codex --version did not run successfully; check the CLI and Node.js, rerun omi install --apply (or update --apply) from a working WSL shell, then restart the session",
     };
   }
   const { version, compatibility } = checkCodexVersion(run.stdout);

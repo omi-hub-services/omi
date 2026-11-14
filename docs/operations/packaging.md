@@ -69,6 +69,16 @@ Node.js on PATH. After removing an nvm version, use the bootstrap steps with the
 to refresh the recorded path; neither a global Node installation nor application manifest edits
 are required.
 
+Install/update also records the directories of executable `claude` and `codex` found on the
+installer's PATH. The shim prepends the selected Node.js directory and these worker directories
+to its own PATH, inherited by the runtime, probes and dispatched workers. This supports native
+Claude in `~/.local/bin` and npm Codex in an nvm bin directory, including its
+`#!/usr/bin/env node` launcher. No shell rc is sourced and the system PATH is unchanged.
+Install the CLIs before applying the package. If a worker or nvm version moves, stop the session
+and rerun `install --apply` (using the extracted package as above) or `update --apply` from a WSL
+shell where the replacement CLIs and Node.js are available, then restart. Unrecorded CLIs can
+still resolve on the launcher's PATH.
+
 `session start` uses the same recorded interpreter: the launcher runs
 `wsl.exe … --exec <project-shim> --omi-runtime <runtime.js> <project>`, so the runtime no
 longer depends on `node` being on the non-login `wsl.exe --exec` PATH. The shim's PATH fallback
@@ -101,7 +111,7 @@ failure. It also runs read-only checks through the same probe (no writes, no tok
 | `github-repository-access` | `gh api repos/<owner>/<name>` reports push permission |
 | `github-project-access` | the configured Project reports `viewerCanUpdate` |
 | `github-approval-allowlist` | at least one allowlist entry is a GitHub `User` |
-| `worker-cli-claude`, `worker-cli-codex` | `--version` classified `supported`; a missing CLI is `not-installed` and does not fail |
+| `worker-cli-claude`, `worker-cli-codex` | `--version` through `wsl.exe --exec <shim> --omi-worker-version <cli>` is classified `supported`; absent from both runtime and current shell is optional (`not-installed`); available only in the current shell fails by name with a reinstall/update fix |
 | `worker-cli-available` | at least one worker CLI is `supported` |
 
 The GitHub policy checks read `.omi-squad/config/project.yaml`; a missing or invalid file fails
@@ -109,6 +119,10 @@ them. The JSON report has `version` (report shape, currently `1`) and each check
 `status` (`pass`/`fail`), `detail` and `fix` (the operator action); worker CLI checks add
 `classification`. Version ranges are those in [compatibility.md](compatibility.md). The doctor
 does not probe subscription profiles or quota.
+The worker checks use the same shim PATH as session runtime launch, including Node for npm
+launchers; a successful version command in your interactive shell alone is insufficient.
+`profiles probe` and `login` return the redacted adapter `diagnostic` when a CLI cannot run,
+with installation/update and session restart instructions.
 
 ## Updates and conflicts
 

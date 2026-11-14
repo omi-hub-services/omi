@@ -1,11 +1,24 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { installProjectTool } from "../../../src/application/use-cases/project/install-project-tool.js";
 import { createProjectInstallation } from "../../../src/infrastructure/config/install-project-package.js";
+
+import { ClaudeCodeExecutor } from "../../../src/infrastructure/executors/claude-code/claude-code-executor.js";
+import { CodexExecutor } from "../../../src/infrastructure/executors/codex/codex-executor.js";
 
 const execute = promisify(execFile);
 let temp: string;
@@ -99,6 +112,106 @@ it.each([true, false])(
 const runtimeOf = (projectDir: string) =>
   join(projectDir, ".omi-squad/tool/node_modules/omi-squad/dist/bootstrap/runtime.js");
 
+it("preserves installer worker locations for runtime probes and dispatch with minimal PATH", async () => {
+  const nativeBin = join(temp, "home $quote's/.local/bin");
+  const nvmBin = join(temp, "home $quote's/.nvm/versions/node/v24/bin");
+  const invalidBin = join(temp, "non-executables");
+  await mkdir(join(invalidBin, "claude"), { recursive: true });
+  await writeFile(join(invalidBin, "codex"), "not executable", { mode: 0o600 });
+  for (const dir of [nativeBin, nvmBin]) await mkdir(dir, { recursive: true });
+  const claudeStream = await readFile(
+    resolve("tests/fixtures/executors/claude-code/success.stream.jsonl"),
+    "utf8",
+  );
+  const codexStream = await readFile(
+    resolve("tests/fixtures/executors/codex/success.stream.jsonl"),
+    "utf8",
+  );
+  const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  await writeFile(
+    join(nativeBin, "claude"),
+    `#!/bin/sh
+if [ "$1" = "-p" ]; then while IFS= read -r line; do :; done; fi
+case "$1" in
+  --version) printf '%s\\n' '2.1.322 (Claude Code)' ;;
+  auth) printf '%s\\n' '{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}' ;;
+  *) printf '%s' ${quote(claudeStream)} ;;
+esac
+`,
+  );
+  // npm's launcher needs env to find node in the shim's process-local PATH.
+  await writeFile(
+    join(nvmBin, "codex"),
+    `#!/usr/bin/env node
+const fs = require('node:fs');
+if (process.argv[2] === '--version') fs.writeSync(1, 'codex-cli 0.167.0\\n');
+else {
+  fs.readFileSync(0);
+  fs.writeFileSync(process.argv[process.argv.indexOf('-o') + 1], 'finished');
+  fs.writeSync(1, ${JSON.stringify(codexStream)});
+}
+`,
+  );
+  await chmod(join(nativeBin, "claude"), 0o755);
+  await chmod(join(nvmBin, "codex"), 0o755);
+  vi.stubEnv("PATH", `${invalidBin}:${nativeBin}:${nvmBin}:${process.env["PATH"] ?? ""}`);
+  let installed: Awaited<ReturnType<typeof install>>;
+  try {
+    installed = await install("worker-locations");
+    await installProjectTool(store(), installed.input);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+  await writeFile(
+    join(packageDir, "dist/bootstrap/runtime.js"),
+    "require('node:fs').writeSync(1, process.env.PATH);\n",
+  );
+  const { input, shim } = installed;
+  const runtimePath = (
+    await execute(shim, ["--omi-runtime", runtimeOf(input.projectDir), input.projectDir], {
+      env: { PATH: bin },
+    })
+  ).stdout;
+  const profileHome = join(temp, "worker-profile");
+  await mkdir(profileHome);
+  await cp(
+    resolve("tests/fixtures/executors/codex/subscription-cache.json"),
+    join(profileHome, "auth.json"),
+  );
+  // Exercise the real adapters with exactly the PATH observed in the shim-launched runtime.
+  for (const executor of [
+    new ClaudeCodeExecutor({ parentEnv: { PATH: runtimePath } }),
+    new CodexExecutor({ parentEnv: { PATH: runtimePath } }),
+  ]) {
+    expect(await executor.probe({ profileHome })).toMatchObject({ status: "ready" });
+    const handle = await executor.start({
+      attemptId: "worker-path",
+      workspace: input.projectDir,
+      profileHome,
+      model: executor.executor === "codex" ? "gpt-5.5" : "claude-sonnet-5-5",
+      effort: "low",
+      access: "read-only",
+      prompt: "fixture",
+      timeoutMs: 5000,
+    });
+    const result = await executor.collectResult(handle);
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: "succeeded" });
+  }
+  for (const [cli, version] of [
+    ["claude", "2.1.322 (Claude Code)"],
+    ["codex", "codex-cli 0.167.0"],
+  ] as const)
+    expect(
+      await execute(shim, ["--omi-worker-version", cli], { env: { PATH: bin } }),
+    ).toMatchObject({ stdout: `${version}\n` });
+  for (const args of [
+    ["--omi-worker-version", "sh"],
+    ["--omi-worker-version", "codex", "extra"],
+    ["--omi-worker-version"],
+  ])
+    await expect(execute(shim, args)).rejects.toMatchObject({ code: 2 });
+}, 30_000);
+
 it.each([true, false])(
   "starts only the project runtime and node version through the recorded node, fallback %s",
   async (fallback) => {
@@ -154,7 +267,7 @@ it("refuses internal modes with any other script, flag or extra argument without
 it("refuses internal modes from the Windows entrypoint without calling wsl.exe", async () => {
   const { shim } = await install("internal-mode-windows");
   const cjs = join(shim + ".cjs");
-  for (const mode of ["--omi-runtime", "--omi-node-version"]) {
+  for (const mode of ["--omi-runtime", "--omi-node-version", "--omi-worker-version"]) {
     await expect(execute(process.execPath, [cjs, mode])).rejects.toMatchObject({
       code: 2,
       stderr: expect.stringContaining("not available from Windows") as unknown,

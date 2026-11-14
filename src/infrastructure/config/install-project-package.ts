@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import {
+  access,
   chmod,
   cp,
   lstat,
@@ -9,6 +11,7 @@ import {
   realpath,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -321,9 +324,27 @@ export function createProjectInstallation(options: {
         join(squad, "tool/node_modules/omi-squad/templates/bridges/omi.cjs"),
         "utf8",
       );
+      const workerDirs: string[] = [];
+      for (const cli of ["claude", "codex"]) {
+        for (const directory of (process.env["PATH"] ?? "").split(":")) {
+          if (directory === "") continue;
+          const executable = resolve(directory, cli);
+          try {
+            await access(executable, constants.X_OK);
+            if (!(await stat(executable)).isFile()) continue;
+            workerDirs.push(dirname(executable));
+            break;
+          } catch {
+            // Continue the installer's PATH search, without sourcing shell configuration.
+          }
+        }
+      }
+      const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
       await write(
         join(squad, "bin", "omi"),
-        shell.replaceAll("__OMI_NODE__", () => `'${process.execPath.replaceAll("'", "'\\''")}'`),
+        shell
+          .replaceAll("__OMI_NODE__", () => shellQuote(process.execPath))
+          .replaceAll("__OMI_WORKER_DIRS__", () => shellQuote([...new Set(workerDirs)].join(":"))),
       );
       await chmod(join(squad, "bin", "omi"), 0o755);
       await write(

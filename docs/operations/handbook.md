@@ -138,6 +138,15 @@ node <package>/dist/bootstrap/cli.js install --project /home/user/project --pack
   (exit 6) naming each failed check (`interop`, `distribution-version`, `windows-launch`, `session-runtime-launch`, …). `session-runtime-launch` fails when the project
   shim cannot start Node.js (for example nvm removed): rerun `install --apply` with a working Node.js
   or put `node` on PATH; `session start` reports `RUNTIME_START_FAILED` for the same cause.
+- Install/update records worker CLI directories from its WSL PATH and the shim prepends them
+  and Node's directory for the runtime and workers. Native `~/.local/bin/claude` and nvm npm
+  `codex` work without a login shell. After moving/installing a CLI or removing an nvm version,
+  stop the session, apply install/update from a WSL shell where the replacements are on PATH,
+  then restart. This changes only the shim's process environment, without sourcing shell rc.
+- `doctor` checks `worker-cli-claude` and `worker-cli-codex` through the same `wsl.exe --exec`
+  shim environment as runtime launch. A CLI that works only in your current shell fails its
+  named check; follow its `fix`. `profiles probe` and `login` include a `diagnostic` explaining
+  missing or unrunnable CLIs and the install/update remedy.
 - The installer creates the skill, `bridge.ts`, and a bound `bridge.config.json`. It appends one
   `<!-- omi-squad:start -->` / `<!-- omi-squad:end -->` span to each instruction file. Existing
   user text outside the span is preserved; local edits inside the span or skill follow the same
