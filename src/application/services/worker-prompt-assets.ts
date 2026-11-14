@@ -15,5 +15,5 @@ export const workerPromptAssets = {
   developerChecks:
     "Use scripts for deterministic operations. The runtime runs the required checks (for example project-check) on your head after you report, and a failure is returned to you with its output. If you have no shell and cannot run tests, that is not a reason to report blocked: report succeeded, state which acceptance criteria and checks are unverified, and name open decisions. Quote check results only when you ran them yourself.",
   skillInstructions:
-    'Use only the skills and rules listed in the context packet. The skills and rules are given in full below; no other skill is available.\nReport each skill you applied in "skillsApplied" with its id and an "evidenceRef" to an artifact that shows how.',
+    'Use only the skills and rules listed in the context packet. The skills and rules are given in full below; no other skill is available.\nReport EVERY skill listed in the context packet "skillsManifest" in "skillsApplied", one entry per skill with its id and an "evidenceRef". Each "evidenceRef" points to its own non-empty artifact that you write in the artifact directory: a short note on how you applied the skill. For a skill that did not apply to this step, the note states in one line why it did not apply. Do not leave a skill out: a missing skill fails the attempt.',
 } as const;

@@ -86,7 +86,9 @@ export async function completeRunAttempt(
       attempt.stepRunId,
       recorded.failure === "CHECK_FAILED" || recorded.failure === "CHECK_TIMED_OUT"
         ? checkFindings(deps, checkRuns)
-        : [],
+        : recorded.failure === "SKILL_EVIDENCE_MISSING"
+          ? skillFindings(attempt, reported.success ? reported.data : undefined)
+          : [],
     );
     if (
       !(reported.success && reported.data.status === "blocked") &&
@@ -177,6 +179,27 @@ function checkFindings(deps: DispatchStepDependencies, runs: readonly CheckRunRe
         location: run.evidence.path,
       };
     });
+}
+
+/** Names the skills the report left out so the next attempt reports each with its own note. */
+function skillFindings(
+  attempt: NonNullable<ReturnType<DispatchStepDependencies["attempts"]["get"]>>,
+  report: { readonly skillsApplied: readonly { readonly id: string }[] } | undefined,
+): Finding[] {
+  const reported = new Set(report?.skillsApplied.map((skill) => skill.id));
+  const missing = attempt.skills.map((skill) => skill.id).filter((id) => !reported.has(id));
+  if (missing.length === 0) return [];
+  return [
+    {
+      id: "skill-evidence-missing",
+      severity: "major" as const,
+      message: (
+        `Skills missing from skillsApplied: ${missing.join(", ")}. Report every skill in skillsManifest, ` +
+        `each with its own non-empty note in the artifact directory (one line why, if it did not apply).`
+      ).slice(0, 2000),
+      location: attempt.artifactRoot,
+    },
+  ];
 }
 
 const MAX_FINAL_MESSAGE_CHARS = 8000;
