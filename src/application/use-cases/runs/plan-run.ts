@@ -116,9 +116,12 @@ export async function planRunWithTask(
     // Planning stays available before analysis establishes the approved baseline; dispatch gates remain.
     if (
       error instanceof DispatchPlanningError &&
-      ["BUSINESS_APPROVAL_REQUIRED", "IMPLEMENTATION_MAP_EMPTY", "PLAN_KEY_REQUIRED"].includes(
-        error.reason,
-      )
+      [
+        "BUSINESS_APPROVAL_REQUIRED",
+        "BUSINESS_APPROVAL_STALE",
+        "IMPLEMENTATION_MAP_EMPTY",
+        "PLAN_KEY_REQUIRED",
+      ].includes(error.reason)
     )
       return planRun(deps, input);
     throw error;

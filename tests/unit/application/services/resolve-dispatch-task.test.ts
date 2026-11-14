@@ -27,7 +27,7 @@ const approval: ApprovalRequest = {
 const body =
   "## Implementation map\n- `src/bootstrap/runtime.ts`\n- [tests](tests/e2e/)\n- migrations/\n\n## Other\n- `outside.txt`\n<!-- omi-squad:plan-key=OMI-070 -->";
 const issue = { issueNumber: 142, title: "Runtime", body };
-const input = { taskId: "task-142", issue, approvals: [approval], now: 100 };
+const input = { taskId: "task-142", issue, approvals: [approval], now: 100, current: subject };
 
 describe("PO-approved dispatch sources", () => {
   it("preserves structured task metadata for the effort policy without interpreting Issue prose", () => {
@@ -98,6 +98,42 @@ describe("PO-approved dispatch sources", () => {
     expect(() => resolveDispatchTask({ ...input, approvals: [invalid] })).toThrow(
       "BUSINESS_APPROVAL_REQUIRED",
     );
+  });
+  it("refuses an approval for an older Issue revision as stale, naming the reason", () => {
+    const revisionB = { ...subject, baselineHash: "c".repeat(64) };
+    expect(() => resolveDispatchTask({ ...input, current: revisionB })).toThrow(
+      "BUSINESS_APPROVAL_STALE",
+    );
+  });
+  it("refuses as required, not stale, when no approval exists for the current revision", () => {
+    expect(() => resolveDispatchTask({ ...input, approvals: [], current: undefined })).toThrow(
+      "BUSINESS_APPROVAL_REQUIRED",
+    );
+  });
+  it("uses the approval for the current revision even when an older one is also approved", () => {
+    const revisionB = { ...subject, baselineHash: "c".repeat(64) };
+    const currentApproval: ApprovalRequest = {
+      ...approval,
+      id: "approval-b",
+      subjectHash: revisionB.baselineHash,
+      subject: revisionB,
+      decision: {
+        id: "approval-b",
+        subject: revisionB,
+        actor: "po",
+        source: "po-cli",
+        decision: "approved",
+        decidedAt: 2,
+        evidenceRef: "message",
+      },
+    };
+    expect(
+      resolveDispatchTask({
+        ...input,
+        approvals: [approval, currentApproval],
+        current: revisionB,
+      }).context,
+    ).toMatchObject({ businessBaselineHash: revisionB.baselineHash, approvalRefs: ["approval-b"] });
   });
   it("accepts a project-prefix Plan Key such as BN-001 with a valid Implementation map", () => {
     const bnBody = body.replace("OMI-070", "BN-001");

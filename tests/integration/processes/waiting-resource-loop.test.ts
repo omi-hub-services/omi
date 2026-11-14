@@ -101,8 +101,8 @@ async function setup() {
     "INSERT INTO projects (id, repo_identity, config_hash, created_at, updated_at) VALUES ('p', 'acme/app', 'h', ?, ?)",
   ).run(at, at);
   db.prepare(
-    "INSERT INTO task_snapshots (id, project_id, issue_node_id, issue_number, content_hash, remote_updated_at, scope, captured_at) VALUES ('task-144', 'p', 'I_144', 144, 'h', ?, '{}', ?)",
-  ).run(at, at);
+    "INSERT INTO task_snapshots (id, project_id, issue_node_id, issue_number, content_hash, remote_updated_at, scope, captured_at) VALUES ('task-144', 'p', 'I_144', 144, ?, ?, '{}', ?)",
+  ).run("9".repeat(64), at, at);
   const approvalDeps = {
     unitOfWork: createSqliteStateUnitOfWork(db),
     now,

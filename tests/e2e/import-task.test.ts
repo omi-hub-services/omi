@@ -421,7 +421,7 @@ it("sync stops sending if the lease is lost during marker lookup", async () => {
   ]);
 });
 
-it("sync refreshes the business baseline without changing an existing approval", async () => {
+it("sync refreshes the business baseline and invalidates the now-stale approval, keeping its pinned hash", async () => {
   const s = await setup(false, true);
   expect((await s.cli("sync", "--issues", "1")).code).toBe(0);
   expect((await s.cli("approvals", "request", "task-1", "--kind", "business")).code).toBe(0);
@@ -431,7 +431,11 @@ it("sync refreshes the business baseline without changing an existing approval",
   if (root === undefined) throw new Error("fixture missing");
   root.body += " changed";
   expect((await s.cli("sync", "--issues", "1")).code).toBe(0);
-  expect(s.db.prepare("SELECT * FROM approvals").get()).toEqual(before);
+  expect(s.db.prepare("SELECT * FROM approvals").get()).toMatchObject({
+    subject_hash: (before as { subject_hash: string }).subject_hash,
+    status: "invalidated",
+    version: 1,
+  });
   expect(createSqliteTaskApprovalSubjects(s.db).read("task-1", "business")).not.toEqual(oldSubject);
 });
 

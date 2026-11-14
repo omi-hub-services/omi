@@ -10,7 +10,10 @@ import {
   applyMigrations,
   loadMigrations,
 } from "../../../src/infrastructure/persistence/sqlite/migration-runner.ts";
-import { createSqliteTaskApprovalSubjects } from "../../../src/infrastructure/persistence/sqlite/sqlite-approval-store.ts";
+import {
+  createSqliteApprovalStore,
+  createSqliteTaskApprovalSubjects,
+} from "../../../src/infrastructure/persistence/sqlite/sqlite-approval-store.ts";
 import {
   openStateDatabase,
   type StateDatabase,
@@ -43,6 +46,10 @@ const deps = () => ({
   now: () => (clock += 1000),
   nextId: () => `id-${String((ids += 1))}`,
   unitOfWork: createSqliteStateUnitOfWork(db),
+  approvals: {
+    store: createSqliteApprovalStore(db),
+    subjects: createSqliteTaskApprovalSubjects(db),
+  },
 });
 const imported = (value: TaskIssue = issue) =>
   importTask(
@@ -114,6 +121,59 @@ describe("task snapshot persistence", () => {
     expect(rows()).toHaveLength(1);
     expect(rows()).not.toEqual(before);
     expect(events().map((e) => e.kind)).toEqual(["task.imported", "task.imported"]);
+  });
+
+  it("invalidates a business approval whose hash a re-import changed, keeping the decision for audit", async () => {
+    storeTaskSnapshots(deps(), { projectId: "proj", imported: await imported() });
+    const pending = requestApproval(
+      { ...deps(), subjects: createSqliteTaskApprovalSubjects(db) },
+      { schemaVersion: 1, subjectId: "task-1", kind: "business" },
+    );
+    if (!pending.ok) throw new Error("request refused");
+    const store = createSqliteApprovalStore(db);
+    const approved = {
+      ...pending.request,
+      status: "approved" as const,
+      version: 1,
+      decision: {
+        id: pending.request.id,
+        subject: pending.request.subject,
+        decision: "approved" as const,
+        actor: "po",
+        source: "po-cli" as const,
+        evidenceRef: "message",
+        decidedAt: clock,
+      },
+    };
+    const committed = createSqliteStateUnitOfWork(db).commit({
+      target: { kind: "approval_decision", request: approved, expectedVersion: 0 },
+      at: new Date(clock).toISOString(),
+      event: {
+        eventId: "approve-1",
+        kind: "approval.approved",
+        subject: approved.id,
+        correlationId: approved.id,
+        payload: JSON.stringify(approved),
+      },
+    });
+    expect(committed.ok).toBe(true);
+
+    // Same content again: the approval stays valid.
+    storeTaskSnapshots(deps(), { projectId: "proj", imported: await imported() });
+    expect(store.get(approved.id)?.status).toBe("approved");
+
+    storeTaskSnapshots(deps(), {
+      projectId: "proj",
+      imported: await imported({ ...issue, body: "Objective changed." }),
+    });
+    expect(store.get(approved.id)).toMatchObject({
+      status: "invalidated",
+      version: 2,
+      decision: { actor: "po", decision: "approved" },
+    });
+    expect(store.list("invalidated").map((r) => r.id)).toEqual([approved.id]);
+    expect(store.list("approved")).toEqual([]);
+    expect(events().map((e) => e.kind)).toContain("approval.invalidated");
   });
 
   it("rejects an Issue number already held by another Issue and writes nothing", async () => {

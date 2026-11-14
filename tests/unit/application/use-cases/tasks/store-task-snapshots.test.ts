@@ -22,6 +22,7 @@ function setup(results: StateCommitResult[] = []) {
     changes,
     deps: {
       hasher,
+      approvals: { store: { list: () => [] }, subjects: { read: () => undefined } },
       now: () => Date.UTC(2026, 10, 13),
       nextId: () => `id-${String((next += 1))}`,
       unitOfWork: {

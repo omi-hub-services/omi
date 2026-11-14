@@ -13,7 +13,10 @@ import type { ContentHasher } from "../../src/application/ports/content-hasher.t
 import type { GithubTaskReader } from "../../src/application/ports/github-task-reader.ts";
 import { importTask } from "../../src/application/use-cases/tasks/import-task.ts";
 import { storeTaskSnapshots } from "../../src/application/use-cases/tasks/store-task-snapshots.ts";
-import { createSqliteApprovalStore } from "../../src/infrastructure/persistence/sqlite/sqlite-approval-store.ts";
+import {
+  createSqliteApprovalStore,
+  createSqliteTaskApprovalSubjects,
+} from "../../src/infrastructure/persistence/sqlite/sqlite-approval-store.ts";
 import {
   openReadOnlyStateDatabase,
   openStateDatabase,
@@ -298,6 +301,10 @@ export async function runLivePrep(
     const stored = storeTaskSnapshots(
       {
         unitOfWork: createSqliteStateUnitOfWork(db),
+        approvals: {
+          store: createSqliteApprovalStore(db),
+          subjects: createSqliteTaskApprovalSubjects(db),
+        },
         hasher: deps.hasher,
         now: deps.now,
         nextId: deps.newId,

@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { identifierSchema } from "../../contracts/identifiers.js";
 import { importedTasksSchema } from "../../contracts/task-import.js";
+import { invalidateStaleBusinessApprovals } from "../../services/invalidate-stale-business-approvals.js";
+import type { ApprovalListReader, ApprovalSubjectReader } from "../../ports/approval-store.js";
 import type { ContentHasher } from "../../ports/content-hasher.js";
 import type { StateRejection, StateUnitOfWork } from "../../ports/state-unit-of-work.js";
 
@@ -11,6 +13,11 @@ const storeTaskSnapshotsSchema = z.strictObject({
 
 export interface StoreTaskSnapshotsDependencies {
   readonly unitOfWork: StateUnitOfWork;
+  /** Lets a changed hash invalidate the task's now-stale business approvals. */
+  readonly approvals: {
+    readonly store: ApprovalListReader;
+    readonly subjects: ApprovalSubjectReader;
+  };
   readonly hasher: ContentHasher;
   readonly now: () => number;
   readonly nextId: () => string;
@@ -96,6 +103,17 @@ export function storeTaskSnapshots(
       },
     });
     if (committed.ok || committed.reason === "UNCHANGED") {
+      // Also on UNCHANGED, so an earlier interrupted invalidation is finished by the next import.
+      invalidateStaleBusinessApprovals(
+        {
+          approvals: deps.approvals.store,
+          subjects: deps.approvals.subjects,
+          unitOfWork: deps.unitOfWork,
+          now: deps.now,
+          nextId: deps.nextId,
+        },
+        taskId,
+      );
       stored.push({
         taskId,
         issueNodeId: issue.id,
