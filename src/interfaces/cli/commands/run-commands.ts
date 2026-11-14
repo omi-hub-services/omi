@@ -474,6 +474,21 @@ export function registerRunCommands(program: Command, context: CliContext): void
     });
 
   program
+    .command("deploy")
+    .description(
+      "Deploy a configured deploy target using its approved deploy approval; repeat to reconcile",
+    )
+    .requiredOption("--target <id>", "deploy_targets id from project.yaml")
+    .action(async (options: { target: string }, command: Command) => {
+      await runCommand(
+        context,
+        command,
+        { command: "deploy", target: options.target },
+        SLOW_COMMAND_MS,
+      );
+    });
+
+  program
     .command("coordinator")
     .description("Coordinator session handoff")
     .command("switch")

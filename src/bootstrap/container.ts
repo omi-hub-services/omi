@@ -91,6 +91,11 @@ import {
   type PublishReleaseDeps,
 } from "../application/use-cases/delivery/publish-release.js";
 import { DeliveryError } from "../application/ports/pr-delivery.js";
+import {
+  deployConfiguredRelease,
+  type DeployConfiguredReleaseDeps,
+} from "../application/use-cases/delivery/deploy-configured-release.js";
+import { createGithubDeployReader } from "../infrastructure/github/github-deploy.js";
 import { createGithubReleaseReader } from "../infrastructure/github/github-release-reader.js";
 import type { MergeReleaseDeps } from "../application/use-cases/delivery/merge-release.js";
 import { createGithubReleaseMergeReader } from "../infrastructure/github/github-release-merge.js";
@@ -586,6 +591,25 @@ export function createReleaseDeliveryUseCases(
 }
 
 /**
+ * DeliveryError is a typed refusal. `failed` and `refused` both exit non-zero; `pending` and
+ * `verified` succeed, and the same command resumes a pending deploy.
+ */
+export function createDeployUseCase(deps: DeployConfiguredReleaseDeps) {
+  return async (input: unknown) => {
+    try {
+      const result = await deployConfiguredRelease(deps, input);
+      if (result.status === "refused") return { ok: false as const, reason: result.reason };
+      if (result.status === "failed")
+        return { ok: false as const, reason: result.reason, detail: result.notification };
+      return { ok: true as const, ...result };
+    } catch (error) {
+      if (error instanceof DeliveryError) return { ok: false as const, reason: error.code };
+      throw error;
+    }
+  };
+}
+
+/**
  * Repository and PO logins are trusted runtime configuration (`policies.github_approval_actors`,
  * the same allowlist approvals use); a caller can never supply or override them. No configured PO
  * refuses before any GitHub read.
@@ -746,6 +770,7 @@ export type RunCommandUseCases = Pick<
   | "prepareRunPr"
   | "prepareRelease"
   | "publishRelease"
+  | "deploy"
   | "mergeRelease"
   | "handoffCoordinator"
 >;
@@ -959,6 +984,7 @@ export async function createProjectRunCommandUseCases(
         mergeRelease: refuse,
         prepareRelease: refuse,
         publishRelease: refuse,
+        deploy: refuse,
       },
       drain: () => Promise.resolve(),
       resourceWakeup: undefined,
@@ -1312,6 +1338,20 @@ export async function createProjectRunCommandUseCases(
         },
         `${config.project.repository.owner}/${config.project.repository.name}`,
       ),
+      deploy: createDeployUseCase({
+        ...merge,
+        session,
+        hasher: sha256ContentHasher,
+        approvals: createSqliteApprovalStore(database),
+        deployments: createGithubDeployReader(client),
+        deploy: config.project.deploy,
+        targets: config.project.deploy_targets,
+        repository: `${config.project.repository.owner}/${config.project.repository.name}`,
+        sleep,
+        // Bounded in-command wait; a still-running deploy is resumed by repeating the command.
+        maxPolls: 6,
+        pollIntervalMs: 5_000,
+      }),
       ...createWorkerCommandUseCases({
         ...dispatch,
         committer: createCliWorkerCommitter(),

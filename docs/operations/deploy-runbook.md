@@ -1,6 +1,6 @@
 # Sandbox deployment and approved rollback
 
-The runtime writer calls `deployRelease` with a repository, environment, immutable
+The runtime writer (the `deploy` command, or the live test) calls `deployRelease` with a repository, environment, immutable
 `sha256:<64 lowercase hex>` artifact digest and durable deploy approval ID. Release approval
 is insufficient. The configured agent account dispatches; an allowlisted PO approves the
 native environment gate. Configure required **User** reviewers, `prevent_self_review: true`
@@ -81,11 +81,58 @@ the PO's native approval. If dispatch is still unconfirmed, retain state and rer
 Default checks do not run it. The PO chooses sandbox repository, workflow/tag/SHA, protected
 environment, image/digest, PO/report Issue and the time to run the probe.
 
+## Prepare a target for an installed project (OMI-121)
+
+`<cli> deploy --target <id>` runs `deployRelease` from an installed project. The repository is
+the project's own `repository` in `project.yaml`; the command takes nothing but the target id.
+Prepare, in order:
+
+1. **Workflow fixture.** Copy `tests/fixtures/github/sandbox-deploy.yml` (or your reviewed
+   equivalent honouring the workflow contract above: `run-name: omi-deploy:<operation_key>`,
+   inputs `operation_key`, `environment`, `artifact_digest`, a job targeting the input
+   environment) to `.github/workflows/<workflow>` on the default branch. Review its commit.
+2. **Tag.** Create a protected lightweight tag on the reviewed commit (`deploy.tag_ref`);
+   `deploy.workflow_sha` is that commit's full sha.
+3. **Environment.** In GitHub create the environment with required **User** reviewers (the PO),
+   `prevent_self_review: true`, `can_admins_bypass: false`. This is the native approval layer.
+4. **Image digest.** Choose the immutable `sha256:<64 hex>` digest of the reviewed image.
+5. **Configure `project.yaml`:**
+
+```yaml
+deploy:
+  workflow: deploy.yml
+  tag_ref: deploy-r1
+  workflow_sha: <40 hex commit sha>
+  issue_number: 48 # PO report Issue that receives waiting/failure comments
+  allowed_actors: [po-login] # PO logins allowed to approve the native gate
+  author_actor: dispatch-account-login
+  allowed_repositories: [owner/name] # the project's own repository must be listed
+  allowed_environments: [staging]
+deploy_targets:
+  - id: app-r1
+    target_environment: staging
+    artifact_digest: sha256:<64 hex>
+```
+
+   The allowlists replace the former hard-coded `sandbox` name rule; they are fail-closed (absent
+   `deploy` block, or a repository/environment not listed, refuses before any approval read or
+   dispatch). Restart the session after editing; editing a target's digest or environment makes
+   older approvals stale.
+6. **Approve and deploy:** `approvals request app-r1 --kind deploy` → PO `approvals decide` →
+   `deploy --target app-r1` → PO approves the native environment gate. Repeat the same `deploy`
+   command while it reports `pending`/`VERIFY_WAITING`; a fresh deploy of the same target needs a
+   fresh deploy approval. A rollback stays a separate, explicit, separately approved deploy of the
+   previous digest; the `deploy` command does not request rollback and nothing rolls back
+   automatically.
+
+The `sandbox` name checks in `tests/live/github/deploy-release.test.ts` and `tools/sandbox-setup/`
+are **test/tooling-only** guards; they do not apply to the `deploy` command.
+
 ## Preparing the sandbox for the live run (OMI-089)
 
 `tools/sandbox-setup/` prepares `omi-hub-services/omi-sandbox` and the local state. It never
 creates or decides an approval, and it refuses any repository whose name lacks `sandbox` and the
-production repository. Run it as the dispatch account (`minibox-claude-code`, repository admin)
+production repository (a tooling guard only, see above). Run it as the dispatch account (`minibox-claude-code`, repository admin)
 after the PO has confirmed the admin changes. The PO supplies the reviewed image repository and
 its immutable digest (`sha256:<64 hex>`); the script does not choose or pull one.
 

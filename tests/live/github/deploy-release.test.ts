@@ -1,6 +1,8 @@
 import { claimProjectSession } from "../../../src/application/services/claim-project-session.ts";
 import { createSqliteLeaseStore } from "../../../src/infrastructure/persistence/sqlite/sqlite-lease-store.ts";
 // Explicit opt-in: dispatches only to the configured sandbox; the PO approves in GitHub.
+// The `sandbox` name rule below is a test-only safety guard. The product `deploy` command
+// uses the project.yaml `deploy.allowed_repositories` / `allowed_environments` allowlists.
 import { randomUUID, createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
