@@ -25,7 +25,6 @@ it.each(["dispatcher", "socket"])(
       ...run.attempt,
       workspace: {
         ...run.attempt.workspace,
-        taskId: request.taskId,
         branch: "task/omi-023-merge-gates",
       },
     };
