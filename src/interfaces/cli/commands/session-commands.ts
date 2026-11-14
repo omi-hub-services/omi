@@ -85,7 +85,7 @@ export function registerSessionCommands(
             {
               code: "RUNTIME_UNAVAILABLE",
               message:
-                "RUNTIME_START_FAILED: the session runtime did not start in WSL. Run omi doctor (session-runtime-launch); if Node.js is missing, reinstall with omi install --apply using a working Node.js or configure node on PATH",
+                "RUNTIME_START_FAILED: the session runtime did not start in WSL or did not report ready in time. Run omi doctor (session-runtime-launch); if Node.js is missing, reinstall with omi install --apply using a working Node.js or configure node on PATH",
             },
             format,
             EXIT_CODES.FAILURE,

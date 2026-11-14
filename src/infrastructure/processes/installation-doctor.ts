@@ -238,8 +238,7 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
             input.projectDir,
             "--exec",
             shim,
-            "--omi-node-exec",
-            "--version",
+            "--omi-node-version",
           ],
           input.projectDir,
         )

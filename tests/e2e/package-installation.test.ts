@@ -779,7 +779,7 @@ describe("WSL2 doctor", () => {
           return Promise.resolve(
             args[0] === "--list"
               ? "  NAME STATE VERSION\n* Ubuntu Running 2"
-              : args.includes("--omi-node-exec")
+              : args.includes("--omi-node-version")
                 ? "v24.0.0"
                 : "0.0.0",
           );

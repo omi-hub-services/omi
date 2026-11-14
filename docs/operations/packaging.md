@@ -70,7 +70,7 @@ to refresh the recorded path; neither a global Node installation nor application
 are required.
 
 `session start` uses the same recorded interpreter: the launcher runs
-`wsl.exe … --exec <project-shim> --omi-node-exec <runtime.js> <project>`, so the runtime no
+`wsl.exe … --exec <project-shim> --omi-runtime <runtime.js> <project>`, so the runtime no
 longer depends on `node` being on the non-login `wsl.exe --exec` PATH. The shim's PATH fallback
 and missing-Node message apply. If the runtime does not start, `session start` reports
 `RUNTIME_START_FAILED` with the fix instead of a generic internal error, and `doctor` fails

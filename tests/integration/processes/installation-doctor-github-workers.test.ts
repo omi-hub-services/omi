@@ -42,7 +42,7 @@ function probe(answers: Answers, projectConfig: ProjectConfig | null): WslProbe 
         return Promise.resolve(
           args[0] === "--list"
             ? "  NAME STATE VERSION\n* Ubuntu Running 2"
-            : args.includes("--omi-node-exec")
+            : args.includes("--omi-node-version")
               ? all["session-runtime"]
               : "0.0.0",
         );
