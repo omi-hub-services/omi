@@ -226,6 +226,32 @@ describe("Codex through the neutral port", () => {
     expect(argv.join(" ")).not.toContain("do-not-execute");
   });
 
+  it("adds the absolute artifact directory as a writable root only for workspace-write (OMI-131)", async () => {
+    const artifactDir = join(root, "artifact-store", "attempts", "attempt-1");
+    mkdirSync(artifactDir, { recursive: true });
+    const writing = harness();
+    await writing.executor.collectResult(
+      await writing.executor.start(request({ access: "workspace-write", artifactDir })),
+    );
+    const argv = writing.invocations()[0]?.argv ?? [];
+    expect(argv.filter((arg) => arg === "--add-dir")).toHaveLength(1);
+    expect(argv[argv.indexOf("--add-dir") + 1]).toBe(artifactDir);
+    const readOnly = harness();
+    await readOnly.executor.collectResult(
+      await readOnly.executor.start(request({ access: "read-only", artifactDir })),
+    );
+    expect(readOnly.invocations()[0]?.argv).not.toContain("--add-dir");
+  });
+
+  it("refuses an artifact directory that does not exist as a framework error", async () => {
+    const { executor } = harness();
+    await expect(
+      executor.start(
+        request({ access: "workspace-write", artifactDir: join(root, "missing-artifact-dir") }),
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+  });
+
   it.each(["low", "medium", "high", "xhigh", "max"] as const)(
     "never silently changes requested effort %s",
     async (effort) => {

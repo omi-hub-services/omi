@@ -166,6 +166,13 @@ export function createLocalArtifactStore(
       }
     },
 
+    directory(path) {
+      // The last component is a placeholder: the resolver creates every parent and rejects symlinks.
+      return dirname(
+        resolveArtifactPath(canonicalRoot, `${validateArtifactPath(path)}/.dir`, true),
+      );
+    },
+
     adopt(input) {
       validateArtifactPath(input.path);
       const metadata = artifactWriteSchema.omit({ bytes: true }).parse(input);

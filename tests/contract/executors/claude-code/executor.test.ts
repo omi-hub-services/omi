@@ -265,6 +265,41 @@ describe("invocation", () => {
     expect(argv.join(" ")).not.toContain("Bash");
   });
 
+  it("grants exactly the absolute artifact directory to a writing worker with --add-dir (OMI-131)", async () => {
+    const artifactDir = join(root, "artifact-store", "attempts", "attempt-1");
+    mkdirSync(artifactDir, { recursive: true });
+    const { executor, invocations } = harness(SUCCESS);
+    await executor.collectResult(
+      await executor.start(request({ access: "workspace-write", artifactDir })),
+    );
+    const argv = invocations()[0]?.argv ?? [];
+    expect(argv.filter((arg) => arg === "--add-dir")).toHaveLength(1);
+    expect(argv[argv.indexOf("--add-dir") + 1]).toBe(artifactDir);
+    expect(invocations()[0]?.cwd).toBe(workspace);
+  });
+
+  it("grants no extra directory to a read-only worker or when none is given", async () => {
+    const artifactDir = join(root, "artifact-store", "attempts", "attempt-2");
+    mkdirSync(artifactDir, { recursive: true });
+    const readOnly = harness(SUCCESS);
+    await readOnly.executor.collectResult(await readOnly.executor.start(request({ artifactDir })));
+    expect(readOnly.invocations()[0]?.argv).not.toContain("--add-dir");
+    const none = harness(SUCCESS);
+    await none.executor.collectResult(
+      await none.executor.start(request({ access: "workspace-write" })),
+    );
+    expect(none.invocations()[0]?.argv).not.toContain("--add-dir");
+  });
+
+  it("refuses an artifact directory that does not exist as a framework error", async () => {
+    const { executor } = harness(SUCCESS);
+    await expect(
+      executor.start(
+        request({ access: "workspace-write", artifactDir: join(root, "missing-artifact-dir") }),
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+  });
+
   it("always names the model: the request cannot omit it", async () => {
     const { executor } = harness(SUCCESS);
     const withoutModel: Partial<ExecutionRequest> = request();

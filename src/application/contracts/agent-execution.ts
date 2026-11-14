@@ -53,6 +53,11 @@ export const executionRequestSchema = z.strictObject({
   /** Working directory the worker edits: a framework-created task worktree. */
   workspace: absolutePathSchema,
   profileHome: absolutePathSchema,
+  /**
+   * The one extra directory a writing worker may write, outside the worktree: where the runtime
+   * adopts result artifacts from (OMI-131). Absent when the worker has nowhere to publish.
+   */
+  artifactDir: absolutePathSchema.optional(),
   /** Delivered over stdin, never as a command-line argument. */
   prompt: z.string().min(1).max(MAX_PROMPT_CHARS),
   /** Always explicit: the default model differs per profile (ADR-0013 finding 4). */

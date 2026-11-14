@@ -888,6 +888,24 @@ own head and merge-base with `develop`. A missing or malformed claim is ignored,
 `REVISION_MISSING`. Diagnostic text keeps 40/64-character lowercase hex
 (git SHAs) and still redacts secret-prefixed and other long tokens.
 
+A worker writes its artifacts only into the attempt's absolute artifact directory
+(`<store>/attempts/<attemptId>`, under `.omi-squad/local/runs`), never into the task worktree or
+branch. The runtime creates it before the start and grants exactly that one directory (Claude Code
+`--add-dir`, Codex `--add-dir`) to `workspace-write` workers; read-only workers get none. The prompt
+names the absolute directory, while the `path` in the result stays store-relative
+(`attempts/<attemptId>/<file>`). A dispatch whose artifact directory would sit inside the worktree
+is refused (`CONTEXT_REJECTED`, `ARTIFACT_DIR_IN_WORKSPACE`) before any attempt exists, and an
+artifact directory that is missing at start fails the start as `INVALID_REQUEST`, not as a worker
+failure.
+
+Recovery when a step still fails with `ARTIFACT_INVALID` and the file is not in the store: the
+failure cannot be told apart from a worker that never wrote the file, so it is counted like any
+other failed attempt against the quality budget (`ARTIFACT_INVALID` is not reclassified as an
+infrastructure failure). If the cause is a framework defect (the file sits under the worktree, as
+in beta #55 before OMI-131), do not retry blindly: fix the framework, remove the stray
+`attempts/` directory from the worktree (it is untracked; never commit it), and have the
+Architect/PO reopen the step so the failed attempt does not consume the remaining cycle.
+
 Each dispatch has its own log `omi-NNN-<profile>-<ts>-<step>-<attempt>-<stamp>.jsonl` (and `.err`,
 codex `-last.md`), so QA and review can run in parallel on one profile. When several workers of a
 task run, read each with `worker-report <issue> --step verify-1` (or `review-1`); without `--step`

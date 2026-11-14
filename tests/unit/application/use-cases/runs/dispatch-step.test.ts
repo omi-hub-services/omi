@@ -30,6 +30,32 @@ describe("dispatchStep", () => {
     expect(prompt).toContain('"checks"');
     expect(prompt).toContain("one AC-n: met|not met — <evidence> line per criterion");
   });
+  it("gives the worker an absolute artifact directory outside the worktree and names it in the prompt (OMI-131)", async () => {
+    const r = rig();
+    dispatched(await dispatchStep(r.deps, dispatchInput()));
+    const request = r.executor.started[0];
+    expect(request?.artifactDir).toBe("/artifact-store/attempts/id-1");
+    expect(request?.artifactDir?.startsWith(`${request.workspace}/`)).toBe(false);
+    const prompt = request?.prompt ?? "";
+    expect(prompt).toContain('"/artifact-store/attempts/id-1/"');
+    // Reported paths stay store-relative, which is what the adopter resolves.
+    expect(prompt).toContain("attempts/id-1/<file name>");
+    expect(prompt).not.toContain('"attempts/id-1/"');
+  });
+
+  it("refuses to dispatch when the artifact directory would sit inside the task worktree (OMI-131)", async () => {
+    const r = rig();
+    r.artifacts.base = "/work/omi-017/store";
+    const result = await dispatchStep(r.deps, dispatchInput());
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "CONTEXT_REJECTED",
+      detail: "ARTIFACT_DIR_IN_WORKSPACE",
+    });
+    expect(r.executor.started).toHaveLength(0);
+    expect(r.attempts.get("id-1")).toBeUndefined();
+  });
+
   it("completes an attempt id reserved by executor selection instead of allocating another", async () => {
     const r = rig();
     const result = dispatched(

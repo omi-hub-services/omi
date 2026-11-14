@@ -40,11 +40,16 @@ export interface ClaudeInvocationOptions {
  * default model differs per profile.
  */
 export function buildClaudeInvocationArgs(
-  request: Pick<ExecutionRequest, "model" | "effort" | "access">,
+  request: Pick<ExecutionRequest, "model" | "effort" | "access" | "artifactDir">,
   options: ClaudeInvocationOptions = {},
 ): string[] {
   const access = ACCESS_FLAGS[request.access];
   const sources = options.settingSources ?? DEFAULT_SETTING_SOURCES;
+  // The attempt's artifact directory is the only extra directory a writing worker gets (OMI-131).
+  const artifactDir =
+    request.access === "workspace-write" && request.artifactDir !== undefined
+      ? ["--add-dir", request.artifactDir]
+      : [];
   return [
     "-p",
     "--output-format",
@@ -66,6 +71,7 @@ export function buildClaudeInvocationArgs(
     access.tools,
     "--permission-mode",
     access.permissionMode,
+    ...artifactDir,
   ];
 }
 
