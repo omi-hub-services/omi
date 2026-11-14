@@ -532,6 +532,16 @@ custom content separately before taking the upstream file. Files outside the tem
 and untouched. Project, distro and location cannot be changed by an update. The full rules and
 the manual restore after an interrupted publish are in packaging.md.
 
+**Runs in flight.** A run pins its workflow template by sha-256 and keeps it: an update that changes
+a template never switches a running run to the new one (new runs use the new template). The
+runtime resolves the pinned template from the installed `.omi-squad/workflows/` first, then from the
+content-addressed archive `.omi-squad/local/workflow-archive/<sha256>.yaml`. The archive is filled
+when the runtime starts (installed templates), by `update --apply` (the templates it replaces) and
+from existing `.omi-squad/local/backups/install-*/templates.json`, so runs planned before this
+archive existed still resolve. An entry is used only if its bytes hash to its name. If no template
+has the pinned hash, dispatch/retry refuse with `TEMPLATE_UNAVAILABLE` and `template_hash=<hash>`;
+restore that template file's exact bytes into the archive under that name, or start a new run.
+
 ## 8. Recovery
 
 | Situation                                    | Do this                                                                                                       |

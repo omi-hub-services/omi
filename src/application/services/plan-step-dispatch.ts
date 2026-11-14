@@ -96,6 +96,15 @@ export function createDispatchPlanner(deps: {
 } {
   const config = projectConfigSchema.parse(deps.config);
   const models = modelsConfigSchema.parse(deps.models);
+  /** The run's own template: its quality plan, else the installed/archived one it pinned by hash. */
+  const pinnedWorkflow = (plan: ReturnType<RunPlanStore["forRun"]>) => {
+    if (plan === undefined) return undefined;
+    if (plan.qualityPlan?.workflow !== undefined) return plan.qualityPlan.workflow;
+    const pinned = deps.workflows.byHash(plan.templateHash);
+    if (pinned === undefined)
+      throw new DispatchPlanningError("TEMPLATE_UNAVAILABLE", `template_hash=${plan.templateHash}`);
+    return pinned.workflow;
+  };
   const input = (
     request: DispatchPlanRequest,
     selection: {
@@ -109,9 +118,7 @@ export function createDispatchPlanner(deps: {
     round: number,
   ) => {
     const plan = deps.plans.forRun(request.runId);
-    const workflow =
-      plan?.qualityPlan?.workflow ??
-      (plan === undefined ? undefined : deps.workflows.byHash(plan.templateHash)?.workflow);
+    const workflow = pinnedWorkflow(plan);
     const step = workflow?.steps.find((entry) => entry.id === request.stepId);
     if (step === undefined) throw new Error("WORKFLOW_UNKNOWN");
     const packetSteps = plan?.qualityPlan?.packets[step.id] ?? [step];
@@ -210,9 +217,7 @@ export function createDispatchPlanner(deps: {
     },
     async plan(request) {
       const plan = deps.plans.forRun(request.runId);
-      const workflow =
-        plan?.qualityPlan?.workflow ??
-        (plan === undefined ? undefined : deps.workflows.byHash(plan.templateHash)?.workflow);
+      const workflow = pinnedWorkflow(plan);
       const step = workflow?.steps.find((entry) => entry.id === request.stepId);
       if (step === undefined) return undefined;
       const task = dispatchTaskSchema.parse(await deps.task(request.taskId));

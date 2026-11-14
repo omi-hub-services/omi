@@ -86,6 +86,7 @@ function setup(
   overrides: {
     config?: typeof config;
     workflow?: typeof workflow;
+    templateMissing?: boolean;
     findings?: { recall: (stepRunId: string) => never[] };
   } = {},
 ) {
@@ -123,7 +124,10 @@ function setup(
     plans,
     workflows: {
       byId: () => ({ workflow: overrides.workflow ?? workflow, hash }),
-      byHash: () => ({ workflow: overrides.workflow ?? workflow, hash }),
+      byHash: () =>
+        overrides.templateMissing === true
+          ? undefined
+          : { workflow: overrides.workflow ?? workflow, hash },
     },
     profiles: { list: () => registryProfiles, save: () => true },
     selections,
@@ -138,6 +142,15 @@ function setup(
 }
 
 describe("dispatch planning from a trusted task boundary", () => {
+  it("refuses with TEMPLATE_UNAVAILABLE and the pinned hash when no template has that hash", async () => {
+    const r = setup([profile], () => Promise.resolve(task), [profile], { templateMissing: true });
+    await expect(r.planner.plan(request)).rejects.toMatchObject({
+      reason: "TEMPLATE_UNAVAILABLE",
+      detail: `template_hash=${hash}`,
+    });
+    expect(r.reservations).toEqual([]);
+  });
+
   it("cancels the reserved capacity slot if the chosen profile disappears before plan construction", async () => {
     const r = setup([profile], () => Promise.resolve(task), []);
     await expect(r.planner.plan(request)).rejects.toThrow("PROFILE_UNKNOWN");

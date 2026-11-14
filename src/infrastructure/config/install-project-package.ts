@@ -34,6 +34,7 @@ import {
   projectInstructionBlock,
   mergeProjectInstruction,
 } from "./project-bridge.js";
+import { archiveWorkflowTemplate } from "./workflow-template-archive.js";
 import { runCommand } from "../processes/run-command.js";
 import { openStateDatabase } from "../persistence/sqlite/sqlite-connection.js";
 import { applyMigrations, loadMigrations } from "../persistence/sqlite/migration-runner.js";
@@ -236,6 +237,10 @@ export function createProjectInstallation(options: {
         }
       }
       await writeFile(join(backupDir, "templates.json"), JSON.stringify(plan.local));
+      // Runs pin their workflow template by hash; keep what this update is about to replace.
+      for (const [path, text] of Object.entries(plan.local))
+        if (/^workflows\/[^/]+\.yaml$/.test(path))
+          await archiveWorkflowTemplate(join(squad, "local"), text);
       for (const path of new Set(
         [...Object.keys(plan.local), ...Object.keys(plan.candidate.base)].filter((path) =>
           path.startsWith("bridge/"),
