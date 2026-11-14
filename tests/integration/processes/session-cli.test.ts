@@ -42,6 +42,17 @@ describe("session CLI", () => {
       1,
     );
   });
+  it("explains a runtime start failure with a fix instead of a generic internal error", async () => {
+    const { env, launchSession, stderr } = environment();
+    launchSession.mockRejectedValue(new Error("RUNTIME_START_FAILED"));
+    expect(await runCli(["session", "start", "--project", "/p", "--runtime", "/r.js"], env)).toBe(
+      1,
+    );
+    const output = String(stderr.mock.calls[0]?.[0] ?? "");
+    expect(output).not.toContain("INTERNAL_ERROR");
+    expect(output).toContain("RUNTIME_START_FAILED");
+    expect(output).toContain("omi doctor");
+  });
   it("refuses invalid paths before launching", async () => {
     const { env, launchSession } = environment();
     expect(

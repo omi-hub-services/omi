@@ -69,6 +69,14 @@ Node.js on PATH. After removing an nvm version, use the bootstrap steps with the
 to refresh the recorded path; neither a global Node installation nor application manifest edits
 are required.
 
+`session start` uses the same recorded interpreter: the launcher runs
+`wsl.exe … --exec <project-shim> --omi-runtime <runtime.js> <project>`, so the runtime no
+longer depends on `node` being on the non-login `wsl.exe --exec` PATH. The shim's PATH fallback
+and missing-Node message apply. If the runtime does not start, `session start` reports
+`RUNTIME_START_FAILED` with the fix instead of a generic internal error, and `doctor` fails
+`session-runtime-launch` (the shim cannot start Node.js; reinstall with `omi install --apply`
+using a working Node.js or configure node on PATH).
+
 From Windows, use the installed shim through its UNC path:
 
 ```powershell

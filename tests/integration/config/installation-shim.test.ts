@@ -95,3 +95,69 @@ it.each([true, false])(
   },
   30_000,
 );
+
+const runtimeOf = (projectDir: string) =>
+  join(projectDir, ".omi-squad/tool/node_modules/omi-squad/dist/bootstrap/runtime.js");
+
+it.each([true, false])(
+  "starts only the project runtime and node version through the recorded node, fallback %s",
+  async (fallback) => {
+    const { input, shim } = await install(`node-exec-${String(fallback)}`);
+    const root = input.projectDir;
+    await writeFile(
+      join(packageDir, "dist/bootstrap/runtime.js"),
+      "require('node:fs').writeSync(1, 'runtime ' + JSON.stringify(process.argv.slice(2)));\n",
+    );
+    const shell = await readFile(shim, "utf8");
+    const emptyBin = join(temp, `node-exec-bin-${String(fallback)}`);
+    await mkdir(emptyBin);
+    await symlink("/usr/bin/dirname", join(emptyBin, "dirname"));
+    const runtime = ["--omi-runtime", runtimeOf(root), root];
+    // PATH has no node, as under a non-login wsl.exe --exec: only the recorded path can work.
+    expect(await execute(shim, runtime, { env: { PATH: emptyBin } })).toMatchObject({
+      stdout: `runtime ${JSON.stringify([root])}`,
+    });
+    expect(
+      (await execute(shim, ["--omi-node-version"], { env: { PATH: emptyBin } })).stdout.trim(),
+    ).toBe(process.version);
+    await writeFile(shim, shell.replace(process.execPath, join(temp, "removed-node")));
+    if (fallback) await symlink(process.execPath, join(emptyBin, "node"));
+    const result = execute(shim, runtime, { env: { PATH: emptyBin } });
+    if (fallback)
+      await expect(result).resolves.toMatchObject({ stdout: `runtime ${JSON.stringify([root])}` });
+    else await expect(result).rejects.toMatchObject({ code: 127 });
+  },
+  30_000,
+);
+
+it("refuses internal modes with any other script, flag or extra argument without running node", async () => {
+  const { input, shim } = await install("internal-mode-refusal");
+  const root = input.projectDir;
+  const marker = join(temp, "must-not-exist");
+  const evil = join(temp, "evil.js");
+  await writeFile(evil, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran');\n`);
+  const runtime = runtimeOf(root);
+  for (const args of [
+    ["--omi-runtime", evil, root],
+    ["--omi-runtime", runtime, root, "extra"],
+    ["--omi-runtime", runtime],
+    ["--omi-runtime", runtime, join(temp, "other")],
+    ["--omi-runtime", "-e", `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`],
+    ["--omi-runtime"],
+    ["--omi-node-version", "-e", "1"],
+    ["--omi-node-version", "extra"],
+  ])
+    await expect(execute(shim, args)).rejects.toMatchObject({ code: 2 });
+  await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+}, 30_000);
+
+it("refuses internal modes from the Windows entrypoint without calling wsl.exe", async () => {
+  const { shim } = await install("internal-mode-windows");
+  const cjs = join(shim + ".cjs");
+  for (const mode of ["--omi-runtime", "--omi-node-version"]) {
+    await expect(execute(process.execPath, [cjs, mode])).rejects.toMatchObject({
+      code: 2,
+      stderr: expect.stringContaining("not available from Windows") as unknown,
+    });
+  }
+});

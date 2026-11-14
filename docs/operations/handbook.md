@@ -135,7 +135,9 @@ node <package>/dist/bootstrap/cli.js install --project /home/user/project --pack
   identify marked spans in the root instructions. The preview includes all bridge targets.
 - `--apply` backs up, installs the package under `.omi-squad/tool/`, and writes the shims and templates.
 - `doctor` prints `WSL2 installation checks passed` (exit 0) or `error[DOCTOR_FAILED]: <check>: <detail>; …`
-  (exit 6) naming each failed check (`interop`, `distribution-version`, `windows-launch`, …).
+  (exit 6) naming each failed check (`interop`, `distribution-version`, `windows-launch`, `session-runtime-launch`, …). `session-runtime-launch` fails when the project
+  shim cannot start Node.js (for example nvm removed): rerun `install --apply` with a working Node.js
+  or put `node` on PATH; `session start` reports `RUNTIME_START_FAILED` for the same cause.
 - The installer creates the skill, `bridge.ts`, and a bound `bridge.config.json`. It appends one
   `<!-- omi-squad:start -->` / `<!-- omi-squad:end -->` span to each instruction file. Existing
   user text outside the span is preserved; local edits inside the span or skill follow the same

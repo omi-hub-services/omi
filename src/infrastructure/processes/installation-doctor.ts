@@ -228,6 +228,30 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
         : "Cannot be checked until the wsl-exe check passes",
     );
 
+    const nodeVersion = reachable
+      ? await probe.command(
+          wslExe,
+          [
+            "--distribution",
+            input.distribution,
+            "--cd",
+            input.projectDir,
+            "--exec",
+            shim,
+            "--omi-node-version",
+          ],
+          input.projectDir,
+        )
+      : undefined;
+    check(
+      "session-runtime-launch",
+      nodeVersion !== undefined && /^v\d+\.\d+\.\d+/.test(nodeVersion.trim()),
+      "Windows session start must be able to launch the runtime with Node.js through the project shim",
+      reachable
+        ? "Reinstall with omi install --apply using a working Node.js, or configure node on PATH"
+        : "Cannot be checked until the wsl-exe check passes",
+    );
+
     // GitHub identity and permissions. Only the login, user type and permission booleans are read
     // from gh; auth output is never stored, so no token can reach the report.
     const gh = (args: readonly string[]) => probe.command("gh", args, input.projectDir);

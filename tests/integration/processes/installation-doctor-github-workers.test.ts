@@ -26,6 +26,7 @@ const defaults: Answers = {
   }),
   "claude --version": "2.1.322 (Claude Code)",
   "codex --version": "codex-cli 0.167.0",
+  "session-runtime": "v24.0.0",
 };
 
 function probe(answers: Answers, projectConfig: ProjectConfig | null): WslProbe {
@@ -39,7 +40,11 @@ function probe(answers: Answers, projectConfig: ProjectConfig | null): WslProbe 
     command: (executable, args) => {
       if (executable === "wsl.exe")
         return Promise.resolve(
-          args[0] === "--list" ? "  NAME STATE VERSION\n* Ubuntu Running 2" : "0.0.0",
+          args[0] === "--list"
+            ? "  NAME STATE VERSION\n* Ubuntu Running 2"
+            : args.includes("--omi-node-version")
+              ? all["session-runtime"]
+              : "0.0.0",
         );
       if (executable === "wslpath")
         return Promise.resolve(
@@ -61,6 +66,19 @@ async function run(answers: Answers = {}, projectConfig: ProjectConfig | null = 
   const status = (name: string) => report.checks.find((check) => check.name === name);
   return { report, status };
 }
+
+describe("doctor session runtime launch", () => {
+  it("passes when the shim can start node", async () => {
+    const { status } = await run();
+    expect(status("session-runtime-launch")).toMatchObject({ ok: true });
+  });
+  it("fails by name when the shim cannot start node", async () => {
+    const { report, status } = await run({ "session-runtime": undefined });
+    expect(status("session-runtime-launch")).toMatchObject({ ok: false });
+    expect(status("session-runtime-launch")?.fix).toContain("omi install --apply");
+    expect(report.supported).toBe(false);
+  });
+});
 
 describe("doctor GitHub and worker CLI checks", () => {
   it("passes with a distinct agent account, permissions and supported CLIs", async () => {
