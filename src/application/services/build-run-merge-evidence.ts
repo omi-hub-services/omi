@@ -31,7 +31,9 @@ export function buildRunMergeEvidence(
         ).length,
       0,
     ),
-    ...(review?.result.revision === undefined
+    // An accepted result always carries the runtime's own head and base; without both, no review.
+    ...(review?.result.revision?.headSha === undefined ||
+    review.result.revision.baseSha === undefined
       ? {}
       : {
           review: {
