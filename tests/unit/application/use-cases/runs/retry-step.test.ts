@@ -16,6 +16,13 @@ import {
 } from "../../../../../src/application/contracts/task-complexity.ts";
 import type { FailoverStepDependencies } from "../../../../../src/application/use-cases/profiles/failover-step.ts";
 import { retryStep } from "../../../../../src/application/use-cases/runs/retry-step.ts";
+import {
+  DispatchPlanningError,
+  type DispatchPlanningRefusal,
+} from "../../../../../src/application/services/dispatch-planning-error.ts";
+import { createCommandDispatcher } from "../../../../../src/interfaces/ipc/command-dispatcher.ts";
+import { runCli } from "../../../../../src/interfaces/cli/commands/create-program.ts";
+import { inspectRuntime } from "../../../../../src/application/use-cases/project/inspect-runtime.ts";
 
 async function setup(status: "failed" | "ready" | "waiting_resource" | "succeeded" = "ready") {
   const r = rig(status);
@@ -170,7 +177,7 @@ describe("retryStep", () => {
   });
 });
 
-it("reenters failover, reconciles the checkpoint and selects a new attempt without resetting quality", async () => {
+async function failoverSetup() {
   const { r, state, deps } = await setup("waiting_resource");
   const recovery = recoveryRig();
   const workflow = workflowSchema.parse({
@@ -239,38 +246,102 @@ it("reenters failover, reconciles the checkpoint and selects a new attempt witho
       return dispatched.ok ? { ok: true, attemptId: dispatched.attempt.id } : dispatched;
     },
   };
-  const before = structuredClone(state.rework);
-  const result = await retryStep(
-    {
-      ...deps,
-      failover: {
-        dependencies: failover,
-        models: modelsConfigSchema.parse(dispatchInput()["models"]),
-        effortPolicy: effortPolicySchema.parse(undefined),
-        readTask: () =>
-          Promise.resolve({
-            complexity: taskComplexitySchema.parse(undefined),
-            workspace: { taskId: "omi-116", slug: "retry" },
-            context: {
-              taskSnapshot: { issueNumber: 1, title: "Retry", body: "Retry" },
-              acceptanceCriteria: ["works"],
-              businessBaselineHash: "a".repeat(64),
-              inputArtifacts: [],
-              previousFindings: [],
-              allowedScope: { paths: ["src"] },
-              approvalRefs: [],
-            },
-          }),
-      },
+  const retryDeps = {
+    ...deps,
+    failover: {
+      dependencies: failover,
+      models: modelsConfigSchema.parse(dispatchInput()["models"]),
+      effortPolicy: effortPolicySchema.parse(undefined),
+      readTask: () =>
+        Promise.resolve({
+          complexity: taskComplexitySchema.parse(undefined),
+          workspace: { taskId: "omi-116", slug: "retry" },
+          context: {
+            taskSnapshot: { issueNumber: 1, title: "Retry", body: "Retry" },
+            acceptanceCriteria: ["works"],
+            businessBaselineHash: "a".repeat(64),
+            inputArtifacts: [],
+            previousFindings: [],
+            allowedScope: { paths: ["src"] },
+            approvalRefs: [],
+          },
+        }),
     },
-    input,
-  );
+  };
+  return { r, state, deps: retryDeps, recovery };
+}
+
+it("reenters failover, reconciles the checkpoint and selects a new attempt without resetting quality", async () => {
+  const { r, state, deps, recovery } = await failoverSetup();
+  const before = structuredClone(state.rework);
+  const result = await retryStep(deps, input);
   expect(result).toMatchObject({ ok: true, outcome: "failed_over", profileId: "alternate" });
   expect(recovery.state.order).toContain("checkpoint");
   expect(recovery.state.order).toContain("gates");
   expect(r.executor.started).toHaveLength(1);
   expect(r.attempts.latestForStep("step-1")?.attemptNumber).toBe(2);
   expect(state.rework).toEqual(before);
+});
+
+it.each([
+  ["BUSINESS_APPROVAL_STALE", undefined],
+  ["BUSINESS_APPROVAL_REQUIRED", undefined],
+  ["IMPLEMENTATION_MAP_EMPTY", undefined],
+  ["PLAN_KEY_REQUIRED", undefined],
+  ["TASK_NOT_FOUND", undefined],
+  ["QUOTA_EXHAUSTED", "earliest_reset=unknown"],
+  ["TEMPLATE_UNAVAILABLE", "template_hash=h"],
+] satisfies [DispatchPlanningRefusal, string | undefined][])(
+  "returns %s from failover task planning without side effects",
+  async (reason, detail) => {
+    const { r, state, deps, recovery } = await failoverSetup();
+    const before = structuredClone({ state, steps: r.steps.rows, attempts: r.attempts.rows });
+    deps.failover.readTask = () => Promise.reject(new DispatchPlanningError(reason, detail));
+    await expect(retryStep(deps, input)).resolves.toEqual({
+      ok: false,
+      reason,
+      ...(detail === undefined ? {} : { detail }),
+    });
+    expect({ state, steps: r.steps.rows, attempts: r.attempts.rows }).toEqual(before);
+    expect(r.unitOfWork.commits).toHaveLength(0);
+    expect(r.executor.started).toHaveLength(0);
+    expect(r.workspaces.leases.size).toBe(0);
+    expect(r.artifacts.files.size).toBe(0);
+    expect(recovery.state.order).toEqual([]);
+  },
+);
+
+it("propagates unexpected failover task reader errors", async () => {
+  const { deps } = await failoverSetup();
+  const error = new Error("unexpected task reader failure");
+  deps.failover.readTask = () => Promise.reject(error);
+  await expect(retryStep(deps, input)).rejects.toBe(error);
+});
+
+it("presents stale business approval on retry as COMMAND_REFUSED through IPC and CLI", async () => {
+  const { deps } = await failoverSetup();
+  deps.failover.readTask = () =>
+    Promise.reject(new DispatchPlanningError("BUSINESS_APPROVAL_STALE"));
+  const handler = createCommandDispatcher({
+    retryStep: (request) => retryStep(deps, request),
+    inspectRuntime: () =>
+      inspectRuntime({ runtimeVersion: "0", startedAt: "2026-11-11T00:00:00.000Z" }),
+  });
+  let output = "";
+  const code = await runCli(["--json", "retry", "--run", "run-1", "--step", "implement"], {
+    sendCommand: ({ command }) => handler(command),
+    defaultSocketPath: "/unused",
+    timeoutMs: 100,
+    version: "0",
+    stdout: (text) => {
+      output += text;
+    },
+    stderr: () => undefined,
+  });
+  expect(code).toBe(4);
+  expect(JSON.parse(output)).toMatchObject({
+    error: { code: "COMMAND_REFUSED", message: "BUSINESS_APPROVAL_STALE" },
+  });
 });
 
 async function blockedSetup() {

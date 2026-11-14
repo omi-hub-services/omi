@@ -2,6 +2,7 @@ import { transitionStep } from "../../../domain/runs/step-run.js";
 import { decideOperationalRetry, type RetryBudget } from "../../../domain/runs/retry-policy.js";
 import { retryStepSchema } from "../../contracts/rework.js";
 import type { DispatchTask } from "../../services/plan-step-dispatch.js";
+import { DispatchPlanningError } from "../../services/dispatch-planning-error.js";
 import { packetModels, qualityStepId } from "../../services/plan-workflow-quality.js";
 import type { ModelsConfig } from "../../contracts/model-capability.js";
 import type { ProjectConfig } from "../../contracts/project-config.js";
@@ -104,7 +105,17 @@ export async function retryStep(
     const definition = workflow?.steps.find((entry) => entry.id === stepId);
     if (failover === undefined || plan === undefined || definition === undefined)
       return { ok: false, reason: "NOT_PLANNABLE" };
-    const task = await failover.readTask(plan.taskId);
+    let task: DispatchTask;
+    try {
+      task = await failover.readTask(plan.taskId);
+    } catch (error) {
+      if (!(error instanceof DispatchPlanningError)) throw error;
+      return {
+        ok: false,
+        reason: error.reason,
+        ...(error.detail === undefined ? {} : { detail: error.detail }),
+      };
+    }
     if (!canRetry()) return { ok: false, reason: "RUN_NOT_RUNNING" };
     const result = await failoverStep(
       {
