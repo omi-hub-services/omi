@@ -78,7 +78,8 @@ task's hash marks that task's open (`pending` or `approved`) business approvals 
 (`approvals list --status invalidated`); the recorded decision stays for audit. `dispatch`,
 `resume`, `retry` and failover re-read the current hash and refuse an approval for an older
 revision with `BUSINESS_APPROVAL_STALE` before any branch, worktree or attempt exists. Request and
-decide a new business approval for the re-imported revision to continue.
+decide a new business approval for the re-imported revision to continue. A paused run whose Issue
+changed continues the same way (§5): `resume` accepts the new baseline only with a current approval.
 
 **Exit codes** (stable, ADR-0020): `0` ok (the command succeeded, not "the task passed"), `1` failure
 inside the CLI or runtime (also `install`/`update` conflicts and workflow validation errors), `2` usage
@@ -417,6 +418,15 @@ the worktree (head, branch, dirty state, file hashes), reconciles GitHub, re-che
 starts a **fresh attempt** of the interrupted step. Success prints the new `attemptId` / `stepRunId`.
 It never stashes, resets or cleans anything.
 
+**Issue changed while the run was paused.** After the re-import, request and decide a business
+approval for the new revision (`approvals request` / `approvals decide`), then run `resume` again.
+With a current approval for the new hash, `resume` rebaselines: it records a `run.rebaselined`
+event (old hash → new hash, approval ids) and the fresh attempt starts from the beginning of the
+step on the new baseline; output of the old attempt is not reused. Without a current approval
+(pending, stale, missing) it is refused as `GATE_INVALID` with detail `BUSINESS_APPROVAL_STALE` or
+`BUSINESS_APPROVAL_REQUIRED`, and nothing changes. A changed config or template stays refused
+(`CONFIG_OR_TEMPLATE_CHANGED`).
+
 When it is refused (`error[COMMAND_REFUSED]: <REASON>`), the workspace is left as it is:
 
 | Reason                                                                | What to do                                                                                      |
@@ -425,7 +435,7 @@ When it is refused (`error[COMMAND_REFUSED]: <REASON>`), the workspace is left a
 | `CHECKPOINT_MISSING`, `CHECKPOINT_INVALID`                            | The checkpoint files are missing, altered or inconsistent. Keep them for diagnosis; ask the PO. |
 | `WORKSPACE_UNAVAILABLE`, `GIT_MISMATCH`                               | The worktree is gone or its head/branch changed since the checkpoint. Do not force it; ask the PO. |
 | `UNCOMMITTED_MISMATCH`, `UNCOMMITTED_UNVERIFIABLE`, `ARTIFACT_HASH_MISMATCH` | Local files differ from, or cannot be matched to, the checkpoint. Resolve explicitly (commit, keep or discard by hand), then retry. |
-| `GITHUB_UNRESOLVED`, `GATE_INVALID`                                   | The remote outcome is unknown, or an approval/check gate no longer holds. Fix the gate, retry.   |
+| `GITHUB_UNRESOLVED`, `GATE_INVALID`                                   | The remote outcome is unknown, or an approval/check gate no longer holds. For `BUSINESS_APPROVAL_STALE`/`_REQUIRED`, decide a business approval for the current Issue revision, retry. |
 | `NO_READY_STEP`, `DISPATCH_FAILED`, `STATE_REJECTED`                  | Inspect `status --run <id>`; a partial recovery can be retried with the same command.            |
 | `PROJECT_LOCK_LOST`                                                   | Start a new session (§8).                                                                       |
 

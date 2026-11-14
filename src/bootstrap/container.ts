@@ -9,10 +9,8 @@ import {
   runtimeConfigHash,
 } from "../infrastructure/config/load-runtime-config.js";
 import { createDispatchPlanner } from "../application/services/plan-step-dispatch.js";
-import {
-  createDispatchTaskReader,
-  DispatchPlanningError,
-} from "../application/services/resolve-dispatch-task.js";
+import { createDispatchTaskReader } from "../application/services/resolve-dispatch-task.js";
+import { createResumeGate } from "../application/services/resume-gate.js";
 import { readReworkAuthor } from "../application/services/check-rework-approval.js";
 import { snapshotRunContext } from "../application/services/snapshot-run-context.js";
 import type { CompletionRouting } from "../application/services/complete-run-attempt.js";
@@ -1036,25 +1034,7 @@ export async function createProjectRunCommandUseCases(
     github,
     now,
     nextId,
-    validateGates: async (checkpoint) => {
-      const plan = plans.forRun(checkpoint.runId);
-      if (
-        plan === undefined ||
-        plan.templateHash !== checkpoint.hashes.template ||
-        checkpoint.hashes.config !== configHash
-      )
-        return { ok: false, reason: "CONFIG_OR_TEMPLATE_CHANGED" };
-      try {
-        const current = await taskReader.read(plan.taskId);
-        return current.context.businessBaselineHash === checkpoint.businessBaselineHash
-          ? { ok: true }
-          : { ok: false, reason: "BUSINESS_BASELINE_CHANGED" };
-      } catch (error) {
-        // A stale or missing business approval is a gate refusal, not a crash.
-        if (error instanceof DispatchPlanningError) return { ok: false, reason: error.reason };
-        throw error;
-      }
-    },
+    validateGates: createResumeGate({ plans, configHash, taskReader }),
     dispatch: async (_checkpoint, step) =>
       dispatchRunStep(dependencies(), { runId: step.runId, stepId: step.stepId }),
   };
