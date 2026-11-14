@@ -31,7 +31,7 @@ const PROJECT: InspectedProject = {
     { id: "F_PlanKey", name: "Plan Key", dataType: "TEXT", options: [] },
   ],
 };
-const READY_BODY = `## Mục tiêu\nGoal.\n## Phạm vi\nScope.\n## Acceptance criteria\n- [ ] one\n## Dependencies\nNone.\n<!-- omi-squad:plan-key=OMI-001 -->\n## Framework counterpart\nsrc/domain/tasks/readiness-gate.ts\n`;
+const READY_BODY = `## Mục tiêu\nGoal.\n## Phạm vi\nScope.\n## Acceptance criteria\n- [ ] one\n## Implementation map\n- src/application/map.ts\n## Dependencies\nNone.\n<!-- omi-squad:plan-key=OMI-001 -->\n## Framework counterpart\nsrc/domain/tasks/readiness-gate.ts\n`;
 const BACKLOG_FIELDS = {
   Status: "Backlog",
   Priority: "P1",

@@ -29,7 +29,7 @@ it.each(["—", "–", "-", "--"])("accepts the framework's %s verdict separator
 it("uses the same generic Plan Key readiness rule", () => {
   const task = {
     planKey: "APP-001",
-    body: "## Acceptance criteria\n- [ ] works\n<!-- omi-squad:plan-key=APP-001 -->",
+    body: "## Acceptance criteria\n- [ ] works\n## Implementation map\n- `src/application/map.ts`\n<!-- omi-squad:plan-key=APP-001 -->",
     priority: "P1",
     workType: "Task",
     workflow: "feature",

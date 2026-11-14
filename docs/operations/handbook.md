@@ -320,7 +320,8 @@ a configured project (§1).
 Refusals print `error[COMMAND_REFUSED]: <REASON>[: detail]` (exit 4). Reasons seen in the code
 (not all reproduced live, see the record): `PROJECT_NOT_CONFIGURED`, `INVALID_INPUT`, `WORKFLOW_REQUIRED`,
 `WORKFLOW_UNKNOWN`, `TASK_NOT_FOUND`, `WORKFLOW_CYCLIC`, `RUN_NOT_FOUND`, `RUN_NOT_RUNNING`,
-`STEP_NOT_READY`, `NOT_PLANNABLE`, `STATE_REJECTED`, `TASK_NOT_READY` (the Issue fails the readiness
+`IMPLEMENTATION_MAP_EMPTY` (no valid path under `## Implementation map`; the intake gate refuses this
+earlier, §9), `PLAN_KEY_REQUIRED` (not exactly one `PREFIX-NNN` marker), `STEP_NOT_READY`, `NOT_PLANNABLE`, `STATE_REJECTED`, `TASK_NOT_READY` (the Issue fails the readiness
 gate, §9: `dispatch` creates no branch, attempt or worker). A usage error (exit 2) means a missing/invalid
 flag; numbers must be whole (`--issue 1`, not `1e3`). Exit 3: no runtime, start the session.
 Merge and PO-approval gates are in [ADR-0034](../architecture/adr/0034-task-pr-merge-gates.md).
@@ -531,7 +532,12 @@ is ready only when: its Project `Plan Key` is `PREFIX-NNN` and matches **exactly
 `<!-- omi-squad:plan-key=… -->` marker in the Issue body; Priority, Work Type, Workflow, Role and
 Area are all set; and `## Acceptance criteria` has at least one **top-level** checkbox (nested
 checkboxes, checkboxes in a code fence and anything under a `###` sub-heading do not count; this
-is the same parser that ticks the criteria at delivery). A refusal lists every failed condition at once.
+is the same parser that ticks the criteria at delivery); and, except for an Epic, `## Implementation
+map` lists at least one valid relative path (`src/domain/x.ts`, `tests/unit/`; no absolute path, `..`,
+URL or glob), read by the same `implementationPaths` parser that `run`/`dispatch` use for the allowed
+scope. A task without a map is refused at intake, not at `run`. Dispatch accepts the Plan Key by the
+same rule (`PREFIX-NNN`, exactly one marker), so `BN-001` works like `OMI-001`. A refusal lists every
+failed condition at once.
 The gate runs on a move to Ready or In Progress (`promote`, `set-status`) and before `dispatch`
 creates a task branch.
 
@@ -546,7 +552,7 @@ creates a task branch.
   unknown keys refused): `title`, `priority`, `workType`, `workflow`, `role`, `area`, `milestone`
   (exact title), `epic` (number of an existing Epic) and `blockedBy` (list of Issue numbers, may be
   empty). The body needs `## Mục tiêu`, `## Phạm vi`, `## Acceptance criteria` (one top-level
-  checkbox at least) and `## Dependencies`. Without `--apply` it prints the allocated key
+  checkbox at least), `## Implementation map` (one valid relative path at least) and `## Dependencies`. Without `--apply` it prints the allocated key
   (largest existing `PREFIX-NNN` over Issue markers, title prefixes and Project values, closed
   Issues included, plus one; pull requests and Epic keys do not count), title, milestone, epic,
   blockers and field values, and writes nothing. `--prefix` is the project's Plan Key prefix

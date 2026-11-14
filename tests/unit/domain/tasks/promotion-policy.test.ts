@@ -5,7 +5,8 @@ import {
   type PromotionCandidate,
 } from "../../../../src/domain/tasks/promotion-policy.ts";
 
-const BODY = "## Acceptance criteria\n- [ ] one\n\n<!-- omi-squad:plan-key=OMI-001 -->\n";
+const BODY =
+  "## Acceptance criteria\n- [ ] one\n## Implementation map\n- `src/application/map.ts`\n\n<!-- omi-squad:plan-key=OMI-001 -->\n";
 
 function candidate(overrides: Partial<PromotionCandidate> = {}): PromotionCandidate {
   return {

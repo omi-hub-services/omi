@@ -199,7 +199,7 @@ it("keeps Issue spec and Plan Key allocation aligned", async () => {
   const frontmatter =
     "---\ntitle: Example\npriority: P1\nworkType: Task\nworkflow: feature\nrole: Developer\narea: tooling\nmilestone: M1\nepic: 1\nblockedBy: []\n---\n";
   const valid =
-    "## Mục tiêu\nGoal\n## Phạm vi\nScope\n## Acceptance criteria\n- [ ] measurable\n## Dependencies\nNone\n## Framework counterpart\nsrc/domain/tasks/issue-spec-policy.ts";
+    "## Mục tiêu\nGoal\n## Phạm vi\nScope\n## Acceptance criteria\n- [ ] measurable\n## Implementation map\n- `src/application/map.ts`\n## Dependencies\nNone\n## Framework counterpart\nsrc/domain/tasks/issue-spec-policy.ts";
   for (const body of [
     valid,
     "empty",

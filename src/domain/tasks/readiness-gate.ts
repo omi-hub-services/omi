@@ -1,4 +1,5 @@
 import { acceptanceCriteria } from "./acceptance-criteria.js";
+import { implementationPaths } from "./implementation-map.js";
 import { PLAN_KEY_PATTERN, planKeyMarkers } from "./plan-key.js";
 
 /** The Project single-select fields every task needs before it can be worked on. */
@@ -41,6 +42,8 @@ export function taskReadinessReasons(task: TaskReadinessInput): string[] {
   }
   if (acceptanceCriteria(task.body).length === 0)
     reasons.push("Acceptance criteria needs at least one top-level checkbox");
+  if (task.workType !== "Epic" && implementationPaths(task.body).length === 0)
+    reasons.push("Implementation map needs at least one valid relative path");
   reasons.push(...workTypeWorkflowReasons(task.body, task.workType, task.workflow));
   reasons.push(...frameworkCounterpartReasons(task.body, task.area));
   return reasons;

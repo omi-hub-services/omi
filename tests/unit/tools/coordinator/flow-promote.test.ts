@@ -14,7 +14,7 @@ interface Fake {
 }
 const key = (n: number) => `OMI-${String(n).padStart(3, "0")}`;
 const bodyOf = (n: number) =>
-  `## Acceptance criteria\n- [ ] one\n<!-- omi-squad:plan-key=${key(n)} -->`;
+  `## Acceptance criteria\n- [ ] one\n## Implementation map\n- src/application/map.ts\n<!-- omi-squad:plan-key=${key(n)} -->`;
 const select = (name: string | null | undefined) => (name == null ? null : { name });
 const text = (c: Command) => [c.file, ...c.args].join(" ");
 
