@@ -73,7 +73,12 @@ requested import also keeps the completed flush report. Exit `0` means the pass 
 inspect waiting/stale/failed/unknown outcomes and `stopped` before deciding whether work remains.
 A second pass does not resend succeeded operations, and unchanged snapshots keep their hashes.
 Changed Issue content updates the business baseline, making an old approval stale under the
-existing policy; sync never requests, decides or rewrites an approval.
+existing policy; sync never requests, decides or rewrites an approval. An import that changes a
+task's hash marks that task's open (`pending` or `approved`) business approvals `invalidated`
+(`approvals list --status invalidated`); the recorded decision stays for audit. `dispatch`,
+`resume`, `retry` and failover re-read the current hash and refuse an approval for an older
+revision with `BUSINESS_APPROVAL_STALE` before any branch, worktree or attempt exists. Request and
+decide a new business approval for the re-imported revision to continue.
 
 **Exit codes** (stable, ADR-0020): `0` ok (the command succeeded, not "the task passed"), `1` failure
 inside the CLI or runtime (also `install`/`update` conflicts and workflow validation errors), `2` usage

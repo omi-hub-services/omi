@@ -1,5 +1,8 @@
 import { acceptanceCriteria } from "../../domain/tasks/acceptance-criteria.js";
-import type { ApprovalRequest } from "../../domain/approvals/approval.js";
+import { evaluateExecutionApprovals } from "../../domain/approvals/approval-policy.js";
+import type { ApprovalRequest, ApprovalSubject } from "../../domain/approvals/approval.js";
+import { approvalSubjectSchema } from "../contracts/approval.js";
+import type { ApprovalSubjectReader } from "../ports/approval-store.js";
 import { implementationPaths } from "../../domain/tasks/implementation-map.js";
 import { PLAN_KEY_PATTERN, planKeyMarkers } from "../../domain/tasks/plan-key.js";
 import { contextPacketSchema } from "../contracts/context.js";
@@ -17,6 +20,8 @@ export function resolveDispatchTask(input: {
   readonly issue: unknown;
   readonly approvals: readonly ApprovalRequest[];
   readonly now: number;
+  /** Business subject of the imported task snapshot read just now (ADR-0037); absent fails closed. */
+  readonly current: ApprovalSubject | undefined;
   readonly complexity?: unknown;
 }): DispatchTask {
   const issue = contextPacketSchema.shape.taskSnapshot.parse(input.issue);
@@ -26,7 +31,9 @@ export function resolveDispatchTask(input: {
   const planKey = keys[0];
   if (planKey === undefined || keys.length !== 1 || !PLAN_KEY_PATTERN.test(planKey))
     throw new DispatchPlanningError("PLAN_KEY_REQUIRED");
-  const approval = input.approvals.find(
+  const current = input.current;
+  if (current === undefined) throw new DispatchPlanningError("BUSINESS_APPROVAL_REQUIRED");
+  const candidates = input.approvals.filter(
     (request) =>
       request.status === "approved" &&
       request.subject.kind === "business" &&
@@ -38,7 +45,30 @@ export function resolveDispatchTask(input: {
       (request.expiresAt === undefined || request.expiresAt > input.now) &&
       (request.decision.expiresAt === undefined || request.decision.expiresAt > input.now),
   );
-  if (approval === undefined) throw new DispatchPlanningError("BUSINESS_APPROVAL_REQUIRED");
+  // The approval must still authorise the CURRENT imported revision (domain policy decides).
+  // The actor was allowlisted when the decision was recorded; re-checking it here is not this gate.
+  const verdicts = candidates.map((request) => ({
+    request,
+    decision: evaluateExecutionApprovals([
+      {
+        request,
+        expected: {
+          subject: current,
+          allowedActors: request.decision === undefined ? [] : [request.decision.actor],
+          now: input.now,
+        },
+      },
+    ]),
+  }));
+  const approval = verdicts.find(({ decision }) => decision.allowed)?.request;
+  if (approval === undefined) {
+    const stale = verdicts.some(
+      ({ decision }) => !decision.allowed && decision.reasons.includes("STALE_REVISION"),
+    );
+    throw new DispatchPlanningError(
+      stale ? "BUSINESS_APPROVAL_STALE" : "BUSINESS_APPROVAL_REQUIRED",
+    );
+  }
   return {
     context: {
       taskSnapshot: issue,
@@ -57,6 +87,7 @@ export function resolveDispatchTask(input: {
 /** A successful read can supply the synchronous checkpoint boundary in the same session. */
 export function createDispatchTaskReader(
   source: import("../ports/dispatch-task-source.js").DispatchTaskSource,
+  subjects: ApprovalSubjectReader,
   now: () => number,
 ) {
   const tasks = new Map<string, DispatchTask>();
@@ -65,7 +96,14 @@ export function createDispatchTaskReader(
     async read(taskId: string): Promise<DispatchTask> {
       const sourceTask = await source.read(taskId);
       if (sourceTask === undefined) throw new DispatchPlanningError("TASK_NOT_FOUND");
-      const task = resolveDispatchTask({ taskId, ...sourceTask, now: now() });
+      // Read after the (async) source so the revision is as fresh as the approvals compared to it.
+      const parsed = approvalSubjectSchema.safeParse(subjects.read(taskId, "business"));
+      const task = resolveDispatchTask({
+        taskId,
+        ...sourceTask,
+        now: now(),
+        current: parsed.success ? parsed.data : undefined,
+      });
       tasks.set(taskId, task);
       return task;
     },

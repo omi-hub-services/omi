@@ -5,6 +5,7 @@ import {
   rmSync,
   writeFileSync,
   readFileSync,
+  existsSync,
   copyFileSync,
   cpSync,
 } from "node:fs";
@@ -153,8 +154,8 @@ async function setup(mode = "good", approval = true, body = issueBody) {
     "INSERT INTO projects (id, repo_identity, config_hash, created_at, updated_at) VALUES ('p', 'acme/app', 'h', ?, ?)",
   ).run(at, at);
   db.prepare(
-    "INSERT INTO task_snapshots (id, project_id, issue_node_id, issue_number, content_hash, remote_updated_at, scope, captured_at) VALUES ('task-142', 'p', 'I_142', 142, 'h', ?, '{}', ?)",
-  ).run(at, at);
+    "INSERT INTO task_snapshots (id, project_id, issue_node_id, issue_number, content_hash, remote_updated_at, scope, captured_at) VALUES ('task-142', 'p', 'I_142', 142, ?, ?, '{}', ?)",
+  ).run("9".repeat(64), at, at);
   const registry = createSqliteProfileRegistry(db);
   for (const id of mode === "waiting" ? ["p1"] : ["p1", "p2"])
     registry.save(
@@ -397,6 +398,34 @@ describe("bridge against the real session runtime process", () => {
     },
     15000,
   );
+  it("refuses dispatch of a revision whose approval pins an older Issue hash, creating no attempt or worktree", async () => {
+    const s = await setup();
+    // Re-import changed the content hash after the business approval was decided.
+    s.db
+      .prepare("UPDATE task_snapshots SET content_hash=? WHERE id='task-142'")
+      .run("8".repeat(64));
+    expect(
+      await s.bridge({ command: "dispatch", runId: s.runId, stepId: "implement" }),
+    ).toMatchObject({ ok: false, code: "COMMAND_REFUSED", message: "BUSINESS_APPROVAL_STALE" });
+    expect(s.db.prepare("SELECT count(*) AS count FROM agent_attempts").get()).toEqual({
+      count: 0,
+    });
+    expect(existsSync(join(s.directory, "omi-wt/omi-070"))).toBe(false);
+  }, 15000);
+  it("refuses to resume a run whose business approval went stale while it was paused", async () => {
+    const s = await setup("slow");
+    await s.ok({ command: "dispatch", runId: s.runId, stepId: "implement" });
+    await s.restart();
+    s.db
+      .prepare("UPDATE task_snapshots SET content_hash=? WHERE id='task-142'")
+      .run("8".repeat(64));
+    const resumed = await s.bridge({ command: "resume", runId: s.runId });
+    expect(resumed).toMatchObject({ ok: false });
+    expect(JSON.stringify(resumed)).toContain("BUSINESS_APPROVAL_STALE");
+    expect(s.db.prepare("SELECT status FROM agent_attempts").all()).toEqual([
+      { status: "interrupted" },
+    ]);
+  }, 20000);
   it("routes a usage limit through failover, reuses the checkpoint and dispatches a new profile without spending quality budget", async () => {
     const s = await setup("failover");
     await s.dispatch("implement");
