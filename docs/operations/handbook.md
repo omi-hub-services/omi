@@ -802,7 +802,25 @@ listed there is `untested`. This table adds only what the CLI itself depends on:
   `session stop --help` prints the `session` help.
 - Codex: one profile; no Codex-to-Codex failover. Per-model limits are seen only after a rejection.
 - Windows graceful shutdown, sleep/hibernate and `wsl --shutdown` paths are unverified (ADR-0030).
-- Version `0.0.0`, local tarball only; no registry publication.
+- Distribution is through GitHub Releases from 0.1.0; no registry publication.
+- Beta acceptance rows not exercised (AT-02, 03, 05, 07, 08, 10, 12, 14): Codex step, profile
+  failover, parallel/blocked tasks, wrong-actor approval and missing Issue link, GitHub
+  timeout-after-success, approval invalidated by a new release head, injected architecture
+  violation, and the idea step with docs-versus-behaviour. Record:
+  [omi-047-beta.md](acceptance/omi-047-beta.md).
+- Open beta findings (no Issue yet; see the record for follow-ups):
+  - `NOT_PLANNABLE` when the 5-minute probe TTL expired; `DIRTY_WORKTREE` surfaces as
+    `PREVIOUS_VERDICT_OR_DELTA_MISSING`.
+  - `approvals list` prints JSON without `--json`.
+  - Resume dirty-state check conflicts with the stray-file recovery (`GIT_MISMATCH`).
+  - No product Architect dispatch: the Coordinator acted as Architect under PO authorization.
+  - No profile disable/remove command; no CLI for Project field mapping or rulesets.
+  - prepare-pr evidence is pinned at the first call; release Issues stay open after
+    `publish-release`.
+  - A framework update moves `develop` and makes reviews stale (refresh); `update` needs the
+    session stopped (`PROJECT_OWNER_HELD`).
+  - `sandbox-setup` is hardcoded to `omi-sandbox`; `worker-report` refuses summaries over 4000
+    characters; transient `RUNTIME_UNAVAILABLE` in integration tests under load.
 
 ## Folder rules (a project that uses omi-squad)
 
