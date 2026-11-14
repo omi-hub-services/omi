@@ -43,7 +43,6 @@ export async function prepareRunPr(
       (attempt) =>
         attempt === undefined ||
         attempt.runId !== runId ||
-        attempt.workspace.taskId !== task.taskId ||
         attempt.workspace.path !== workspace.path ||
         attempt.workspace.branch !== workspace.branch,
     )

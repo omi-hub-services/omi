@@ -21,7 +21,7 @@ export function runPreparation() {
     requiredChecks: [],
     startedAt: "2026-11-14T00:00:00.000Z",
     workspace: {
-      taskId: request.taskId,
+      taskId: "bn-001", // plan-key slug, never the local task id
       slug: "task",
       path: "/work/task",
       branch: request.head,

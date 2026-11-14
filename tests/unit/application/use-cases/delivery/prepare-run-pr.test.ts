@@ -115,6 +115,33 @@ it("refuses missing task or workspace records before PR writes", async () => {
   expect(h.state.pull).toBeUndefined();
 });
 
+it("accepts a workspace slug that differs from the local task id", async () => {
+  const h = runPreparation();
+  expect(h.attempt.workspace.taskId).not.toBe(request.taskId);
+  expect(await prepareRunPr(h.deps, input)).toMatchObject({ ok: true, status: "verified" });
+});
+
+it("refuses path or branch drift between steps", async () => {
+  const h = runPreparation();
+  const steps = [
+    { id: "s", runId: "r", stepId: "implement", status: "succeeded" as const, version: 1 },
+    { id: "t", runId: "r", stepId: "verify", status: "succeeded" as const, version: 1 },
+  ];
+  for (const drift of [{ path: "/work/other" }, { branch: "task/other" }]) {
+    const attempts = {
+      latestForStep: (id: string) =>
+        id === "s" ? h.attempt : { ...h.attempt, workspace: { ...h.attempt.workspace, ...drift } },
+    };
+    expect(
+      await prepareRunPr(
+        { ...h.deps, runs: { ...h.deps.runs, listSteps: () => steps }, attempts },
+        input,
+      ),
+    ).toEqual({ ok: false, reason: "WORKSPACE_MISMATCH" });
+  }
+  expect(h.state.pull).toBeUndefined();
+});
+
 it("preserves pending delivery and propagates unexpected errors", async () => {
   const h = runPreparation();
   h.github.sendScript.push({ kind: "outcome_unknown", code: "TIMEOUT" });
