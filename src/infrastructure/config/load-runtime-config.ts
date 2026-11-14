@@ -15,11 +15,29 @@ import type {
   WorkflowValidationCatalog,
 } from "../../application/contracts/workflow-validation.js";
 
+/** Check ids in project.yaml; undefined when it is absent or unreadable (other tooling reports that). */
+function readConfiguredChecks(squadDir: string): string[] | undefined {
+  try {
+    const document = parseDocument(readFileSync(join(squadDir, "config", "project.yaml"), "utf8"), {
+      uniqueKeys: true,
+      customTags: [],
+      schema: "core",
+    });
+    if (document.errors.length > 0) return undefined;
+    const raw = document.toJS({ maxAliasCount: 0 }) as { checks?: unknown } | null;
+    const checks = raw?.checks;
+    return typeof checks === "object" && checks !== null ? Object.keys(checks) : [];
+  } catch {
+    return undefined;
+  }
+}
+
 /** Loads installed workflow assets without project settings, state, models or IPC. */
 export async function loadWorkflowValidationCatalog(
   squadDir: string,
 ): Promise<WorkflowValidationCatalog> {
   const errors: ConfigValidationError[] = [];
+  const configuredChecks = readConfiguredChecks(squadDir);
   const roleFiles = new Map<CatalogRole, string>();
   const catalog = loadResolutionCatalog(squadDir, errors, roleFiles);
   const roles = [...roleFiles].map(([role, file]) => ({ definition: role.definition, file }));
@@ -36,7 +54,13 @@ export async function loadWorkflowValidationCatalog(
       .sort();
   } catch (error) {
     errors.push(...configDiagnostics(directory, error));
-    return { catalog, roles, workflows, errors };
+    return {
+      catalog,
+      roles,
+      workflows,
+      errors,
+      ...(configuredChecks === undefined ? {} : { configuredChecks }),
+    };
   }
   for (const name of files) {
     const file = join(directory, name);
@@ -50,7 +74,13 @@ export async function loadWorkflowValidationCatalog(
       errors.push(...configDiagnostics(file, error));
     }
   }
-  return { catalog, roles, workflows, errors };
+  return {
+    catalog,
+    roles,
+    workflows,
+    errors,
+    ...(configuredChecks === undefined ? {} : { configuredChecks }),
+  };
 }
 
 export async function loadRuntimeConfig(squadDir: string) {

@@ -180,9 +180,18 @@ When it fails:
   "branches": { "integration": "develop", "release": "main" },
   "limits": { "max_parallel_workers": 2, "step_timeout_seconds": 600, "max_rework_cycles": 2 },
   "effort_policy": { "low": "low", "medium": "medium", "high": "high" },
-  "policies": { "mandatory_approvals": ["release", "deploy"], "github_approval_actors": ["your-po-login"] }
+  "policies": { "mandatory_approvals": ["release", "deploy"], "github_approval_actors": ["your-po-login"] },
+  "checks": { "project-check": { "command": ["npm", "test"], "timeout_seconds": 600 } }
 }
 ```
+
+`checks.project-check` is required for the feature, bugfix and refactor workflows. Workers have no
+shell, so the runtime runs it in the task worktree after `implement` and again at `verify`. A pass
+makes the step succeed even though the worker never ran the tests; a failure fails the step and its
+output is kept as evidence. `command` is an argv array (no shell). Without it every dispatch of
+those workflows is refused with `CHECK_UNCONFIGURED`, and `workflows validate` (run it in a project
+that has `config/project.yaml`) reports `step "implement" requires check "project-check" but
+project.yaml has no checks.project-check`.
 
 ```sh
 <cli> init --project /home/user/project --config /home/user/baseline.json --variant existing

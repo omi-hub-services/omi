@@ -1,5 +1,6 @@
 import {
   cpSync,
+  mkdirSync,
   mkdtempSync,
   rmSync,
   readFileSync,
@@ -140,6 +141,29 @@ it("locates role reference errors in the source file even when its filename diff
       }),
     ]),
   );
+});
+
+it("names the workflow step that needs a project check the project does not configure", async () => {
+  const { squad, run } = setup();
+  mkdirSync(join(squad, "config"), { recursive: true });
+  const project = join(squad, "config/project.yaml");
+  writeFileSync(project, "schema_version: 1\nchecks:\n  other-check:\n    command: [npm, test]\n");
+  const result = await run();
+  expect(result.status).toBe(1);
+  expect((JSON.parse(result.stdout) as WorkflowValidationResult).errors).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        file: join(squad, "workflows/feature.yaml"),
+        path: "steps.1.required_checks",
+        message: expect.stringContaining("checks.project-check") as unknown,
+      }),
+    ]),
+  );
+  writeFileSync(
+    project,
+    "schema_version: 1\nchecks:\n  project-check:\n    command: [npm, test]\n",
+  );
+  expect((await run()).status).toBe(0);
 });
 
 it("identifies the id field when a workflow id disagrees with its filename", async () => {

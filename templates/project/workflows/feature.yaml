@@ -21,6 +21,9 @@ steps:
     rules: [project-baseline, approval-gates, evidence-and-tests, architecture-boundaries]
     capability_profile: coding
     output_contract: implementation-result-v1
+    # Workers have no shell: the runtime runs this check on the worker's head, and a failure
+    # fails the step with the check output (OMI-132). Verify runs it again for QA's evidence.
+    required_checks: [project-check]
   - id: verify
     role: qa
     needs: [implement]

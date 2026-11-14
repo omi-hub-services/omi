@@ -25,6 +25,15 @@ export async function validateWorkflows(
   }
   for (const { workflow, file } of loaded.workflows) {
     workflow.steps.forEach((step, index) => {
+      // A required check without a command would fail every dispatch (CHECK_UNCONFIGURED).
+      for (const id of step.required_checks) {
+        if (loaded.configuredChecks === undefined || loaded.configuredChecks.includes(id)) continue;
+        errors.push({
+          file,
+          path: `steps.${String(index)}.required_checks`,
+          message: `step "${step.id}" requires check "${id}" but project.yaml has no checks.${id}`,
+        });
+      }
       errors.push(
         ...validateCatalogReferences(loaded.catalog, [
           { kind: "role", id: step.role, path: `steps.${String(index)}.role` },

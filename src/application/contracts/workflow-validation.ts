@@ -18,4 +18,6 @@ export interface WorkflowValidationCatalog {
   readonly roles: readonly { file: string; definition: Role }[];
   readonly workflows: readonly { file: string; workflow: Workflow }[];
   readonly errors: readonly ConfigValidationError[];
+  /** Check ids in project.yaml `checks`; absent when the project has no readable project.yaml. */
+  readonly configuredChecks?: readonly string[];
 }
