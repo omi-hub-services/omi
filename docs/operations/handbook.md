@@ -27,7 +27,7 @@ JSON document `{"schemaVersion":1,"ok":…,"exitCode":…,"result"|"error":…}`
 SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<drive>`).
 
 **What the v0.1 CLI really has.** `--help` lists: `init`, `install`, `update`, `doctor`, `profiles {register,list,probe}`, `status`,
-`session {new,start}`, `approvals {list,request,decide}`, `workflows validate`, `plan`, `run`, `dispatch`, `wait`, `pause`, `resume`, `deliver`, `merge-release`,
+`session {new,start}`, `approvals {list,request,decide}`, `workflows validate`, `plan`, `run`, `dispatch`, `wait`, `pause`, `resume`, `prepare-pr`, `deliver`, `merge-release`,
 `coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9), `watch`,
 `worker-report`, `commit-worker`, `review-comment`, `import-task`, `sync`, and `prune-logs`.
 
@@ -36,7 +36,7 @@ SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<d
 | init           | `install`, `init`, `doctor`                       | Preview first; `--apply` creates files (§1)                       |
 | login/profiles | `login`, `profiles register/list/probe`           | Login with the native tool; `login` shows the step and probes (§2) |
 | intake         | `new-issue`, `promote`, `set-status`              | Preview first; readiness gate (§9)                                |
-| run            | `run`, or `plan` → `dispatch` → `wait` → `status` → `deliver` | `run` = plan + first dispatch, same gates (see §3)       |
+| run            | `run`, or `plan` → `dispatch` → `wait` → `status` → `prepare-pr` → `review-comment` → `deliver` | `run` = plan + first dispatch, same gates (see §3)       |
 | pause / resume | `pause`, `resume`                                 | §4, §5                                                             |
 | retry          | `omi retry --run <id> --step <id> [--po-decision <id>]` | New attempt through rework/failover and approval gates (see §6) |
 | update         | `update`                                          | §7                                                                 |
@@ -322,11 +322,20 @@ a configured project (§1).
 4. `<cli> wait --run <id> [--timeout <1-3600>]` blocks until no worker of the run is running
    (default 300 s). Use it instead of polling.
 5. `<cli> status --run <id>` shows the run and its steps; `status --runtime` shows the runtime.
-6. `<cli> deliver --run <id> --pr <n> --head-sha <sha> --check <name> [--check …] [--min-approvals <n>]`
+6. After all run steps succeed, `<cli> prepare-pr --run <id> --title <text> --evidence <text> [--evidence …]`
+   opens the task PR into `develop`, or reads back the matching PR on retry, verifies the Issue
+   backlink and saves the task ↔ PR mapping. Supply one nonempty evidence entry per top-level AC,
+   in AC order. Repository, Issue, task and head branch come from the stored run and its workspace;
+   the caller cannot override them. A `pending` result means retry the same command to reconcile
+   its outbox operation. Use the returned `mapping.prNumber` for the next commands.
+7. `<cli> review-comment --pr <n> --file .tmp/review.md` posts the independent review on that PR
+   (§10). The comment does not replace the runtime's recorded review evidence.
+8. `<cli> deliver --run <id> --pr <n> --head-sha <sha> --check <name> [--check …] [--min-approvals <n>]`
    merges the reviewed head into `develop` and closes the task. `--head-sha` must be the head the
-   independent review examined; at least one `--check` is required.
+   independent review examined; at least one `--check` is required. Missing or mismatched PR
+   mappings refuse `COMMAND_REFUSED: MAPPING_MISMATCH` (exit 4); prepare the run's PR first.
 
-7. `<cli> merge-release --release <label> --pr <n> --head-sha <sha> [--check <name> …]`
+9. `<cli> merge-release --release <label> --pr <n> --head-sha <sha> [--check <name> …]`
    merges the release PR `develop` → `main` on the head the PO approved natively
    ([ADR-0039](../architecture/adr/0039-release-merge-and-two-layer-deploy-approval.md)). It runs
    `checkReleaseMerge` first, pins the native merge to `--head-sha`, and confirms the merge commit on
@@ -678,9 +687,10 @@ For an initialized project with its Issue imported, approvals recorded and a ses
    lease is a gate. Committing does not change the old report's revision or mark the step passed:
    use the workflow's recovery/rework path and obtain fresh verification at the new head.
 6. Follow `status --run RUN` and dispatch the independent reviewer step on a fixed revision.
-   Prepare/publish the task PR through the project's configured delivery workflow before posting
-   its review. These commands do not introduce a new PR-opening interface; Issue import uses
-   `import-task` (§3).
+   Once all run steps succeed, run `prepare-pr --run RUN --title "Task PR" --evidence "AC-1 evidence"
+   --evidence "AC-2 evidence"` (one entry per AC, in order; §3). It creates or recovers the task PR
+   into `develop`, verifies its backlink and saves the mapping required by `deliver`. Retry a
+   `pending` result with the same inputs. Post the review on the returned `mapping.prNumber`.
    `review-comment --pr N --file .tmp/review.md` requires this exact header with the full PR head:
 
    ```text

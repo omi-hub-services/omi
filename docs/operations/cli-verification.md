@@ -916,3 +916,28 @@ Error: spawnSync git EPERM
   code: 'EPERM', syscall: 'spawnSync git', path: 'git'
 Node.js v24.22.2
 ```
+
+## prepare-pr syntax check — 2026-11-14
+
+The built CLI (`node dist/bootstrap/cli.js prepare-pr --help`, exit 0) now exposes:
+
+```text
+Usage: omi-squad prepare-pr [options]
+
+Open or recover the task PR for a finished run and save its mapping
+
+Options:
+  --run <id>         run id
+  --title <text>     pull request title
+  --evidence <text>  one evidence line per AC in order (repeatable) (default:
+                     [])
+  --json             print one machine-readable JSON document
+  --socket <path>    runtime socket path
+  -h, --help         display help for command
+```
+
+This supplements the historical inventory above. CLI unit coverage preserves repeated evidence
+order. The IPC dispatcher integration uses real SQLite/outbox and fake GitHub to prepare/recover
+one PR, persist its mapping and deliver to Done; absent or mismatched mappings return
+`COMMAND_REFUSED: MAPPING_MISMATCH`. The Unix socket variant is present but this sandbox refuses
+`listen` with `EPERM`; successful socket transport and live GitHub delivery remain unverified here.

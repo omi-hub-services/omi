@@ -12,6 +12,10 @@ export const preparePrSchema = z.strictObject({
   title: pullOperation.shape.title,
   evidence: z.array(z.string().trim().min(1).max(10_000)).max(1000),
 });
+export const prepareRunPrSchema = z.strictObject({
+  runId: identifierSchema,
+  ...preparePrSchema.pick({ title: true, evidence: true }).shape,
+});
 export const deliveryPullSchema = z.strictObject({
   number: z.number().int().positive(),
   body: z.string(),

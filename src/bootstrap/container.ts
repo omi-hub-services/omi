@@ -78,6 +78,9 @@ import type { RecoveryRunReader } from "../application/ports/run-recovery.js";
 import type { RunPlanStore } from "../application/ports/run-plan-store.js";
 import type { WorkflowCatalog } from "../application/ports/workflow-catalog.js";
 import { deliverRun } from "../application/use-cases/delivery/deliver-run.js";
+import { prepareRunPr } from "../application/use-cases/delivery/prepare-run-pr.js";
+import type { PreparePrDeps } from "../application/use-cases/delivery/prepare-pr.js";
+import { createGithubPrDelivery } from "../infrastructure/github/github-pr-delivery.js";
 import { mergeRelease } from "../application/use-cases/delivery/merge-release.js";
 import type { MergeReleaseDeps } from "../application/use-cases/delivery/merge-release.js";
 import { createGithubReleaseMergeReader } from "../infrastructure/github/github-release-merge.js";
@@ -690,6 +693,7 @@ export type RunCommandUseCases = Pick<
   | "pauseRun"
   | "resumeRun"
   | "deliverRun"
+  | "prepareRunPr"
   | "handoffCoordinator"
 >;
 
@@ -712,6 +716,7 @@ export interface RunCommandWiring {
   readonly track: (completion: Promise<void>) => void;
   readonly recovery: ReturnType<typeof createRunRecoveryUseCases>;
   readonly merge: MergeTaskPrDeps;
+  readonly prepare: PreparePrDeps;
   readonly sleep: (ms: number) => Promise<void>;
   readonly pollMs: number;
 }
@@ -775,6 +780,17 @@ export function createRunCommandUseCases(wiring: RunCommandWiring): RunCommandUs
     },
     deliverRun: (input) =>
       deliverRun({ runs, plans, merge: wiring.merge, session, nextId: dispatch.nextId }, input),
+    prepareRunPr: (input) =>
+      prepareRunPr(
+        {
+          runs,
+          plans,
+          attempts: dispatch.attempts,
+          workspaces: dispatch.workspaces,
+          prepare: wiring.prepare,
+        },
+        input,
+      ),
     handoffCoordinator: (input) =>
       handoffCoordinator(
         {
@@ -868,6 +884,7 @@ export async function createProjectRunCommandUseCases(
         pauseRun: refuse,
         resumeRun: refuse,
         deliverRun: refuse,
+        prepareRunPr: refuse,
         handoffCoordinator: refuse,
         readWorkerReport: refuse,
         commitWorker: refuse,
@@ -1183,6 +1200,7 @@ export async function createProjectRunCommandUseCases(
     track,
     recovery,
     merge,
+    prepare: { ...merge, reader: createGithubPrDelivery(client) },
     sleep,
     pollMs: 100,
   });

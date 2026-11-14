@@ -8,6 +8,7 @@ import { registerProfileSchema } from "./profile-metadata.js";
 import { importTaskSelectionSchema } from "./task-import.js";
 import { retryStepSchema, reworkRecordSchema } from "./rework.js";
 import { syncSelectionSchema } from "./sync.js";
+import { prepareRunPrSchema } from "./pr-delivery.js";
 
 const envelope = { schemaVersion: schemaVersionV1 };
 
@@ -79,6 +80,7 @@ export const commandSchema = z
       reason: z.string().min(1).max(500),
     }),
     z.strictObject({ ...envelope, command: z.literal("resume"), runId: identifierSchema }),
+    prepareRunPrSchema.extend({ ...envelope, command: z.literal("prepare-pr") }),
     z.strictObject({
       ...envelope,
       command: z.literal("deliver"),
