@@ -1,4 +1,6 @@
 import { stepResultSchema } from "../contracts/result.js";
+import { extractStepResult } from "../contracts/step-result-extract.js";
+import { redactDiagnostic } from "../../domain/shared/redact-diagnostic.js";
 import { contextPacketSchema } from "../contracts/context.js";
 import type { ExecutionHandle } from "../contracts/agent-execution.js";
 import type { CheckRunRecord } from "../contracts/check-run.js";
@@ -66,16 +68,13 @@ export async function completeRunAttempt(
       if (!result.ok) throw new Error(result.reason);
       return;
     }
-    let report: unknown;
-    try {
-      report =
-        execution.finalMessage === undefined
-          ? undefined
-          : (JSON.parse(execution.finalMessage) as unknown);
-    } catch {
-      report = undefined;
-    }
+    const extracted =
+      execution.finalMessage === undefined ? undefined : extractStepResult(execution.finalMessage);
+    const report = extracted?.ok === true ? extracted.value : undefined;
     const reported = stepResultSchema.safeParse(report);
+    if (execution.outcome === "succeeded" && !reported.success) {
+      keepFinalMessage(deps, attempt, execution.finalMessage);
+    }
     const checkRuns = await runRequiredChecks(deps, attempt, execution.outcome, reported);
     const recorded = recordStepResult(deps, { attemptId, execution, result: report, checkRuns });
     if (!recorded.ok) return;
@@ -134,6 +133,34 @@ export async function completeRunAttempt(
     } catch {
       /* A lost session cannot append audit; recovery retains its durable state. */
     }
+  }
+}
+
+const MAX_FINAL_MESSAGE_CHARS = 8000;
+
+/**
+ * RESULT_MISSING / RESULT_INVALID leave nothing to diagnose from, so keep the tail of the final
+ * message (where the document or the worker's excuse is) with the attempt's artifacts. Redacted
+ * and bounded; it is for people, never for a prompt. A failed write must not hide the outcome.
+ */
+function keepFinalMessage(
+  deps: DispatchStepDependencies,
+  attempt: NonNullable<ReturnType<DispatchStepDependencies["attempts"]["get"]>>,
+  finalMessage: string | undefined,
+): void {
+  if (finalMessage === undefined || finalMessage.trim() === "") return;
+  const text = redactDiagnostic(finalMessage, finalMessage.length).slice(-MAX_FINAL_MESSAGE_CHARS);
+  try {
+    deps.artifacts.write({
+      id: deps.nextId(),
+      path: `${attempt.artifactRoot}/final-message.txt`,
+      bytes: new TextEncoder().encode(text),
+      producerAttemptId: attempt.id,
+      classification: "final-message",
+      createdAt: new Date(deps.now()).toISOString(),
+    });
+  } catch {
+    /* Diagnosis is best effort; the step outcome is recorded either way. */
   }
 }
 

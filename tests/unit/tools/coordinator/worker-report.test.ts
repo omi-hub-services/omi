@@ -5,6 +5,7 @@ import {
   newestLogCommand,
   parseClaudeReport,
   parseCodexReport,
+  validateWorkerResult,
 } from "../../../../tools/coordinator/worker-report.ts";
 
 const line = (o: unknown) => JSON.stringify(o);
@@ -149,5 +150,32 @@ describe("formatReport", () => {
         resumeId: null,
       }),
     ).toContain("no final report");
+  });
+});
+
+describe("validateWorkerResult", () => {
+  const doc = {
+    schemaVersion: 1,
+    runId: "repo-264",
+    stepId: "implement",
+    attemptId: "repo-264-implement-1",
+    status: "succeeded",
+    summary: "Evidence",
+    artifacts: [],
+    checks: [],
+    skillsApplied: [],
+    findings: [],
+  };
+  const fence = "```";
+  const block = (d: unknown) => `${fence}json\n${JSON.stringify(d)}\n${fence}`;
+
+  it("uses the framework extractor: prose plus one fenced json document is a result", () => {
+    expect(validateWorkerResult(`AC-1: met — ok\n\n${block(doc)}\n`).success).toBe(true);
+  });
+
+  it("refuses two different fenced documents", () => {
+    expect(
+      validateWorkerResult(`${block(doc)}\n${block({ ...doc, status: "failed" })}`).success,
+    ).toBe(false);
   });
 });
