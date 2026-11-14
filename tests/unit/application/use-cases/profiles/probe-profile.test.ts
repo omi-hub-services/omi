@@ -48,6 +48,22 @@ function setup(overrides: Partial<ProfileMetadata> = {}, activeWorkers = 0) {
   return { registry, executor, clock: () => time, saved: () => saved, probes: () => probes };
 }
 describe("probeProfile", () => {
+  it("returns the adapter diagnostic so an unavailable profile has an actionable reason", async () => {
+    const test = setup();
+    const base = test.executor("unavailable");
+    const diagnostic =
+      "claude executable not found or not runnable; reinstall/update omi-squad after installing the CLI";
+    const executor = {
+      ...base,
+      probe: async (input: Parameters<typeof base.probe>[0]) => ({
+        ...(await base.probe(input)),
+        diagnostic,
+      }),
+    };
+    expect(await probeProfile(test.registry, executor, "p", test.clock)).toMatchObject({
+      diagnostic,
+    });
+  });
   it.each([
     ["ready", "ready"],
     ["login-required", "login-required"],

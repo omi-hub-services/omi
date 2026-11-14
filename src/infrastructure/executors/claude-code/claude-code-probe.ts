@@ -71,7 +71,10 @@ export async function probeClaudeCode(options: ClaudeProbeOptions): Promise<Prob
     return {
       status: "unavailable",
       compatibility: "unknown",
-      diagnostic: "claude --version did not run successfully",
+      diagnostic:
+        versionRun.kind === "spawn-failed"
+          ? "claude executable not found or not runnable; install claude, then run omi install --apply (or update --apply) from a WSL shell where claude is on PATH and restart the session"
+          : "claude --version did not run successfully; check the CLI and rerun omi install --apply (or update --apply) from a working WSL shell, then restart the session",
     };
   }
   const { version, compatibility } = checkClaudeCodeVersion(versionRun.stdout);

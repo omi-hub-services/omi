@@ -329,14 +329,32 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
     // Worker CLIs: ranges come from the adapters (compatibility.md), classified once here.
     const classified: ("supported" | "untested" | "unsupported" | "not-installed")[] = [];
     for (const cli of ["claude", "codex"] as const) {
-      const output = await probe.command(cli, ["--version"], input.projectDir);
+      const output = reachable
+        ? await probe.command(
+            wslExe,
+            [
+              "--distribution",
+              input.distribution,
+              "--cd",
+              input.projectDir,
+              "--exec",
+              shim,
+              "--omi-worker-version",
+              cli,
+            ],
+            input.projectDir,
+          )
+        : undefined;
       if (output === undefined) {
+        const shellOutput = await probe.command(cli, ["--version"], input.projectDir);
         classified.push("not-installed");
         check(
           `worker-cli-${cli}`,
-          true,
-          `${cli} is not installed; optional if another worker CLI is supported`,
-          `Install ${cli} within the supported range to use it as a worker`,
+          reachable && shellOutput === undefined,
+          `${cli} executable not found or not runnable in the runtime environment; optional only if absent from the installer shell too`,
+          reachable
+            ? `Install ${cli}, then rerun omi install --apply (or update --apply) from a WSL shell where ${cli} is on PATH; restart the session`
+            : "Cannot be checked until the wsl-exe check passes",
           "not-installed",
         );
         continue;

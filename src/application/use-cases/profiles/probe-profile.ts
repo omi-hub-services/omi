@@ -72,5 +72,9 @@ export async function probeProfile(
     at,
     profile.revision,
   );
-  return { outcome: saved ? "probed" : "stale", status: result.status } as const;
+  return {
+    outcome: saved ? "probed" : "stale",
+    status: result.status,
+    ...(result.diagnostic === undefined ? {} : { diagnostic: result.diagnostic }),
+  } as const;
 }

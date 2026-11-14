@@ -44,7 +44,9 @@ function probe(answers: Answers, projectConfig: ProjectConfig | null): WslProbe 
             ? "  NAME STATE VERSION\n* Ubuntu Running 2"
             : args.includes("--omi-node-version")
               ? all["session-runtime"]
-              : "0.0.0",
+              : args.includes("--omi-worker-version")
+                ? all[`${args.at(-1) ?? ""} --version`]
+                : "0.0.0",
         );
       if (executable === "wslpath")
         return Promise.resolve(
@@ -68,6 +70,54 @@ async function run(answers: Answers = {}, projectConfig: ProjectConfig | null = 
 }
 
 describe("doctor session runtime launch", () => {
+  it("checks workers with typed wsl shim argv even when they are absent from the current shell", async () => {
+    const base = probe({ "claude --version": undefined, "codex --version": undefined }, config);
+    const workerCalls: string[][] = [];
+    const doctor = createInstallationDoctor({
+      ...base,
+      command: (executable, args, cwd) => {
+        if (args.includes("--omi-worker-version")) {
+          workerCalls.push([executable, ...args]);
+          return Promise.resolve(
+            args.at(-1) === "claude" ? "2.1.322 (Claude Code)" : "codex-cli 0.167.0",
+          );
+        }
+        return base.command(executable, args, cwd);
+      },
+    });
+    expect((await inspectInstallation(doctor, request)).supported).toBe(true);
+    expect(workerCalls).toEqual(
+      ["claude", "codex"].map((cli) => [
+        "wsl.exe",
+        "--distribution",
+        "Ubuntu",
+        "--cd",
+        request.projectDir,
+        "--exec",
+        `${request.projectDir}/.omi-squad/bin/omi`,
+        "--omi-worker-version",
+        cli,
+      ]),
+    );
+  });
+  it("fails the named worker check when only the user's shell can run that CLI", async () => {
+    const base = probe({}, config);
+    const doctor = createInstallationDoctor({
+      ...base,
+      command: (executable, args, cwd) =>
+        args.includes("--omi-worker-version")
+          ? Promise.resolve(undefined)
+          : base.command(executable, args, cwd),
+    });
+    const report = await inspectInstallation(doctor, request);
+    expect(report.supported).toBe(false);
+    for (const cli of ["claude", "codex"]) {
+      expect(report.checks.find((check) => check.name === `worker-cli-${cli}`)).toMatchObject({
+        ok: false,
+        fix: expect.stringContaining("omi install --apply") as unknown,
+      });
+    }
+  });
   it("passes when the shim can start node", async () => {
     const { status } = await run();
     expect(status("session-runtime-launch")).toMatchObject({ ok: true });
