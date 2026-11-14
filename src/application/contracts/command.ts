@@ -10,6 +10,7 @@ import { retryStepSchema, reworkRecordSchema } from "./rework.js";
 import { syncSelectionSchema } from "./sync.js";
 import { prepareRunPrSchema } from "./pr-delivery.js";
 import { refreshRunSchema } from "./run-refresh.js";
+import { deployConfiguredSchema } from "./deploy-delivery.js";
 import { prepareReleaseSchema, publishReleaseSchema } from "./release-delivery.js";
 
 const envelope = { schemaVersion: schemaVersionV1 };
@@ -105,6 +106,8 @@ export const commandSchema = z
     mergeReleaseSchema
       .omit({ repository: true, poActors: true })
       .extend({ ...envelope, command: z.literal("release.merge") }),
+    // Pipeline, repository and approval id come from project config and the approval store.
+    deployConfiguredSchema.extend({ ...envelope, command: z.literal("deploy") }),
     z.strictObject({
       ...envelope,
       command: z.literal("handoff"),

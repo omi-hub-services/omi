@@ -15,6 +15,9 @@ export const deployReleaseSchema = z.strictObject({
     .optional(),
 });
 
+/** The `deploy` command names only a configured target; everything else is project config. */
+export const deployConfiguredSchema = z.strictObject({ target: identifierSchema });
+
 /** Trusted workflow configuration, never worker supplied approval provenance. */
 export const deployPipelineSchema = z.strictObject({
   workflow: deployOperationSchema.shape.workflow,

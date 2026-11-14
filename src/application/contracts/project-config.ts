@@ -69,6 +69,35 @@ export const deployTargetSchema = z.strictObject({
 });
 export type DeployTarget = z.infer<typeof deployTargetSchema>;
 
+/**
+ * The trusted deploy pipeline and the repositories/environments a deploy may reach. The allowlists
+ * replace the former hard-coded `sandbox` name rule; an absent block refuses every deploy. The
+ * approval id is never configured here: it comes from the approval store.
+ */
+export const deployConfigSchema = z.strictObject({
+  workflow: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*[.]ya?ml$/),
+  tag_ref: z
+    .string()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, "must be a plain tag name")
+    .refine((tag) => !tag.includes("..") && !/[.]$|[.]lock$/.test(tag), "invalid git ref name"),
+  workflow_sha: z.string().regex(/^[0-9a-f]{40}$/, "must be a full git sha"),
+  issue_number: z.number().int().positive(),
+  allowed_actors: z
+    .array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/))
+    .min(1)
+    .max(100),
+  author_actor: githubNameSchema,
+  allowed_repositories: z
+    .array(z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, "must be owner/name"))
+    .min(1)
+    .max(50),
+  allowed_environments: z
+    .array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/))
+    .min(1)
+    .max(50),
+});
+export type DeployConfig = z.infer<typeof deployConfigSchema>;
+
 /** `.omi-squad/config/project.yaml`: repo, Project, branches, limits, policies. No secrets. */
 export const projectConfigSchema = z
   .strictObject({
@@ -106,6 +135,7 @@ export const projectConfigSchema = z
         message: "deploy target ids must be unique",
       })
       .optional(),
+    deploy: deployConfigSchema.optional(),
     policies: z.strictObject({
       /** Gates that always need a human; a runtime field must not remove them. */
       mandatory_approvals: z.array(slugSchema),

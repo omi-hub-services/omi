@@ -6,6 +6,25 @@ import type { Decision } from "../shared/decision.js";
 
 export type DeployApprovalRefusal = ApprovalInvalidReason | "INVALID_ARTIFACT_DIGEST";
 
+export type DeployAllowlistRefusal =
+  "DEPLOY_REPOSITORY_NOT_ALLOWED" | "DEPLOY_ENVIRONMENT_NOT_ALLOWED";
+
+/** Project-declared allowlist; the former `sandbox` name rule is not a product rule. */
+export function evaluateDeployAllowlist(
+  target: { readonly repository: string; readonly environment: string },
+  allowed: {
+    readonly repositories: readonly string[];
+    readonly environments: readonly string[];
+  },
+): Decision<DeployAllowlistRefusal> {
+  const refusals: DeployAllowlistRefusal[] = [];
+  if (!allowed.repositories.includes(target.repository))
+    refusals.push("DEPLOY_REPOSITORY_NOT_ALLOWED");
+  if (!allowed.environments.includes(target.environment))
+    refusals.push("DEPLOY_ENVIRONMENT_NOT_ALLOWED");
+  return decide(refusals);
+}
+
 /** A deploy needs its own decision for this immutable artifact in this environment. */
 export function evaluateDeployApproval(
   approval: Approval | undefined,

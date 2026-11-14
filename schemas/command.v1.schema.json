@@ -892,6 +892,29 @@
     {
       "type": "object",
       "properties": {
+        "target": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "command": {
+          "type": "string",
+          "const": "deploy"
+        }
+      },
+      "required": [
+        "target",
+        "schemaVersion",
+        "command"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
         "schemaVersion": {
           "type": "number",
           "const": 1

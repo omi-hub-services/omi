@@ -45,6 +45,7 @@ export function parseSetupOptions(
   if (!/^sandbox-deploy-[A-Za-z0-9._-]+$/.test(tag))
     throw new Error("--tag must look like sandbox-deploy-<name> so the tag ruleset covers it");
   const repository = values["repo"] ?? "omi-hub-services/omi-sandbox";
+  // Test-only guard for this setup tool; the product `deploy` command uses project.yaml allowlists.
   const parts = repository.split("/");
   const sound = (part: string) =>
     /^[\w.-]+$/.test(part) && /[A-Za-z0-9]/.test(part) && !part.includes("..");

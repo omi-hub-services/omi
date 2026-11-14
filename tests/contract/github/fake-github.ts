@@ -98,6 +98,8 @@ export class FakeGithub implements GithubTransport {
   deployConclusion: string | null = "success";
   deployStatus = "completed";
   deployProtected = true;
+  /** Environment the native reviewer approved; the default keeps the sandbox fixtures unchanged. */
+  deployEnvironment = "sandbox";
   deployNativeApproved = true;
   deployDigestOverride: string | undefined;
   readonly deployRuns: Record<string, unknown>[] = [];
@@ -450,7 +452,13 @@ export class FakeGithub implements GithubTransport {
         : this.json(
             200,
             this.deployNativeApproved
-              ? [{ state: "approved", user: { login: "po" }, environments: [{ name: "sandbox" }] }]
+              ? [
+                  {
+                    state: "approved",
+                    user: { login: "po" },
+                    environments: [{ name: this.deployEnvironment }],
+                  },
+                ]
               : [],
           );
     }

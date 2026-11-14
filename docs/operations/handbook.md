@@ -380,6 +380,27 @@ a configured project (§1).
    `TAG_POINTS_ELSEWHERE` return their named `COMMAND_REFUSED` reason (exit 4).
    The order is `prepare-release` → PO native GitHub approval → `merge-release` → `publish-release`.
 
+12. `<cli> deploy --target <id>` deploys one `deploy_targets` entry of `project.yaml` (OMI-121).
+   Order after `publish-release`: (a) put the release's `deploy_targets` entry (id, environment,
+   image digest) in `project.yaml` and restart the session; (b)
+   `<cli> approvals request <id> --kind deploy`; (c) the PO decides it
+   (`approvals decide`, above); (d) `<cli> deploy --target <id>`; (e) the PO approves the
+   **native GitHub environment gate** on the dispatched run. Both layers stay; neither replaces
+   the other. The command takes only the target id: the pipeline (`deploy.workflow`, `tag_ref`,
+   `workflow_sha`, `issue_number`, `allowed_actors`, `author_actor`), the repository (the project's
+   own) and the approval id (the newest approved, unexpired decision for the target's current
+   digest, read from the approval store) are never flags. The repository and the target's
+   environment must be in `deploy.allowed_repositories` / `deploy.allowed_environments`; without a
+   `deploy` block every deploy refuses `DEPLOY_NOT_CONFIGURED`. Refusals (`COMMAND_REFUSED`, exit 4)
+   name the reason and dispatch nothing: `DEPLOY_TARGET_NOT_FOUND`, `DEPLOY_REPOSITORY_NOT_ALLOWED`,
+   `DEPLOY_ENVIRONMENT_NOT_ALLOWED`, `NO_APPROVAL`, `APPROVAL_NOT_ACTIVE` (still pending or
+   rejected), `STALE_REVISION` (the target's digest or environment changed after approval),
+   `EXPIRED`. `pending` and `VERIFY_WAITING` mean: wait, then repeat the same command; it
+   reconciles the same outbox intent and never dispatches twice. A failed deploy exits 4 with the
+   reason, comments to the PO and is never rolled back automatically
+   ([deploy-runbook.md](deploy-runbook.md), ADR-0039). Preparing a target in an installed project:
+   [deploy-runbook.md, "Prepare a target for an installed project"](deploy-runbook.md).
+
 Refusals print `error[COMMAND_REFUSED]: <REASON>[: detail]` (exit 4). Reasons seen in the code
 (not all reproduced live, see the record): `PROJECT_NOT_CONFIGURED`, `INVALID_INPUT`, `WORKFLOW_REQUIRED`,
 `WORKFLOW_UNKNOWN`, `TASK_NOT_FOUND`, `WORKFLOW_CYCLIC`, `RUN_NOT_FOUND`, `RUN_NOT_RUNNING`,

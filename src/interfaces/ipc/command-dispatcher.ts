@@ -39,6 +39,7 @@ export interface DispatchedUseCases {
   mergeRelease?: RunUseCase;
   prepareRelease?: RunUseCase;
   publishRelease?: RunUseCase;
+  deploy?: RunUseCase;
   handoffCoordinator?: RunUseCase;
   registerProfile?: RunUseCase;
   listProfiles?: RunUseCase;
@@ -135,6 +136,8 @@ export function createCommandDispatcher(useCases: DispatchedUseCases): CommandHa
         return run(useCases.prepareRelease, 'command "prepare-release"', command);
       case "release.publish":
         return run(useCases.publishRelease, 'command "publish-release"', command);
+      case "deploy":
+        return run(useCases.deploy, 'command "deploy"', command);
       case "handoff":
         return run(useCases.handoffCoordinator, 'command "handoff"', command);
     }

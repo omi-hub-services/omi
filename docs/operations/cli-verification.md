@@ -976,3 +976,28 @@ accepted by merge, refusal without PO approval, merge after native approval, pub
 after merge, repeat publication, empty-release and conflicting-tag refusals. The socket variant
 is retained but cannot bind in this sandbox (`listen EPERM`); successful socket transport and
 live GitHub release remain unverified. Release order is documented in handbook §3.
+
+## Deploy command — 2026-11-14 (OMI-121)
+
+Built CLI help (`node dist/bootstrap/cli.js deploy --help`, exit 0) exposes:
+
+```text
+deploy --target <id> [--json] [--socket <path>]
+```
+
+The IPC route is `deploy`. The command carries only a `deploy_targets` id; strict validation
+rejects approval ids, repositories, environments and pipeline fields. The runtime builds the
+pipeline from the `deploy` block of `project.yaml`, uses the project's own repository, reads the
+approval id from the approval store (newest approved unexpired decision for the target's current
+digest) and refuses `DEPLOY_NOT_CONFIGURED`, `DEPLOY_TARGET_NOT_FOUND`,
+`DEPLOY_REPOSITORY_NOT_ALLOWED`, `DEPLOY_ENVIRONMENT_NOT_ALLOWED`, `NO_APPROVAL`,
+`APPROVAL_NOT_ACTIVE`, `STALE_REVISION` or `EXPIRED` before any dispatch (`COMMAND_REFUSED`,
+exit 4). Both approval layers and the outbox dedupe/reconcile are unchanged; nothing rolls back.
+
+`tests/unit/interfaces/cli/deploy-command.test.ts` covers the payload and override rejection.
+`tests/unit/application/use-cases/delivery/deploy-configured-release.test.ts` covers the
+refusals, the allowlists (a non-`sandbox` repository and environment deploy), and repeat-command
+reconciliation after a lost dispatch response (one dispatch). `tests/integration/ipc/deploy-command.test.ts`
+runs the container wiring through the dispatcher and socket with real SQLite/outbox and fake
+GitHub. Live GitHub deploy from an installed project is unverified here (OMI-041 live evidence
+covers `deployRelease` itself).
