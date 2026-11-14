@@ -37,7 +37,7 @@ import type { AgentExecutor } from "../../ports/agent-executor.js";
 import { AgentExecutorError } from "../../ports/agent-executor.js";
 import type { AttemptRecord, AttemptStore, StepRunReader } from "../../ports/attempt-store.js";
 import { ArtifactError } from "../../ports/artifact-store.js";
-import type { ArtifactStore } from "../../ports/artifact-store.js";
+import type { ArtifactAdopter, ArtifactStore } from "../../ports/artifact-store.js";
 import type { BoundaryCheckpointHook } from "../../ports/checkpoint-hook.js";
 import type { GitWorkspace } from "../../ports/git-workspace.js";
 import type { Lease } from "../../ports/lease-store.js";
@@ -107,7 +107,7 @@ export interface DispatchStepDependencies {
   readonly rules: RuleSource;
   readonly steps: StepRunReader;
   readonly attempts: AttemptStore;
-  readonly artifacts: ArtifactStore;
+  readonly artifacts: ArtifactStore & ArtifactAdopter;
   readonly workspaces: GitWorkspace;
   /** Already selected by the caller (profile/executor selection is not this use case's job). */
   readonly executor: AgentExecutor;
@@ -247,8 +247,8 @@ function buildPrompt(
           attemptId: packet.attemptId,
           status: "succeeded|failed|blocked",
           summary: "branch, files per layer, check results, unverified items and open decisions",
-          artifacts: [],
-          revision: { headSha: "<40 hex>", baseSha: "<40 hex>" },
+          artifacts: [{ path: "<artifact path under the root>" }],
+          revision: { headSha: "<40 hex, optional>", baseSha: "<40 hex, optional>" },
           checks: [{ id: "<check id>", evidenceRef: "<artifact path>" }],
           skillsApplied: [{ id: "<assigned skill>", evidenceRef: "<artifact path>" }],
           findings: [],

@@ -4,17 +4,22 @@
  * never store raw output streams.
  */
 export function redactDiagnostic(text: string, maxChars: number): string {
-  return text
-    .replace(/sk-[A-Za-z0-9_-]{16,}/g, "[REDACTED_KEY]")
-    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, "[REDACTED_JWT]")
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]")
-    .replace(
-      /\b(access_token|refresh_token|id_token|OPENAI_API_KEY|CODEX_API_KEY|api[_-]?key|token|secret|password|authorization)(["']?\s*[:=]\s*["']?)[^\s"',;]+/gi,
-      "$1$2[REDACTED]",
-    )
-    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[REDACTED_EMAIL]")
-    .replace(/[A-Za-z0-9_-]{40,}/g, "[REDACTED_LONG_TOKEN]")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, maxChars);
+  return (
+    text
+      .replace(/sk-[A-Za-z0-9_-]{16,}/g, "[REDACTED_KEY]")
+      .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, "[REDACTED_JWT]")
+      .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [REDACTED]")
+      .replace(
+        /\b(access_token|refresh_token|id_token|OPENAI_API_KEY|CODEX_API_KEY|api[_-]?key|token|secret|password|authorization)(["']?\s*[:=]\s*["']?)[^\s"',;]+/gi,
+        "$1$2[REDACTED]",
+      )
+      .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[REDACTED_EMAIL]")
+      // A bare lowercase-hex 40 or 64 run is a git object id (or sha-256), not a secret.
+      .replace(/[A-Za-z0-9_-]{40,}/g, (token) =>
+        /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(token) ? token : "[REDACTED_LONG_TOKEN]",
+      )
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, maxChars)
+  );
 }

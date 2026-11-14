@@ -346,10 +346,22 @@ describe("other invalid input is rejected", () => {
         skillsApplied: [{ id: "tdd", evidenceRef: "../escape.md" }],
       }).success,
     ).toBe(false);
+    // The revision is only a claim (OMI-130): a worker without a shell may report junk, and the
+    // runtime ignores it and records its own head and merge-base instead of failing the step.
     expect(
       stepResultSchema.safeParse({ ...validResult, revision: { headSha: "abc", baseSha: GIT_SHA } })
         .success,
+    ).toBe(true);
+    expect(
+      stepResultSchema.safeParse({
+        ...validResult,
+        artifacts: [{ path: "attempts/a/x.md", sha256: "abc" }],
+      }).success,
     ).toBe(false);
+    expect(
+      stepResultSchema.safeParse({ ...validResult, artifacts: [{ path: "attempts/a/x.md" }] })
+        .success,
+    ).toBe(true);
     expect(
       commandSchema.safeParse({ schemaVersion: 1, command: "wait", runId: "r", timeoutSeconds: 0 })
         .success,

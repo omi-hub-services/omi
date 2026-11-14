@@ -183,12 +183,15 @@ async function runRequiredChecks(
   if (packet.quality?.step === "verify" || packet.quality?.step === "review")
     return packet.checkEvidence ?? [];
   if (!reported.success || reported.data.status !== "succeeded") return [];
-  const revision = reported.data.revision?.headSha;
-  if (revision === undefined) return [];
   const ids = attempt.requiredChecks.filter((id) => runner.has(id));
   if (ids.length === 0) return [];
+  // The check runs on the runtime's own head; recording refuses a worker claim that disagrees.
   const state = deps.workspaces.inspect(attempt.workspace.path);
-  if (!state.ok || state.value.headSha !== revision) return [];
+  if (!state.ok) return [];
+  const claimed = reported.data.revision?.headSha;
+  if (claimed !== undefined && /^[0-9a-f]{40}$/.test(claimed) && claimed !== state.value.headSha) {
+    return [];
+  }
   const runs: CheckRunRecord[] = [];
   for (const checkId of ids) {
     runs.push(

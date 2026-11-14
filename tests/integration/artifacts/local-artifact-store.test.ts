@@ -11,6 +11,7 @@ import type {
 } from "../../../src/application/contracts/artifact.ts";
 import {
   ArtifactError,
+  type ArtifactAdopter,
   type ArtifactStore,
 } from "../../../src/application/ports/artifact-store.ts";
 import {
@@ -37,7 +38,7 @@ const digest = (bytes: Uint8Array | string): string =>
 let directory: string;
 let root: string;
 let db: StateDatabase;
-let store: ArtifactStore;
+let store: ArtifactStore & ArtifactAdopter;
 
 beforeEach(() => {
   directory = fs.mkdtempSync(join(tmpdir(), "omi-artifacts-"));
@@ -587,5 +588,37 @@ describe("untrusted artifact references", () => {
       CredentialInputError,
     );
     expect(rowCount()).toBe(0);
+  });
+});
+
+describe("adopt (worker-written files)", () => {
+  const adopt = (path: string) =>
+    store.adopt({
+      id: "adopted-1",
+      path,
+      classification: "worker-output",
+      createdAt: at,
+    });
+
+  it("hashes a file the worker wrote and makes it readable through the store", () => {
+    fs.mkdirSync(join(root, "attempts"));
+    fs.writeFileSync(join(root, "attempts", "analysis.md"), "findings");
+    const reference = adopt("attempts/analysis.md");
+    expect(reference).toEqual({ path: "attempts/analysis.md", sha256: digest("findings") });
+    expect(new TextDecoder().decode(store.read(reference))).toBe("findings");
+  });
+
+  it("refuses a missing file and a symlink", () => {
+    expect(() => adopt("nope.md")).toThrow(expect.objectContaining({ code: "NOT_FOUND" }));
+    fs.writeFileSync(join(directory, "outside.txt"), "secret");
+    fs.symlinkSync(join(directory, "outside.txt"), join(root, "link.md"));
+    expect(() => adopt("link.md")).toThrow(ArtifactError);
+  });
+
+  it("refuses a file that changed after it was first registered", () => {
+    fs.writeFileSync(join(root, "a.md"), "one");
+    adopt("a.md");
+    fs.writeFileSync(join(root, "a.md"), "two");
+    expect(() => adopt("a.md")).toThrow(expect.objectContaining({ code: "HASH_MISMATCH" }));
   });
 });

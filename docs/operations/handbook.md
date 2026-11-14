@@ -877,6 +877,15 @@ revision SHA, status, findings, checks and artifacts. Valid blocked/failed resul
 a valid succeeded result returns 0. Inspect the document even on nonzero exit, and use its
 `revision.headSha` for the fixed-head check. Never treat a summary or schema validity as approval.
 
+A worker without a shell (for example a read-only analyze step with only `Read,Edit,Write,Glob,Grep`)
+reports each artifact by `path` only: the runtime registers the file, computes its sha-256 and
+records that hash. A `sha256` the worker does add must match, and a missing file, a symlink or a
+path outside the attempt's artifact root still fails the step (`ARTIFACT_INVALID`,
+`ARTIFACT_HASH_MISMATCH`, `PATH_OUTSIDE_ROOT`). `revision` is only a claim: the runtime records its
+own head and merge-base with `develop`; a missing or malformed claim is ignored, while a well-formed
+SHA that differs is refused as `STALE_REVISION`. Diagnostic text keeps 40/64-character lowercase hex
+(git SHAs) and still redacts secret-prefixed and other long tokens.
+
 Each dispatch has its own log `omi-NNN-<profile>-<ts>-<step>-<attempt>-<stamp>.jsonl` (and `.err`,
 codex `-last.md`), so QA and review can run in parallel on one profile. When several workers of a
 task run, read each with `worker-report <issue> --step verify-1` (or `review-1`); without `--step`

@@ -74,6 +74,8 @@ export type GitWorkspaceResult<T> =
 export interface GitWorkspace {
   /** Committed PR paths relative to the integration branch; missing/failed reads fail closed. */
   changedPaths?(worktreePath: string): GitWorkspaceResult<readonly string[]>;
+  /** Merge-base of the worktree's head with the integration branch, as the runtime sees it. */
+  mergeBase?(worktreePath: string): GitWorkspaceResult<string>;
   /** Bounded committed delta on a clean task worktree, with external diff/textconv disabled. */
   diffSince?(worktreePath: string, headSha: string): GitWorkspaceResult<string>;
   /** Creates from local develop, or reconciles an existing matching branch/worktree on retry.

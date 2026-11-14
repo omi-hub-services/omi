@@ -5,14 +5,15 @@ import { transitionStep } from "../../../domain/runs/step-run.js";
 import type { StepStatus } from "../../../domain/runs/step-run.js";
 import { executionResultSchema } from "../../contracts/agent-execution.js";
 import { artifactPathSchema } from "../../contracts/artifact.js";
+import type { ArtifactReference } from "../../contracts/artifact.js";
 import { checkRunRecordSchema } from "../../contracts/check-run.js";
 import type { CheckRunRecord } from "../../contracts/check-run.js";
-import { identifierSchema } from "../../contracts/identifiers.js";
+import { gitShaSchema, identifierSchema } from "../../contracts/identifiers.js";
 import { stepResultSchema } from "../../contracts/result.js";
 import type { StepResult } from "../../contracts/result.js";
 import type { AttemptStore, StepRunReader } from "../../ports/attempt-store.js";
 import { ArtifactError } from "../../ports/artifact-store.js";
-import type { ArtifactStore } from "../../ports/artifact-store.js";
+import type { ArtifactAdopter, ArtifactStore } from "../../ports/artifact-store.js";
 import type { BoundaryCheckpointHook } from "../../ports/checkpoint-hook.js";
 import type { CheckRunner } from "../../ports/check-runner.js";
 import type { GitWorkspace } from "../../ports/git-workspace.js";
@@ -32,7 +33,7 @@ export type RecordStepResultInput = z.input<typeof recordStepResultSchema>;
 export interface RecordStepResultDependencies {
   readonly attempts: AttemptStore;
   readonly steps: StepRunReader;
-  readonly artifacts: ArtifactStore;
+  readonly artifacts: ArtifactStore & ArtifactAdopter;
   readonly workspaces: GitWorkspace;
   readonly unitOfWork: StateUnitOfWork;
   /**
@@ -225,7 +226,7 @@ export function recordStepResult(
     stepId: step.stepId,
     attemptId: attempt.id,
     workspacePath: attempt.workspace.path,
-    outputs: succeeded && "report" in verdict ? verdict.report.artifacts : [],
+    outputs: "accepted" in verdict ? verdict.report.artifacts : [],
   });
   return {
     ok: true,
@@ -236,8 +237,14 @@ export function recordStepResult(
   };
 }
 
+/** An accepted result: artifacts carry the runtime's hashes and the revision is the runtime's own. */
+type VerifiedResult = Omit<StepResult, "artifacts" | "revision"> & {
+  readonly artifacts: ArtifactReference[];
+  readonly revision: { readonly headSha: string; readonly baseSha: string } | undefined;
+};
+
 type Verdict =
-  | { readonly accepted: true; readonly report: StepResult }
+  | { readonly accepted: true; readonly report: VerifiedResult }
   | { readonly failure: StepFailureReason; readonly report?: StepResult }
   | { readonly refusal: RecordStepRefusal; readonly detail?: string };
 
@@ -274,8 +281,23 @@ function verify(
   ) {
     return { failure: "PATH_OUTSIDE_ROOT", report };
   }
+  let artifacts: ArtifactReference[];
   try {
-    const manifest = deps.artifacts.manifest(report.artifacts);
+    // The runtime hashes what the worker wrote; a hash the worker claimed must agree with it.
+    artifacts = report.artifacts.map((claimed) => {
+      const adopted = deps.artifacts.adopt({
+        id: deps.nextId(),
+        path: claimed.path,
+        producerAttemptId: attempt.id,
+        classification: "worker-output",
+        createdAt: new Date(deps.now()).toISOString(),
+      });
+      if (claimed.sha256 !== undefined && claimed.sha256 !== adopted.sha256) {
+        throw new ArtifactError("HASH_MISMATCH");
+      }
+      return adopted;
+    });
+    const manifest = deps.artifacts.manifest(artifacts);
     // Check and skill names alone are claims. Every evidence path must have verified, nonempty
     // bytes.
     const hasEvidence = (evidenceRef: string) =>
@@ -293,13 +315,37 @@ function verify(
     };
   }
 
-  if (report.revision === undefined) {
-    if (attempt.access === "workspace-write") return { failure: "REVISION_MISSING", report };
+  // The revision is the runtime's own view of the worktree. The worker's value is only a claim:
+  // absent or malformed (a worker without a shell) is ignored, a well-formed different one is stale.
+  const claim = report.revision;
+  const claimedSha = (value: string | undefined) =>
+    value !== undefined && gitShaSchema.safeParse(value).success ? value : undefined;
+  const state = deps.workspaces.inspect(attempt.workspace.path);
+  let revision: { headSha: string; baseSha: string } | undefined;
+  if (!state.ok) {
+    if (attempt.access === "workspace-write" || claimedSha(claim?.headSha) !== undefined) {
+      return { refusal: "WORKSPACE_UNAVAILABLE", detail: state.error.code };
+    }
   } else {
-    const state = deps.workspaces.inspect(attempt.workspace.path);
-    if (!state.ok) return { refusal: "WORKSPACE_UNAVAILABLE", detail: state.error.code };
-    if (state.value.headSha !== report.revision.headSha) return { refusal: "STALE_REVISION" };
+    const headSha = state.value.headSha;
+    const base = deps.workspaces.mergeBase?.(attempt.workspace.path);
+    const baseSha = base?.ok === true ? base.value : claimedSha(claim?.baseSha);
+    const claimedHead = claimedSha(claim?.headSha);
+    const claimedBase = claimedSha(claim?.baseSha);
+    if (
+      (claimedHead !== undefined && claimedHead !== headSha) ||
+      (base?.ok === true && claimedBase !== undefined && claimedBase !== baseSha)
+    ) {
+      return { refusal: "STALE_REVISION" };
+    }
+    if (baseSha === undefined) {
+      if (attempt.access === "workspace-write") return { failure: "REVISION_MISSING", report };
+    } else {
+      revision = { headSha, baseSha };
+    }
   }
+  // Setting revision explicitly (even to undefined) drops the worker's claim.
+  const verified: VerifiedResult = { ...report, artifacts, revision };
 
   const runtimeChecks = attempt.requiredChecks.filter((id) => deps.checks?.has(id) === true);
   // The worker's own check list is informational for these ids; only the runtime's run counts.
@@ -308,7 +354,7 @@ function verify(
   if (!evidenceChecks.every((id) => reported.has(id))) {
     return { failure: "REQUIRED_CHECK_MISSING", report };
   }
-  const checkFailure = verifyRuntimeChecks(deps, attempt, report, runtimeChecks, checkRuns);
+  const checkFailure = verifyRuntimeChecks(deps, attempt, verified, runtimeChecks, checkRuns);
   if (checkFailure !== undefined) return { failure: checkFailure, report };
 
   // The worker saw exactly the manifest's skills (inlined at dispatch); it must account for each.
@@ -318,14 +364,14 @@ function verify(
   if (![...given].every((id) => applied.has(id))) {
     return { failure: "SKILL_EVIDENCE_MISSING", report };
   }
-  return { accepted: true, report };
+  return { accepted: true, report: verified };
 }
 
 /** Every check the runtime runs must have passed, on the worker's revision, with stored evidence. */
 function verifyRuntimeChecks(
   deps: RecordStepResultDependencies,
   attempt: NonNullable<ReturnType<AttemptStore["get"]>>,
-  report: StepResult,
+  report: VerifiedResult,
   ids: readonly string[],
   runs: readonly CheckRunRecord[],
 ): StepFailureReason | undefined {

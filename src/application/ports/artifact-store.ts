@@ -14,6 +14,17 @@ export class ArtifactError extends Error {
   }
 }
 
+/** Takes in files that a worker without a shell wrote itself, so the runtime can hash them. */
+export interface ArtifactAdopter {
+  /**
+   * Registers a regular file a worker already wrote under the root and returns its reference with
+   * the hash the runtime computed. Refuses a missing file (NOT_FOUND), a symlink or non-file
+   * (INVALID_PATH), credential-looking content, and a path already registered with other bytes
+   * (HASH_MISMATCH). Registering the same bytes again returns the same reference.
+   */
+  adopt(input: Omit<ArtifactWrite, "bytes">): ArtifactReference;
+}
+
 /** Runtime-owned, immutable files. Writes return only after file durability and DB commit. */
 export interface ArtifactStore {
   write(input: ArtifactWrite): ArtifactReference;

@@ -55,9 +55,11 @@ export function createRunMergeEvidenceReader(
       const { entries, allStepsSucceeded } = source.read(projectId, taskId);
       const reviewed = entries.map((entry) => {
         if (entry.attempt.role.id !== "reviewer") return entry;
-        const reports = entry.result.artifacts.map((reference) =>
-          new TextDecoder("utf-8", { fatal: true }).decode(artifacts.read(reference)),
-        );
+        const reports = entry.result.artifacts.map(({ path, sha256 }) => {
+          // An accepted result always carries the runtime's hash; anything else fails closed.
+          if (sha256 === undefined) throw new Error("ARTIFACT_HASH_MISSING");
+          return new TextDecoder("utf-8", { fatal: true }).decode(artifacts.read({ path, sha256 }));
+        });
         const body = reports.find((report) => /^AC-\d+:/m.test(report)) ?? entry.result.summary;
         if (body.length > 60_000) throw new Error("REVIEW_REPORT_TOO_LARGE");
         return { ...entry, reviewBody: body };
