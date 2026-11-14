@@ -416,9 +416,11 @@ export function createTaskCommands(
         { spec: createIssueSpecFile(input.file), intake: (await github(input.projectDir)).intake },
         { prefix: input.prefix, apply: input.apply },
       ),
-    promote: async (input) => promoteTask({ board: (await github(input.projectDir)).board }, input),
-    setStatus: async (input) =>
-      setTaskStatus({ board: (await github(input.projectDir)).board }, input),
+    // The use-case schemas are strict: hand over only their fields, never `projectDir`.
+    promote: async ({ projectDir, issueNumber, dryRun }) =>
+      promoteTask({ board: (await github(projectDir)).board }, { issueNumber, dryRun }),
+    setStatus: async ({ projectDir, issueNumber, status }) =>
+      setTaskStatus({ board: (await github(projectDir)).board }, { issueNumber, status }),
   };
 }
 
