@@ -12,16 +12,14 @@ import {
 } from "../../application/ports/git-workspace.js";
 import type { Lease, LeaseStore } from "../../application/ports/lease-store.js";
 import { worktreeLeaseKey } from "../../domain/runs/lease-resource.js";
+import { WORKSPACE_ID_PATTERN } from "../../domain/tasks/plan-key.js";
 import { gitCommand } from "./git-command.js";
 import { gitObjectId, parseWorktrees } from "./git-worktree-output.js";
 import { listUncommittedFiles } from "./git-uncommitted.js";
 import { inspectGitStatus } from "./git-worktree-status.js";
 
 const taskShape = {
-  taskId: z
-    .string()
-    .regex(/^omi-\d{3,}$/)
-    .max(40),
+  taskId: z.string().regex(WORKSPACE_ID_PATTERN).max(40),
   slug: z
     .string()
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)

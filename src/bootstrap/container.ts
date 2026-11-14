@@ -424,6 +424,10 @@ export function createTaskCommands(
   };
 }
 
+/** Unexpected IPC handler errors, kept beside the worker logs and out of the run artifacts. */
+export const ipcErrorLogPath = (projectDir: string): string =>
+  join(projectDir, ".omi-squad", "local", "logs", "ipc-errors.log");
+
 /** Worker logs live in `.omi-squad/local/logs`, outside the immutable run artifacts. */
 const workerLogDirectory = (projectDir: string): string =>
   join(projectDir, ".omi-squad", "local", "logs");
@@ -571,9 +575,11 @@ export function createRuntimeIpcServer(options: {
   /** Lets `status` list the unfinished runs. */
   readonly activeRuns?: ActiveRunReader;
   readonly idleTimeoutMs?: number;
+  readonly errorLogPath?: string;
 }): IpcServer {
   return createIpcServer({
     socketPath: options.socketPath,
+    ...(options.errorLogPath === undefined ? {} : { errorLogPath: options.errorLogPath }),
     handler: createCommandDispatcher({
       inspectRuntime: () =>
         inspectRuntime(options.identity, options.selections, options.activeRuns),

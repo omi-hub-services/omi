@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, stat, unlink } from "node:fs/promises";
+import { appendFile, chmod, lstat, mkdir, stat, unlink } from "node:fs/promises";
 import { connect, createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 import { dirname } from "node:path";
@@ -16,6 +16,8 @@ export interface IpcServerOptions {
   /** A connection with no traffic for this long is destroyed (stalled or half-sent frame). */
   readonly idleTimeoutMs?: number;
   readonly maxConnections?: number;
+  /** Runtime-local file that receives unexpected handler errors; never sent to the client. */
+  readonly errorLogPath?: string;
 }
 
 export interface IpcServer {
@@ -48,8 +50,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const SECRET_PATTERN =
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,})\b|(?:Bearer|token)\s+[A-Za-z0-9._~+/=-]{16,}/gi;
+
+/** Appends the cause to the runtime-local log; a failure to log never changes the reply. */
+async function logHandlerError(path: string | undefined, error: unknown): Promise<void> {
+  if (path === undefined) return;
+  const text = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  try {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await appendFile(
+      path,
+      `${new Date().toISOString()} ${text.replace(SECRET_PATTERN, "[redacted]")}\n`,
+      { mode: 0o600 },
+    );
+  } catch {
+    // Logging is best effort.
+  }
+}
+
 /** Turns one request payload into exactly one response. Never throws. */
-async function respondTo(payload: string, handler: CommandHandler): Promise<IpcResponse> {
+async function respondTo(
+  payload: string,
+  handler: CommandHandler,
+  errorLogPath: string | undefined,
+): Promise<IpcResponse> {
   let raw: unknown;
   try {
     raw = JSON.parse(payload);
@@ -99,8 +124,9 @@ async function respondTo(payload: string, handler: CommandHandler): Promise<IpcR
       ok: false,
       error: outcome.error,
     };
-  } catch {
-    // The cause may hold paths or SQL; the caller gets a fixed message.
+  } catch (error) {
+    // The cause may hold paths or SQL; the caller gets a fixed message, the operator a local log.
+    await logHandlerError(errorLogPath, error);
     return failure(
       envelope.data.requestId,
       "INTERNAL_ERROR",
@@ -167,7 +193,7 @@ export function createIpcServer(options: IpcServerOptions): IpcServer {
         for (let event = queue.shift(); event !== undefined; event = queue.shift()) {
           let response: IpcResponse;
           if (event.kind === "frame") {
-            response = await respondTo(event.payload, options.handler);
+            response = await respondTo(event.payload, options.handler, options.errorLogPath);
           } else if (event.kind === "oversized") {
             response = failure(
               null,

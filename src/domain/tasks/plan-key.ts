@@ -3,6 +3,15 @@ const MARKER_SOURCE = String.raw`<!--\s*omi-squad:plan-key=([A-Z][A-Z0-9]*-\d+)\
 /** The task key shape the project allocates: a prefix and three digits, e.g. `OMI-079`. */
 export const PLAN_KEY_PATTERN = /^[A-Z][A-Z0-9]{1,9}-\d{3}$/;
 
+/** Lowercase form of a Plan Key: the workspace id, and the id inside `task/<id>-<slug>` branches. */
+export const WORKSPACE_ID_PATTERN = /^[a-z][a-z0-9]{1,9}-\d{3,}$/;
+
+/** The Plan Key of a task branch (`task/bn-001-slug` gives `BN-001`); undefined for other branches. */
+export function planKeyOfBranch(branch: string): string | undefined {
+  const id = /^task\/([a-z][a-z0-9]{1,9}-\d+)-/.exec(branch)?.[1];
+  return id?.toUpperCase();
+}
+
 /** Hidden body marker that ties an Issue to its Project Plan Key. */
 export function planKeyMarker(key: string): string {
   return `<!-- omi-squad:plan-key=${key} -->`;

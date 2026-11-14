@@ -152,6 +152,11 @@ describe("AC-1 task branch and sibling worktree", () => {
     expect(existsSync(redirectedIndex)).toBe(false);
   });
 
+  it("creates a workspace and branch for a task of another Plan Key prefix", () => {
+    const task = value(workspace.createTask({ ...REQUEST, taskId: "bn-001", slug: "bn-001" }));
+    expect(task.branch).toBe("task/bn-001-bn-001");
+  });
+
   it("creates at develop even when the user's checkout is on another branch", () => {
     const develop = git(main, "rev-parse", "develop");
     git(main, "switch", "-qc", "user-work");
