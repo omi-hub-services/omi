@@ -12,7 +12,7 @@ import { planSetStatus } from "../../../../tools/coordinator/flow-plans.ts";
 
 const ready: IssueReadiness = {
   planKey: "OMI-059",
-  body: "## Acceptance criteria\n- [ ] Works\n\n<!-- omi-squad:plan-key=OMI-059 -->",
+  body: "## Acceptance criteria\n- [ ] Works\n## Implementation map\n- `src/application/map.ts`\n\n<!-- omi-squad:plan-key=OMI-059 -->",
   priority: "P1",
   workType: "Task",
   workflow: "feature",

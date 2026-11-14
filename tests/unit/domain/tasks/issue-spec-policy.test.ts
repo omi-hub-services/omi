@@ -8,6 +8,8 @@ const BODY = [
   "Scope.",
   "## Acceptance criteria",
   "- [ ] one",
+  "## Implementation map",
+  "- `src/application/map.ts`",
   "## Dependencies",
   "None.",
 ].join("\n");
@@ -26,6 +28,13 @@ describe("issueSpecBodyReasons", () => {
       expect(reasons(body)).toContain(`missing ## ${heading}`);
     },
   );
+
+  it.each([
+    ["missing", BODY.replace("## Implementation map\n- `src/application/map.ts`\n", "")],
+    ["without a valid path", BODY.replace("`src/application/map.ts`", "../escape.ts")],
+  ])("refuses a spec whose Implementation map is %s", (_name, body) => {
+    expect(reasons(body)).toEqual(["Implementation map needs at least one valid relative path"]);
+  });
 
   it("does not take a heading inside a code fence as a section", () => {
     const body = BODY.replace("## Dependencies\nNone.", "```\n## Dependencies\n```");

@@ -1,5 +1,6 @@
 import { frameworkCounterpartReasons, workTypeWorkflowReasons } from "./readiness-gate.js";
 import { acceptanceCriteria } from "./acceptance-criteria.js";
+import { implementationPaths } from "./implementation-map.js";
 import { planKeyMarkers } from "./plan-key.js";
 
 const SECTIONS = ["Mục tiêu", "Phạm vi", "Acceptance criteria", "Dependencies"] as const;
@@ -23,6 +24,8 @@ export function issueSpecBodyReasons(
   }
   if (acceptanceCriteria(body).length === 0)
     reasons.push("Acceptance criteria needs at least one top-level checkbox");
+  if (implementationPaths(body).length === 0)
+    reasons.push("Implementation map needs at least one valid relative path");
   if (workType === "Epic") reasons.push("creating Epics is outside this command's scope");
   const markers = planKeyMarkers(body);
   if (markers.length > 1 || (markers[0] !== undefined && !markers[0].startsWith(`${prefix}-`)))

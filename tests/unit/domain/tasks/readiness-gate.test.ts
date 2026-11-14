@@ -9,6 +9,8 @@ const BODY = [
   "Do it.",
   "## Acceptance criteria",
   "- [ ] first",
+  "## Implementation map",
+  "- `src/domain/tasks/readiness-gate.ts`",
   "## Dependencies",
   "None.",
   "<!-- omi-squad:plan-key=OMI-079 -->",
@@ -92,6 +94,26 @@ describe("taskReadinessReasons", () => {
     ]);
   });
 
+  it.each([
+    [
+      "is missing",
+      BODY.replace("## Implementation map\n- `src/domain/tasks/readiness-gate.ts`\n", ""),
+    ],
+    ["has no usable path", BODY.replace("`src/domain/tasks/readiness-gate.ts`", "prose only")],
+  ])("refuses a body whose Implementation map %s", (_name, body) => {
+    expect(taskReadinessReasons({ ...ready, body })).toEqual([
+      "Implementation map needs at least one valid relative path",
+    ]);
+  });
+
+  it("exempts an Epic from the Implementation map rule", () => {
+    const body = BODY.replace(
+      "## Implementation map\n- `src/domain/tasks/readiness-gate.ts`\n",
+      "",
+    );
+    expect(taskReadinessReasons({ ...ready, workType: "Epic", body })).toEqual([]);
+  });
+
   it("reports every failed condition at once", () => {
     expect(
       taskReadinessReasons({ ...ready, planKey: null, body: "", role: null, area: null }),
@@ -101,6 +123,7 @@ describe("taskReadinessReasons", () => {
       "missing Role",
       "missing Area",
       "Acceptance criteria needs at least one top-level checkbox",
+      "Implementation map needs at least one valid relative path",
     ]);
   });
 });

@@ -14,6 +14,8 @@ blockedBy: []
 Goal.
 ## Acceptance criteria
 - [ ] one
+## Implementation map
+- src/application/map.ts
 `;
 
 let dir: string;
@@ -32,7 +34,7 @@ describe("createIssueSpecFile", () => {
     expect(await createIssueSpecFile(file).read()).toEqual({
       kind: "ok",
       frontmatter: { title: "Validate a task", priority: "P1", epic: 1, blockedBy: [] },
-      body: "## Mục tiêu\nGoal.\n## Acceptance criteria\n- [ ] one\n",
+      body: "## Mục tiêu\nGoal.\n## Acceptance criteria\n- [ ] one\n## Implementation map\n- src/application/map.ts\n",
     });
   });
 

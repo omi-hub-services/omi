@@ -7,7 +7,7 @@ import {
 } from "../../../../tools/coordinator/promote.ts";
 
 const body = (key: string) =>
-  `## Acceptance criteria\n- [ ] one\n<!-- omi-squad:plan-key=${key} -->`;
+  `## Acceptance criteria\n- [ ] one\n## Implementation map\n- src/application/map.ts\n<!-- omi-squad:plan-key=${key} -->`;
 
 function input(over: Partial<PromoteInput> = {}): PromoteInput {
   return {

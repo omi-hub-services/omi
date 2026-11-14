@@ -79,7 +79,7 @@ describe("planSetStatus", () => {
         { itemId: "I", status: "In Progress" },
         {
           planKey: "OMI-050",
-          body: "## Acceptance criteria\n- [ ] works\n<!-- omi-squad:plan-key=OMI-050 -->",
+          body: "## Acceptance criteria\n- [ ] works\n## Implementation map\n- `src/application/map.ts`\n<!-- omi-squad:plan-key=OMI-050 -->",
           priority: "P1",
           workType: "Task",
           workflow: "feature",

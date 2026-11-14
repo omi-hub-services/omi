@@ -54,7 +54,7 @@ const READY_FIELDS = {
   Area: "tooling",
 };
 const readyBody = (key: string) =>
-  `## Acceptance criteria\n- [ ] one\n\n<!-- omi-squad:plan-key=${key} -->\n## Framework counterpart\nsrc/domain/tasks/readiness-gate.ts\n`;
+  `## Acceptance criteria\n- [ ] one\n## Implementation map\n- src/application/map.ts\n\n<!-- omi-squad:plan-key=${key} -->\n## Framework counterpart\nsrc/domain/tasks/readiness-gate.ts\n`;
 
 let github: FakeGithubBoard;
 

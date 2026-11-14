@@ -22,7 +22,7 @@ describe("dispatchStep readiness gate (task branch creation)", () => {
       ok: false,
       reason: "TASK_NOT_READY",
       detail:
-        "Plan Key must match exactly one body marker; missing Role; Acceptance criteria needs at least one top-level checkbox",
+        "Plan Key must match exactly one body marker; missing Role; Acceptance criteria needs at least one top-level checkbox; Implementation map needs at least one valid relative path",
     });
     expect(create).not.toHaveBeenCalled();
     expect(r.executor.started).toEqual([]);

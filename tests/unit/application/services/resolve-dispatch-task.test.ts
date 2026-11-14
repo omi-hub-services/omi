@@ -99,6 +99,12 @@ describe("PO-approved dispatch sources", () => {
       "BUSINESS_APPROVAL_REQUIRED",
     );
   });
+  it("accepts a project-prefix Plan Key such as BN-001 with a valid Implementation map", () => {
+    const bnBody = body.replace("OMI-070", "BN-001");
+    expect(resolveDispatchTask({ ...input, issue: { ...issue, body: bnBody } })).toMatchObject({
+      workspace: { taskId: "bn-001", slug: "bn-001" },
+    });
+  });
   it("refuses missing/ambiguous Plan Keys and an empty Implementation map", () => {
     expect(() =>
       resolveDispatchTask({

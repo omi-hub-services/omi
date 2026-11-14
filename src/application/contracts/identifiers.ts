@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RELATIVE_PATH_PATTERN } from "../../domain/tasks/implementation-map.js";
 
 /** Run, attempt and similar runtime identifiers. */
 export const identifierSchema = z
@@ -28,7 +29,7 @@ export const relativePathSchema = z
   .min(1)
   .max(512)
   .regex(
-    /^(?!\/)(?![A-Za-z]:)(?![\s\S]*(?:^|\/)\.\.(?:\/|$))[^\\\r\n\u2028\u2029]+$/u,
+    RELATIVE_PATH_PATTERN,
     "must be a relative path without '..' segments, drive prefix, backslashes or line breaks",
   )
   .refine(hasNoNul, "must not contain a NUL character");

@@ -84,6 +84,8 @@ const ISSUE_BODY = [
   "## Acceptance criteria",
   "- [ ] Bridge calls the CLI.",
   "- [ ] Fixture workflow reaches Done.",
+  "## Implementation map",
+  "- `src/application/map.ts`",
 ].join("\n");
 const REVIEW_PASS =
   "**VERDICT:** PASS\n\nAC-1: met — bridge e2e\nAC-2: met — slice e2e, independent reviewer run";
