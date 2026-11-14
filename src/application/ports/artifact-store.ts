@@ -17,6 +17,12 @@ export class ArtifactError extends Error {
 /** Takes in files that a worker without a shell wrote itself, so the runtime can hash them. */
 export interface ArtifactAdopter {
   /**
+   * Creates (if needed) the directory for a store-relative path and returns its absolute location.
+   * This is the one place outside the task worktree a worker may write, and `adopt` reads the same
+   * files back. Refuses a path that is not plain and relative, and any symlink on the way.
+   */
+  directory(path: string): string;
+  /**
    * Registers a regular file a worker already wrote under the root and returns its reference with
    * the hash the runtime computed. Refuses a missing file (NOT_FOUND), a symlink or non-file
    * (INVALID_PATH), credential-looking content, and a path already registered with other bytes

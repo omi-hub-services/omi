@@ -177,6 +177,11 @@ export class FakeUnitOfWork implements StateUnitOfWork {
 
 export class FakeArtifacts implements ArtifactStore {
   readonly files = new Map<string, Uint8Array>();
+  /** Absolute location of the fake store root. */
+  base = "/artifact-store";
+  directory(path: string): string {
+    return `${this.base}/${path}`;
+  }
   write(input: ArtifactWrite): ArtifactReference {
     if (this.files.has(input.path)) throw new ArtifactError("ALREADY_EXISTS");
     this.files.set(input.path, input.bytes);

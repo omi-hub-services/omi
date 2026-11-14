@@ -26,6 +26,10 @@ export function buildCodexInvocationArgs(request: ExecutionRequest, outputPath: 
     request.workspace,
     "-s",
     request.access,
+    // Extra writable root: the attempt's artifact directory, outside the worktree (OMI-131).
+    ...(request.access === "workspace-write" && request.artifactDir !== undefined
+      ? ["--add-dir", request.artifactDir]
+      : []),
     "-o",
     outputPath,
     "-",

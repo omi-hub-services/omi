@@ -108,7 +108,8 @@ export class CodexExecutor implements AgentExecutor {
     if (
       !parsed.success ||
       !isDirectory(parsed.data.workspace) ||
-      !isDirectory(parsed.data.profileHome)
+      !isDirectory(parsed.data.profileHome) ||
+      (parsed.data.artifactDir !== undefined && !isDirectory(parsed.data.artifactDir))
     ) {
       throw new AgentExecutorError("INVALID_REQUEST");
     }

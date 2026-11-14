@@ -208,6 +208,7 @@ function buildPrompt(
   packet: ContextPacket,
   packetRef: ArtifactReference,
   root: string,
+  artifactDir: string,
   skills: readonly InlinedSkill[],
   rules: readonly (RuleContent & { id: string; version: string })[],
   checkLogs: readonly string[],
@@ -235,6 +236,7 @@ function buildPrompt(
         : workerPromptAssets.developerChecks,
     ].join("\n"),
     report_contract: workerPromptAssets.report
+      .replace("{{artifact_dir}}", artifactDir)
       .replace("{{artifact_root}}", root)
       .replace("{{expected_schema}}", packet.expectedOutputSchema)
       .replace("{{attempt_id}}", packet.attemptId)
@@ -444,6 +446,20 @@ export async function dispatchStep(
       deps.attempts.reservedNumber?.(attemptId) ?? (previous?.attemptNumber ?? 0) + 1;
 
     const artifactRoot = attemptArtifactRoot(attemptId);
+    // The worker's cwd is the worktree, so a relative root would land there (OMI-131): it gets the
+    // store's absolute directory instead, and never one inside the worktree.
+    let artifactDir: string;
+    try {
+      artifactDir = deps.artifacts.directory(artifactRoot);
+    } catch (error) {
+      if (!(error instanceof ArtifactError)) throw error;
+      release();
+      return { ok: false, reason: "CONTEXT_REJECTED", detail: `ARTIFACT_DIR_${error.code}` };
+    }
+    if (artifactDir === created.value.path || artifactDir.startsWith(`${created.value.path}/`)) {
+      release();
+      return { ok: false, reason: "CONTEXT_REJECTED", detail: "ARTIFACT_DIR_IN_WORKSPACE" };
+    }
     let reviewDelta: ContextPacket["reviewDelta"];
     const qualityWorker = command.quality?.step === "verify" || command.quality?.step === "review";
     if (qualityWorker && (command.quality?.round ?? 1) > 1) {
@@ -675,10 +691,12 @@ export async function dispatchStep(
         attemptId,
         workspace: created.value.path,
         profileHome: command.execution.profileHome,
+        artifactDir,
         prompt: buildPrompt(
           packet,
           contextPacket,
           artifactRoot,
+          artifactDir,
           inlined.contents,
           rules.contents,
           checkLogs,

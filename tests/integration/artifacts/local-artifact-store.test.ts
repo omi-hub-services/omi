@@ -608,6 +608,36 @@ describe("adopt (worker-written files)", () => {
     expect(new TextDecoder().decode(store.read(reference))).toBe("findings");
   });
 
+  it("adopts what a worker wrote into the absolute directory the store handed out (OMI-131)", () => {
+    const dir = store.directory("attempts/attempt-9");
+    expect(dir).toBe(join(fs.realpathSync(root), "attempts", "attempt-9"));
+    expect(fs.statSync(dir).isDirectory()).toBe(true);
+    fs.writeFileSync(join(dir, "analysis.md"), "findings");
+    const reference = adopt("attempts/attempt-9/analysis.md");
+    expect(reference).toEqual({
+      path: "attempts/attempt-9/analysis.md",
+      sha256: digest("findings"),
+    });
+  });
+
+  it("does not adopt a file the worker wrote relative to its own cwd instead (the OMI-131 defect)", () => {
+    store.directory("attempts/attempt-9");
+    const worktree = join(directory, "worktree");
+    fs.mkdirSync(join(worktree, "attempts", "attempt-9"), { recursive: true });
+    fs.writeFileSync(join(worktree, "attempts", "attempt-9", "analysis.md"), "findings");
+    expect(() => adopt("attempts/attempt-9/analysis.md")).toThrow(
+      expect.objectContaining({ code: "NOT_FOUND" }),
+    );
+  });
+
+  it("refuses an artifact directory that is not a plain path under the root", () => {
+    expect(() => store.directory("../escape")).toThrow(ArtifactError);
+    expect(() => store.directory("/abs")).toThrow(ArtifactError);
+    fs.mkdirSync(join(directory, "elsewhere"));
+    fs.symlinkSync(join(directory, "elsewhere"), join(root, "linked-dir"));
+    expect(() => store.directory("linked-dir/attempt")).toThrow(ArtifactError);
+  });
+
   it("refuses a missing file and a symlink", () => {
     expect(() => adopt("nope.md")).toThrow(expect.objectContaining({ code: "NOT_FOUND" }));
     fs.writeFileSync(join(directory, "outside.txt"), "secret");
