@@ -660,6 +660,38 @@ describe("OMI-141 refresh: merge origin/develop into the task worktree", () => {
     ]);
   });
 
+  it("keeps the current local develop as the base when origin/develop is stale", () => {
+    writeFileSync(join(main, "local.txt"), "local\n");
+    git(main, "add", "local.txt");
+    git(main, "commit", "-qm", "local develop ahead of the stale origin ref");
+    const localDevelop = git(main, "rev-parse", "develop");
+    const task = createTask();
+    commitTask(task);
+    expect(value(workspace.mergeBase?.(task.path) ?? missing<string>())).toBe(localDevelop);
+    expect(value(workspace.changedPaths?.(task.path) ?? missing<readonly string[]>())).toEqual([
+      "task.txt",
+    ]);
+  });
+
+  it("refuses a diverged local and origin develop instead of guessing", () => {
+    const task = createTask();
+    commitTask(task);
+    writeFileSync(join(main, "local.txt"), "local\n");
+    git(main, "add", "local.txt");
+    git(main, "commit", "-qm", "local only");
+    const other = join(directory, "other clone");
+    git(directory, "clone", "-q", remote, other);
+    git(other, "config", "user.name", "Other");
+    git(other, "config", "user.email", "other@example.invalid");
+    writeFileSync(join(other, "other.txt"), "other\n");
+    git(other, "add", "other.txt");
+    git(other, "commit", "-qm", "origin only");
+    git(other, "push", "-q", "origin", "develop");
+    value(workspace.developHead?.(task.path) ?? missing<string>());
+    failure(workspace.mergeBase?.(task.path) ?? missing(), "INTEGRATION_REF_DIVERGED");
+    failure(workspace.changedPaths?.(task.path) ?? missing(), "INTEGRATION_REF_DIVERGED");
+  });
+
   it("aborts a conflicting merge and leaves the worktree clean at the old head", () => {
     const task = createTask();
     writeFileSync(join(task.path, "tracked.txt"), "task edit\n");

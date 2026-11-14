@@ -53,6 +53,7 @@ export type GitWorkspaceErrorCode =
   | "UNMERGED_WORK"
   | "UNPUSHED_WORK"
   | "MERGE_CONFLICT"
+  | "INTEGRATION_REF_DIVERGED"
   | "GIT_FAILED"
   | "GIT_TIMEOUT"
   | "IO_FAILED";

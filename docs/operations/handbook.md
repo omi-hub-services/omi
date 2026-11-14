@@ -346,7 +346,9 @@ a configured project (§1).
    `RUN_NOT_FINISHED`, `RUN_NOT_RUNNING`, `REVIEW_REVISION_MISSING`, `DIRTY_WORKTREE`,
    `WORKSPACE_MISMATCH`, `DEVELOP_UNAVAILABLE`. A refresh is not a failure: it does not count
    toward the rework limit. Pushing the branch is the Coordinator's job. The review base is the
-   fetched `origin/develop` head (what `deliver` pins), so local `develop` need not be updated.
+   newer of local `develop` and the fetched `origin/develop` by ancestry (what `deliver` pins after
+   a refresh), so local `develop` need not be updated. If the two diverged, recording the result
+   refuses `INTEGRATION_REF_DIVERGED`; reconcile `develop` first.
    Run: `refresh` → push →
    `dispatch` verify (`wait`) → `dispatch` review on the new head (delta review from the previous
    verdict) → `review-comment` → `deliver`. `prepare-pr` accepts the already mapped PR again; it

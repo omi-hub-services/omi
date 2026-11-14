@@ -164,12 +164,21 @@ export function createCliGitWorkspace(
     );
   }
 
-  /** The merge gate pins the remote develop head, so review bases use the fetched origin ref;
-   * local develop is only a fallback for repositories without that remote ref. */
+  /** The newer of local and fetched origin develop by ancestry, never by preference: a stale
+   * origin ref (never fetched) must not hide a current local develop, nor the reverse. Diverged
+   * refs are refused because the merge gate's base cannot be inferred. */
   function integrationRef(): string {
-    return refExists("refs/remotes/origin/develop")
-      ? "refs/remotes/origin/develop"
-      : "refs/heads/develop";
+    const local = "refs/heads/develop";
+    const origin = "refs/remotes/origin/develop";
+    if (!refExists(origin)) return local;
+    if (!refExists(local)) return origin;
+    const contains = (ancestor: string, descendant: string) =>
+      gitCommand(main, ["merge-base", "--is-ancestor", ancestor, descendant], {
+        allowedCodes: [0, 1],
+      }).code === 0;
+    if (contains(origin, local)) return local;
+    if (contains(local, origin)) return origin;
+    throw new GitWorkspaceError("INTEGRATION_REF_DIVERGED");
   }
 
   checkRoot();
