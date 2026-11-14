@@ -95,6 +95,12 @@ export async function retryStep(
     const workflow =
       plan?.qualityPlan?.workflow ??
       (plan === undefined ? undefined : dispatch.workflows.byHash(plan.templateHash)?.workflow);
+    if (plan !== undefined && workflow === undefined)
+      return {
+        ok: false,
+        reason: "TEMPLATE_UNAVAILABLE",
+        detail: `template_hash=${plan.templateHash}`,
+      };
     const definition = workflow?.steps.find((entry) => entry.id === stepId);
     if (failover === undefined || plan === undefined || definition === undefined)
       return { ok: false, reason: "NOT_PLANNABLE" };

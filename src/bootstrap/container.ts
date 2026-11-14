@@ -239,6 +239,7 @@ export function createOverviewCommands(
           readdirSync(directory, { withFileTypes: true })
             .filter((entry) => entry.isFile() && entry.name.endsWith(".yaml"))
             .map((entry) => entry.name.slice(0, -5)),
+          { localDir: join(input.projectDir, ".omi-squad", "local"), persist: false },
         );
       } catch (error) {
         deps.database.close();

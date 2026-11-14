@@ -6,7 +6,9 @@ export type DispatchPlanningRefusal =
   | "PLAN_KEY_REQUIRED"
   | "TASK_NOT_FOUND"
   /** Every profile is below the quota threshold; `detail` is `earliest_reset=<ISO or unknown>`. */
-  | "QUOTA_EXHAUSTED";
+  | "QUOTA_EXHAUSTED"
+  /** No installed or archived workflow template has the hash the run pinned; `detail` is `template_hash=<hash>`. */
+  | "TEMPLATE_UNAVAILABLE";
 
 export class DispatchPlanningError extends Error {
   readonly reason: DispatchPlanningRefusal;

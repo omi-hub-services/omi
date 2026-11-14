@@ -103,7 +103,10 @@ export async function loadRuntimeConfig(squadDir: string) {
   return {
     project,
     models,
-    workflows: await loadWorkflowCatalog(join(squadDir, "workflows"), ids),
+    workflows: await loadWorkflowCatalog(join(squadDir, "workflows"), ids, {
+      localDir: join(squadDir, "local"),
+      persist: true,
+    }),
     catalog: loadResolutionCatalog(squadDir),
   };
 }
