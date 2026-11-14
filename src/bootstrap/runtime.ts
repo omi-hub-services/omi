@@ -31,6 +31,7 @@ import {
   type RuntimeCompositionOptions,
   createRuntimeIpcServer,
   defaultSocketPath,
+  ipcErrorLogPath,
   readPackageVersion,
 } from "./container.js";
 
@@ -98,6 +99,7 @@ export async function runSessionRuntime(
         });
         server = createRuntimeIpcServer({
           socketPath: defaultSocketPath(projectDir),
+          errorLogPath: ipcErrorLogPath(projectDir),
           selections: createProfileStores(database).selections,
           identity: { runtimeVersion: readPackageVersion(), startedAt: session.lease.acquiredAt },
           runs: composition.commands,

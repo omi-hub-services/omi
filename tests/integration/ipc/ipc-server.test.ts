@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { connect, createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -258,6 +258,33 @@ describe("handler failures", () => {
       expect(JSON.stringify(outcome)).not.toContain("secrets");
     } finally {
       await throwing.stop();
+    }
+  });
+
+  it("logs the cause locally while the caller still gets the fixed message", async () => {
+    const errorLogPath = join(dir, "logs", "ipc-errors.log");
+    const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    const logging = createIpcServer({
+      socketPath: join(dir, "logging", "runtime.sock"),
+      errorLogPath,
+      handler: () => Promise.reject(new Error(`boom ${token}`)),
+    });
+    await logging.start();
+    try {
+      const outcome = await sendCommand({
+        socketPath: join(dir, "logging", "runtime.sock"),
+        command: status,
+      });
+      expect(outcome).toMatchObject({
+        ok: false,
+        error: { code: "INTERNAL_ERROR", message: "the runtime failed to handle the command" },
+      });
+      expect(JSON.stringify(outcome)).not.toContain("boom");
+      const log = await readFile(errorLogPath, "utf8");
+      expect(log).toContain("boom");
+      expect(log).not.toContain(token);
+    } finally {
+      await logging.stop();
     }
   });
 

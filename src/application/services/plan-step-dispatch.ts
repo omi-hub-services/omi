@@ -5,6 +5,7 @@ import { contextPacketSchema } from "../contracts/context.js";
 import { taskComplexitySchema } from "../contracts/task-complexity.js";
 import type { DispatchPlanner, DispatchPlanRequest } from "../ports/dispatch-planner.js";
 import type { ExecutorSelectionStore } from "../ports/executor-selection-store.js";
+import { WORKSPACE_ID_PATTERN } from "../../domain/tasks/plan-key.js";
 import { earliestQuotaReset, type QuotaVerdict } from "../../domain/profiles/quota-policy.js";
 import type { ProfileRegistry } from "../ports/profile-registry.js";
 import type { QuotaReader } from "../ports/quota-reader.js";
@@ -27,7 +28,7 @@ export const dispatchTaskSchema = z.strictObject({
   }),
   complexity: taskComplexitySchema,
   workspace: z.strictObject({
-    taskId: z.string().regex(/^omi-\d{3,}$/),
+    taskId: z.string().regex(WORKSPACE_ID_PATTERN),
     slug: z
       .string()
       .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)

@@ -6,6 +6,7 @@ import type { NativeApprovalInputs } from "../approvals/native-approval-policy.j
 import { isApprovalActorAllowed } from "../approvals/approval-policy.js";
 import { decide } from "../shared/decision.js";
 import type { Decision } from "../shared/decision.js";
+import { planKeyOfBranch } from "../tasks/plan-key.js";
 import { mergeableRefusals, requiredCheckRefusals } from "./merge-policy.js";
 import type { CheckObservation, MergeableState, MergeRefusal } from "./merge-policy.js";
 
@@ -36,7 +37,6 @@ export interface ReleaseTask {
   readonly issueNumber: number | undefined;
 }
 
-const TASK_BRANCH = /^task\/(omi-\d+)-/;
 const ISSUE_LINE = /^Issue: #(\d+)\s*$/m;
 
 /**
@@ -55,12 +55,12 @@ export function releaseTasks(
     .filter((pull) => Date.parse(pull.mergedAt) > since && Date.parse(pull.mergedAt) <= until)
     .sort((a, b) => Date.parse(a.mergedAt) - Date.parse(b.mergedAt) || a.number - b.number)
     .map((pull) => {
-      const key = TASK_BRANCH.exec(pull.head)?.[1];
+      const key = planKeyOfBranch(pull.head);
       const issue = ISSUE_LINE.exec(pull.body)?.[1];
       return {
         pullNumber: pull.number,
         title: pull.title,
-        taskKey: key === undefined ? undefined : key.toUpperCase(),
+        taskKey: key,
         issueNumber: issue === undefined ? undefined : Number(issue),
       };
     });

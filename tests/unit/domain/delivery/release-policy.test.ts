@@ -6,7 +6,7 @@ import {
   releaseTasks,
 } from "../../../../src/domain/delivery/release-policy.ts";
 
-const pull = (number: number, mergedAt: string, head = `task/omi-0${String(number)}-x`) => ({
+const pull = (number: number, mergedAt: string, head = `task/omi-00${String(number)}-x`) => ({
   number,
   title: `Task ${String(number)}`,
   body: `Issue: #${String(number + 10)}\n`,
@@ -24,7 +24,16 @@ describe("releaseTasks", () => {
       ],
       "2026-02-01T00:00:00Z",
     );
-    expect(tasks).toEqual([{ pullNumber: 3, title: "Task 3", taskKey: "OMI-03", issueNumber: 13 }]);
+    expect(tasks).toEqual([
+      { pullNumber: 3, title: "Task 3", taskKey: "OMI-003", issueNumber: 13 },
+    ]);
+  });
+  it("recognises a task branch of another Plan Key prefix", () => {
+    const [task] = releaseTasks(
+      [pull(1, "2026-01-01T00:00:00Z", "task/bn-001-first-slice")],
+      undefined,
+    );
+    expect(task?.taskKey).toBe("BN-001");
   });
   it("takes everything when there was no earlier release", () => {
     expect(
