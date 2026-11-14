@@ -186,6 +186,34 @@ describe("resumeRun", () => {
     expect(state.run.status).toBe("paused");
   });
 
+  it("records a rebaseline audit event and dispatches a fresh attempt when the gate rebaselined", async () => {
+    const { deps, state } = recoveryRig();
+    const record = vi.fn();
+    const rebaseline = { from: "a".repeat(64), to: "b".repeat(64), approvalIds: ["approval-new"] };
+    const result = await resumeRun(
+      {
+        ...deps,
+        session: { ...deps.session, record },
+        validateGates: () => Promise.resolve({ ok: true as const, rebaseline }),
+      },
+      { runId: "run-1" },
+    );
+    expect(result).toMatchObject({ ok: true, attemptId: "next-attempt" });
+    expect(record).toHaveBeenCalledWith("run.rebaselined", { runId: "run-1", ...rebaseline });
+    expect(state.dispatches).toEqual(["step-1"]);
+  });
+
+  it("records no rebaseline event when the gate refuses", async () => {
+    const { deps, state } = recoveryRig();
+    const record = vi.fn();
+    state.gates = false;
+    expect(
+      await resumeRun({ ...deps, session: { ...deps.session, record } }, { runId: "run-1" }),
+    ).toMatchObject({ ok: false, reason: "GATE_INVALID" });
+    expect(record).not.toHaveBeenCalled();
+    expect(state.dispatches).toEqual([]);
+  });
+
   it("checks the project lock before any recovery work", async () => {
     const { deps, state } = recoveryRig();
     state.lock = false;

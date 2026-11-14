@@ -31,7 +31,17 @@ export interface WorkerRecovery {
 export type RecoveryGate = (
   checkpoint: CheckpointManifest,
   steps: readonly StepRunRecord[],
-) => Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: string }>;
+) => Promise<
+  | { readonly ok: true; readonly rebaseline?: Rebaseline }
+  | { readonly ok: false; readonly reason: string }
+>;
+
+/** The business baseline moved since the checkpoint, and a current approval covers the new one. */
+export interface Rebaseline {
+  readonly from: string;
+  readonly to: string;
+  readonly approvalIds: readonly string[];
+}
 
 /** Bind to dispatchStep with the current authorized execution plan. A retry allocates a new
  * attempt; do not invoke the old executor handle or derive authorization from nextAction text.

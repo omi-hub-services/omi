@@ -232,6 +232,8 @@ export async function resumeRun(
   if (!locked()) return { ok: false, reason: "PROJECT_LOCK_LOST", checkpointProblems, github };
   if (!gates.ok)
     return { ok: false, reason: "GATE_INVALID", detail: gates.reason, checkpointProblems, github };
+  if (gates.rebaseline !== undefined)
+    deps.session.record("run.rebaselined", { runId: run.id, ...gates.rebaseline });
   // Only unfinished, recoverable steps change. Accepted results are authoritative even when the
   // latest checkpoint predates recordStepResult's commit (crash at its after-output boundary).
   for (const step of deps.runs.listSteps(run.id)) {
