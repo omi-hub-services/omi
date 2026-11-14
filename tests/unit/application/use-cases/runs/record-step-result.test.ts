@@ -226,6 +226,31 @@ describe("recordStepResult", () => {
       expect(payload.result.revision).toEqual({ headSha: HEAD, baseSha: BASE });
     });
 
+    it("accepts a revision claim with only one field and records the runtime's own revision", async () => {
+      for (const revision of [{ headSha: HEAD }, { baseSha: BASE }]) {
+        const r = rig();
+        const { attempt, handle } = await started(r);
+        const claim = { ...goodResult(r, attempt.id), revision };
+        expect(await record(r, attempt.id, handle, claim)).toMatchObject({
+          stepStatus: "succeeded",
+        });
+        const payload = JSON.parse(r.unitOfWork.commits.at(-1)?.event.payload ?? "{}") as {
+          result: { revision: { headSha: string; baseSha: string } };
+        };
+        expect(payload.result.revision).toEqual({ headSha: HEAD, baseSha: BASE });
+      }
+    });
+
+    it("still refuses a head-only claim that is well-formed but not the runtime's head", async () => {
+      const r = rig();
+      const { attempt, handle } = await started(r);
+      const claim = { ...goodResult(r, attempt.id), revision: { headSha: "d".repeat(40) } };
+      expect(await record(r, attempt.id, handle, claim)).toMatchObject({
+        ok: false,
+        reason: "STALE_REVISION",
+      });
+    });
+
     it("fails closed instead of trusting the worker's base when the merge-base is unavailable", async () => {
       const r = rig();
       const { attempt, handle } = await started(r);

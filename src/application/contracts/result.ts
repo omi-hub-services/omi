@@ -28,7 +28,10 @@ export const stepResultSchema = z
       z.strictObject({ path: relativePathSchema, sha256: sha256Schema.optional() }),
     ),
     revision: z
-      .strictObject({ headSha: z.string().max(200), baseSha: z.string().max(200) })
+      .strictObject({
+        headSha: z.string().max(200).optional(),
+        baseSha: z.string().max(200).optional(),
+      })
       .optional(),
     checks: z.array(z.strictObject({ id: slugSchema, evidenceRef: relativePathSchema })),
     /** One entry per skill the attempt was given: how the worker applied it, with evidence. */

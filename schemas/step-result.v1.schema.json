@@ -66,10 +66,6 @@
           "maxLength": 200
         }
       },
-      "required": [
-        "headSha",
-        "baseSha"
-      ],
       "additionalProperties": false
     },
     "checks": {

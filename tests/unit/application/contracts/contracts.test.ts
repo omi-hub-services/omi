@@ -352,6 +352,17 @@ describe("other invalid input is rejected", () => {
       stepResultSchema.safeParse({ ...validResult, revision: { headSha: "abc", baseSha: GIT_SHA } })
         .success,
     ).toBe(true);
+    // The prompt's report_format marks each revision field optional (OMI-136), so each must be.
+    for (const revision of [{ headSha: GIT_SHA }, { baseSha: GIT_SHA }, {}]) {
+      expect(
+        stepResultSchema.safeParse({ ...validResult, revision }).success,
+        JSON.stringify(revision),
+      ).toBe(true);
+    }
+    expect(
+      stepResultSchema.safeParse({ ...validResult, revision: { headSha: GIT_SHA, extra: 1 } })
+        .success,
+    ).toBe(false);
     expect(
       stepResultSchema.safeParse({
         ...validResult,
