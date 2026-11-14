@@ -9,6 +9,8 @@ export const STAGE_PATHS = [
   "schemas",
   "tools",
   "AGENTS.md",
+  "CHANGELOG.md",
+  "README.md",
   "package.json",
   "package-lock.json",
 ] as const;
@@ -18,7 +20,7 @@ export type CommitJudgement =
 
 const allowed = (path: string) =>
   STAGE_PATHS.some((dir) => path.startsWith(`${dir}/`)) ||
-  ["AGENTS.md", "package.json", "package-lock.json"].includes(path);
+  ["AGENTS.md", "CHANGELOG.md", "README.md", "package.json", "package-lock.json"].includes(path);
 
 /** `current` is the checked-out branch, `staged` the index after staging the allowed paths. */
 export function judgeCommit(

@@ -386,7 +386,13 @@ describe("commitWorkerCommand", () => {
         mkdirSync(join(cwd, path));
         writeFileSync(join(cwd, path, "output.txt"), "before\n");
       }
-      for (const path of ["AGENTS.md", "package.json", "package-lock.json"])
+      for (const path of [
+        "AGENTS.md",
+        "CHANGELOG.md",
+        "README.md",
+        "package.json",
+        "package-lock.json",
+      ])
         writeFileSync(join(cwd, path), "{}\n");
       gitLocal("add", ".");
       gitLocal("commit", "-m", "seed");
@@ -430,7 +436,7 @@ describe("commitWorkerCommand", () => {
     expect(await commitWorkerCommand(f.ctx, input)).toBe(0);
     const add = f.seen.find((c) => git(c).startsWith("add"));
     expect(git(add as Command)).toBe(
-      "add -A -- src tests docs templates schemas tools AGENTS.md package.json package-lock.json",
+      "add -A -- src tests docs templates schemas tools AGENTS.md CHANGELOG.md README.md package.json package-lock.json",
     );
     const commit = f.seen.find((c) => /\bcommit -F -$/.test(git(c)));
     expect(git(commit as Command)).toBe("commit -F -");
