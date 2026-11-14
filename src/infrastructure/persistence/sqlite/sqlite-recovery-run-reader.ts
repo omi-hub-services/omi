@@ -24,8 +24,12 @@ export function createSqliteRecoveryRunReader(
   db: StateDatabase,
 ): RecoveryRunReader & ActiveRunReader {
   const run = db.prepare("SELECT id, status, version FROM workflow_runs WHERE id = ?");
+  // Only the newest iteration of each step is current: a refresh reopens finished steps.
   const steps = db.prepare(
-    "SELECT id, run_id AS runId, step_key AS stepId, status, version FROM step_runs WHERE run_id = ? ORDER BY rowid",
+    `SELECT id, run_id AS runId, step_key AS stepId, status, version FROM step_runs s
+      WHERE run_id = ? AND iteration = (SELECT MAX(iteration) FROM step_runs
+        WHERE run_id = s.run_id AND step_key = s.step_key)
+      ORDER BY (SELECT MIN(rowid) FROM step_runs WHERE run_id = s.run_id AND step_key = s.step_key)`,
   );
   const active = db.prepare(
     "SELECT id, status, version FROM workflow_runs WHERE closed_at IS NULL ORDER BY rowid",

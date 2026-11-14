@@ -99,13 +99,19 @@ export function createSqliteAttemptStore(
     qualityHistory(stepRunId) {
       const rows = db
         .prepare(
-          "SELECT kind, payload FROM events WHERE subject=? AND kind IN ('step.failed', 'step.succeeded') ORDER BY sequence",
+          // Every iteration of the step: a refresh reopens it, and its earlier verdict is the delta base.
+          `SELECT kind, subject, payload FROM events WHERE kind IN ('step.failed', 'step.succeeded')
+             AND subject IN (SELECT id FROM step_runs WHERE (run_id, step_key) =
+               (SELECT run_id, step_key FROM step_runs WHERE id=?))
+           ORDER BY sequence`,
         )
         .all(identifierSchema.parse(stepRunId));
       let round = 1;
       let previousVerdict;
       for (const row of rows) {
-        const event = z.object({ kind: z.string(), payload: z.string() }).parse(row);
+        const event = z
+          .object({ kind: z.string(), subject: z.string(), payload: z.string() })
+          .parse(row);
         const raw: unknown = JSON.parse(event.payload);
         // Start failures predate result collection and carry no execution outcome or verdict.
         if (
@@ -122,6 +128,8 @@ export function createSqliteAttemptStore(
           .object({ outcome: z.string(), result: stepResultSchema.optional() })
           .parse(raw);
         if (event.kind === "step.failed" && payload.outcome === "succeeded") round += 1;
+        // An earlier iteration that finished (a refresh reopened the step) is a completed round.
+        if (event.kind === "step.succeeded" && event.subject !== stepRunId) round += 1;
         if (payload.result?.revision !== undefined) previousVerdict = payload.result;
       }
       return { round, ...(previousVerdict === undefined ? {} : { previousVerdict }) };

@@ -213,6 +213,40 @@ export function createCliGitWorkspace(
         return diff;
       });
     },
+    developHead(path) {
+      return attempt(() => {
+        const state = inspect(path);
+        gitCommand(state.path, ["fetch", "--quiet", "origin", "develop"]);
+        return gitObjectId(
+          gitCommand(state.path, ["rev-parse", "refs/remotes/origin/develop"]).stdout,
+        );
+      });
+    },
+    mergeDevelop(path) {
+      return attempt(() => {
+        const state = inspect(path);
+        if (state.dirty) throw new GitWorkspaceError("DIRTY_WORKTREE");
+        gitCommand(state.path, ["fetch", "--quiet", "origin", "develop"]);
+        // Any failed merge (conflict or e.g. missing identity) must not leave a half-done merge.
+        const abort = () => attempt(() => gitCommand(state.path, ["merge", "--abort"]));
+        let code: number;
+        try {
+          code = gitCommand(
+            state.path,
+            ["merge", "--no-edit", "--no-verify", "refs/remotes/origin/develop"],
+            { allowedCodes: [0, 1] },
+          ).code;
+        } catch (error) {
+          abort();
+          throw error;
+        }
+        if (code !== 0) {
+          abort();
+          throw new GitWorkspaceError("MERGE_CONFLICT");
+        }
+        return { headSha: inspect(path).headSha };
+      });
+    },
     createTask(request) {
       return attempt(() =>
         reserved(request, (workspace) => {

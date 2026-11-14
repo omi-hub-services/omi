@@ -181,6 +181,29 @@ it("counts quality failures separately from failovers and supplies the previous 
   expect(store().qualityHistory?.("step-1")).toEqual({ round: 2, previousVerdict: verdict });
 });
 
+it("carries the previous verdict into a refresh iteration and counts it as a new round", () => {
+  const verdict = {
+    schemaVersion: 1,
+    runId: "run-1",
+    stepId: "implement",
+    attemptId: "old",
+    status: "succeeded",
+    summary: "ok",
+    artifacts: [],
+    checks: [],
+    skillsApplied: [],
+    findings: [],
+    revision: { headSha: "a".repeat(40), baseSha: "b".repeat(40) },
+  };
+  db.prepare(
+    "INSERT INTO events (event_id, kind, subject, run_id, correlation_id, payload, occurred_at) VALUES ('done', 'step.succeeded', 'step-1', 'run-1', 'old', ?, ?)",
+  ).run(JSON.stringify({ outcome: "succeeded", result: verdict }), at);
+  db.prepare(
+    "INSERT INTO step_runs (id, run_id, step_key, iteration, status, created_at, updated_at) VALUES ('step-1b', 'run-1', 'implement', 2, 'ready', ?, ?)",
+  ).run(at, at);
+  expect(store().qualityHistory?.("step-1b")).toEqual({ round: 2, previousVerdict: verdict });
+});
+
 it("excludes actual executor start-failure payloads from quality history", async () => {
   const r = rig();
   r.executor.failStart = true;

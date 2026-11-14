@@ -600,3 +600,62 @@ describe("AC-4 lossless cleanup", () => {
     expect(readFileSync(join(main, "tracked.txt"), "utf8")).toBe("PO edits\n");
   });
 });
+
+describe("OMI-141 refresh: merge origin/develop into the task worktree", () => {
+  function moveDevelop(file: string, content: string): string {
+    writeFileSync(join(main, file), content);
+    git(main, "add", file);
+    git(main, "commit", "-qm", `develop ${file}`);
+    git(main, "push", "-q", "origin", "develop");
+    return git(main, "rev-parse", "HEAD");
+  }
+  const missing = <T>(): GitWorkspaceResult<T> => {
+    throw new Error("port method missing");
+  };
+
+  it("reports the fetched origin/develop head without touching the worktree", () => {
+    const task = createTask();
+    const head = commitTask(task);
+    const developHead = moveDevelop("other.txt", "other\n");
+    expect(value(workspace.developHead?.(task.path) ?? missing())).toBe(developHead);
+    expect(git(task.path, "rev-parse", "HEAD")).toBe(head);
+  });
+
+  it("merges develop without hooks and without pushing", () => {
+    const task = createTask();
+    commitTask(task);
+    const hook = join(main, ".git", "hooks", "pre-merge-commit");
+    const marker = join(directory, "hook-ran");
+    writeFileSync(hook, `#!/bin/sh\ntouch "${marker}"\n`, { mode: 0o755 });
+    const developHead = moveDevelop("other.txt", "other\n");
+    const merged = value(workspace.mergeDevelop?.(task.path) ?? missing<{ headSha: string }>());
+    expect(merged.headSha).toBe(git(task.path, "rev-parse", "HEAD"));
+    expect(git(task.path, "rev-parse", "HEAD^2")).toBe(developHead);
+    expect(readFileSync(join(task.path, "other.txt"), "utf8")).toBe("other\n");
+    expect(readFileSync(join(task.path, "task.txt"), "utf8")).toBe("task work\n");
+    expect(existsSync(marker)).toBe(false);
+    expect(git(main, "ls-remote", "--heads", "origin", task.branch)).toBe("");
+    expect(value(workspace.inspect(task.path)).dirty).toBe(false);
+  });
+
+  it("aborts a conflicting merge and leaves the worktree clean at the old head", () => {
+    const task = createTask();
+    writeFileSync(join(task.path, "tracked.txt"), "task edit\n");
+    git(task.path, "commit", "-qam", "task edit");
+    const before = git(task.path, "rev-parse", "HEAD");
+    moveDevelop("tracked.txt", "develop edit\n");
+    failure(workspace.mergeDevelop?.(task.path) ?? missing(), "MERGE_CONFLICT");
+    expect(git(task.path, "rev-parse", "HEAD")).toBe(before);
+    expect(value(workspace.inspect(task.path))).toMatchObject({ dirty: false, headSha: before });
+    expect(() => git(task.path, "rev-parse", "-q", "--verify", "MERGE_HEAD")).toThrow();
+    expect(readFileSync(join(task.path, "tracked.txt"), "utf8")).toBe("task edit\n");
+  });
+
+  it("refuses to merge into a dirty worktree", () => {
+    const task = createTask();
+    commitTask(task);
+    moveDevelop("other.txt", "other\n");
+    writeFileSync(join(task.path, "scratch.txt"), "dirty\n");
+    failure(workspace.mergeDevelop?.(task.path) ?? missing(), "DIRTY_WORKTREE");
+  });
+});

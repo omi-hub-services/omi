@@ -45,6 +45,7 @@ const commands: [string, Command, keyof DispatchedUseCases][] = [
   ["status run", { schemaVersion: 1, command: "status", runId: "r" }, "inspectRun"],
   ["pause", { schemaVersion: 1, command: "pause", runId: "r", reason: "why" }, "pauseRun"],
   ["resume", { schemaVersion: 1, command: "resume", runId: "r" }, "resumeRun"],
+  ["refresh", { schemaVersion: 1, command: "refresh", runId: "r" }, "refreshRun"],
   [
     "prepare-pr",
     { schemaVersion: 1, command: "prepare-pr", runId: "r", title: "Task", evidence: ["test"] },

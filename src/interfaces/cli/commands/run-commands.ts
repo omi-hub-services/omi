@@ -328,6 +328,21 @@ export function registerRunCommands(program: Command, context: CliContext): void
     });
 
   program
+    .command("refresh")
+    .description(
+      "Merge develop into a finished run's task branch and reopen verify and review (no push)",
+    )
+    .requiredOption("--run <id>", "run id")
+    .action(async (options: { run: string }, command: Command) => {
+      await runCommand(
+        context,
+        command,
+        { command: "refresh", runId: options.run },
+        SLOW_COMMAND_MS,
+      );
+    });
+
+  program
     .command("prepare-pr")
     .description("Open or recover the task PR for a finished run and save its mapping")
     .requiredOption("--run <id>", "run id")

@@ -45,7 +45,68 @@ export function createSqliteRunPlanStore(
     `INSERT INTO events (event_id, kind, subject, run_id, causation_id, correlation_id, payload, occurred_at)
      VALUES (?, 'run.planned', ?, ?, NULL, ?, ?, ?)`,
   );
+  const newest = db.prepare(
+    "SELECT status, iteration FROM step_runs WHERE run_id=? AND step_key=? ORDER BY iteration DESC LIMIT 1",
+  );
+  const insertIteration = db.prepare(
+    `INSERT INTO step_runs (id, run_id, step_key, iteration, status, version, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+  );
+  const insertRefresh = db.prepare(
+    `INSERT INTO events (event_id, kind, subject, run_id, causation_id, correlation_id, payload, occurred_at)
+     VALUES (?, 'run.refreshed', ?, ?, NULL, ?, ?, ?)`,
+  );
   return {
+    reopenSteps(request) {
+      return runInTransaction(db, () => {
+        if (
+          options !== undefined &&
+          db
+            .prepare(
+              "SELECT 1 FROM leases WHERE resource_key=? AND owner=? AND generation=? AND expires_at>?",
+            )
+            .get(
+              options.fence.resourceKey,
+              options.fence.owner,
+              options.fence.generation,
+              new Date(options.now()).toISOString(),
+            ) === undefined
+        )
+          return { ok: false as const, reason: "PROJECT_LOCK_LOST" as const };
+        const rows = request.steps.map((step) => ({
+          step,
+          row: z
+            .object({ status: z.string(), iteration: z.number().int().positive() })
+            .optional()
+            .parse(newest.get(request.runId, step.stepId)),
+        }));
+        if (rows.some(({ row }) => row?.status !== "succeeded"))
+          return { ok: false as const, reason: "STEPS_NOT_FINISHED" as const };
+        for (const { step, row } of rows) {
+          insertIteration.run(
+            step.stepRunId,
+            request.runId,
+            step.stepId,
+            (row?.iteration ?? 0) + 1,
+            step.status,
+            request.at,
+            request.at,
+          );
+        }
+        insertRefresh.run(
+          request.eventId,
+          request.runId,
+          request.runId,
+          request.runId,
+          JSON.stringify({
+            headSha: request.headSha,
+            steps: request.steps.map((step) => step.stepId),
+          }),
+          request.at,
+        );
+        return { ok: true as const };
+      });
+    },
     findTask(issueNumber) {
       const row = task.get(issueNumber);
       return row === undefined ? undefined : taskRow.parse(row);
