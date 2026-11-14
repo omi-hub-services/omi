@@ -436,6 +436,44 @@ export function registerRunCommands(program: Command, context: CliContext): void
     );
 
   program
+    .command("prepare-release")
+    .description("Open or recover the release PR from develop to main, awaiting PO approval")
+    .requiredOption("--release <label>", "stable release label")
+    .option("--title <text>", "release Issue and pull request title")
+    .action(async (options: { release: string; title?: string }, command: Command) => {
+      await runCommand(
+        context,
+        command,
+        {
+          command: "release.prepare",
+          release: options.release,
+          ...(options.title === undefined ? {} : { title: options.title }),
+        },
+        SLOW_COMMAND_MS,
+      );
+    });
+
+  program
+    .command("publish-release")
+    .description("Publish the tag and GitHub Release after the release PR has merged into main")
+    .requiredOption("--release <label>", "stable release label and tag")
+    .requiredOption("--pr <number>", "merged release pull request number")
+    .option("--title <text>", "GitHub Release title")
+    .action(async (options: { release: string; pr: string; title?: string }, command: Command) => {
+      await runCommand(
+        context,
+        command,
+        {
+          command: "release.publish",
+          release: options.release,
+          prNumber: wholeNumber(options.pr),
+          ...(options.title === undefined ? {} : { title: options.title }),
+        },
+        SLOW_COMMAND_MS,
+      );
+    });
+
+  program
     .command("coordinator")
     .description("Coordinator session handoff")
     .command("switch")
