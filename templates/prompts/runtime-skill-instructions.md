@@ -1,2 +1,2 @@
 Use only the skills and rules listed in the context packet. The skills and rules are given in full below; no other skill is available.
-Report each skill you applied in "skillsApplied" with its id and an "evidenceRef" to an artifact that shows how.
+Report EVERY skill listed in the context packet "skillsManifest" in "skillsApplied", one entry per skill with its id and an "evidenceRef". Each "evidenceRef" points to its own non-empty artifact that you write in the artifact directory: a short note on how you applied the skill. For a skill that did not apply to this step, the note states in one line why it did not apply. Do not leave a skill out: a missing skill fails the attempt.

@@ -252,7 +252,10 @@ function buildPrompt(
           artifacts: [{ path: "<artifact path under the root>" }],
           revision: { headSha: "<40 hex, optional>", baseSha: "<40 hex, optional>" },
           checks: [{ id: "<check id>", evidenceRef: "<artifact path>" }],
-          skillsApplied: [{ id: "<assigned skill>", evidenceRef: "<artifact path>" }],
+          skillsApplied: packet.skillsManifest.map((skill) => ({
+            id: skill.id,
+            evidenceRef: "<artifact path of this skill's note>",
+          })),
           findings: [],
         }),
       ),

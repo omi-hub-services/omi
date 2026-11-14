@@ -199,6 +199,26 @@ describe("completeRunAttempt runs the step's required checks itself", () => {
     expect(finding?.location).toBe(`${attempt.artifactRoot}/checks/unit-tests.json`);
   });
 
+  it("hands the next attempt the ids of the skills the worker left out (SKILL_EVIDENCE_MISSING, OMI-135)", async () => {
+    const remembered = new Map<string, { id: string; message: string }[]>();
+    const s = setup();
+    Object.assign(s.deps, {
+      findings: {
+        remember: (stepRunId: string, entries: { id: string; message: string }[]) =>
+          remembered.set(stepRunId, entries),
+      },
+    });
+    const attempt = await finish(s, () => ({ skillsApplied: [] }));
+    const failed = s.r.unitOfWork.commits.at(-1)?.event;
+    expect(JSON.parse(failed?.payload ?? "{}")).toMatchObject({
+      failure: "SKILL_EVIDENCE_MISSING",
+    });
+    const [finding] = remembered.get(attempt.stepRunId) ?? [];
+    expect(finding?.id).toBe("skill-evidence-missing");
+    expect(finding?.message).toContain("tdd");
+    expect(finding?.message).toContain("skillsManifest");
+  });
+
   describe("for a shell-less implement worker under the installed templates", () => {
     // The worker ran nothing and says so: succeeded, the AC unverified, no checks listed.
     const unverified = () => ({

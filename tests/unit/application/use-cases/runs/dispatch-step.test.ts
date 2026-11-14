@@ -30,6 +30,17 @@ describe("dispatchStep", () => {
     expect(prompt).toContain('"checks"');
     expect(prompt).toContain("one AC-n: met|not met — <evidence> line per criterion");
   });
+  it("tells the worker to report every manifest skill with its own evidence artifact, and lists them (OMI-135)", async () => {
+    const r = rig();
+    dispatched(await dispatchStep(r.deps, dispatchInput()));
+    const prompt = r.executor.started[0]?.prompt ?? "";
+    expect(prompt).toContain('Report EVERY skill listed in the context packet "skillsManifest"');
+    expect(prompt).toContain("states in one line why it did not apply");
+    expect(prompt).toContain("a missing skill fails the attempt");
+    expect(prompt).not.toContain("Report each skill you applied");
+    expect(prompt).toContain('"skillsApplied":[{"id":"tdd","evidenceRef":"<artifact path');
+    expect(prompt).not.toContain("<assigned skill>");
+  });
   it("gives the worker an absolute artifact directory outside the worktree and names it in the prompt (OMI-131)", async () => {
     const r = rig();
     dispatched(await dispatchStep(r.deps, dispatchInput()));
