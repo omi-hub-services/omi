@@ -27,7 +27,7 @@ JSON document `{"schemaVersion":1,"ok":…,"exitCode":…,"result"|"error":…}`
 SQLite state, workers and the checkout in WSL2 (Linux filesystem, never `/mnt/<drive>`).
 
 **What the v0.1 CLI really has.** `--help` lists: `init`, `install`, `update`, `doctor`, `profiles {register,list,probe}`, `status`,
-`session {new,start}`, `approvals {list,request,decide}`, `workflows validate`, `plan`, `run`, `dispatch`, `wait`, `pause`, `resume`, `refresh`, `prepare-pr`, `deliver`, `merge-release`,
+`session {new,start}`, `approvals {list,request,decide}`, `workflows validate`, `plan`, `run`, `dispatch`, `wait`, `pause`, `resume`, `refresh`, `prepare-pr`, `deliver`, `prepare-release`, `merge-release`, `publish-release`,
 `coordinator switch`, `new-issue`, `promote`, `set-status` (intake, §9), `watch`,
 `worker-report`, `commit-worker`, `review-comment`, `import-task`, `sync`, and `prune-logs`.
 
@@ -354,7 +354,15 @@ a configured project (§1).
    verdict) → `review-comment` → `deliver`. `prepare-pr` accepts the already mapped PR again; it
    follows the branch, so the new head is used.
 
-9. `<cli> merge-release --release <label> --pr <n> --head-sha <sha> [--check <name> …]`
+9. `<cli> prepare-release --release <label> [--title <text>]` opens or recovers the Release
+   Issue and release PR `develop` → `main` with its operation marker. Repository comes from
+   `project.yaml`; the command cannot override it. A verified result prints `prNumber` and
+   `headSha`. Reuse the same label on retry; `pending` means retry the same command after the
+   outbox reconciles. `RELEASE_EMPTY` refuses when no task has merged since the last release.
+   **The PO then approves that exact release PR head natively on GitHub**, using an account
+   different from the PR author. A manually opened PR lacks the marker required by merge.
+
+10. `<cli> merge-release --release <label> --pr <n> --head-sha <sha> [--check <name> …]`
    merges the release PR `develop` → `main` on the head the PO approved natively
    ([ADR-0039](../architecture/adr/0039-release-merge-and-two-layer-deploy-approval.md)). It runs
    `checkReleaseMerge` first, pins the native merge to `--head-sha`, and confirms the merge commit on
@@ -363,6 +371,14 @@ a configured project (§1).
    merges nothing; the same command is safe to repeat (`pending`, or already merged, sends no second
    merge). **Two deploy approval layers stay (PO, 2026-11-13):** the durable approval by artifact
    digest and the native GitHub environment approval; the release merge approval replaces neither.
+
+11. `<cli> publish-release --release <label> --pr <n> [--title <text>]` publishes the tag and
+   GitHub Release only after `merge-release` confirms the release PR is merged into `main`.
+   Keep the same label and PR number from preparation. It tags the merge commit and lists the
+   release's tasks in the notes. Retry `pending` with the same arguments; verified writes are
+   reused. An open or unmerged PR refuses `RELEASE_PR_NOT_MERGED`; delivery failures such as
+   `TAG_POINTS_ELSEWHERE` return their named `COMMAND_REFUSED` reason (exit 4).
+   The order is `prepare-release` → PO native GitHub approval → `merge-release` → `publish-release`.
 
 Refusals print `error[COMMAND_REFUSED]: <REASON>[: detail]` (exit 4). Reasons seen in the code
 (not all reproduced live, see the record): `PROJECT_NOT_CONFIGURED`, `INVALID_INPUT`, `WORKFLOW_REQUIRED`,

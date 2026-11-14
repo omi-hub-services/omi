@@ -82,6 +82,16 @@ import { prepareRunPr } from "../application/use-cases/delivery/prepare-run-pr.j
 import type { PreparePrDeps } from "../application/use-cases/delivery/prepare-pr.js";
 import { createGithubPrDelivery } from "../infrastructure/github/github-pr-delivery.js";
 import { mergeRelease } from "../application/use-cases/delivery/merge-release.js";
+import {
+  prepareRelease,
+  type PrepareReleaseDeps,
+} from "../application/use-cases/delivery/prepare-release.js";
+import {
+  publishRelease,
+  type PublishReleaseDeps,
+} from "../application/use-cases/delivery/publish-release.js";
+import { DeliveryError } from "../application/ports/pr-delivery.js";
+import { createGithubReleaseReader } from "../infrastructure/github/github-release-reader.js";
 import type { MergeReleaseDeps } from "../application/use-cases/delivery/merge-release.js";
 import { createGithubReleaseMergeReader } from "../infrastructure/github/github-release-merge.js";
 import type { MergeTaskPrDeps } from "../application/use-cases/delivery/merge-task-pr.js";
@@ -537,6 +547,44 @@ export function createReviewCommentUseCase(deps: PostReviewCommentDeps) {
   return (input: unknown) => postReviewComment(deps, input);
 }
 
+/** Binds delivery to the configured repository; callers cannot redirect release writes. */
+export function createReleaseDeliveryUseCases(
+  prepare: PrepareReleaseDeps,
+  publish: PublishReleaseDeps,
+  repository: string,
+) {
+  return {
+    prepareRelease: async (input: unknown) => {
+      try {
+        const result = await prepareRelease(prepare, {
+          ...(typeof input === "object" && input !== null ? input : {}),
+          repository,
+        });
+        if (result.status === "pending") return { ok: true as const, ...result };
+        const pull = await publish.pulls.pull(repository, result.prNumber);
+        return { ok: true as const, ...result, headSha: pull.headSha };
+      } catch (error) {
+        if (error instanceof DeliveryError) return { ok: false as const, reason: error.code };
+        throw error;
+      }
+    },
+    publishRelease: async (input: unknown) => {
+      try {
+        const result = await publishRelease(publish, {
+          ...(typeof input === "object" && input !== null ? input : {}),
+          repository,
+        });
+        return result.status === "refused"
+          ? { ok: false as const, reason: result.reason }
+          : { ok: true as const, ...result };
+      } catch (error) {
+        if (error instanceof DeliveryError) return { ok: false as const, reason: error.code };
+        throw error;
+      }
+    },
+  };
+}
+
 /**
  * Repository and PO logins are trusted runtime configuration (`policies.github_approval_actors`,
  * the same allowlist approvals use); a caller can never supply or override them. No configured PO
@@ -696,6 +744,9 @@ export type RunCommandUseCases = Pick<
   | "refreshRun"
   | "deliverRun"
   | "prepareRunPr"
+  | "prepareRelease"
+  | "publishRelease"
+  | "mergeRelease"
   | "handoffCoordinator"
 >;
 
@@ -906,6 +957,8 @@ export async function createProjectRunCommandUseCases(
         commitWorker: refuse,
         postReviewComment: refuse,
         mergeRelease: refuse,
+        prepareRelease: refuse,
+        publishRelease: refuse,
       },
       drain: () => Promise.resolve(),
       resourceWakeup: undefined,
@@ -1246,6 +1299,19 @@ export async function createProjectRunCommandUseCases(
     },
     commands: {
       ...commands,
+      ...createReleaseDeliveryUseCases(
+        {
+          ...merge,
+          releases: createGithubReleaseReader(client),
+          pulls: createGithubPrDelivery(client),
+        },
+        {
+          ...merge,
+          releases: createGithubReleaseReader(client),
+          pulls: createGithubMergeDelivery(client),
+        },
+        `${config.project.repository.owner}/${config.project.repository.name}`,
+      ),
       ...createWorkerCommandUseCases({
         ...dispatch,
         committer: createCliWorkerCommitter(),

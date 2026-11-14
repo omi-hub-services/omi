@@ -951,3 +951,28 @@ the use-case unit tests cover the named refusals, and the git integration tests 
 and bare origin) cover the clean merge (no hook run, nothing pushed), the aborted conflict
 (clean worktree, unchanged head) and the dirty worktree. Live GitHub delivery after a refresh and
 the Unix socket transport remain unverified here.
+
+## Release preparation and publication — 2026-11-14 (OMI-143)
+
+Built CLI help (`node dist/bootstrap/cli.js prepare-release --help` and
+`node dist/bootstrap/cli.js publish-release --help`, both exit 0) exposes:
+
+```text
+prepare-release --release <label> [--title <text>] [--json] [--socket <path>]
+publish-release --release <label> --pr <number> [--title <text>] [--json] [--socket <path>]
+```
+
+The IPC routes are `release.prepare` and `release.publish`. Both use the repository from
+`project.yaml`; strict command validation rejects caller-supplied repository fields. Preparation
+returns the release Issue number, PR number and current `headSha` after verification. Publication
+returns the tag, merge commit and release identity. Pending operations retain their outbox key.
+Delivery errors return `COMMAND_REFUSED` with their named reason, and CLI JSON refusals exit 4.
+
+`tests/unit/interfaces/cli/release-commands.test.ts` covers command payloads, optional titles,
+validation and refusal presentation. `tests/integration/ipc/release-commands.test.ts` exercises
+the production delivery wiring through the dispatcher, real SQLite/outbox, local artifacts and
+fake GitHub: lost-response recovery, repeat preparation without duplicates, the creation marker
+accepted by merge, refusal without PO approval, merge after native approval, publication only
+after merge, repeat publication, empty-release and conflicting-tag refusals. The socket variant
+is retained but cannot bind in this sandbox (`listen EPERM`); successful socket transport and
+live GitHub release remain unverified. Release order is documented in handbook §3.

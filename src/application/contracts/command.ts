@@ -10,6 +10,7 @@ import { retryStepSchema, reworkRecordSchema } from "./rework.js";
 import { syncSelectionSchema } from "./sync.js";
 import { prepareRunPrSchema } from "./pr-delivery.js";
 import { refreshRunSchema } from "./run-refresh.js";
+import { prepareReleaseSchema, publishReleaseSchema } from "./release-delivery.js";
 
 const envelope = { schemaVersion: schemaVersionV1 };
 
@@ -95,6 +96,12 @@ export const commandSchema = z
       }).shape,
     }),
     // Repository and PO logins are trusted runtime configuration; a command never names them.
+    prepareReleaseSchema
+      .omit({ repository: true })
+      .extend({ ...envelope, command: z.literal("release.prepare") }),
+    publishReleaseSchema
+      .omit({ repository: true })
+      .extend({ ...envelope, command: z.literal("release.publish") }),
     mergeReleaseSchema
       .omit({ repository: true, poActors: true })
       .extend({ ...envelope, command: z.literal("release.merge") }),
