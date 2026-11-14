@@ -9,6 +9,7 @@ import {
   dispatchStep,
   type DispatchStepResult,
 } from "../../../../../src/application/use-cases/runs/dispatch-step.ts";
+import { workerPromptAssets } from "../../../../../src/application/services/worker-prompt-assets.ts";
 import { dispatchInput, h, rig, role, HEAD, BASE, skillEvidence } from "./run-fakes.ts";
 import { recordStepResult } from "../../../../../src/application/use-cases/runs/record-step-result.ts";
 
@@ -571,11 +572,47 @@ it("refuses a combined packet when the actual changed files touch a gate", async
   expect(r.executor.started).toHaveLength(0);
 });
 
-it("blocks repeated quality work without a previous verdict and delta", async () => {
+it("gives a full review, not a delta, when the earlier round left no verdict", async () => {
   const r = rig();
+  const result = await dispatchStep(
+    {
+      ...r.deps,
+      attempts: Object.assign(r.attempts, { qualityHistory: () => ({ round: 2 }) }),
+    },
+    dispatchInput({ quality: { policy: "lean", step: "review", steps: ["review"], round: 2 } }),
+  );
+  expect(result.ok).toBe(true);
+  expect(r.executor.started).toHaveLength(1);
+  expect(r.executor.started[0]?.prompt).toContain("round 2");
+  expect(r.executor.started[0]?.prompt).not.toContain(workerPromptAssets.qualityDelta);
+});
+
+it("refuses a delta review when the previous verdict exists but the delta cannot be computed", async () => {
+  const r = rig();
+  const previousVerdict = {
+    schemaVersion: 1 as const,
+    runId: "run-1",
+    stepId: "review",
+    attemptId: "old-1",
+    status: "failed" as const,
+    summary: "previous FAIL",
+    artifacts: [],
+    revision: { headSha: "b".repeat(40), baseSha: "c".repeat(40) },
+    checks: [],
+    skillsApplied: [],
+    findings: [],
+  };
   expect(
     await dispatchStep(
-      r.deps,
+      {
+        ...r.deps,
+        attempts: Object.assign(r.attempts, {
+          qualityHistory: () => ({ round: 2, previousVerdict }),
+        }),
+        workspaces: Object.assign(r.workspaces, {
+          diffSince: () => ({ ok: false as const, error: new GitWorkspaceError("DIRTY_WORKTREE") }),
+        }),
+      },
       dispatchInput({ quality: { policy: "lean", step: "review", steps: ["review"], round: 2 } }),
     ),
   ).toMatchObject({
