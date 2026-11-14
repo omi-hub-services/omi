@@ -30,6 +30,7 @@ describe("dispatchStep", () => {
     expect(prompt).toContain('"skillsApplied"');
     expect(prompt).toContain('"checks"');
     expect(prompt).toContain("one AC-n: met|not met — <evidence> line per criterion");
+    expect(prompt).toContain("Each AC-n: line must stand alone at the start of a line");
   });
   it("tells the worker to report every manifest skill with its own evidence artifact, and lists them (OMI-135)", async () => {
     const r = rig();
@@ -756,7 +757,7 @@ it("forwards preceding QA hashed check evidence to a separate runtime reviewer w
         stepId: "review",
         attemptId: review.attempt.id,
         status: "succeeded",
-        summary: "Independent review",
+        summary: "Independent review\nAC-1: met — QA evidence verified",
         artifacts: proof.artifacts,
         revision: { headSha: HEAD, baseSha: BASE },
         checks: [],

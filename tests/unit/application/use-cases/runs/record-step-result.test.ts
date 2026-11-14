@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { dispatchStep } from "../../../../../src/application/use-cases/runs/dispatch-step.ts";
 import { recordStepResult } from "../../../../../src/application/use-cases/runs/record-step-result.ts";
+import { createRunMergeEvidenceReader } from "../../../../../src/application/services/build-run-merge-evidence.ts";
+import { stepResultSchema } from "../../../../../src/application/contracts/result.ts";
+import { contextPacketSchema } from "../../../../../src/application/contracts/context.ts";
 import { dispatchInput, HEAD, BASE, rig, type Rig } from "./run-fakes.ts";
 
 async function started(r: Rig, input: Record<string, unknown> = dispatchInput()) {
@@ -49,6 +52,126 @@ async function record(
 const stepStatus = (r: Rig) => r.steps.rows.get("step-1")?.status;
 
 describe("recordStepResult", () => {
+  describe("review AC report validation", () => {
+    async function review(summary: string, reports: string[] = [], criteria = ["works"]) {
+      const r = rig();
+      r.deps.catalog = {
+        ...r.deps.catalog,
+        roles: r.deps.catalog.roles.map((entry) => ({
+          ...entry,
+          definition: { ...entry.definition, id: "reviewer" },
+        })),
+      };
+      const input = dispatchInput({ role: "reviewer" });
+      const context = contextPacketSchema.partial().parse(input["context"]);
+      const { attempt, handle } = await started(r, {
+        ...input,
+        context: { ...context, acceptanceCriteria: criteria },
+      });
+      const good = goodResult(r, attempt.id, { summary });
+      const report = {
+        ...good,
+        artifacts: [
+          ...good.artifacts,
+          ...reports.map((text, i) =>
+            r.artifacts.publish(`${attempt.artifactRoot}/review-${String(i)}.md`, text),
+          ),
+        ],
+      };
+      const result = await record(r, attempt.id, handle, report);
+      const merge = createRunMergeEvidenceReader(
+        {
+          read: () => ({
+            entries: [{ attempt, result: stepResultSchema.parse(report) }],
+            allStepsSucceeded: true,
+          }),
+        },
+        r.artifacts,
+      ).read("project", "task", HEAD);
+      return { r, result, merge };
+    }
+
+    it.each([
+      ["Reviewed. AC-1: met — inline evidence", "AC_LINE_MISSING"],
+      ["No verdict", "AC_LINE_MISSING"],
+      ["AC-1: met — first\nAC-1: met — second", "AC_LINE_DUPLICATE"],
+      ["AC-1: passed — evidence", "AC_LINE_MALFORMED"],
+      ["AC-1: met — evidence\nAC-2: met — extra", "AC_LINE_UNKNOWN"],
+    ])("fails invalid reviewer summary %s with feedback detail", async (body, reason) => {
+      const { r, result } = await review(body);
+      expect(result).toMatchObject({
+        ok: true,
+        stepStatus: "failed",
+        failure: "REVIEW_AC_LINES_INVALID",
+      });
+      expect(result).toHaveProperty("detail", expect.stringContaining(reason));
+      const event = JSON.parse(r.unitOfWork.commits.at(-1)?.event.payload ?? "{}") as {
+        failure: string;
+        detail: string;
+      };
+      expect(event.failure).toBe("REVIEW_AC_LINES_INVALID");
+      expect(event.detail).toContain(reason);
+    });
+
+    it.each(["met", "not met"])("accepts a complete %s verdict", async (verdict) => {
+      const { result } = await review(`AC-1: ${verdict} — evidence`);
+      expect(result).toMatchObject({ stepStatus: "succeeded" });
+    });
+
+    it("validates the first matching artifact used by merge instead of the summary or later artifacts", async () => {
+      const body = "AC-1: broken";
+      const { result, merge } = await review("AC-1: met — summary", [
+        "prose",
+        body,
+        "AC-1: met — later",
+      ]);
+      expect(merge.review?.body).toBe(body);
+      expect(result).toMatchObject({
+        failure: "REVIEW_AC_LINES_INVALID",
+        detail: "AC_LINE_MALFORMED",
+      });
+    });
+
+    it("accepts the matching artifact even when the summary is inline", async () => {
+      const body = "AC-1: met — artifact evidence";
+      const { result, merge } = await review("Reviewed. AC-1: met — inline", [body]);
+      expect(merge.review?.body).toBe(body);
+      expect(result).toMatchObject({ stepStatus: "succeeded" });
+    });
+
+    it("uses the stored task snapshot's AC count", async () => {
+      const { result } = await review("AC-1: met — evidence", [], ["first", "second"]);
+      expect(result).toMatchObject({
+        failure: "REVIEW_AC_LINES_INVALID",
+        detail: "AC_LINE_MISSING",
+      });
+      const complete = await review(
+        "AC-1: met — first\nAC-2: not met — second",
+        [],
+        ["first", "second"],
+      );
+      expect(complete.result).toMatchObject({ stepStatus: "succeeded" });
+    });
+
+    it("refuses a review without task criteria", async () => {
+      const { result } = await review("AC-1: met — evidence", [], []);
+      expect(result).toMatchObject({
+        failure: "REVIEW_AC_LINES_INVALID",
+        detail: "AC_CRITERIA_MISSING",
+      });
+    });
+
+    it("falls back to summary when artifacts only have list-prefixed verdicts, exactly as merge does", async () => {
+      const { result, merge } = await review("Inline AC-1: met — summary", [
+        "- AC-1: met — artifact",
+      ]);
+      expect(merge.review?.body).toBe("Inline AC-1: met — summary");
+      expect(result).toMatchObject({
+        failure: "REVIEW_AC_LINES_INVALID",
+        detail: "AC_LINE_MISSING",
+      });
+    });
+  });
   it("accepts a verified result: step and attempt succeed and the writer is released", async () => {
     const r = rig();
     const { attempt, handle } = await started(r);
