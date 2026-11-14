@@ -98,6 +98,7 @@ async function finish(
   ) => unknown = () => ({}),
   execution: Partial<ExecutionResult> = {},
   quality = false,
+  wrap?: (json: string) => string,
 ) {
   const input = dispatchInput({
     requiredChecks: ["unit-tests"],
@@ -132,7 +133,12 @@ async function finish(
   };
   const collected = await s.r.executor.collectResult(dispatched.handle);
   s.r.executor.collectResult = () =>
-    Promise.resolve({ ...collected, ...execution, finalMessage: JSON.stringify(result) });
+    Promise.resolve({
+      ...collected,
+      ...execution,
+      finalMessage:
+        wrap?.(JSON.stringify(result)) ?? execution.finalMessage ?? JSON.stringify(result),
+    });
   await completeRunAttempt(s.deps, attempt.id, dispatched.handle, "run-1", {});
   return attempt;
 }
@@ -241,5 +247,52 @@ it("rejects a quality verdict whose SHA differs from its supplied check", async 
   expect(stepStatus(s)).toBe("failed");
   expect(JSON.parse(s.r.unitOfWork.commits.at(-1)?.event.payload ?? "{}")).toMatchObject({
     failure: "CHECK_REVISION_MISMATCH",
+  });
+});
+
+describe("completeRunAttempt reads the step result out of the final message", () => {
+  it("accepts prose followed by one fenced json document", async () => {
+    const s = setup();
+    const fence = "\u0060\u0060\u0060";
+    await finish(
+      s,
+      () => ({}),
+      {},
+      false,
+      (json) => `Finished.\n\n${fence}json\n${json}\n${fence}\n`,
+    );
+    expect(stepStatus(s)).toBe("succeeded");
+  });
+
+  it("keeps a bounded, redacted final message when no result can be read", async () => {
+    const s = setup();
+    const secret = "sk-" + "A1b2C3d4E5f6G7h8I9j0";
+    const attempt = await finish(s, () => ({}), {
+      finalMessage: `${"x ".repeat(40_000)} I could not finish. token=${secret}`,
+    });
+    expect(stepStatus(s)).toBe("failed");
+    expect(JSON.parse(s.r.unitOfWork.commits.at(-1)?.event.payload ?? "{}")).toMatchObject({
+      failure: "RESULT_MISSING",
+    });
+    const bytes = s.r.artifacts.files.get(`${attempt.artifactRoot}/final-message.txt`);
+    const stored = new TextDecoder().decode(bytes);
+    expect(stored).toContain("I could not finish");
+    expect(stored).not.toContain(secret);
+    expect(stored.length).toBeLessThanOrEqual(8000);
+  });
+
+  it("keeps the final message when the document fails the schema", async () => {
+    const s = setup();
+    const attempt = await finish(s, () => ({}), { finalMessage: '{"schemaVersion":1}' });
+    expect(JSON.parse(s.r.unitOfWork.commits.at(-1)?.event.payload ?? "{}")).toMatchObject({
+      failure: "RESULT_INVALID",
+    });
+    expect(s.r.artifacts.files.has(`${attempt.artifactRoot}/final-message.txt`)).toBe(true);
+  });
+
+  it("stores no final message when the result was read", async () => {
+    const s = setup();
+    const attempt = await finish(s);
+    expect(s.r.artifacts.files.has(`${attempt.artifactRoot}/final-message.txt`)).toBe(false);
   });
 });
