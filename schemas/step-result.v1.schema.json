@@ -49,8 +49,7 @@
           }
         },
         "required": [
-          "path",
-          "sha256"
+          "path"
         ],
         "additionalProperties": false
       }
@@ -60,11 +59,11 @@
       "properties": {
         "headSha": {
           "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
+          "maxLength": 200
         },
         "baseSha": {
           "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
+          "maxLength": 200
         }
       },
       "required": [

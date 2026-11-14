@@ -187,6 +187,11 @@ export class FakeArtifacts implements ArtifactStore {
     this.files.set(path, new TextEncoder().encode(text));
     return { path, sha256: sha(text) };
   }
+  adopt(input: { path: string }): ArtifactReference {
+    const bytes = this.files.get(input.path);
+    if (bytes === undefined) throw new ArtifactError("NOT_FOUND");
+    return { path: input.path, sha256: createHash("sha256").update(bytes).digest("hex") };
+  }
   read(reference: ArtifactReference): Uint8Array {
     const bytes = this.files.get(reference.path);
     if (bytes === undefined) throw new ArtifactError("NOT_FOUND");
@@ -220,6 +225,11 @@ export class FakeWorkspaces implements GitWorkspace {
         branch: `task/${request.slug}`,
       },
     };
+  }
+  failMergeBase = false;
+  mergeBase(): GitWorkspaceResult<string> {
+    if (this.failMergeBase) return { ok: false, error: new GitWorkspaceError("GIT_FAILED") };
+    return { ok: true, value: BASE };
   }
   inspect(path: string): GitWorkspaceResult<WorkspaceState> {
     return {

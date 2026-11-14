@@ -175,9 +175,66 @@ describe("recordStepResult", () => {
       expect(result).toMatchObject({ failure: "ARTIFACT_HASH_MISMATCH" });
     });
 
-    it("rejects a write attempt that reports no revision", async () => {
-      const result = await failureOf((r, id) => ({ ...goodResult(r, id), revision: undefined }));
-      expect(result).toMatchObject({ failure: "REVISION_MISSING" });
+    it("hashes an artifact the worker declared by path only and records the real hash", async () => {
+      const r = rig();
+      const { attempt, handle } = await started(r);
+      const good = goodResult(r, attempt.id);
+      const bare = good.artifacts.map(({ path }) => ({ path }));
+      const result = await record(r, attempt.id, handle, { ...good, artifacts: bare });
+      expect(result).toMatchObject({ stepStatus: "succeeded" });
+      const payload = JSON.parse(r.unitOfWork.commits.at(-1)?.event.payload ?? "{}") as {
+        result: { artifacts: unknown[] };
+      };
+      expect(payload.result.artifacts).toEqual(good.artifacts);
+    });
+
+    it("still refuses a path-only artifact that is missing or outside the root", async () => {
+      const missing = await failureOf((r, id) =>
+        goodResult(r, id, { artifacts: [{ path: `attempts/${id}/missing.md` }] }),
+      );
+      expect(missing).toMatchObject({ failure: "ARTIFACT_INVALID" });
+      const outside = await failureOf((r, id) => {
+        r.artifacts.publish("attempts/someone-else/x.md", "x");
+        return goodResult(r, id, { artifacts: [{ path: "attempts/someone-else/x.md" }] });
+      });
+      expect(outside).toMatchObject({ failure: "PATH_OUTSIDE_ROOT" });
+    });
+
+    it("records the runtime's own revision when a write worker has no shell to report one", async () => {
+      for (const revision of [undefined, { headSha: "unavailable", baseSha: "unavailable" }]) {
+        const r = rig();
+        const { attempt, handle } = await started(r);
+        const claim = { ...goodResult(r, attempt.id), revision };
+        const result = await record(r, attempt.id, handle, claim);
+        expect(result).toMatchObject({ stepStatus: "succeeded" });
+        const payload = JSON.parse(r.unitOfWork.commits.at(-1)?.event.payload ?? "{}") as {
+          result: { revision: { headSha: string; baseSha: string } };
+        };
+        expect(payload.result.revision).toEqual({ headSha: HEAD, baseSha: BASE });
+      }
+    });
+
+    it("ignores a well-formed base claim that differs and records the runtime's merge-base", async () => {
+      const r = rig();
+      const { attempt, handle } = await started(r);
+      const revision = { headSha: HEAD, baseSha: "d".repeat(40) };
+      const claim = { ...goodResult(r, attempt.id), revision };
+      expect(await record(r, attempt.id, handle, claim)).toMatchObject({ stepStatus: "succeeded" });
+      const payload = JSON.parse(r.unitOfWork.commits.at(-1)?.event.payload ?? "{}") as {
+        result: { revision: { headSha: string; baseSha: string } };
+      };
+      expect(payload.result.revision).toEqual({ headSha: HEAD, baseSha: BASE });
+    });
+
+    it("fails closed instead of trusting the worker's base when the merge-base is unavailable", async () => {
+      const r = rig();
+      const { attempt, handle } = await started(r);
+      r.workspaces.failMergeBase = true;
+      const claim = { ...goodResult(r, attempt.id), revision: { headSha: HEAD, baseSha: BASE } };
+      expect(await record(r, attempt.id, handle, claim)).toMatchObject({
+        stepStatus: "failed",
+        failure: "REVISION_MISSING",
+      });
     });
 
     it("rejects a result missing a check the step gate requires", async () => {

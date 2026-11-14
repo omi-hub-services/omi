@@ -11,6 +11,7 @@ import type {
 } from "../../../src/application/contracts/artifact.ts";
 import {
   ArtifactError,
+  type ArtifactAdopter,
   type ArtifactStore,
 } from "../../../src/application/ports/artifact-store.ts";
 import {
@@ -37,7 +38,7 @@ const digest = (bytes: Uint8Array | string): string =>
 let directory: string;
 let root: string;
 let db: StateDatabase;
-let store: ArtifactStore;
+let store: ArtifactStore & ArtifactAdopter;
 
 beforeEach(() => {
   directory = fs.mkdtempSync(join(tmpdir(), "omi-artifacts-"));
@@ -587,5 +588,63 @@ describe("untrusted artifact references", () => {
       CredentialInputError,
     );
     expect(rowCount()).toBe(0);
+  });
+});
+
+describe("adopt (worker-written files)", () => {
+  const adopt = (path: string) =>
+    store.adopt({
+      id: "adopted-1",
+      path,
+      classification: "worker-output",
+      createdAt: at,
+    });
+
+  it("hashes a file the worker wrote and makes it readable through the store", () => {
+    fs.mkdirSync(join(root, "attempts"));
+    fs.writeFileSync(join(root, "attempts", "analysis.md"), "findings");
+    const reference = adopt("attempts/analysis.md");
+    expect(reference).toEqual({ path: "attempts/analysis.md", sha256: digest("findings") });
+    expect(new TextDecoder().decode(store.read(reference))).toBe("findings");
+  });
+
+  it("refuses a missing file and a symlink", () => {
+    expect(() => adopt("nope.md")).toThrow(expect.objectContaining({ code: "NOT_FOUND" }));
+    fs.writeFileSync(join(directory, "outside.txt"), "secret");
+    fs.symlinkSync(join(directory, "outside.txt"), join(root, "link.md"));
+    expect(() => adopt("link.md")).toThrow(ArtifactError);
+  });
+
+  const rows = () => (db.prepare("SELECT count(*) AS n FROM artifacts").get() as { n: number }).n;
+
+  it("refuses credential-looking content and registers nothing", () => {
+    fs.writeFileSync(join(root, "leak.md"), "Bearer synthetic-test-credential");
+    expect(() => adopt("leak.md")).toThrow(CredentialInputError);
+    expect(rows()).toBe(0);
+  });
+
+  it("refuses a directory and a FIFO instead of reading them", () => {
+    fs.mkdirSync(join(root, "dir.md"));
+    expect(() => adopt("dir.md")).toThrow(expect.objectContaining({ code: "INVALID_PATH" }));
+    const made = spawnSync("mkfifo", [join(root, "pipe.md")]);
+    expect(made.status).toBe(0);
+    expect(() => adopt("pipe.md")).toThrow(expect.objectContaining({ code: "INVALID_PATH" }));
+    expect(rows()).toBe(0);
+  });
+
+  it("refuses a file reached through a symlinked parent directory", () => {
+    const outside = join(directory, "outside-dir");
+    fs.mkdirSync(outside);
+    fs.writeFileSync(join(outside, "x.md"), "secret");
+    fs.symlinkSync(outside, join(root, "linked"));
+    expect(() => adopt("linked/x.md")).toThrow(ArtifactError);
+    expect(rows()).toBe(0);
+  });
+
+  it("refuses a file that changed after it was first registered", () => {
+    fs.writeFileSync(join(root, "a.md"), "one");
+    adopt("a.md");
+    fs.writeFileSync(join(root, "a.md"), "two");
+    expect(() => adopt("a.md")).toThrow(expect.objectContaining({ code: "HASH_MISMATCH" }));
   });
 });

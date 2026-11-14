@@ -5,7 +5,11 @@ import {
   artifactReferenceSchema,
   artifactWriteSchema,
 } from "../../application/contracts/artifact.js";
-import { ArtifactError, type ArtifactStore } from "../../application/ports/artifact-store.js";
+import {
+  ArtifactError,
+  type ArtifactAdopter,
+  type ArtifactStore,
+} from "../../application/ports/artifact-store.js";
 import {
   assertCredentialFree,
   type CredentialPolicy,
@@ -33,6 +37,22 @@ function guardBytes(bytes: Uint8Array, policy: CredentialPolicy): void {
   assertCredentialFree(data, policy);
 }
 
+/** Reads a regular file without following a final symlink; missing or non-file are ArtifactErrors. */
+function readRegularFile(target: string): Buffer {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    if (!fs.fstatSync(fd).isFile()) throw new ArtifactError("INVALID_PATH");
+    return fs.readFileSync(fd);
+  } catch (error) {
+    if (hasFsCode(error, "ENOENT")) throw new ArtifactError("NOT_FOUND");
+    if (hasFsCode(error, "ELOOP")) throw new ArtifactError("INVALID_PATH");
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 /**
  * The root must already exist; bootstrap owns its location/lifecycle. A synchronous SQLite
  * transaction serializes cooperating publications; bulk file I/O happens before it. Linking
@@ -45,7 +65,7 @@ export function createLocalArtifactStore(
   root: string,
   db: StateDatabase,
   policy: CredentialPolicy = {},
-): ArtifactStore {
+): ArtifactStore & ArtifactAdopter {
   assertCredentialFree(root, policy);
   if (fs.lstatSync(root).isSymbolicLink() || !fs.statSync(root).isDirectory()) {
     throw new ArtifactError("INVALID_PATH");
@@ -58,7 +78,7 @@ export function createLocalArtifactStore(
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
 
-  const store: ArtifactStore = {
+  const store: ArtifactStore & ArtifactAdopter = {
     write(input) {
       validateArtifactPath(input.path);
       const { bytes: suppliedBytes, ...metadata } = artifactWriteSchema.parse(input);
@@ -146,6 +166,35 @@ export function createLocalArtifactStore(
       }
     },
 
+    adopt(input) {
+      validateArtifactPath(input.path);
+      const metadata = artifactWriteSchema.omit({ bytes: true }).parse(input);
+      assertCredentialFree(metadata, policy);
+      const target = resolveArtifactPath(canonicalRoot, metadata.path, false);
+      const bytes = readRegularFile(target);
+      guardBytes(bytes, policy);
+      const sha256 = hash(bytes);
+      return runInTransaction(db, () => {
+        const row = lookup.get(metadata.path) as { content_hash: string } | undefined;
+        if (row !== undefined) {
+          if (row.content_hash !== sha256) throw new ArtifactError("HASH_MISMATCH");
+          return { path: metadata.path, sha256 };
+        }
+        if (exists.get(metadata.id, metadata.path) !== undefined) {
+          throw new ArtifactError("ALREADY_EXISTS");
+        }
+        insert.run(
+          metadata.id,
+          metadata.path,
+          sha256,
+          metadata.producerAttemptId ?? null,
+          metadata.classification,
+          metadata.createdAt,
+        );
+        return { path: metadata.path, sha256 };
+      });
+    },
+
     read(reference) {
       validateArtifactPath(reference.path);
       const pinned = artifactReferenceSchema.parse(reference);
@@ -153,19 +202,7 @@ export function createLocalArtifactStore(
       const target = resolveArtifactPath(canonicalRoot, pinned.path, false);
       const row = lookup.get(pinned.path) as { content_hash: string } | undefined;
       if (row === undefined) throw new ArtifactError("NOT_FOUND");
-      let bytes: Buffer;
-      let fd: number | undefined;
-      try {
-        fd = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-        if (!fs.fstatSync(fd).isFile()) throw new ArtifactError("INVALID_PATH");
-        bytes = fs.readFileSync(fd);
-      } catch (error) {
-        if (hasFsCode(error, "ENOENT")) throw new ArtifactError("NOT_FOUND");
-        if (hasFsCode(error, "ELOOP")) throw new ArtifactError("INVALID_PATH");
-        throw error;
-      } finally {
-        if (fd !== undefined) fs.closeSync(fd);
-      }
+      const bytes = readRegularFile(target);
       if (row.content_hash !== pinned.sha256 || hash(bytes) !== pinned.sha256) {
         throw new ArtifactError("HASH_MISMATCH");
       }

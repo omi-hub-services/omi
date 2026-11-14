@@ -186,6 +186,14 @@ export function createCliGitWorkspace(
         return paths.split("\0").filter(Boolean);
       });
     },
+    mergeBase(path) {
+      return attempt(() => {
+        const state = inspect(path);
+        return gitObjectId(
+          gitCommand(state.path, ["merge-base", "refs/heads/develop", state.headSha]).stdout,
+        );
+      });
+    },
     diffSince(path, headSha) {
       return attempt(() => {
         if (!/^[a-f0-9]{40}$/.test(headSha)) throw new GitWorkspaceError("INVALID_INPUT");

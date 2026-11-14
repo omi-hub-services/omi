@@ -21,7 +21,7 @@ import {
   type DispatchRunStepDependencies,
 } from "../application/use-cases/runs/dispatch-run-step.js";
 import type { AgentExecutor } from "../application/ports/agent-executor.js";
-import type { ArtifactStore } from "../application/ports/artifact-store.js";
+import type { ArtifactAdopter, ArtifactStore } from "../application/ports/artifact-store.js";
 import { createSqliteAttemptStore } from "../infrastructure/persistence/sqlite/sqlite-attempt-store.js";
 import { createSqliteDispatchTaskSource } from "../infrastructure/persistence/sqlite/sqlite-dispatch-task-source.js";
 import { createSqliteRunDeliveryStore } from "../infrastructure/persistence/sqlite/sqlite-run-delivery-store.js";
@@ -833,7 +833,7 @@ export interface RuntimeCompositionOptions {
   /** Reversible test boundary: no fake mode or executable override is read from Issue text. */
   readonly executors?: (ports: {
     readonly attempts: AttemptStore;
-    readonly artifacts: ArtifactStore;
+    readonly artifacts: ArtifactStore & ArtifactAdopter;
     readonly onWorkerStarted: (attemptId: string, worker: SupervisedProcess) => void;
     readonly startProcess: typeof startSupervisedProcess;
   }) => Readonly<Record<"claude-code" | "codex", AgentExecutor>>;
