@@ -283,6 +283,23 @@ it("reenters failover, reconciles the checkpoint and selects a new attempt witho
   expect(state.rework).toEqual(before);
 });
 
+it("refuses failover with the pinned hash when the catalog template is unavailable", async () => {
+  const { r, state, deps, recovery } = await failoverSetup();
+  const before = structuredClone({ state, steps: r.steps.rows, attempts: r.attempts.rows });
+  deps.dispatch.workflows.byHash = () => undefined;
+  await expect(retryStep(deps, input)).resolves.toEqual({
+    ok: false,
+    reason: "TEMPLATE_UNAVAILABLE",
+    detail: "template_hash=h",
+  });
+  expect({ state, steps: r.steps.rows, attempts: r.attempts.rows }).toEqual(before);
+  expect(r.unitOfWork.commits).toHaveLength(0);
+  expect(r.executor.started).toHaveLength(0);
+  expect(r.workspaces.leases.size).toBe(0);
+  expect(r.artifacts.files.size).toBe(0);
+  expect(recovery.state.order).toEqual([]);
+});
+
 it.each([
   ["BUSINESS_APPROVAL_STALE", undefined],
   ["BUSINESS_APPROVAL_REQUIRED", undefined],

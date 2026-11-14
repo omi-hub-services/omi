@@ -24,6 +24,7 @@ export type AdvanceRunResult =
         | "RUN_NOT_RUNNING"
         | "WORKFLOW_UNKNOWN"
         | "STATE_REJECTED";
+      readonly detail?: string;
     };
 
 /**
@@ -39,7 +40,12 @@ export function advanceRun(deps: AdvanceRunDependencies, input: unknown): Advanc
   if (run.status !== "running") return { ok: false, reason: "RUN_NOT_RUNNING" };
   const pinned = deps.plans.forRun(run.id);
   const workflow = pinned === undefined ? undefined : deps.workflows.byHash(pinned.templateHash);
-  if (workflow === undefined) return { ok: false, reason: "WORKFLOW_UNKNOWN" };
+  if (workflow === undefined)
+    return {
+      ok: false,
+      reason: "WORKFLOW_UNKNOWN",
+      ...(pinned === undefined ? {} : { detail: `template_hash=${pinned.templateHash}` }),
+    };
 
   const steps = deps.runs.listSteps(run.id);
   const succeeded = new Set(
