@@ -9,6 +9,7 @@ import { WORKSPACE_ID_PATTERN } from "../../domain/tasks/plan-key.js";
 import { earliestQuotaReset, type QuotaVerdict } from "../../domain/profiles/quota-policy.js";
 import type { ProfileRegistry } from "../ports/profile-registry.js";
 import type { QuotaReader } from "../ports/quota-reader.js";
+import type { StepFindingStore } from "../ports/step-findings.js";
 import type { RunPlanStore } from "../ports/run-plan-store.js";
 import type { WorkflowCatalog } from "../ports/workflow-catalog.js";
 import { selectExecutor } from "../use-cases/profiles/select-executor.js";
@@ -74,6 +75,8 @@ export function createDispatchPlanner(deps: {
   readonly profiles: ProfileRegistry;
   readonly selections: ExecutorSelectionStore;
   readonly task: (taskId: string) => Promise<DispatchTask>;
+  /** Runtime-observed findings of the step's previous attempt, e.g. a failed required check. */
+  readonly findings?: Pick<StepFindingStore, "recall">;
   readonly qualityRound?: (stepRunId: string) => number;
   readonly nextAttemptNumber: (stepRunId: string) => number;
   readonly cancelReservation: (attemptId: string) => void;
@@ -161,6 +164,10 @@ export function createDispatchPlanner(deps: {
       },
       context: {
         ...task.context,
+        previousFindings: [
+          ...task.context.previousFindings,
+          ...(deps.findings?.recall(request.stepRunId) ?? []),
+        ],
         capabilityProfile: { id: step.capability_profile, ...capability },
         expectedOutputSchema: step.output_contract,
       },

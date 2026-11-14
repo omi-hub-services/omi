@@ -13,7 +13,7 @@ export const workerPromptAssets = {
   qualityChecks:
     "Use scripts for deterministic operations. Judge the supplied check evidence before reporting; quote the results and name unverified items and open decisions.",
   developerChecks:
-    "Use scripts for deterministic operations. Run the project's configured checks before reporting; quote the results and name unverified items and open decisions.",
+    "Use scripts for deterministic operations. The runtime runs the required checks (for example project-check) on your head after you report, and a failure is returned to you with its output. If you have no shell and cannot run tests, that is not a reason to report blocked: report succeeded, state which acceptance criteria and checks are unverified, and name open decisions. Quote check results only when you ran them yourself.",
   skillInstructions:
     'Use only the skills and rules listed in the context packet. The skills and rules are given in full below; no other skill is available.\nReport each skill you applied in "skillsApplied" with its id and an "evidenceRef" to an artifact that shows how.',
 } as const;
