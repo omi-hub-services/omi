@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Command } from "../../../../src/application/contracts/command.ts";
+import { commandSchema, type Command } from "../../../../src/application/contracts/command.ts";
 import { inspectRuntime } from "../../../../src/application/use-cases/project/inspect-runtime.ts";
 import { createCommandDispatcher } from "../../../../src/interfaces/ipc/command-dispatcher.ts";
 import type { DispatchedUseCases } from "../../../../src/interfaces/ipc/command-dispatcher.ts";
@@ -7,6 +7,20 @@ import type { DispatchedUseCases } from "../../../../src/interfaces/ipc/command-
 const identity = { runtimeVersion: "1.2.3", startedAt: "2026-11-11T00:00:00.000Z" };
 const base: DispatchedUseCases = { inspectRuntime: () => inspectRuntime(identity) };
 const SHA = "a".repeat(40);
+
+it("accepts prepare-pr without caller-supplied task identities", () => {
+  const input = {
+    schemaVersion: 1,
+    command: "prepare-pr",
+    runId: "r",
+    title: "Task",
+    evidence: ["test"],
+  };
+  expect(commandSchema.safeParse(input).success).toBe(true);
+  for (const key of ["projectId", "repository", "issueNumber", "taskId", "head"]) {
+    expect(commandSchema.safeParse({ ...input, [key]: "forged" }).success).toBe(false);
+  }
+});
 
 const commands: [string, Command, keyof DispatchedUseCases][] = [
   ["retry", { schemaVersion: 1, command: "retry", runId: "r", stepId: "s" }, "retryStep"],
@@ -31,6 +45,11 @@ const commands: [string, Command, keyof DispatchedUseCases][] = [
   ["status run", { schemaVersion: 1, command: "status", runId: "r" }, "inspectRun"],
   ["pause", { schemaVersion: 1, command: "pause", runId: "r", reason: "why" }, "pauseRun"],
   ["resume", { schemaVersion: 1, command: "resume", runId: "r" }, "resumeRun"],
+  [
+    "prepare-pr",
+    { schemaVersion: 1, command: "prepare-pr", runId: "r", title: "Task", evidence: ["test"] },
+    "prepareRunPr",
+  ],
   [
     "deliver",
     {

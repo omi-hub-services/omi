@@ -4,6 +4,34 @@ import type { IpcOutcome } from "../../../../src/interfaces/ipc/protocol.ts";
 
 type Outcome = IpcOutcome;
 
+it("prepares a run PR with evidence in AC order through IPC", async () => {
+  const r = await run(
+    [
+      "prepare-pr",
+      "--run",
+      "run-1",
+      "--title",
+      "Task PR",
+      "--evidence",
+      "unit",
+      "--evidence",
+      "integration",
+      "--json",
+    ],
+    { "prepare-pr": { ok: true, result: { status: "verified", mapping: { prNumber: 18 } } } },
+  );
+  expect(r.code).toBe(0);
+  expect(r.sent).toEqual([
+    {
+      schemaVersion: 1,
+      command: "prepare-pr",
+      runId: "run-1",
+      title: "Task PR",
+      evidence: ["unit", "integration"],
+    },
+  ]);
+});
+
 const PLAN_OK: Outcome = {
   ok: true,
   result: {

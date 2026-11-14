@@ -65,7 +65,7 @@ afterEach(() => {
 });
 
 /** A delivered task PR into develop with a PASS review on its head and green CI. */
-export function sandbox() {
+export function sandbox(options: { mapped?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "omi-merge-"));
   dirs.push(dir);
   mkdirSync(join(dir, "artifacts"));
@@ -176,13 +176,14 @@ export function sandbox() {
     mergeLockTtlMs: 60_000,
   });
   const deps = wire();
-  deps.mappings.save({
-    projectId: "project-1",
-    taskId: "task-27",
-    repository: REPO,
-    issueNumber: ISSUE,
-    prNumber: PR,
-  });
+  if (options.mapped !== false)
+    deps.mappings.save({
+      projectId: "project-1",
+      taskId: "task-27",
+      repository: REPO,
+      issueNumber: ISSUE,
+      prNumber: PR,
+    });
   const writes = (method: string, pathIncludes: string) =>
     github.requests.filter((r) => r.method === method && r.path.includes(pathIncludes)).length;
   return {

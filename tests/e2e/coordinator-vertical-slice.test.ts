@@ -29,6 +29,7 @@ import { sha256ContentHasher } from "../../src/infrastructure/artifacts/sha256-c
 import { loadWorkflowCatalog } from "../../src/infrastructure/config/load-workflow-catalog.ts";
 import { createCliGitWorkspace } from "../../src/infrastructure/git/cli-git-workspace.ts";
 import { createGithubMergeDelivery } from "../../src/infrastructure/github/github-merge-delivery.ts";
+import { createGithubPrDelivery } from "../../src/infrastructure/github/github-pr-delivery.ts";
 import { createGithubRemote } from "../../src/infrastructure/github/github-remote.ts";
 import { createGithubRestClient } from "../../src/infrastructure/github/github-rest-client.ts";
 import {
@@ -491,6 +492,7 @@ async function slice() {
     track: (completion) => completions.push(completion),
     recovery,
     merge,
+    prepare: { ...merge, reader: createGithubPrDelivery(client) },
     sleep: (ms) => {
       clock.ms += ms;
       return Promise.resolve();

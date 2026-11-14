@@ -5,6 +5,7 @@ import { mergeTaskPrSchema } from "../../contracts/merge-delivery.js";
 import type { ProjectSession } from "../../ports/lease-store.js";
 import type { RunPlanStore } from "../../ports/run-plan-store.js";
 import type { RecoveryRunReader } from "../../ports/run-recovery.js";
+import { DeliveryError } from "../../ports/pr-delivery.js";
 import { mergeTaskPr } from "./merge-task-pr.js";
 import type { MergeTaskPrDeps, MergeTaskPrResult } from "./merge-task-pr.js";
 
@@ -34,14 +35,7 @@ export type DeliverRunResult =
     }
   | {
       readonly ok: false;
-      readonly reason:
-        | "INVALID_INPUT"
-        | "RUN_NOT_FOUND"
-        | "RUN_NOT_DELIVERABLE"
-        | "STEPS_NOT_SUCCEEDED"
-        | "TASK_NOT_FOUND"
-        | "MERGE_REFUSED"
-        | "STATE_REJECTED";
+      readonly reason: string;
       readonly detail?: string;
     };
 
@@ -68,13 +62,19 @@ export async function deliverRun(
   const task = deps.plans.forRun(runId);
   if (task === undefined) return { ok: false, reason: "TASK_NOT_FOUND" };
 
-  const delivery = await mergeTaskPr(deps.merge, {
-    ...request,
-    projectId: task.projectId,
-    taskId: task.taskId,
-    repository: task.repository,
-    issueNumber: task.issueNumber,
-  });
+  let delivery: MergeTaskPrResult;
+  try {
+    delivery = await mergeTaskPr(deps.merge, {
+      ...request,
+      projectId: task.projectId,
+      taskId: task.taskId,
+      repository: task.repository,
+      issueNumber: task.issueNumber,
+    });
+  } catch (error) {
+    if (!(error instanceof DeliveryError)) throw error;
+    return { ok: false, reason: error.code };
+  }
   if (delivery.status === "refused") {
     return {
       ok: false,

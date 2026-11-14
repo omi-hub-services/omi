@@ -328,6 +328,28 @@ export function registerRunCommands(program: Command, context: CliContext): void
     });
 
   program
+    .command("prepare-pr")
+    .description("Open or recover the task PR for a finished run and save its mapping")
+    .requiredOption("--run <id>", "run id")
+    .requiredOption("--title <text>", "pull request title")
+    .option("--evidence <text>", "one evidence line per AC in order (repeatable)", collect, [])
+    .action(
+      async (options: { run: string; title: string; evidence: string[] }, command: Command) => {
+        await runCommand(
+          context,
+          command,
+          {
+            command: "prepare-pr",
+            runId: options.run,
+            title: options.title,
+            evidence: options.evidence,
+          },
+          SLOW_COMMAND_MS,
+        );
+      },
+    );
+
+  program
     .command("deliver")
     .description("Merge the reviewed head of a finished run into develop and close the task")
     .requiredOption("--run <id>", "run id")
