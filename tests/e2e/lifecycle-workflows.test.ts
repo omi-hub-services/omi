@@ -132,7 +132,7 @@ async function execute(
       stepId: step.id,
       attemptId: dispatched.attempt.id,
       status: "succeeded",
-      summary: "Worker claims success",
+      summary: "Worker claims success\nAC-1: met — lifecycle evidence checked",
       artifacts: mode === "phantom" ? [] : [artifact, ...skillProof.artifacts],
       revision: { headSha: mode === "stale" ? "c".repeat(40) : HEAD, baseSha: BASE },
       checks: checksFor(workflow, step.id)

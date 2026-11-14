@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  acceptanceReviewRefusals,
+  parseAcReviewLines,
+} from "../../../domain/delivery/acceptance-review.js";
+import { contextPacketSchema } from "../../contracts/context.js";
+import { selectReviewBody } from "../../services/build-run-merge-evidence.js";
 import { transitionAgentAttempt } from "../../../domain/runs/agent-attempt.js";
 import type { AgentAttemptStatus } from "../../../domain/runs/agent-attempt.js";
 import { transitionStep } from "../../../domain/runs/step-run.js";
@@ -85,7 +91,8 @@ export type StepFailureReason =
   /** The attempt was given a skill the result does not report as applied. */
   | "SKILL_EVIDENCE_MISSING"
   /** The result reports a skill the attempt was not given. */
-  | "SKILL_NOT_ASSIGNED";
+  | "SKILL_NOT_ASSIGNED"
+  | "REVIEW_AC_LINES_INVALID";
 
 export type RecordStepResult =
   | {
@@ -93,6 +100,7 @@ export type RecordStepResult =
       readonly stepStatus: Extract<StepStatus, "succeeded" | "failed">;
       readonly attemptStatus: Extract<AgentAttemptStatus, "succeeded" | "failed">;
       readonly failure?: StepFailureReason;
+      readonly detail?: string;
       /** Set only when a checkpoint hook is wired and it failed; the step outcome still stands. */
       readonly checkpointFailure?: string;
     }
@@ -136,6 +144,7 @@ export function recordStepResult(
     };
   }
   const failure = "failure" in verdict ? verdict.failure : undefined;
+  const detail = "detail" in verdict ? verdict.detail : undefined;
 
   const succeeded = failure === undefined;
   // The process has finished, so the writer is stopped. Staleness beyond the attempt number is
@@ -191,6 +200,7 @@ export function recordStepResult(
         outcome: execution.outcome,
         exitCode: execution.exitCode,
         ...(failure === undefined ? {} : { failure }),
+        ...(detail === undefined ? {} : { detail }),
         ...(checkRuns.length === 0
           ? {}
           : {
@@ -235,6 +245,7 @@ export function recordStepResult(
     stepStatus: stepOutcome.to,
     attemptStatus: attemptOutcome.to,
     ...(failure === undefined ? {} : { failure }),
+    ...(detail === undefined ? {} : { detail }),
     ...(checkpoint === undefined || checkpoint.ok ? {} : { checkpointFailure: checkpoint.reason }),
   };
 }
@@ -247,7 +258,7 @@ type VerifiedResult = Omit<StepResult, "artifacts" | "revision"> & {
 
 type Verdict =
   | { readonly accepted: true; readonly report: VerifiedResult }
-  | { readonly failure: StepFailureReason; readonly report?: StepResult }
+  | { readonly failure: StepFailureReason; readonly report?: StepResult; readonly detail?: string }
   | { readonly refusal: RecordStepRefusal; readonly detail?: string };
 
 function verify(
@@ -314,7 +325,28 @@ function verify(
       !report.skillsApplied.every((skill) => hasEvidence(skill.evidenceRef))
     )
       return { failure: "ARTIFACT_INVALID", report };
+    if (attempt.role.id === "reviewer") {
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      const packet = contextPacketSchema.safeParse(
+        JSON.parse(decoder.decode(deps.artifacts.read(attempt.contextPacket))) as unknown,
+      );
+      if (!packet.success) return { failure: "ARTIFACT_INVALID", report };
+      const body = selectReviewBody(
+        artifacts.map((artifact) => decoder.decode(deps.artifacts.read(artifact))),
+        report.summary,
+      );
+      const refusals = acceptanceReviewRefusals(
+        packet.data.acceptanceCriteria.length,
+        parseAcReviewLines(body),
+      ).filter((reason) => reason !== "AC_NOT_MET");
+      if (refusals.length > 0) {
+        return { failure: "REVIEW_AC_LINES_INVALID", detail: refusals.join(","), report };
+      }
+    }
   } catch (error) {
+    if (error instanceof SyntaxError || error instanceof TypeError) {
+      return { failure: "ARTIFACT_INVALID", report };
+    }
     if (!(error instanceof ArtifactError)) throw error;
     return {
       failure: error.code === "HASH_MISMATCH" ? "ARTIFACT_HASH_MISMATCH" : "ARTIFACT_INVALID",

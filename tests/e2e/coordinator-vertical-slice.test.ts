@@ -220,7 +220,10 @@ async function slice() {
         createdAt: new Date(now()).toISOString(),
       });
     const base = `attempts/${attempt.id}`;
-    const report = publish(`${base}/reports/${attempt.stepId}.md`, `report of ${attempt.id}`);
+    const report = publish(
+      `${base}/reports/${attempt.stepId}.md`,
+      attempt.role.id === "reviewer" ? REVIEW_PASS : `report of ${attempt.id}`,
+    );
     const proofs = attempt.requiredChecks.map((id) => ({
       id,
       artifact: publish(`${base}/reports/${id}.txt`, "all green"),
