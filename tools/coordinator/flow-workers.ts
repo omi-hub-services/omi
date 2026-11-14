@@ -270,17 +270,12 @@ export async function commitWorkerCommand(
   }
   await runChecked(ctx.run, add);
   const names = (await runChecked(ctx.run, staged)).split("\n").filter((l) => l.trim() !== "");
-  const leftovers = (
-    await runChecked(ctx.run, git(["diff", "--name-only", "--", ...STAGE_PATHS]))
-  ).trim();
-  if (leftovers) return refuse(label, `in-scope unstaged changes remain: ${leftovers}`);
+  const leftovers = (await runChecked(ctx.run, git(["diff", "--name-only", "--"]))).trim();
+  if (leftovers) return refuse(label, `unstaged changes remain: ${leftovers}`);
   const untracked = (
-    await runChecked(
-      ctx.run,
-      git(["ls-files", "--others", "--exclude-standard", "--", ...STAGE_PATHS]),
-    )
+    await runChecked(ctx.run, git(["ls-files", "--others", "--exclude-standard", "--"]))
   ).trim();
-  if (untracked) return refuse(label, `in-scope untracked changes remain: ${untracked}`);
+  if (untracked) return refuse(label, `untracked changes remain: ${untracked}`);
   const verdict = judgeCommit(input.branch, current, names);
   if (verdict.kind === "refuse") return refuse(label, verdict.reason);
   const made = await ctx.run(commit);
