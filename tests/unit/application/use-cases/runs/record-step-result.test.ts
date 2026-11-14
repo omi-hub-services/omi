@@ -262,6 +262,16 @@ describe("recordStepResult", () => {
       });
     });
 
+    it("fails with the named reason when the develop refs diverged", async () => {
+      const r = rig();
+      const { attempt, handle } = await started(r);
+      r.workspaces.failMergeBase = "INTEGRATION_REF_DIVERGED";
+      expect(await record(r, attempt.id, handle, goodResult(r, attempt.id))).toMatchObject({
+        stepStatus: "failed",
+        failure: "INTEGRATION_REF_DIVERGED",
+      });
+    });
+
     it("rejects a result missing a check the step gate requires", async () => {
       const result = await failureOf((r, id) => goodResult(r, id, { checks: [] }));
       expect(result).toMatchObject({ failure: "REQUIRED_CHECK_MISSING" });

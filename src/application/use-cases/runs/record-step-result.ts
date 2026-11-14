@@ -73,6 +73,8 @@ export type StepFailureReason =
   | "ARTIFACT_INVALID"
   | "ARTIFACT_HASH_MISMATCH"
   | "REVISION_MISSING"
+  /** Local and origin develop diverged, so the review base cannot be determined. */
+  | "INTEGRATION_REF_DIVERGED"
   | "REQUIRED_CHECK_MISSING"
   /** A check the runtime runs has no run in the input. */
   | "CHECK_NOT_RUN"
@@ -339,6 +341,8 @@ function verify(
     if (claimedHead !== undefined && claimedHead !== headSha) return { refusal: "STALE_REVISION" };
     // The base is never taken from the worker. Merge evidence needs one, so without the runtime's
     // own merge-base the result fails closed.
+    if (base?.ok === false && base.error.code === "INTEGRATION_REF_DIVERGED")
+      return { failure: "INTEGRATION_REF_DIVERGED", report };
     if (base?.ok !== true) return { failure: "REVISION_MISSING", report };
     revision = { headSha, baseSha: base.value };
   }

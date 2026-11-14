@@ -572,6 +572,29 @@ it("refuses a combined packet when the actual changed files touch a gate", async
   expect(r.executor.started).toHaveLength(0);
 });
 
+it("names diverged develop refs instead of flattening them into the risk refusal", async () => {
+  const r = rig();
+  const workspaces = Object.assign(r.workspaces, {
+    changedPaths: () => ({
+      ok: false as const,
+      error: new GitWorkspaceError("INTEGRATION_REF_DIVERGED"),
+    }),
+  });
+  expect(
+    await dispatchStep(
+      { ...r.deps, workspaces },
+      dispatchInput({
+        quality: { policy: "lean", step: "review", steps: ["verify", "review"], round: 1 },
+      }),
+    ),
+  ).toMatchObject({
+    ok: false,
+    reason: "CONTEXT_REJECTED",
+    detail: "INTEGRATION_REF_DIVERGED",
+  });
+  expect(r.executor.started).toHaveLength(0);
+});
+
 it("gives a full review, not a delta, when the earlier round left no verdict", async () => {
   const r = rig();
   const result = await dispatchStep(
