@@ -25,6 +25,26 @@ describe("extractStepResult", () => {
     expect(extractStepResult(message)).toEqual({ ok: false, reason: "AMBIGUOUS" });
   });
 
+  it("refuses a fenced document next to a different bare object, accepts an identical one", () => {
+    const fence = `\`\`\`json\n${json}\n\`\`\``;
+    expect(
+      extractStepResult(`${fence}\nalso ${JSON.stringify({ ...doc, status: "failed" })}`),
+    ).toEqual({
+      ok: false,
+      reason: "AMBIGUOUS",
+    });
+    expect(extractStepResult(`${fence}\nsame again: ${json}`)).toEqual({ ok: true, value: doc });
+  });
+
+  it("stays fast and reports no document on 100k unbalanced braces", () => {
+    const started = Date.now();
+    expect(extractStepResult(`prose ${"{".repeat(100_000)}`)).toEqual({
+      ok: false,
+      reason: "MISSING",
+    });
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
   it("falls back to the last JSON object in prose without a fence", () => {
     expect(extractStepResult(`first {"a":1} then the result:\n${json}\nthanks`)).toEqual({
       ok: true,

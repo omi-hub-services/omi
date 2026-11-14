@@ -29,12 +29,21 @@ function objectEnd(text: string, start: number): number {
   return -1;
 }
 
+// shortcut: each failed attempt rescans to the end, so stop after this many (bounds the work to
+// O(64 n) on hostile input); a real document behind 64 stray unbalanced or invalid objects is
+// reported MISSING. Upgrade to a single-pass tokenizer if that ever matters.
+const MAX_FAILED_STARTS = 64;
+
 function lastObject(text: string): { readonly value: unknown } | undefined {
   let found: { readonly value: unknown } | undefined;
+  let failed = 0;
   for (let i = text.indexOf("{"); i !== -1; i = text.indexOf("{", i + 1)) {
     const end = objectEnd(text, i);
     const parsed = end === -1 ? undefined : tryParse(text.slice(i, end));
-    if (parsed === undefined) continue;
+    if (parsed === undefined) {
+      if (++failed >= MAX_FAILED_STARTS) break;
+      continue;
+    }
     found = parsed;
     i = end - 1;
   }
@@ -56,6 +65,16 @@ export function extractStepResult(message: string): StepResultExtraction {
     .filter((candidate) => candidate !== undefined);
   const distinct = new Map(fenced.map((candidate) => [JSON.stringify(candidate.value), candidate]));
   if (distinct.size > 1) return { ok: false, reason: "AMBIGUOUS" };
-  const only = [...distinct.values()][0] ?? lastObject(message);
+  const fence = [...distinct.values()][0];
+  // A different bare object next to the fenced one is a second candidate, not noise.
+  const bare = lastObject(message.replace(FENCE, " "));
+  if (
+    fence !== undefined &&
+    bare !== undefined &&
+    JSON.stringify(bare.value) !== JSON.stringify(fence.value)
+  ) {
+    return { ok: false, reason: "AMBIGUOUS" };
+  }
+  const only = fence ?? bare;
   return only === undefined ? { ok: false, reason: "MISSING" } : { ok: true, value: only.value };
 }
