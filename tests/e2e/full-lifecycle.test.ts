@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { acceptanceCriteria } from "../../src/domain/tasks/acceptance-criteria.ts";
 import { dispatchStep } from "../../src/application/use-cases/runs/dispatch-step.ts";
 import { recordStepResult } from "../../src/application/use-cases/runs/record-step-result.ts";
 import { checkExecutionApprovals } from "../../src/application/services/check-execution-approvals.ts";
@@ -154,6 +155,11 @@ it("runs the lifecycle from business approval through separate release and deplo
         role,
         taskId: request.taskId,
         slug: "omi-023-merge-gates",
+        context: {
+          ...(dispatchInput().context as object),
+          taskSnapshot: { issueNumber: taskIssue.number, title: idea, body: taskIssue.body },
+          acceptanceCriteria: acceptanceCriteria(taskIssue.body),
+        },
       }),
     );
     if (!dispatched.ok) throw new Error(dispatched.reason);
