@@ -21,3 +21,10 @@ it("tells a shell-less developer the runtime runs the checks and that this is no
   expect(text).toContain("not a reason to report blocked");
   expect(text).toContain("unverified");
 });
+
+it("tells QA to reference the runtime check evidence for the same check id and attempt", () => {
+  const text = workerPromptAssets.qualityChecks;
+  expect(text).toContain("checks[].evidenceRef");
+  expect(text).toContain("CheckRunRecord.evidence.path");
+  expect(text).toContain("same checkId and attempt");
+});

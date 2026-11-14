@@ -486,6 +486,59 @@ describe("checks the runtime ran itself", () => {
     expect(stepStatus(r)).toBe("failed");
   });
 
+  it("accepts a project-check reference to runtime evidence absent from worker artifacts", async () => {
+    const r = rig();
+    const { attempt, handle } = await started(r, {
+      ...dispatchInput(),
+      requiredChecks: ["project-check"],
+    });
+    const evidence = r.artifacts.publish(
+      `attempts/${attempt.id}/checks/project-check.json`,
+      JSON.stringify({ status: "passed", revision: HEAD }),
+    );
+    const report = goodResult(r, attempt.id, {
+      checks: [{ id: "project-check", evidenceRef: evidence.path }],
+    });
+    expect(report.artifacts.some((artifact) => artifact.path === evidence.path)).toBe(false);
+    const execution = await r.executor.collectResult(handle);
+    const outcome = recordStepResult(
+      { ...r.deps, checks: { has: (id: string) => id === "project-check" } },
+      {
+        attemptId: attempt.id,
+        execution,
+        result: report,
+        checkRuns: [checkRun(r, attempt.id, { checkId: "project-check", evidence })],
+      },
+    );
+    expect(outcome).toEqual({ ok: true, stepStatus: "succeeded", attemptStatus: "succeeded" });
+  });
+
+  it.each(["unlisted-file", "wrong-check-id", "other-attempt", "skill-evidence"])(
+    "rejects runtime evidence substitution: %s",
+    async (scenario) => {
+      const { outcome } = await recordWith(
+        (r, id) => [checkRun(r, scenario === "other-attempt" ? "other" : id)],
+        (r, id) => {
+          const path = `attempts/${id}/checks/${scenario === "unlisted-file" ? "unlisted" : "unit-tests"}.json`;
+          if (scenario === "unlisted-file") r.artifacts.publish(path, "unlisted bytes");
+          return goodResult(r, id, {
+            ...(scenario === "skill-evidence"
+              ? { checks: [], skillsApplied: [{ id: "tdd", evidenceRef: path }] }
+              : {
+                  checks: [
+                    {
+                      id: scenario === "wrong-check-id" ? "lint" : "unit-tests",
+                      evidenceRef: path,
+                    },
+                  ],
+                }),
+          });
+        },
+      );
+      expect(outcome).toMatchObject({ stepStatus: "failed", failure: "ARTIFACT_INVALID" });
+    },
+  );
+
   it("fails the step when the runtime's check failed, whatever the worker claims", async () => {
     const { r, outcome, attempt } = await recordWith(
       (r, id) => [checkRun(r, id, { status: "failed", exitCode: 1 })],
