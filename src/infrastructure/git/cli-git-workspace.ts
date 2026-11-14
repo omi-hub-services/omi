@@ -164,6 +164,14 @@ export function createCliGitWorkspace(
     );
   }
 
+  /** The merge gate pins the remote develop head, so review bases use the fetched origin ref;
+   * local develop is only a fallback for repositories without that remote ref. */
+  function integrationRef(): string {
+    return refExists("refs/remotes/origin/develop")
+      ? "refs/remotes/origin/develop"
+      : "refs/heads/develop";
+  }
+
   checkRoot();
   return {
     changedPaths(path) {
@@ -171,7 +179,7 @@ export function createCliGitWorkspace(
         const state = inspect(path);
         if (state.dirty) throw new GitWorkspaceError("DIRTY_WORKTREE");
         const base = gitObjectId(
-          gitCommand(state.path, ["merge-base", "refs/heads/develop", state.headSha]).stdout,
+          gitCommand(state.path, ["merge-base", integrationRef(), state.headSha]).stdout,
         );
         const paths = gitCommand(state.path, [
           "diff",
@@ -190,7 +198,7 @@ export function createCliGitWorkspace(
       return attempt(() => {
         const state = inspect(path);
         return gitObjectId(
-          gitCommand(state.path, ["merge-base", "refs/heads/develop", state.headSha]).stdout,
+          gitCommand(state.path, ["merge-base", integrationRef(), state.headSha]).stdout,
         );
       });
     },

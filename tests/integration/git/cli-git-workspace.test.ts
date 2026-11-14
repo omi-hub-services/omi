@@ -638,6 +638,28 @@ describe("OMI-141 refresh: merge origin/develop into the task worktree", () => {
     expect(value(workspace.inspect(task.path)).dirty).toBe(false);
   });
 
+  it("records the fetched origin/develop head as the merge base even when local develop is behind", () => {
+    const task = createTask();
+    commitTask(task);
+    const localDevelop = git(main, "rev-parse", "develop");
+    // origin moves through another clone; the main checkout's local develop stays behind
+    const other = join(directory, "other clone");
+    git(directory, "clone", "-q", remote, other);
+    git(other, "config", "user.name", "Other");
+    git(other, "config", "user.email", "other@example.invalid");
+    writeFileSync(join(other, "other.txt"), "other\n");
+    git(other, "add", "other.txt");
+    git(other, "commit", "-qm", "origin moved");
+    git(other, "push", "-q", "origin", "develop");
+    const originHead = git(other, "rev-parse", "HEAD");
+    expect(git(main, "rev-parse", "develop")).toBe(localDevelop);
+    value(workspace.mergeDevelop?.(task.path) ?? missing<{ headSha: string }>());
+    expect(value(workspace.mergeBase?.(task.path) ?? missing<string>())).toBe(originHead);
+    expect(value(workspace.changedPaths?.(task.path) ?? missing<readonly string[]>())).toEqual([
+      "task.txt",
+    ]);
+  });
+
   it("aborts a conflicting merge and leaves the worktree clean at the old head", () => {
     const task = createTask();
     writeFileSync(join(task.path, "tracked.txt"), "task edit\n");
