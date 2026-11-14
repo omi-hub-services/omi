@@ -298,12 +298,17 @@ function verify(
       return adopted;
     });
     const manifest = deps.artifacts.manifest(artifacts);
-    // Check and skill names alone are claims. Every evidence path must have verified, nonempty
-    // bytes.
+    // Runtime check evidence is verified below; skill evidence must be worker-declared.
     const hasEvidence = (evidenceRef: string) =>
       manifest.artifacts.some((artifact) => artifact.path === evidenceRef && artifact.size > 0);
     if (
-      !report.checks.every((check) => hasEvidence(check.evidenceRef)) ||
+      !report.checks.every(
+        (check) =>
+          hasEvidence(check.evidenceRef) ||
+          checkRuns.some(
+            (run) => run.checkId === check.id && run.evidence.path === check.evidenceRef,
+          ),
+      ) ||
       !report.skillsApplied.every((skill) => hasEvidence(skill.evidenceRef))
     )
       return { failure: "ARTIFACT_INVALID", report };
