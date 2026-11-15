@@ -1,7 +1,12 @@
+import {
+  assertKnownCredentialFree,
+  type CredentialPolicy,
+} from "../../application/contracts/credential-input.js";
 import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
 
 export interface SupervisedProcessOptions {
+  credentialPolicy?: CredentialPolicy;
   executable: string;
   args: readonly string[];
   cwd: string;
@@ -79,6 +84,8 @@ export function startSupervisedProcess(
   options: SupervisedProcessOptions,
 ): Promise<SupervisedProcess> {
   return new Promise((resolveStart, rejectStart) => {
+    if (options.credentialPolicy !== undefined)
+      assertKnownCredentialFree([options.args, options.stdin], options.credentialPolicy);
     const startedAt = performance.now();
     const child = spawn(options.executable, [...options.args], {
       cwd: options.cwd,
@@ -109,6 +116,7 @@ function supervise(
   startedAt: number,
 ): SupervisedProcess {
   const state = {
+    credentialViolation: false,
     exited: false,
     cancelRequested: false,
     timedOut: false,
@@ -120,6 +128,12 @@ function supervise(
   let stdoutBuffer = "";
   let stdoutChars = 0;
   let stderr = "";
+  let stderrScan = "";
+  const secretTailLength =
+    options.credentialPolicy?.sensitiveValues?.reduce(
+      (length, value) => Math.max(length, value.length),
+      0,
+    ) ?? 0;
 
   const stop = (signal: NodeJS.Signals, scope: CancelScope = "child"): void => {
     if (state.exited) return;
@@ -159,6 +173,27 @@ function supervise(
   });
   child.stdin?.end(options.stdin);
 
+  const guardOutput = (text: string): boolean => {
+    if (state.credentialViolation) return false;
+    if (options.credentialPolicy === undefined) return true;
+    try {
+      assertKnownCredentialFree(text, options.credentialPolicy);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return true;
+      }
+      assertKnownCredentialFree(parsed, options.credentialPolicy);
+      return true;
+    } catch {
+      state.credentialViolation = true;
+      stderr = "Worker output refused: credential material";
+      killGroup(pid, "SIGKILL");
+      return false;
+    }
+  };
+
   child.stdout?.setEncoding("utf8");
   child.stdout?.on("data", (chunk: string) => {
     if (state.stdoutOverflow) return;
@@ -170,7 +205,8 @@ function supervise(
     stdoutBuffer += chunk;
     let newline = stdoutBuffer.indexOf("\n");
     while (newline !== -1) {
-      options.onStdoutLine(stdoutBuffer.slice(0, newline).replace(/\r$/, ""));
+      const line = stdoutBuffer.slice(0, newline).replace(/\r$/, "");
+      if (guardOutput(line)) options.onStdoutLine(line);
       stdoutBuffer = stdoutBuffer.slice(newline + 1);
       newline = stdoutBuffer.indexOf("\n");
     }
@@ -179,7 +215,10 @@ function supervise(
   child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (chunk: string) => {
     // Bounded: diagnostics only.
-    if (stderr.length < options.maxStderrChars) {
+    const scan = stderrScan + chunk;
+    const safe = guardOutput(scan);
+    stderrScan = secretTailLength > 0 ? scan.slice(-secretTailLength) : "";
+    if (safe && stderr.length < options.maxStderrChars) {
       stderr = (stderr + chunk).slice(0, options.maxStderrChars);
     }
   });
@@ -188,13 +227,14 @@ function supervise(
     child.once("close", (exitCode, signal) => {
       state.exited = true;
       for (const timer of timers) clearTimeout(timer);
-      if (stdoutBuffer !== "" && !state.stdoutOverflow) options.onStdoutLine(stdoutBuffer);
+      if (stdoutBuffer !== "" && !state.stdoutOverflow && guardOutput(stdoutBuffer))
+        options.onStdoutLine(stdoutBuffer);
       if (isGroupAlive(pid)) {
         state.leftoverProcessesKilled = true;
         killGroup(pid, "SIGKILL");
       }
       resolveExit({
-        exitCode,
+        exitCode: state.credentialViolation ? 1 : exitCode,
         signal,
         durationMs: performance.now() - startedAt,
         stderr,

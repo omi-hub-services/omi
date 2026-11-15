@@ -1,3 +1,4 @@
+import { parseOmiSetting } from "../../application/contracts/omisetting.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -319,6 +320,36 @@ export function createProjectInstallation(options: {
         } else if (plan.merged[path] === undefined) await rm(target);
         else await write(target, plan.merged[path]);
       }
+      const examplePath = join(squad, "omisetting.example.json");
+      await assertPlainParents(input.projectDir, examplePath);
+      if ((await readOptional(examplePath)) === undefined) {
+        const example = parseOmiSetting({
+          $schema: "./tool/node_modules/omi-squad/schemas/omisetting.schema.json",
+          version: 1,
+          github: {
+            token: "FAKE_GITHUB_TOKEN_REPLACE_ME",
+            gitUser: { name: "omi-bot", email: "omi-bot@example.com" },
+          },
+          profiles: [
+            {
+              id: "claude-main",
+              tool: "claude",
+              auth: { type: "token", token: "FAKE_CLAUDE_TOKEN_REPLACE_ME" },
+            },
+            { id: "codex-main", tool: "codex", auth: { type: "login" } },
+          ],
+        });
+        await write(examplePath, `${JSON.stringify(example, null, 2)}\n`);
+      }
+      const ignorePath = join(input.projectDir, ".gitignore");
+      await assertPlainParents(input.projectDir, ignorePath);
+      const ignore = (await readOptional(ignorePath)) ?? "";
+      const entry = "/.omi/omisetting.local.json";
+      if (ignore.trimEnd().split(/\r?\n/).at(-1) !== entry)
+        await write(
+          ignorePath,
+          `${ignore}${ignore && !ignore.endsWith("\n") ? "\n" : ""}${entry}\n`,
+        );
       const previousTool = join(stage, "previous-tool");
       const toolExists = await lstat(join(squad, "tool")).then(
         () => true,

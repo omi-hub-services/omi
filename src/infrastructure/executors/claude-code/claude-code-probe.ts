@@ -27,7 +27,10 @@ function shortText(value: unknown): string | undefined {
  * or `orgName` (ADR-0013). The command spends no model quota. The exit code is not trusted; a
  * logged-out CLI may exit non-zero with a JSON body, so the body decides.
  */
-export function interpretAuthStatus(stdout: string): {
+export function interpretAuthStatus(
+  stdout: string,
+  selectedToken = false,
+): {
   status: "ready" | "login-required" | "unsupported-auth-mode" | "unavailable";
   subscriptionType?: string;
   loginExpiresAt?: string;
@@ -49,7 +52,10 @@ export function interpretAuthStatus(stdout: string): {
     ...(loginExpiresAt === undefined ? {} : { loginExpiresAt }),
   };
   // Subscription mode only: an API key or a third-party provider is not the omi-squad path.
-  if (parsed["authMethod"] !== "claude.ai" || parsed["apiProvider"] !== "firstParty") {
+  const subscription =
+    parsed["authMethod"] === "claude.ai" ||
+    (selectedToken && parsed["authMethod"] === "oauth_token");
+  if (!subscription || parsed["apiProvider"] !== "firstParty") {
     return { status: "unsupported-auth-mode", ...extra };
   }
   return { status: "ready", ...extra };
@@ -104,7 +110,10 @@ export async function probeClaudeCode(options: ClaudeProbeOptions): Promise<Prob
       diagnostic: "claude auth status did not run",
     };
   }
-  const auth = interpretAuthStatus(authRun.stdout);
+  const auth = interpretAuthStatus(
+    authRun.stdout,
+    options.env["CLAUDE_CODE_OAUTH_TOKEN"] !== undefined,
+  );
   const { status, ...rest } = auth;
   const diagnostics: Record<typeof status, string | undefined> = {
     ready: undefined,

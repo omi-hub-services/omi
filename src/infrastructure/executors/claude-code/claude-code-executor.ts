@@ -1,3 +1,5 @@
+import type { WorkerCredentials } from "../../../application/contracts/omisetting.js";
+import type { CredentialPolicy } from "../../../application/contracts/credential-input.js";
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,6 +32,8 @@ import { ExecutionEventStream } from "../../processes/execution-event-stream.js"
 import { SUPPORTED_CLAUDE_CODE_RANGE } from "./claude-code-version.js";
 
 export interface ClaudeCodeExecutorOptions {
+  credentials?: (profileHome: string) => WorkerCredentials;
+  credentialPolicy?: CredentialPolicy;
   /** CLI to run; resolved through the child's `PATH`. Tests point it at a fake. */
   startProcess?: typeof startSupervisedProcess;
   executable?: string;
@@ -77,6 +81,8 @@ export class ClaudeCodeExecutor implements AgentExecutor {
 
   private readonly startProcess: typeof startSupervisedProcess;
   private readonly executable: string;
+  private readonly credentials: (profileHome: string) => WorkerCredentials;
+  private readonly credentialPolicy: CredentialPolicy;
   private readonly parentEnv: NodeJS.ProcessEnv;
   private readonly settingSources: readonly SettingSource[] | undefined;
   private readonly graceMs: number;
@@ -86,6 +92,8 @@ export class ClaudeCodeExecutor implements AgentExecutor {
 
   constructor(options: ClaudeCodeExecutorOptions = {}) {
     this.startProcess = options.startProcess ?? startSupervisedProcess;
+    this.credentials = options.credentials ?? (() => ({}));
+    this.credentialPolicy = options.credentialPolicy ?? {};
     this.executable = options.executable ?? "claude";
     this.parentEnv = options.parentEnv ?? process.env;
     this.settingSources = options.settingSources;
@@ -101,7 +109,11 @@ export class ClaudeCodeExecutor implements AgentExecutor {
     }
     const fields = await probeClaudeCode({
       executable: this.executable,
-      env: buildClaudeCodeEnvironment(this.parentEnv, parsed.data.profileHome),
+      env: buildClaudeCodeEnvironment(
+        this.parentEnv,
+        parsed.data.profileHome,
+        this.credentials(parsed.data.profileHome),
+      ),
       cwd: tmpdir(),
     });
     return {
@@ -139,12 +151,17 @@ export class ClaudeCodeExecutor implements AgentExecutor {
     let supervised: SupervisedProcess | undefined;
     try {
       supervised = await this.startProcess({
+        credentialPolicy: this.credentialPolicy,
         executable: this.executable,
         args: buildClaudeInvocationArgs(valid, {
           ...(this.settingSources === undefined ? {} : { settingSources: this.settingSources }),
         }),
         cwd: valid.workspace,
-        env: buildClaudeCodeEnvironment(this.parentEnv, valid.profileHome),
+        env: buildClaudeCodeEnvironment(
+          this.parentEnv,
+          valid.profileHome,
+          this.credentials(valid.profileHome),
+        ),
         stdin: valid.prompt,
         onStdoutLine: (line) => {
           for (const draft of run.stream.ingest(line)) run.events.publish(draft);

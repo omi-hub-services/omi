@@ -1,3 +1,9 @@
+import { loadOmiSetting } from "../config/load-omisetting.js";
+import type { OmiSetting } from "../../application/contracts/omisetting.js";
+import { buildClaudeCodeEnvironment } from "../executors/claude-code/claude-code-environment.js";
+import { buildCodexEnvironment } from "../executors/codex/codex-environment.js";
+import { codexProfileHome } from "../profiles/login-profile.js";
+import { homedir } from "node:os";
 import { access, readdir, readFile, realpath } from "node:fs/promises";
 import { z } from "zod";
 import { join } from "node:path";
@@ -19,7 +25,13 @@ export interface WslProbe {
   kernel(): Promise<string>;
   distro(): string | undefined;
   interop(): Promise<boolean>;
-  command(executable: string, args: readonly string[], cwd: string): Promise<string | undefined>;
+  command(
+    executable: string,
+    args: readonly string[],
+    cwd: string,
+    env?: Readonly<Record<string, string>>,
+  ): Promise<string | undefined>;
+  settings(projectDir: string): Promise<OmiSetting | undefined>;
   canonical(path: string): Promise<string>;
   /** The project's `project.yaml`, or undefined when missing or invalid. */
   projectConfig(projectDir: string): Promise<ProjectConfig | undefined>;
@@ -76,6 +88,7 @@ export async function detectInterop(io: InteropIo): Promise<boolean> {
 }
 
 const systemProbe: WslProbe = {
+  settings: loadOmiSetting,
   kernel: () => readFile("/proc/sys/kernel/osrelease", "utf8"),
   distro: () => process.env["WSL_DISTRO_NAME"],
   interop: () =>
@@ -85,16 +98,12 @@ const systemProbe: WslProbe = {
       readdir: (path) => readdir(path),
       readFile: (path) => readFile(path, "utf8"),
     }),
-  command: async (executable, args, cwd) => {
+  command: async (executable, args, cwd, env) => {
     const result = await runCommand({
       executable,
       args,
       cwd,
-      env: Object.fromEntries(
-        Object.entries(process.env).filter(
-          (pair): pair is [string, string] => pair[1] !== undefined,
-        ),
-      ),
+      env: env ?? buildCodexEnvironment(process.env, homedir()),
       timeoutMs: 10_000,
     });
     return result.kind === "finished" && result.exit.exitCode === 0 ? result.stdout : undefined;
@@ -252,15 +261,83 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
         : "Cannot be checked until the wsl-exe check passes",
     );
 
+    let settings: OmiSetting | undefined;
+    let settingsDetail = "omisetting.local.json: missing file";
+    try {
+      settings = await probe.settings(input.projectDir);
+    } catch (error) {
+      settingsDetail =
+        error instanceof Error ? error.message : "omisetting.local.json: invalid settings";
+    }
+    check(
+      "settings-schema",
+      settings !== undefined,
+      settings === undefined ? settingsDetail : "Local settings are valid",
+      "Fill .omi/omisetting.local.json using the installed example and schema",
+    );
+    const tracked = await probe.command(
+      "git",
+      ["ls-files", "--", ".omi/omisetting.local.json"],
+      input.projectDir,
+    );
+    check(
+      "settings-untracked",
+      tracked !== undefined && tracked.trim() === "",
+      "Local settings must not be tracked by Git",
+      "Remove .omi/omisetting.local.json from the Git index and rotate any exposed credentials",
+    );
+    if (settings !== undefined) {
+      for (const [index, profile] of settings.profiles.entries()) {
+        if (profile.tool === "claude") {
+          const output = await probe.command(
+            "claude",
+            ["auth", "status"],
+            input.projectDir,
+            buildClaudeCodeEnvironment(
+              process.env,
+              join(homedir(), ".claude-profiles", profile.id),
+              { token: profile.auth.token },
+            ),
+          );
+          const live = parseWith(z.object({ loggedIn: z.boolean() }), output)?.loggedIn === true;
+          check(
+            `profiles[${String(index)}].auth.token`,
+            live,
+            `profiles[${String(index)}].auth.token: ${live ? "authenticated" : "authentication failed"}`,
+            "Obtain a fresh token with claude setup-token",
+          );
+        } else {
+          const output = await probe.command(
+            "codex",
+            ["login", "status"],
+            input.projectDir,
+            buildCodexEnvironment(process.env, codexProfileHome(profile.id)),
+          );
+          check(
+            `profiles[${String(index)}].auth`,
+            output !== undefined && /logged in using chatgpt/i.test(output),
+            `profiles[${String(index)}].auth: requires ChatGPT login`,
+            `Run omi profile login ${profile.id}`,
+          );
+        }
+      }
+    }
+
     // GitHub identity and permissions. Only the login, user type and permission booleans are read
     // from gh; auth output is never stored, so no token can reach the report.
-    const gh = (args: readonly string[]) => probe.command("gh", args, input.projectDir);
-    const authenticated = (await gh(["auth", "status"])) !== undefined;
+    const gh = (args: readonly string[]) =>
+      settings === undefined
+        ? Promise.resolve(undefined)
+        : probe.command("gh", args, input.projectDir, {
+            ...buildCodexEnvironment(process.env, homedir()),
+            GH_TOKEN: settings.github.token,
+          });
+    const authenticated = parseWith(loginSchema, await gh(["api", "user"])) !== undefined;
     check(
       "github-auth",
       authenticated,
-      "gh must be logged in as the agent account",
-      "Run gh auth login (agent account) with repo and project scopes",
+      "github.token must authenticate the agent account",
+      "Set github.token to a live fine-grained PAT for the agent account",
     );
     const read = async <T>(schema: z.ZodType<T>, args: readonly string[]) =>
       authenticated ? parseWith(schema, await gh(args)) : undefined;

@@ -1,3 +1,4 @@
+import type { WorkerCredentials } from "../../../application/contracts/omisetting.js";
 /** Variables copied from the parent environment into a worker. Everything else is dropped. */
 const INHERITED_ENV = [
   "PATH",
@@ -17,16 +18,12 @@ const INHERITED_ENV = [
   "no_proxy",
 ] as const;
 
-/** Variables that would let the CLI authenticate with something other than the profile login. */
-export const FORBIDDEN_AUTH_ENV = [
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_AUTH_TOKEN",
-  "CLAUDE_CODE_OAUTH_TOKEN",
-] as const;
+/** Provider overrides are forbidden; only the selected profile may supply an OAuth token. */
+export const FORBIDDEN_AUTH_ENV = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"] as const;
 
 /**
  * The complete environment of one Claude Code process. The profile is chosen here, per process,
- * with `CLAUDE_CONFIG_DIR`; no global login is ever swapped, so runs on different profiles can
+ * with `CLAUDE_CONFIG_DIR` and its explicit token; runs on different profiles can
  * overlap (architecture.md §7).
  *
  * An allowlist (not a denylist) keeps API keys, OAuth tokens and the parent Claude Code session's
@@ -36,6 +33,7 @@ export const FORBIDDEN_AUTH_ENV = [
 export function buildClaudeCodeEnvironment(
   parent: NodeJS.ProcessEnv,
   profileHome: string,
+  credentials: WorkerCredentials = {},
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const name of INHERITED_ENV) {
@@ -46,5 +44,7 @@ export function buildClaudeCodeEnvironment(
   env["DISABLE_AUTOUPDATER"] = "1";
   // The profile's auto-memory is personal state: a worker must not read or write it (OMI-072).
   env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1";
+  if (credentials.githubToken !== undefined) env["GH_TOKEN"] = credentials.githubToken;
+  if (credentials.token !== undefined) env["CLAUDE_CODE_OAUTH_TOKEN"] = credentials.token;
   return env;
 }

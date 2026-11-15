@@ -1,3 +1,5 @@
+import type { ProfileLogin } from "../../../application/ports/profile-login.js";
+import { presentSuccess } from "../presenters/result-presenter.js";
 import type { Command } from "commander";
 import { commandSchema } from "../../../application/contracts/command.js";
 import { CONTRACT_SCHEMA_VERSION } from "../../../application/contracts/schema-version.js";
@@ -7,7 +9,37 @@ import { formatOf } from "./command-context.js";
 import type { CliContext, GlobalOptions } from "./command-context.js";
 import { runCommand } from "./run-commands.js";
 
-export function registerProfileCommands(program: Command, context: CliContext): void {
+export function registerProfileCommands(
+  program: Command,
+  context: CliContext,
+  profileLogin?: ProfileLogin,
+): void {
+  program
+    .command("profile")
+    .command("login <id>")
+    .description("Log a Codex ChatGPT profile into its private writable store")
+    .option("--project <path>", "project containing .omi/omisetting.local.json")
+    .action(async (id: string, options: { project?: string }, command: Command) => {
+      const format = formatOf(command.optsWithGlobals<GlobalOptions>());
+      try {
+        if (profileLogin === undefined) throw new Error("PROFILE_LOGIN_NOT_WIRED");
+        await profileLogin({
+          profileId: id,
+          ...(options.project === undefined ? {} : { projectDir: options.project }),
+        });
+        context.emit(presentSuccess({ status: "logged-in" }, "Profile login completed", format));
+      } catch {
+        context.emit(
+          presentFailure(
+            {
+              code: "COMMAND_REFUSED",
+              message: "Profile login failed; check settings and retry the Codex login",
+            },
+            format,
+          ),
+        );
+      }
+    });
   const profiles = program
     .command("profiles")
     .description("Native subscription profile metadata (login with the native tool first)");

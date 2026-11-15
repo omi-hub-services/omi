@@ -157,6 +157,8 @@ to install the current runtime; ordinary runtime readers only use `.omi`.
 
 | Đường dẫn trong project | Theo dõi bằng Git | Mục đích |
 |---|---|---|
+| `.omi/omisetting.local.json` | Không | GitHub PAT, git identity and selected Claude tokens; strict contract and env-only boundary (ADR-0044) |
+| `.omi/omisetting.example.json` | Có | Editable fake settings; editor schema shipped in the installed package |
 | `.omi/config/project.yaml` | Có | Repo, Project, branches, limits, policies |
 | `.omi/config/models.yaml` | Có | Capability requirement và model aliases; không credential |
 | `.omi/workflows/*.yaml` | Có | Workflow project |
@@ -284,6 +286,14 @@ Claude Code hỗ trợ chạy không tương tác bằng `claude -p`. Tài liệ
 Codex có `codex exec`, JSON output/schema và sử dụng auth CLI đã lưu. Credential có thể ở file dưới `CODEX_HOME` hoặc OS store. Adapter chỉ dùng cơ chế cấu hình/login được hỗ trợ và kiểm thử; không tự sửa refresh token. [Nguồn chạy](https://learn.chatgpt.com/docs/non-interactive-mode), [nguồn auth](https://learn.chatgpt.com/docs/auth).
 
 ### Profile registry và selection
+
+Settings credentials (OMI-155, [ADR-0044](adr/0044-local-settings-credential-boundary.md))
+are loaded only by the config adapter. Bootstrap resolves the registered profile ID to the
+settings entry; the executor receives the selected token and shared `GH_TOKEN` through an
+in-memory callback, never execution requests or registry metadata. All configured token values
+join the packet/artifact/checkpoint policy and native output guard. Claude `oauth_token` auth
+is subscription-ready only when the selected profile supplied it. Codex login keeps its sole
+refresh-token copy in `~/.codex-profiles/<id>` until the Docker volume migration.
 
 Registry local chứa `profileId`, `tool`, `authMode=subscription`, `credentialRef`, `accountGroupId`, `modelAllowlist`, `lastProbeAt`, `availability`, `cooldownUntil`, `maxConcurrency`, `accountGroupMaxConcurrency`, `probeTtlMs`, `preference`; không chứa token. `credentialRef` chỉ là đường dẫn thư mục profile cô lập, không phải file auth. `modelAllowlist` chứa tên model truyền cho CLI đã được kiểm chứng, còn `verified_models` trong models.yaml xác minh alias cho capability profile; selector yêu cầu cả hai. Các profile của cùng tài khoản chia sẻ nhóm hạn mức, không tính như nguồn quota độc lập.
 
@@ -461,6 +471,7 @@ Tên executable là `omi-squad` trong package; project shim gọi bằng `.omi/b
 | `omi sync [--issues <n...>] [--json]` | IPC `sync` có schemaVersion 1: reconcile theo marker → flush operation đã có trong outbox → import Issue chỉ định; giữ single-writer lease, không tạo intent ghi GitHub mới |
 | `omi profiles register <id> --tool <claude-code\|codex> --profile-home <path> --account-group <id> [--model <name> ...]` | Đăng ký metadata vào registry SQLite qua runtime; trạng thái unknown đến khi probe |
 | `omi profiles list` / `omi profiles probe <id>` | Liệt kê/probe qua adapter hiện có; login dùng native CLI với CLAUDE_CONFIG_DIR/CODEX_HOME |
+| `omi profile login <id> [--project <path>]` | Runs native Codex browser login with a forced file store for a configured login profile; the Windows `.omi/bin/omi.cjs` bridge uses typed WSL argv without a WSL shell. Never copies auth into settings. |
 | `omi login <profile-id> [--json]` | Wrapper CLI-only trên `profile.list` + `profile.probe`: in lệnh native (`CLAUDE_CONFIG_DIR=<home> claude` rồi `/login`, hoặc `CODEX_HOME=<home> codex login`, ADR-0031), probe, báo `ready`/`login-required`/`unavailable`; exit 0 chỉ khi ready, ngược lại 4. omi không spawn login và không đọc credential |
 | `omi worker-report --attempt <id>` | Đọc result và verification đã ghi |
 | `omi commit-worker --attempt <id> --message-file <file>` | Commit output trong phạm vi attempt đã dừng, không chạy hooks |

@@ -762,6 +762,12 @@ describe("WSL2 doctor", () => {
   }, 30_000);
   function probe(overrides: Partial<WslProbe> = {}): WslProbe {
     return {
+      settings: () =>
+        Promise.resolve({
+          version: 1,
+          github: { token: "fake-github", gitUser: { name: "bot", email: "bot@example.com" } },
+          profiles: [{ id: "codex-main", tool: "codex", auth: { type: "login" } }],
+        }),
       kernel: () => Promise.resolve("6.6.87-microsoft-standard-WSL2"),
       distro: () => "Ubuntu",
       interop: () => Promise.resolve(true),
@@ -773,6 +779,9 @@ describe("WSL2 doctor", () => {
           policies: { mandatory_approvals: [], github_approval_actors: ["po-human"] },
         } as unknown as ProjectConfig),
       command: (executable, args) => {
+        if (executable === "git") return Promise.resolve("");
+        if (executable === "codex" && args[0] === "login")
+          return Promise.resolve("Logged in using ChatGPT");
         if (executable === "gh")
           return Promise.resolve(
             args[0] === "auth"

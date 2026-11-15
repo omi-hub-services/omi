@@ -1,3 +1,7 @@
+import { loadOmiSetting } from "../infrastructure/config/load-omisetting.js";
+import { settingsCredentialPolicy } from "../application/contracts/omisetting.js";
+import { resolveWorkerCredentials } from "../application/services/resolve-worker-credentials.js";
+import { createProfileLogin } from "../infrastructure/profiles/login-profile.js";
 import { createRunMergeEvidenceReader } from "../application/services/build-run-merge-evidence.js";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { loadWorkflowCatalog } from "../infrastructure/config/load-workflow-catalog.js";
@@ -534,6 +538,7 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
         ),
       doctor: (input) => inspectInstallation(createInstallationDoctor(), input),
     },
+    profileLogin: createProfileLogin(),
     launchSession: launchWindowsSession,
     readStdin: () => readStandardInput(process.stdin),
     readText: (path) => readBoundedText(path, 65_536),
@@ -1001,6 +1006,14 @@ export async function createProjectRunCommandUseCases(
     };
   }
   const config = await loadRuntimeConfig(join(projectDir, ".omi"));
+  const settings = await loadOmiSetting(projectDir);
+  const credentialPolicy =
+    settings === undefined
+      ? {}
+      : {
+          ...settingsCredentialPolicy(settings),
+          credentialRoots: [join(projectDir, ".omi", "omisetting.local.json")],
+        };
   const now = options.now ?? Date.now;
   const nextId = randomUUID;
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -1010,8 +1023,8 @@ export async function createProjectRunCommandUseCases(
   const profiles = createProfileStores(database, { fence: session.lease, now });
   const root = join(projectDir, ".omi", "local", "runs");
   mkdirSync(root, { recursive: true, mode: 0o700 });
-  const artifacts = createLocalArtifactStore(root, database);
-  const checkpoints = createLocalCheckpointStore(root, database);
+  const artifacts = createLocalArtifactStore(root, database, credentialPolicy);
+  const checkpoints = createLocalCheckpointStore(root, database, { policy: credentialPolicy });
   const workspaces = createCliGitWorkspace(
     {
       mainWorktreePath: projectDir,
@@ -1029,9 +1042,19 @@ export async function createProjectRunCommandUseCases(
     onWorkerStarted: processRecovery.onWorkerStarted,
     startProcess: options.startProcess,
   };
+  const credentials = (tool: "claude-code" | "codex") => (home: string) =>
+    resolveWorkerCredentials(settings, profiles.registry.list(), tool, home);
   const executors = options.executors?.(executorPorts) ?? {
-    "claude-code": new ClaudeCodeExecutor(executorPorts),
-    codex: new CodexExecutor(executorPorts),
+    "claude-code": new ClaudeCodeExecutor({
+      ...executorPorts,
+      credentials: credentials("claude-code"),
+      credentialPolicy,
+    }),
+    codex: new CodexExecutor({
+      ...executorPorts,
+      credentials: credentials("codex"),
+      credentialPolicy,
+    }),
   };
   const client = createGithubRestClient({
     transport: options.transport ?? createGhApiTransport(),
@@ -1092,6 +1115,7 @@ export async function createProjectRunCommandUseCases(
   };
   const snapshot = (runId: string) => snapshotRunContext(snapshotDeps, runId);
   const checkpointDeps = {
+    credentialPolicy,
     checkpoints,
     attempts,
     artifacts,
@@ -1101,6 +1125,7 @@ export async function createProjectRunCommandUseCases(
     nextId,
   };
   const dispatch: DispatchStepDependencies = {
+    credentialPolicy,
     catalog: config.catalog,
     skills: createFileSkillSource(join(projectDir, ".omi")),
     rules: createFileRuleSource(join(projectDir, ".omi")),
