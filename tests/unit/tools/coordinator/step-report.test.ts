@@ -305,56 +305,26 @@ describe("worker-report --post", () => {
     expect(p?.input).toContain("status=succeeded next=review -->");
   });
 
-  it("posts nothing when the same dispatch (packet) is already on the Issue", async () => {
+  it("posts nothing when the same step/round/session is already on the Issue", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const first = rig();
-    await post(first);
-    const prior = { author: COORDINATOR_LOGIN, body: posts(first.seen)[0]?.input ?? "" };
     const r = rig();
+    const prior = {
+      author: COORDINATOR_LOGIN,
+      body: stepMarker(marker({ session: "sess-1", next: "verify" })),
+    };
     expect(await post(r, [prior])).toBe(0);
     expect(posts(r.seen)).toHaveLength(0);
   });
 
-  it("a native resume of the same step/round/session posts its own report as the next round", async () => {
+  it("a native resume with a new round of the same step and session posts as that round", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const prior = {
       author: COORDINATOR_LOGIN,
-      body: `**Packet:** implement-1-oldpacket1\n${stepMarker(marker({ session: "sess-1", next: "review" }))}`,
+      body: stepMarker(marker({ session: "sess-1", next: "review" })),
     };
-    const r = rig();
+    const r = rig({ meta: { round: 2 } });
     expect(await post(r, [prior])).toBe(0);
-    const [p] = posts(r.seen);
-    expect(p?.input).toContain("step implement · round 2");
-    expect(p?.input).toContain("round=2 session=sess-1");
-  });
-
-  it("a report without a Packet header (legacy) keeps the step/round/session dedupe", async () => {
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const prior = {
-      author: COORDINATOR_LOGIN,
-      body: `**Worker:** claude / minibox · m · high · session sess-1\n${stepMarker(marker({ session: "sess-1", next: "review" }))}`,
-    };
-    const r = rig();
-    expect(await post(r, [prior])).toBe(0);
-    expect(posts(r.seen)).toHaveLength(0);
-  });
-
-  it("a summary that names this packet does not suppress its report", async () => {
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const prior = {
-      author: COORDINATOR_LOGIN,
-      body: [
-        "**Packet:** implement-1-oldpacket1",
-        "**Summary:** text",
-        "**Packet:** implement-1-k3x9a1b2c3",
-        "**Findings:** none",
-        "**Next:** x",
-        stepMarker(marker({ session: "sess-1", next: "review" })),
-      ].join("\n"),
-    };
-    const r = rig();
-    expect(await post(r, [prior])).toBe(0);
-    expect(posts(r.seen)).toHaveLength(1);
+    expect(posts(r.seen)[0]?.input).toContain("round=2 session=sess-1");
   });
 
   describe("Architect pseudo-step (OMI-173)", () => {

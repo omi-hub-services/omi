@@ -422,31 +422,19 @@ async function postStepReport(
         (id) => id === "analyze",
       )
     : [];
-  // One dispatch (packet) is posted once. A native resume keeps step, round and session of the
-  // earlier run (OMI-173), so those cannot tell it apart; the packet id can.
-  // The packet comes from the header of a validated report only, never from a worker's summary.
-  const sameKey = parsed.filter(
-    (p) =>
-      p.marker.step === meta.step &&
-      p.marker.round === meta.round &&
-      p.marker.session === input.session,
-  );
-  // reports posted before the Packet header keep the legacy step+round+session dedupe
-  if (parsed.some((p) => p.packet === meta.packet) || sameKey.some((p) => p.packet === null)) {
+  // A resumed dispatch has its own round: `prompt` refuses a round that is already reported.
+  if (
+    prior.some((p) => p.step === meta.step && p.round === meta.round && p.session === input.session)
+  ) {
     console.log(`${label}: done: ${meta.step} round ${String(meta.round)} already reported`);
     return 0;
   }
-  // a new packet for a step/round/session already on the Issue is a rework: it gets the next round
-  const sameRun = sameKey.length > 0;
-  const round = sameRun
-    ? 1 + Math.max(...prior.filter((p) => p.step === meta.step).map((p) => p.round))
-    : meta.round;
   let marker: StepMarker;
   try {
     marker = {
       issue: input.number,
       step: meta.step,
-      round,
+      round: meta.round,
       session: input.session,
       status: input.result.status,
       next: computeNext(
@@ -475,7 +463,7 @@ async function postStepReport(
   }
   const body = renderStepReport({
     planKey: input.planKey,
-    meta: { ...meta, round },
+    meta,
     session: input.session,
     result: input.result,
     marker,
@@ -495,7 +483,7 @@ async function postStepReport(
   const out = (await runChecked(ctx.run, post)).trim();
   if (out) console.log(out);
   console.log(
-    `${label}: ok (${meta.step} round ${String(round)} ${marker.status}, next ${marker.next})`,
+    `${label}: ok (${meta.step} round ${String(meta.round)} ${marker.status}, next ${marker.next})`,
   );
   return 0;
 }
