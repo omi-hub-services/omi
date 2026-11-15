@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "src/domain/tasks/taskhelpers.ts": ""
+  },
+  "message": "vague name"
+}

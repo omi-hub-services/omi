@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "tools/common/format.ts": ""
+  },
+  "message": "vague directory"
+}

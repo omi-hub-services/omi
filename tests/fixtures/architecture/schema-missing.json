@@ -1,0 +1,6 @@
+{
+  "guard": "schema",
+  "files": {},
+  "message": "command.v1.schema.json: missing",
+  "remove": ["command.v1.schema.json"]
+}

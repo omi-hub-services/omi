@@ -1,0 +1,5 @@
+{"type":"system","subtype":"hook_started","hook_id":"00000000-0000-4000-8000-0000000000b1","hook_name":"SessionStart:startup","hook_event":"SessionStart","session_id":"00000000-0000-4000-8000-0000000000a1"}
+{"type":"system","subtype":"hook_response","hook_id":"00000000-0000-4000-8000-0000000000b1","hook_name":"SessionStart:startup","hook_event":"SessionStart","outcome":"success","exit_code":0,"session_id":"00000000-0000-4000-8000-0000000000a1"}
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000a1","cwd":"/tmp/omi-fixture-workspace","model":"claude-sonnet-5-5","permissionMode":"default","apiKeySource":"none","tools":[]}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"fixture prompt"}]},"session_id":"00000000-0000-4000-8000-0000000000a1"}
+{"type":"result","subtype":"error_during_execution","is_error":true,"duration_ms":940,"num_turns":1,"session_id":"00000000-0000-4000-8000-0000000000a1"}

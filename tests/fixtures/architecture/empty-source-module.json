@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "src/domain/widgets/.gitkeep": ""
+  },
+  "message": "not a module directory"
+}

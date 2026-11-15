@@ -1,0 +1,8 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/infrastructure/github/client.ts": "import \"../../interfaces/ipc/protocol.js\";",
+    "src/interfaces/ipc/protocol.ts": "export {};"
+  },
+  "message": "infrastructure-not-to-interfaces-or-bootstrap"
+}

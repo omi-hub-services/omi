@@ -1,0 +1,14 @@
+# Install only in a sandbox repository. Gives the rulesets a named check to require.
+name: Sandbox check
+on:
+  pull_request:
+    branches: [main, develop]
+permissions:
+  contents: read
+jobs:
+  sandbox-check:
+    name: sandbox-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "sandbox check passed"

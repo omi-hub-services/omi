@@ -1,0 +1,7 @@
+{
+  "guard": "schema",
+  "files": {
+    "command.v1.schema.json": "{}\n"
+  },
+  "message": "command.v1.schema.json: out of date"
+}

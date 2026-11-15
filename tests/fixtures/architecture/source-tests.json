@@ -1,0 +1,8 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/bootstrap/container.ts": "import \"../../tests/unit/task.js\";",
+    "tests/unit/task.ts": "export {};"
+  },
+  "message": "src-not-to-tests-or-tools"
+}

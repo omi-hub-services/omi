@@ -1,0 +1,7 @@
+schema_version: 1
+id: architect
+version: 1
+title: Architect
+description: Decides structure, boundaries and trade-offs before implementation and records them.
+skills: [requirements-analysis, minimal-change]
+rules: [architecture-boundaries]

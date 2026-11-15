@@ -1,0 +1,7 @@
+{
+  "guard": "schema",
+  "files": {
+    "handwritten.json": "{}\n"
+  },
+  "message": "handwritten.json: not produced by any contract"
+}

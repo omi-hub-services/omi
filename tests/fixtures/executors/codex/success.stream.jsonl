@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"thread-fixture"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item-1","type":"command_execution","command":"cat README.md","status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item-1","type":"command_execution","command":"cat README.md","aggregated_output":"fixture output","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"Stream message differs from output file."}}
+{"type":"turn.completed","usage":{"input_tokens":42,"output_tokens":12}}

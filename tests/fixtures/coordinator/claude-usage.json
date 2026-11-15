@@ -1,0 +1,19 @@
+{
+  "five_hour": { "utilization": 33, "resets_at": "2026-11-11T11:10:00+00:00" },
+  "seven_day": { "utilization": 41.5, "resets_at": "2026-11-16T07:00:00+00:00" },
+  "limits": [
+    { "kind": "session", "percent": 33, "resets_at": "2026-11-11T11:10:00+00:00", "model": null },
+    {
+      "kind": "weekly_all",
+      "percent": 41.5,
+      "resets_at": "2026-11-16T07:00:00+00:00",
+      "model": null
+    },
+    {
+      "kind": "weekly_scoped",
+      "percent": 1,
+      "resets_at": "2026-11-16T07:00:00+00:00",
+      "model": "Fable"
+    }
+  ]
+}

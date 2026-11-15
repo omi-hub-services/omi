@@ -1,0 +1,9 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/domain/tasks/task.ts": "export * from \"./index.js\";",
+    "src/domain/tasks/index.ts": "export * from \"../../infrastructure/github/client.js\";",
+    "src/infrastructure/github/client.ts": "export const client = 1;"
+  },
+  "message": "domain-is-pure"
+}

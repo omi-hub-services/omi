@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "templates/project/.omi-squad/local/state.json": ""
+  },
+  "message": "omi-squad local runtime state"
+}

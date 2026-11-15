@@ -1,0 +1,5 @@
+{"type":"system","subtype":"hook_started","hook_id":"00000000-0000-4000-8000-0000000000b1","hook_name":"SessionStart:startup","hook_event":"SessionStart","session_id":"00000000-0000-4000-8000-0000000000a1"}
+{"type":"system","subtype":"hook_response","hook_id":"00000000-0000-4000-8000-0000000000b1","hook_name":"SessionStart:startup","hook_event":"SessionStart","outcome":"success","exit_code":0,"session_id":"00000000-0000-4000-8000-0000000000a1"}
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000a1","cwd":"/tmp/omi-fixture-workspace","model":"claude-sonnet-5-5","permissionMode":"dontAsk","apiKeySource":"none","tools":["Glob","Grep","Read"]}
+{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1794310800,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":1,"resetsAt":1794310800,"status":"rejected"},"seven_day":{"utilization":0.26,"resetsAt":1794657600,"status":"allowed"}}}}
+{"type":"result","subtype":"success","is_error":true,"duration_ms":310,"num_turns":1,"result":"You've hit your limit · resets 3pm","api_error_status":429,"session_id":"00000000-0000-4000-8000-0000000000a1"}

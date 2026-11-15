@@ -1,0 +1,1 @@
+error: option '--effort <level>' argument 'turbo' is invalid. Allowed choices are low, medium, high, xhigh, max.

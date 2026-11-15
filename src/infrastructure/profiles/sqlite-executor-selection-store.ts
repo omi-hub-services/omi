@@ -1,0 +1,150 @@
+import { z } from "zod";
+import { executionResultSchema } from "../../application/contracts/agent-execution.js";
+import { assertCredentialFree } from "../../application/contracts/credential-input.js";
+import { identifierSchema } from "../../application/contracts/identifiers.js";
+import {
+  effortSchema,
+  executorSchema,
+  modelNameSchema,
+} from "../../application/contracts/model-capability.js";
+import type { ExecutorSelectionStore } from "../../application/ports/executor-selection-store.js";
+import type { ProfileRegistry } from "../../application/ports/profile-registry.js";
+import type { AttemptSettings } from "../../domain/runs/agent-attempt.js";
+import type { LeaseFence } from "../../application/ports/state-unit-of-work.js";
+import type { StateDatabase } from "../persistence/sqlite/sqlite-connection.js";
+import { runInTransaction } from "../persistence/sqlite/sqlite-transaction.js";
+
+const settingsSchema = z.strictObject({
+  executor_id: executorSchema,
+  profile_id: identifierSchema,
+  model_id: modelNameSchema,
+  chosen_effort: effortSchema,
+  selection_reason: z.string().min(1).max(2000).nullable(),
+  actual_model: z.string().min(1).max(128).nullable(),
+  actual_effort: effortSchema.nullable(),
+});
+
+/** The injected registry must share this connection so reads and reservations share a transaction. */
+export function createSqliteExecutorSelectionStore(
+  db: StateDatabase,
+  registry: ProfileRegistry,
+  options?: { readonly fence: LeaseFence; readonly now: () => number },
+): ExecutorSelectionStore {
+  const assertFence = () => {
+    if (
+      options !== undefined &&
+      db
+        .prepare(
+          "SELECT 1 FROM leases WHERE resource_key=? AND owner=? AND generation=? AND expires_at>?",
+        )
+        .get(
+          options.fence.resourceKey,
+          options.fence.owner,
+          options.fence.generation,
+          new Date(options.now()).toISOString(),
+        ) === undefined
+    )
+      throw new Error("PROJECT_LOCK_LOST");
+  };
+  const settings = (attemptId: string): AttemptSettings | undefined => {
+    identifierSchema.parse(attemptId);
+    const row = db
+      .prepare(
+        `SELECT executor_id, profile_id, model_id, chosen_effort,
+      actual_model, actual_effort, selection_reason FROM agent_attempts WHERE id=?`,
+      )
+      .get(attemptId);
+    if (row === undefined) return undefined;
+    const parsed = settingsSchema.parse(row);
+    assertCredentialFree(parsed);
+    return {
+      ...(parsed.selection_reason === null ? {} : { selectionReason: parsed.selection_reason }),
+      chosen: {
+        executor: parsed.executor_id,
+        profileId: parsed.profile_id,
+        model: parsed.model_id,
+        effort: parsed.chosen_effort,
+      },
+      ...(parsed.actual_model === null ? {} : { actualModel: parsed.actual_model }),
+      ...(parsed.actual_effort === null ? {} : { actualEffort: parsed.actual_effort }),
+    };
+  };
+  return {
+    settings,
+    listSettings() {
+      return db
+        .prepare(
+          "SELECT id FROM agent_attempts WHERE chosen_effort IS NOT NULL ORDER BY started_at, id",
+        )
+        .all()
+        .map((row) => {
+          const { id } = z.object({ id: identifierSchema }).parse(row);
+          const value = settings(id);
+          if (value === undefined) throw new Error("Attempt disappeared during status read");
+          return { attemptId: id, settings: value };
+        });
+    },
+    reserve(attempt, choose) {
+      identifierSchema.parse(attempt.id);
+      identifierSchema.parse(attempt.stepRunId);
+      z.number().int().positive().parse(attempt.number);
+      const at = new Date(z.number().int().nonnegative().parse(attempt.at)).toISOString();
+      return runInTransaction(db, () => {
+        assertFence();
+        if (db.prepare("SELECT 1 FROM agent_attempts WHERE id=?").get(attempt.id) !== undefined) {
+          throw new Error("Attempt already exists");
+        }
+        const result = choose(registry.list());
+        if (result.outcome === "selected") {
+          db.prepare(
+            `INSERT INTO agent_attempts
+            (id, step_run_id, attempt_number, executor_id, model_id, profile_id, chosen_effort, status, started_at, selection_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+          ).run(
+            attempt.id,
+            attempt.stepRunId,
+            attempt.number,
+            result.candidate.executor,
+            result.candidate.model,
+            result.candidate.profileId,
+            result.effort,
+            at,
+            attempt.selectionReason ?? null,
+          );
+        }
+        return result;
+      });
+    },
+    recordResult(attemptId, input) {
+      const result = executionResultSchema.parse(input);
+      runInTransaction(db, () => {
+        assertFence();
+        const previous = settings(attemptId);
+        if (
+          previous === undefined ||
+          result.attemptId !== attemptId ||
+          previous.chosen.executor !== result.executor ||
+          previous.chosen.model !== result.model.requested ||
+          previous.chosen.effort !== result.effort.requested
+        ) {
+          throw new Error("Result disagrees with attempt selection");
+        }
+        const actualModel = result.model.actual;
+        const actualEffort = result.effort.actual;
+        assertCredentialFree({ actualModel, actualEffort });
+        // Replaying identical facts is safe; conflicting facts may not overwrite history.
+        if (
+          (previous.actualModel !== undefined && previous.actualModel !== actualModel) ||
+          (previous.actualEffort !== undefined && previous.actualEffort !== actualEffort)
+        ) {
+          throw new Error("Attempt settings already recorded");
+        }
+        db.prepare("UPDATE agent_attempts SET actual_model=?, actual_effort=? WHERE id=?").run(
+          actualModel ?? null,
+          actualEffort ?? null,
+          attemptId,
+        );
+      });
+    },
+  };
+}

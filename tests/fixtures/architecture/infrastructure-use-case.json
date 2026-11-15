@@ -1,0 +1,8 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/infrastructure/github/client.ts": "import \"../../application/use-cases/tasks/select-task.js\";",
+    "src/application/use-cases/tasks/select-task.ts": "export {};"
+  },
+  "message": "infrastructure-not-to-interfaces-or-bootstrap"
+}

@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000a1","cwd":"/tmp/omi-fixture-workspace","model":"claude-sonnet-5-5","permissionMode":"dontAsk","apiKeySource":"none","tools":["Glob","Grep","Read"]}
+this line is not json at all
+{"type":"assistant","message":{"content":[{"type":"te
+[1, 2, 3]
+{"no_type_field": true}

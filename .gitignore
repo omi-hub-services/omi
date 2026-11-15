@@ -1,0 +1,17 @@
+# Dependencies and generated output (never edit by hand)
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Temp, debug output, bootstrap journals
+.tmp/
+
+# Logs, local state, credentials — never commit
+*.log
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.env
+.env.*
+.omi-squad/local/

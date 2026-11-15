@@ -1,0 +1,8 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/application/contracts/input.ts": "import \"../../bootstrap/container.js\";",
+    "src/bootstrap/container.ts": "export {};"
+  },
+  "message": "only-bootstrap-imports-bootstrap"
+}

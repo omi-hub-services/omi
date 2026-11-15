@@ -1,0 +1,28 @@
+schema_version: 1
+id: minimal-delivery
+version: 1
+selection:
+  task_types: [feature]
+quality_policy: task-default
+# The smallest workflow that takes one Issue to Done: implement, then an independent review,
+# then the develop merge gate. It exists for the OMI-030 vertical slice and does not stand in
+# for the M4 template library.
+steps:
+  - id: implement
+    role: developer
+    needs: []
+    skills: []
+    rules: []
+    capability_profile: standard
+    output_contract: step-result
+  - id: review
+    role: reviewer
+    needs: [implement]
+    skills: []
+    rules: []
+    capability_profile: standard
+    output_contract: step-result
+gates:
+  - id: ready-to-merge
+    after: review
+    policy: develop-merge

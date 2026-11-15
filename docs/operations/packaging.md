@@ -1,0 +1,218 @@
+# Project-local packaging, installation and updates
+
+The distribution is a versioned npm tarball containing `dist/`, `templates/`, `schemas/`,
+`migrations/`, `CHANGELOG.md` and npm's package metadata/README/license. Build before `npm pack`; `npm run check`
+builds and runs `pack:check` against a real archive. No registry publication or global framework
+installation is required. Node 24.22.2 and npm must already be available in WSL2. Windows needs
+Node for the installed Windows entrypoint and the existing managed session launcher (ADR-0012,
+ADR-0030). The checkout must be on the Linux filesystem, bound to one named WSL2 distro.
+
+## Download a GitHub Release manually
+
+Releases are distributed at https://github.com/omi-hub-services/omi/releases, starting at
+SemVer 0.1.0. Select a specific version and read its release notes, especially Breaking.
+During 0.x, breaking changes are allowed and must be recorded; version numbers alone do not
+promise compatibility. See [ADR-0038](../architecture/adr/0038-github-release-distribution.md).
+
+Download both assets from the same release into an empty directory in WSL2:
+
+```sh
+curl --fail --location --remote-name https://github.com/omi-hub-services/omi/releases/download/v0.1.0/omi-squad-0.1.0.tgz
+curl --fail --location --remote-name https://github.com/omi-hub-services/omi/releases/download/v0.1.0/omi-squad-0.1.0.tgz.sha256
+sha256sum --check omi-squad-0.1.0.tgz.sha256
+```
+
+Stop if verification fails. Use the verified archive's absolute path in the bootstrap below.
+The checksum detects corruption; it is not an independent signature. The release body contains
+that version's changelog section, including an empty or populated `### Breaking` section.
+No registry publication is involved. Installed projects can download a pinned release with
+`update --version`; `--package` remains available for offline updates.
+
+Maintainers: update package.json and package-lock.json together, add the matching dated changelog
+entry with Breaking, and run `npm run check`. After merge and PO release confirmation, the
+Coordinator pushes the matching version tag. The tag workflow validates it, checks, packs and
+publishes the tarball and checksum using only GITHUB_TOKEN. Do not create a release as part of
+ordinary implementation or treat a tag's existence as PO approval.
+
+## Bootstrap from a local archive
+
+Perform these commands in WSL2, outside the framework source repository. Supply an absolute
+project directory that already exists and the distro name shown by `wsl.exe --list --verbose`.
+The temporary bootstrap is separate from the application and can be removed after installation.
+Do not install the framework globally or change the application's package manifest.
+
+```sh
+bootstrap=$(mktemp -d)
+npm install --prefix "$bootstrap" --global=false --no-audit --no-fund /absolute/omi-squad-0.1.0.tgz
+package="$bootstrap/node_modules/omi-squad"
+node "$package/dist/bootstrap/cli.js" install --project /home/user/project --distribution Ubuntu-24.04 --package "$package" --json
+# Review the preview, then apply the same arguments:
+node "$package/dist/bootstrap/cli.js" install --project /home/user/project --distribution Ubuntu-24.04 --package "$package" --apply --json
+/home/user/project/.omi-squad/bin/omi doctor --project /home/user/project --distribution Ubuntu-24.04 --json
+```
+
+The package argument is an **extracted package directory with its built assets**. The installer
+packs that directory with lifecycle scripts disabled, retains the tarball under `.omi-squad/tool/`,
+and installs it with normal npm dependency/native-module setup. The tool manifest and npm lock
+refer to the retained relative tarball, so they do not depend on the bootstrap directory. The
+framework lock pins the version, artifact content hash, distro, project path and original template
+contents. No source files, application dependencies or native Claude/Codex settings are installed.
+Ignore `.omi-squad/local/` and `.omi-squad/tool/node_modules/` in the target project's Git setup;
+keep its framework lock, shims, tool manifest/lock/tarball and project template files versioned.
+
+Install and update record the absolute path of the Node.js interpreter running the installer in
+the POSIX shim. This lets `wsl.exe --exec` launch it without a login shell or sourcing nvm.
+The project and runtime package paths still resolve relative to the shim. If the recorded
+interpreter is removed or no longer executable, the shim falls back to `node` on PATH. If neither
+is available, it exits with a message to reinstall omi-squad using a working Node.js or configure
+Node.js on PATH. After removing an nvm version, use the bootstrap steps with the replacement Node.js
+to refresh the recorded path; neither a global Node installation nor application manifest edits
+are required.
+
+Install/update also records the directories of executable `claude` and `codex` found on the
+installer's PATH. The shim prepends the selected Node.js directory and these worker directories
+to its own PATH, inherited by the runtime, probes and dispatched workers. This supports native
+Claude in `~/.local/bin` and npm Codex in an nvm bin directory, including its
+`#!/usr/bin/env node` launcher. No shell rc is sourced and the system PATH is unchanged.
+Install the CLIs before applying the package. If a worker or nvm version moves, stop the session
+and rerun `install --apply` (using the extracted package as above) or `update --apply` from a WSL
+shell where the replacement CLIs and Node.js are available, then restart. Unrecorded CLIs can
+still resolve on the launcher's PATH.
+
+`session start` uses the same recorded interpreter: the launcher runs
+`wsl.exe … --exec <project-shim> --omi-runtime <runtime.js> <project>`, so the runtime no
+longer depends on `node` being on the non-login `wsl.exe --exec` PATH. The shim's PATH fallback
+and missing-Node message apply. If the runtime does not start, `session start` reports
+`RUNTIME_START_FAILED` with the fix instead of a generic internal error, and `doctor` fails
+`session-runtime-launch` (the shim cannot start Node.js; reinstall with `omi install --apply`
+using a working Node.js or configure node on PATH).
+
+From Windows, use the installed shim through its UNC path:
+
+```powershell
+node '\\wsl.localhost\Ubuntu-24.04\home\user\project\.omi-squad\bin\omi.cjs' status --json
+node '\\wsl.localhost\Ubuntu-24.04\home\user\project\.omi-squad\bin\omi.cjs' session start
+```
+
+Ordinary calls use `wsl.exe --distribution … --cd … --exec <project-shim>` with an argv array.
+`session start` invokes the existing Windows lifecycle launcher, which owns the WSL runtime pipe
+and starts the Windows Coordinator. The installed launcher refuses attempts to replace its bound
+project/distro/runtime options. Credentials and native modules remain on their respective sides.
+
+`doctor` checks the WSL2 kernel, current and registered distro version, interop registration/socket,
+Linux filesystem checkout, reversible UNC path mapping, and a Windows-to-WSL local shim invocation.
+It fails when evidence is missing. JSON output is versioned and the process returns nonzero on
+failure. It also runs read-only checks through the same probe (no writes, no token in output):
+
+| Check | Passes when |
+| --- | --- |
+| `github-auth` | `gh auth status` succeeds (agent account logged in) |
+| `github-agent-identity` | the `gh` login differs (case-insensitively) from every `policies.github_approval_actors` entry |
+| `github-repository-access` | `gh api repos/<owner>/<name>` reports push permission |
+| `github-project-access` | the configured Project reports `viewerCanUpdate` |
+| `github-approval-allowlist` | at least one allowlist entry is a GitHub `User` |
+| `worker-cli-claude`, `worker-cli-codex` | `--version` through `wsl.exe --exec <shim> --omi-worker-version <cli>` is classified `supported`; absent from both runtime and current shell is optional (`not-installed`); available only in the current shell fails by name with a reinstall/update fix |
+| `worker-cli-available` | at least one worker CLI is `supported` |
+
+The GitHub policy checks read `.omi-squad/config/project.yaml`; a missing or invalid file fails
+them. The JSON report has `version` (report shape, currently `1`) and each check has `ok`,
+`status` (`pass`/`fail`), `detail` and `fix` (the operator action); worker CLI checks add
+`classification`. Version ranges are those in [compatibility.md](compatibility.md). The doctor
+does not probe subscription profiles or quota.
+The worker checks use the same shim PATH as session runtime launch, including Node for npm
+launchers; a successful version command in your interactive shell alone is insufficient.
+`profiles probe` and `login` return the redacted adapter `diagnostic` when a CLI cannot run,
+with installation/update and session restart instructions.
+
+## Updates and conflicts
+
+From an installed project's WSL2 shim, select one release version (not a tag or `latest`):
+
+```sh
+/home/user/project/.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0
+/home/user/project/.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0 --apply
+# Only after reviewing and accepting any breaking entries:
+/home/user/project/.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0 --apply --accept-breaking
+```
+
+These examples assume that version has been released. The updater uses `gh release download`
+with your existing gh authentication against `omi-hub-services/omi`, tag `v0.2.0`, and the exact
+`omi-squad-0.2.0.tgz` and `.tgz.sha256` assets. It stores no token. A missing release/asset,
+invalid checksum, unsafe archive or metadata version mismatch refuses the update. Verified
+archives are extracted privately in the OS temporary directory and removed on success or failure.
+The checksum detects corruption; it is not an independent signature.
+
+`--version` and `--package` are mutually exclusive. Release updates require an existing
+`framework.lock.json`; versions equal to or older than its version are refused. The preview
+prints all changelog version sections after the installed version through the requested version,
+including intermediate breaking entries. JSON includes `changelog` and `breaking`. Missing or
+ambiguous release notes fail closed. A nonempty `### Breaking` section in that range blocks
+`--apply` unless `--accept-breaking` is supplied. Preview always shows those entries.
+
+For offline updates, run the same bootstrap steps with the new archive, replacing `install` with `update`. Both commands
+preview by default and require `--apply` for writes. They share one implementation. Stop the managed
+session first. Live or unreconciled project-owner leases prevent updating; changing a project's distro
+or location is refused. Installers serialize through a private operation directory and compare the
+snapshot again after provisioning so edits made while npm runs are preserved.
+
+The three-way comparison uses old template / incoming template / local file. An untouched file
+follows upstream; a local override remains when upstream is unchanged; identical edits converge.
+Divergent edits, upstream deletion of an edited file, and upstream changes to a locally deleted file
+are conflicts. Conflicts list paths and change nothing. This is a conservative whole-file merge;
+it does not guess how to merge overlapping YAML/Markdown. Resolve a conflict by making the local
+file equal to the incoming version or restoring the old base before retrying. Preserve custom
+content separately when choosing an upstream version. Files outside the template manifest remain
+project-owned. Templates under both `templates/project/.omi-squad/` and the existing onboarding
+`templates/project/workflows/` map to the same project `.omi-squad/` tree; duplicate targets fail.
+
+The preview also lists `bridge/CLAUDE.md`, `bridge/AGENTS.md`, and `bridge/skill/*`. Instruction
+keys represent only the `<!-- omi-squad:start -->` / `<!-- omi-squad:end -->` span in the root
+files, so the same three-way merge preserves text outside that span. Skill keys target
+`.claude/skills/omi-squad/{SKILL.md,bridge.ts,bridge.config.json}`. The config binds the project,
+distro and local shim. Local skill/span edits are kept while upstream is unchanged; divergent
+updates conflict. Invalid/duplicate markers or symlinked targets are refused before provisioning.
+
+## Migration backup and recovery
+
+Before upgrading state, the installer takes a SQLite backup through the backup API (including
+committed WAL data), checks integrity, and backs up config, template bytes, shims and prior tool
+manifests in `.omi-squad/local/backups/install-<id>/`. Existing config is parsed through the existing
+strict v1 loader. The only current config normalization materializes the already-supported default
+`effort_policy` when absent, preserving existing comments and explicit policies. Unknown schema
+versions are refused. No hypothetical legacy schema conversion or automatic schema downgrade is
+provided. Runtime startup also takes a SQLite backup before pending migrations.
+
+Bridge backups contain full original instruction files at `bridge/CLAUDE.md` / `bridge/AGENTS.md`
+and skill files under `bridge/skill/`. For recovery, map those back to root instructions and
+`.claude/skills/omi-squad/` respectively. They are not paths under the target `.omi-squad/` tree.
+
+SQL upgrades reuse the existing checksummed transactional migration runner. A SQL failure rolls
+back that migration batch and leaves the old tool and project files active. Dependency provisioning
+or snapshot validation failures also leave the old tool/files active. The pre-install bootstrap
+migration that creates the owner-lease table may remain on a previously empty database.
+
+Filesystem publication and SQL are not a single crash-atomic transaction. A process kill or disk
+failure during publication may require manual recovery; do not assume that rerunning an older binary
+can downgrade state. Stop all runtime/worker/installer processes and establish that no writer remains.
+Keep the failed tree and backups for diagnosis. Restore the matching config/templates/shims and tool
+manifests together with the backup database, removing the old live database's WAL/SHM only after all
+connections have closed. Reinstall the matching framework artifact/dependencies; never copy native
+modules from Windows. Check integrity and reconcile the restored owner lease/recovery state before
+resuming. The backup may contain the installer's lease, so it must not be treated as a live owner;
+normal runtime recovery can reclaim an expired lease. A stale `local/tmp/installation.lock` is removed
+only after confirming the installer exited. Backups are local and are not a disaster-recovery promise.
+
+Offline e2e tests extract real tarballs, simulate dependency provisioning using already-installed test
+dependencies, and exercise real SQLite/Unix shims. A dependency-free fixture separately exercises real
+npm pack/install and relative tarball locks offline. WSL diagnostic inputs and Windows process argv
+are simulated. Actual clean WSL2 native-module installation and Windows/WSL lifecycle/UNC behavior
+still require opt-in platform acceptance; these tests do not claim that evidence.
+
+## Current reconciliation (2026-11-13)
+
+[CLI verification](cli-verification.md) records built install/update previews from a copied package, source-target refusals, and successful init apply in a
+`.tmp/` project. It does not repeat a full dependency install or Windows acceptance. Bridge keys
+also include Coordinator-only `omi-status`, `omi-next`, `omi-watch` skills, in addition to the
+`omi-squad` bridge (`src/infrastructure/config/` installation adapters and `templates/bridges/`).
+The source-maintenance variants live in `templates/bridges/repository/` and use the external
+Coordinator pin (ADR-0036); installing the product runtime in this source repo is prohibited.

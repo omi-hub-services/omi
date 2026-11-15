@@ -1,0 +1,3 @@
+{"type":"thread.started","thread_id":"thread-auth"}
+{"type":"error","message":"Your access token has expired. Please log in again.","code":"authentication_required"}
+{"type":"turn.failed","error":{"message":"Authentication failed: refresh token revoked."}}

@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "tools/TaskStatus.ts": ""
+  },
+  "message": "TypeScript files must be kebab-case"
+}

@@ -1,0 +1,8 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/interfaces/ipc/protocol.ts": "import \"../../domain/tasks/task.js\";",
+    "src/domain/tasks/task.ts": "export {};"
+  },
+  "message": "interfaces-not-to-infrastructure"
+}

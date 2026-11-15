@@ -1,0 +1,42 @@
+# Script-first audit of `src/` (OMI-077)
+
+Rule: deterministic work is done by a script, a CLI or the runtime; an LLM or agent is used only
+for judgement (AGENTS.md §9, architecture.md §2, rule `script-first`). This audit asks, for the
+runtime in `src/`, where that already holds and where an agent is asked to do deterministic work.
+Audited on the revision of OMI-077 by reading the use cases, services, domain policies and
+adapters named below; it is a reading, not a proof.
+
+## Already deterministic
+
+| Area                           | Where                                                                                                                                           | Why it is deterministic                                                                                                                      |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dispatch                       | `use-cases/runs/dispatch-step.ts`, `services/plan-step-dispatch.ts`, `domain/agents/selection-policy.ts`, `domain/agents/complexity-policy.ts` | Executor, model and effort come from policy; lease, attempt, context packet and worktree are created through ports; the agent only receives a prompt. |
+| Role context (skills, rules)   | `services/resolve-role-context.ts`, `services/assemble-context.ts`                                                                              | Resolved from the catalog by id, version and hash; a mandatory rule cannot be excluded.                                                      |
+| Step and run status            | `domain/runs/*`, `use-cases/runs/record-step-result.ts`, `advance-run.ts`                                                                       | Transitions are pure functions (`transitionStep`, `transitionAgentAttempt`) committed in one unit of work; a worker's claim never sets Done. |
+| Worker result acceptance       | `use-cases/runs/record-step-result.ts`                                                                                                          | Schema, ids, path containment, artifact hash and revision are verified by the runtime, not trusted.                                          |
+| Acceptance review lines        | `domain/delivery/acceptance-review.ts`                                                                                                          | `AC-n: met\|not met` parsing and the one-line-per-criterion gate are pure code.                                                              |
+| Merge and release gates        | `domain/delivery/merge-policy.ts`, `use-cases/delivery/merge-task-pr.ts`, `check-release-merge.ts`, `build-run-merge-evidence.ts`               | Head, base, checks, review and approval are evaluated by policy; the merge is a port call.                                                   |
+| Approvals                      | `domain/approvals/*`, `use-cases/approvals/*`, `interfaces/cli/commands/approval-commands.ts`                                                   | An approval is a recorded decision through the CLI, never inferred from text (approval-gates rule).                                          |
+| Worktrees and git              | `infrastructure/git/*`, `ports/git-workspace.ts`                                                                                                | Argv-based git calls behind a port; worker access is a flag, not an instruction.                                                             |
+| GitHub writes and sync         | `services/queue-github-operation.ts`, `use-cases/sync/*`, `infrastructure/github/*`                                                             | Outbox with markers and reconciliation; no agent writes to GitHub.                                                                           |
+| Quota, profiles, failover      | `use-cases/profiles/*`, `domain/agents/selection-policy.ts`                                                                                     | Selection and failover are policy functions over probe results.                                                                              |
+
+## Violations and how each is handled
+
+| #   | Finding                                                                                                                                                                                                                                                                                                                                            | Size  | Handling                                                                                                                                                                                                   |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | The worker prompt built by `buildPrompt` (`dispatch-step.ts`) never mentioned script-first. Skills are inlined, but rules are only listed by id, version and hash in the context packet; their text is not in the prompt.                                                                                                                          | small | **Fixed in this PR:** one fixed sentence in `buildPrompt`, with a test. This is the interim reminder.                                                                                                       |
+| 2   | Rule text is not inlined in worker prompts (only skill text is, OMI-072). A rule such as `script-first` reaches a worker only if it reads `.omi-squad/rules/<id>.md` from the workspace. Needs a rule source port, an infrastructure reader that verifies the hash, and wiring in `DispatchStepDependencies` (every dispatch test fake changes). | large | **Not fixed.** Sub-Issue proposed: inline rule text in worker prompts, hash-verified, like skills.                                                                                                          |
+| 3   | `record-step-result.ts` accepts required checks by id presence in the worker's report (`reported.has(id)`). I found no runtime check runner in `src/`, while architecture.md §6.3 says checks are executed by the runtime or CI with command, exit status, time and revision. A QA agent's text can therefore stand in for a check that the runtime should run. | large | **Not fixed.** Sub-Issue proposed: the runtime runs the step's required checks itself (a `CheckRunner` port) and records command, exit status, time and revision; the worker only reports them.                      |
+| 4   | Workflow `verify` steps (`templates/project/workflows/*.yaml`, role `qa`) are LLM steps, and part of their work is running the project check and reading its output. Same root cause as 3.                                                                                                                                                         | large | Covered by the sub-Issue of 3: the check run moves to the runtime; the QA step keeps judgement (are the criteria met, is the evidence honest).                                                              |
+
+Not violations, left as they are: choosing between tasks, writing prompts and specs, review and the
+decision after a refusal or failure stay with the Coordinator and the reviewer (out of scope of
+OMI-077: "replacing LLM judgement with scripts").
+
+## Coordinator tooling of this repository
+
+The same rule applied to `tools/coordinator/` (temporary, ADR-0014) turned five steps that the
+Coordinator wrote by hand with the LLM in every task into commands: `dispatch` (launch command and
+curated skills), `worker-report` (report out of the jsonl), `commit-worker` and `review-comment`
+(format gate before posting). See ADR-0014, "Worker commands (OMI-077)".

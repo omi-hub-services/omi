@@ -1,0 +1,7 @@
+{
+  "guard": "dependency",
+  "files": {
+    "src/domain/tasks/task.ts": "import \"node:path\";"
+  },
+  "message": "domain-no-io-or-libraries"
+}

@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "scripts/release.sh": ""
+  },
+  "message": "root directory \"scripts/\" not in the allowlist"
+}

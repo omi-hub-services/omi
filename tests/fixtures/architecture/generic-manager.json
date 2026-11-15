@@ -1,0 +1,7 @@
+{
+  "guard": "structure",
+  "files": {
+    "src/domain/tasks/manager.ts": ""
+  },
+  "message": "vague name"
+}
