@@ -62,7 +62,7 @@ export async function launchWindowsSession(
     input.projectDir,
     "--exec",
     // The project shim owns the pinned Node path; bare `node` is absent from wsl.exe's PATH under nvm.
-    `${input.projectDir}/.omi-squad/bin/omi`,
+    `${input.projectDir}/.omi/bin/omi`,
     "--omi-runtime",
     input.runtimePath,
     input.projectDir,

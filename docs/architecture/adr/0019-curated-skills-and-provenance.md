@@ -102,3 +102,5 @@ the `system/init` event showed `skills: []`, no user plugins (only the built-in 
 no `memory_paths`, and CLAUDE.md still loaded.
 
 Not verified here: a live Codex run against a profile with and without skills.
+
+> Status note (2026-11-15, OMI-153): the project install directory is now `.omi/`; historical decision text above is unchanged.

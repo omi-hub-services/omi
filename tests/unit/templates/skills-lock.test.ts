@@ -5,10 +5,10 @@ import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { sha256Schema, slugSchema } from "../../../src/application/contracts/identifiers.ts";
 
-// Guards templates/project/.omi-squad/provenance/skills.lock.json against the skill files, so a
+// Guards templates/project/.omi/provenance/skills.lock.json against the skill files, so a
 // skill cannot change, appear or disappear without its provenance changing with it.
 
-const squadDir = join(import.meta.dirname, "../../../templates/project/.omi-squad");
+const squadDir = join(import.meta.dirname, "../../../templates/project/.omi");
 const NOTICE = "skills/NOTICE.md";
 
 interface LockFile {

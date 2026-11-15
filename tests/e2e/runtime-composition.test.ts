@@ -84,7 +84,7 @@ function launchRuntime(project: string, mode: string) {
 async function setup(mode = "good", approval = true, body = issueBody) {
   const directory = mkdtempSync(join(tmpdir(), "omi-runtime-e2e-"));
   const project = join(directory, "project");
-  const squad = join(project, ".omi-squad");
+  const squad = join(project, ".omi");
   for (const path of ["config", "roles", "rules", "workflows", "provenance", "local/state"])
     mkdirSync(join(squad, path), { recursive: true });
   const git = (...args: string[]) => {
@@ -95,7 +95,7 @@ async function setup(mode = "good", approval = true, body = issueBody) {
   git("init", "--initial-branch=develop");
   git("config", "user.name", "Fixture");
   git("config", "user.email", "fixture@example.test");
-  writeFileSync(join(project, ".gitignore"), ".omi-squad/local/\n");
+  writeFileSync(join(project, ".gitignore"), ".omi/local/\n");
   writeFileSync(
     join(squad, "config/project.yaml"),
     stringify({
@@ -133,11 +133,11 @@ async function setup(mode = "good", approval = true, body = issueBody) {
       }),
     );
   // Rework packets add receiving-code-review, so the project carries the real template skills.
-  cpSync(resolve("templates/project/.omi-squad/skills"), join(squad, "skills"), {
+  cpSync(resolve("templates/project/.omi/skills"), join(squad, "skills"), {
     recursive: true,
   });
   copyFileSync(
-    resolve("templates/project/.omi-squad/provenance/skills.lock.json"),
+    resolve("templates/project/.omi/provenance/skills.lock.json"),
     join(squad, "provenance/skills.lock.json"),
   );
   copyFileSync(

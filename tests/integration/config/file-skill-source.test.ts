@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createFileSkillSource } from "../../../src/infrastructure/config/file-skill-source.ts";
 import { loadResolutionCatalog } from "../../../src/infrastructure/config/load-resolution-catalog.ts";
 
-const shipped = join(import.meta.dirname, "../../../templates/project/.omi-squad");
+const shipped = join(import.meta.dirname, "../../../templates/project/.omi");
 const temps: string[] = [];
 const sha = (data: string): string => createHash("sha256").update(data).digest("hex");
 
@@ -73,9 +73,7 @@ describe("file skill source", () => {
     writeFileSync(lockPath, JSON.stringify(lock));
 
     const content = createFileSkillSource(dir).read("minimal-change", "1");
-    expect(content?.bundledFiles).toEqual([
-      ".omi-squad/skills/minimal-change/references/cheatsheet.md",
-    ]);
+    expect(content?.bundledFiles).toEqual([".omi/skills/minimal-change/references/cheatsheet.md"]);
     expect(content?.skillMd).not.toContain(extra);
   });
 });

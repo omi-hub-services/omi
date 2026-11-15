@@ -62,7 +62,7 @@ async function install(name: string) {
   await mkdir(projectDir);
   const input = { projectDir, packageDir, distribution: "Ubuntu", apply: true };
   await installProjectTool(store(), input);
-  return { input, shim: join(projectDir, ".omi-squad/bin/omi") };
+  return { input, shim: join(projectDir, ".omi/bin/omi") };
 }
 
 it("runs installed and updated shims without node on PATH", async () => {
@@ -80,7 +80,7 @@ it("runs installed and updated shims without node on PATH", async () => {
   const relocated = join(temp, "relocated project");
   await rename(input.projectDir, relocated);
   expect(
-    await execute(join(relocated, ".omi-squad/bin/omi"), args, {
+    await execute(join(relocated, ".omi/bin/omi"), args, {
       cwd: temp,
       env: { PATH: bin },
     }),
@@ -110,7 +110,7 @@ it.each([true, false])(
 );
 
 const runtimeOf = (projectDir: string) =>
-  join(projectDir, ".omi-squad/tool/node_modules/omi-squad/dist/bootstrap/runtime.js");
+  join(projectDir, ".omi/tool/node_modules/omi-squad/dist/bootstrap/runtime.js");
 
 it("preserves installer worker locations for runtime probes and dispatch with minimal PATH", async () => {
   const nativeBin = join(temp, "home $quote's/.local/bin");

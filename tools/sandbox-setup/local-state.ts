@@ -196,7 +196,7 @@ async function onboard(input: LocalStateInput, apply: boolean): Promise<string[]
   );
   if (result.kind !== "codebase") throw new Error("expected codebase onboarding");
   return result.files
-    .filter((file) => file.action !== "kept" && file.path !== ".omi-squad/config/project.yaml")
+    .filter((file) => file.action !== "kept" && file.path !== ".omi/config/project.yaml")
     .map((file) => file.path);
 }
 
@@ -220,7 +220,7 @@ export async function inspectLocalState(input: LocalStateInput): Promise<{ missi
   missing.push(...catalogs);
   const expectedHash =
     configOk && catalogs.length === 0
-      ? runtimeConfigHash(await loadRuntimeConfig(join(stateDir, ".omi-squad")))
+      ? runtimeConfigHash(await loadRuntimeConfig(join(stateDir, ".omi")))
       : undefined;
 
   const databasePath = layout.database;
@@ -299,7 +299,7 @@ export async function prepareLocalState(input: LocalStateInput): Promise<{ chang
     }
   }
   changed.push(...(await onboard(input, true)));
-  const hash = runtimeConfigHash(await loadRuntimeConfig(join(stateDir, ".omi-squad")));
+  const hash = runtimeConfigHash(await loadRuntimeConfig(join(stateDir, ".omi")));
 
   const databasePath = layout.database;
   mkdirSync(layout.stateDir, { recursive: true, mode: 0o700 });

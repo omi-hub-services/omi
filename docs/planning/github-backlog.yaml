@@ -976,7 +976,7 @@ issues:
       - "Loại xung đột điều phối."
       - "Không copy nguyên bộ thiếu review."
     implementation_map:
-      - "templates/project/ (.omi-squad/skills/, provenance/skills.lock.json)"
+      - "templates/project/ (.omi/skills/, provenance/skills.lock.json)"
     review:
       reviewers: ["Reviewer độc lập kiểm tra license/attribution"]
 
@@ -1342,7 +1342,7 @@ issues:
     objective: "Cài framework project-local, update có kiểm soát."
     scope:
       in:
-        - "npm pack chỉ dist/templates/schemas/migrations; `.omi-squad/tool/`; shim; update ba chiều."
+        - "npm pack chỉ dist/templates/schemas/migrations; `.omi/tool/`; shim; update ba chiều."
       out:
         - "Global framework install; publish dịch vụ trả phí."
     acceptance_criteria:

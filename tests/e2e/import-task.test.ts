@@ -39,7 +39,7 @@ afterEach(async () => {
 
 async function setup(socket = false, sync = false) {
   const directory = mkdtempSync(join(tmpdir(), "omi-import-"));
-  const squad = join(directory, ".omi-squad");
+  const squad = join(directory, ".omi");
   for (const name of ["config", "roles", "rules", "workflows", "provenance", "local/runs"])
     mkdirSync(join(squad, name), { recursive: true });
   writeFileSync(

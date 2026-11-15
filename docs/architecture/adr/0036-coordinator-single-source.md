@@ -201,3 +201,5 @@ after the first) and the script-run tooling both import it; tooling keeps no cop
 (`policy-parity.test.ts`). `watch` reads the `## Skill:` and `## Rule:` headings of the
 resume prompt like any full packet, so it shows what the resumed worker was given. No approval
 requirement is relaxed.
+
+> Status note (2026-11-15, OMI-153): the project install directory is now `.omi/`; historical decision text above is unchanged.

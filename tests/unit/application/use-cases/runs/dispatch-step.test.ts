@@ -263,7 +263,7 @@ describe("dispatchStep", () => {
     const tdd = prompt.indexOf("Write the failing test first.");
     expect(debugging).toBeGreaterThan(-1);
     expect(tdd).toBeGreaterThan(debugging);
-    expect(prompt).toContain(".omi-squad/skills/tdd/references/cycle.md");
+    expect(prompt).toContain(".omi/skills/tdd/references/cycle.md");
   });
 
   it("inlines no skill text the manifest does not contain", async () => {

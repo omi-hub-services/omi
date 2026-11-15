@@ -153,7 +153,7 @@ it("registers, lists and probes native profiles through the real runtime without
   ).toBe(2);
   expect(readFileSync(join(cx, "auth.json"), "utf8")).toBe(cache);
   expect(readInvocations(record)).toMatchObject([{ argv: ["--version"], codexHome: cx }]);
-  const db = openStateDatabase(join(project, ".omi-squad/local/state/state.sqlite"));
+  const db = openStateDatabase(join(project, ".omi/local/state/state.sqlite"));
   try {
     const stored = JSON.stringify(
       db.prepare("SELECT metadata_json FROM profile_observations").all(),

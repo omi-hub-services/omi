@@ -17,6 +17,7 @@ export async function installProjectTool(
   if (releaseInput.success) {
     if (releases === undefined) throw new Error("RELEASE_DOWNLOAD_NOT_WIRED");
     const input = releaseInput.data;
+    await store.assertDirectory(input.projectDir);
     const release = await releases.prepare(input.version);
     try {
       return await installPackage(

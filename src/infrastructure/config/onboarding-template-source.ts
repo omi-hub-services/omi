@@ -14,7 +14,7 @@ export function createOnboardingTemplateSource(directory: string): OnboardingTem
     async runtimeFiles() {
       const root = resolve(directory, "..");
       const files: { path: string; content: string }[] = [];
-      for (const folder of [".omi-squad", "workflows"]) {
+      for (const folder of [".omi", "workflows"]) {
         const entries = await readdir(join(root, folder), { recursive: true, withFileTypes: true });
         for (const entry of entries.filter(
           (entry) => entry.isFile() && entry.name !== ".gitkeep",
@@ -22,7 +22,7 @@ export function createOnboardingTemplateSource(directory: string): OnboardingTem
           const absolute = join(entry.parentPath, entry.name);
           const path = absolute.slice(join(root, folder).length + 1);
           files.push({
-            path: folder === "workflows" ? `.omi-squad/workflows/${path}` : `.omi-squad/${path}`,
+            path: folder === "workflows" ? `.omi/workflows/${path}` : `.omi/${path}`,
             content: await readFile(absolute, "utf8"),
           });
         }

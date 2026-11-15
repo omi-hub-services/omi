@@ -24,8 +24,8 @@ afterEach(() => {
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), "omi-validate-"));
   dirs.push(dir);
-  const squad = join(dir, ".omi-squad");
-  cpSync(resolve("templates/project/.omi-squad"), squad, { recursive: true });
+  const squad = join(dir, ".omi");
+  cpSync(resolve("templates/project/.omi"), squad, { recursive: true });
   cpSync(resolve("templates/project/workflows"), join(squad, "workflows"), { recursive: true });
   const run = async (json = true) => {
     let stdout = "";

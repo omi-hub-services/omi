@@ -146,7 +146,7 @@ function loadSkills(squadDir: string, errors?: ConfigValidationError[]): Catalog
 }
 
 /**
- * Reads a `.omi-squad` directory into a catalog. Each role and rule is hashed from its file
+ * Reads a `.omi` directory into a catalog. Each role and rule is hashed from its file
  * bytes; each skill is re-hashed from its files and must match the provenance lock, so a stale
  * or edited skill fails loudly instead of resolving with a wrong hash.
  */

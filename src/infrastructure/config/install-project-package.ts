@@ -41,6 +41,11 @@ import { applyMigrations, loadMigrations } from "../persistence/sqlite/migration
 import { backupState } from "../persistence/sqlite/backup-state.js";
 import { createSqliteLeaseStore } from "../persistence/sqlite/sqlite-lease-store.js";
 import { PROJECT_OWNER_LEASE_KEY } from "../../application/ports/lease-store.js";
+import {
+  directoryMigrationHint,
+  installationPathExists,
+  legacyProjectDirectory,
+} from "./migrate-project-directory.js";
 
 export type ProvisionPackage = (source: string, tool: string) => Promise<void>;
 /** npm owns the isolated dependency tree; the application's manifest/lockfile are untouched. */
@@ -92,6 +97,10 @@ export function createProjectInstallation(options: {
   provision?: ProvisionPackage;
   sourceRoot: string;
 }): ProjectInstallation {
+  async function assertDirectory(projectDir: string): Promise<void> {
+    if (await installationPathExists(join(projectDir, legacyProjectDirectory)))
+      throw new Error(directoryMigrationHint);
+  }
   async function inspect(input: InstallationInput) {
     const root = await realpath(input.projectDir);
     const sourceRoot = await realpath(options.sourceRoot);
@@ -103,8 +112,9 @@ export function createProjectInstallation(options: {
       root.startsWith(`${await realpath(input.packageDir)}/`)
     )
       throw new Error("INVALID_INSTALLATION_TARGET");
-    await assertPlainParents(root, join(root, ".omi-squad"));
-    const squad = join(root, ".omi-squad");
+    await assertDirectory(root);
+    await assertPlainParents(root, join(root, ".omi"));
+    const squad = join(root, ".omi");
     await assertPlainParents(root, join(squad, "framework.lock.json"));
     const raw = await readOptional(join(squad, "framework.lock.json"));
     const installed =
@@ -148,7 +158,7 @@ export function createProjectInstallation(options: {
   }
   async function apply(plan: InstallationPlan) {
     const { input } = plan;
-    const squad = join(input.projectDir, ".omi-squad");
+    const squad = join(input.projectDir, ".omi");
     for (const path of [
       "tool",
       "bin/omi",
@@ -379,5 +389,5 @@ export function createProjectInstallation(options: {
       await rm(lock, { recursive: true, force: true });
     }
   }
-  return { inspect, apply };
+  return { assertDirectory, inspect, apply };
 }

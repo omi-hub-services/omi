@@ -272,7 +272,7 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       for (const id of ids) {
         if (!/^[a-z][a-z0-9-]*$/.test(id)) throw new Error(`invalid ${kind} reference: ${id}`);
         const path = kind === "skills" ? `skills/${id}/SKILL.md` : `rules/${id}.md`;
-        const content = await read(`templates/project/.omi-squad/${path}`);
+        const content = await read(`templates/project/.omi/${path}`);
         if (!content.trim()) throw new Error(`empty ${kind} content: ${id}`);
         sections.push(`## ${kind === "skills" ? "Skill" : "Rule"}: ${id}\n\n${content}`);
       }

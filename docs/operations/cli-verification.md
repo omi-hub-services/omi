@@ -38,7 +38,7 @@ are described as such. `approvals list` and `workflows validate` are also absent
 | architecture §3, §4, §13 | `src/application/use-cases/` (plan-run, task snapshot storage); `src/infrastructure/observability/` (watch, no Pino); migration 0006 and profile registry; `src/interfaces/cli/commands/` and all help captures below; `templates/bridges/repository/`, ADR-0036/0037 |
 | product-overview | Command inventory below; `store-task-snapshots.ts`, approval subject composition in `src/bootstrap/container.ts`; ADR-0036 repo procedure versus runtime boundary |
 | tech-stack | `package.json`, `.nvmrc`, `tsconfig.build.json`, installation command handler; dependency pins, build scope, init flags and check inventory |
-| design-patterns | `templates/project/.omi-squad/rules/script-first.md`, `src/domain/runs/rework-policy.ts`, ADR-0036; full 2 + Architect + 2 with separate operational retry |
+| design-patterns | `templates/project/.omi/rules/script-first.md`, `src/domain/runs/rework-policy.ts`, ADR-0036; full 2 + Architect + 2 with separate operational retry |
 | compatibility | ADR-0031 live evidence and PO resolutions; current CLI smoke does not extend live version support |
 | handbook | Complete help inventory including worker-report/commit-worker/review-comment/prune-logs; ADR-0036 pin implementation versus deferred state migration |
 | packaging | install/update/init/doctor captures; `src/infrastructure/config/project-bridge.ts`, `templates/bridges/`; full native dependency install remains unverified |
@@ -669,19 +669,19 @@ Options:
     },
     "files": [
       {
-        "path": ".omi-squad/config/project.yaml",
+        "path": ".omi/config/project.yaml",
         "action": "would-create"
       },
       {
-        "path": ".omi-squad/workflows/onboarding-takeover.yaml",
+        "path": ".omi/workflows/onboarding-takeover.yaml",
         "action": "would-create"
       },
       {
-        "path": ".omi-squad/config/codebase.yaml",
+        "path": ".omi/config/codebase.yaml",
         "action": "would-create"
       },
       {
-        "path": ".omi-squad/config/onboarding-plan.md",
+        "path": ".omi/config/onboarding-plan.md",
         "action": "would-create"
       }
     ]
@@ -708,19 +708,19 @@ Options:
     },
     "files": [
       {
-        "path": ".omi-squad/config/project.yaml",
+        "path": ".omi/config/project.yaml",
         "action": "created"
       },
       {
-        "path": ".omi-squad/workflows/onboarding-takeover.yaml",
+        "path": ".omi/workflows/onboarding-takeover.yaml",
         "action": "created"
       },
       {
-        "path": ".omi-squad/config/codebase.yaml",
+        "path": ".omi/config/codebase.yaml",
         "action": "created"
       },
       {
-        "path": ".omi-squad/config/onboarding-plan.md",
+        "path": ".omi/config/onboarding-plan.md",
         "action": "created"
       }
     ]
@@ -747,19 +747,19 @@ Options:
     },
     "files": [
       {
-        "path": ".omi-squad/config/project.yaml",
+        "path": ".omi/config/project.yaml",
         "action": "kept"
       },
       {
-        "path": ".omi-squad/workflows/onboarding-takeover.yaml",
+        "path": ".omi/workflows/onboarding-takeover.yaml",
         "action": "kept"
       },
       {
-        "path": ".omi-squad/config/codebase.yaml",
+        "path": ".omi/config/codebase.yaml",
         "action": "kept"
       },
       {
-        "path": ".omi-squad/config/onboarding-plan.md",
+        "path": ".omi/config/onboarding-plan.md",
         "action": "kept"
       }
     ]
@@ -790,7 +790,7 @@ Options:
   "exitCode": 3,
   "error": {
     "code": "RUNTIME_UNAVAILABLE",
-    "message": "no runtime is listening on <root>/.tmp/omi-083/project/.omi-squad/local/ipc/runtime.sock (EPERM)"
+    "message": "no runtime is listening on <root>/.tmp/omi-083/project/.omi/local/ipc/runtime.sock (EPERM)"
   }
 }
 ```

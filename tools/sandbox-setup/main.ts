@@ -3,7 +3,7 @@
 //                 default: apply. --dry-run reads (GET only) and prints every call it would make.
 //                 --verify reads back every object and exits 1 if one is missing or weaker.
 //   local-state --state-dir <dir> --image … --digest … [--deploy-approval-id <id>]
-//                 creates the runtime layout under <dir>/.omi-squad (state, project row, config, artifacts) and moves
+//                 creates the runtime layout under <dir>/.omi (state, project row, config, artifacts) and moves
 //                 an older top-level layout into it, or refuses when both exist (+ deploy-config.json once
 //                 the PO's deploy approval ID is known). The state dir must be outside this repo.
 // Run: node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts <command> …

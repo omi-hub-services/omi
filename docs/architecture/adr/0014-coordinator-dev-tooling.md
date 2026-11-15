@@ -861,3 +861,5 @@ comments and headings inside fenced examples do not satisfy it. A Task with that
 is refused with a hint to use Bug/bugfix. These reasons also block promote, set-status
 to Ready/In Progress and start-branch/dispatch, and appear in status Attention for
 existing open non-Epic Issues. Correct the Issue fields/body; do not bypass the gate.
+
+> Status note (2026-11-15, OMI-153): the project install directory is now `.omi/`; historical decision text above is unchanged.

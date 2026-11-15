@@ -85,3 +85,5 @@ CLI wiring is deferred: ADR-0020 requires a versioned command, dispatcher branch
 bootstrap lifecycle for the config/outbox stores. The exposed use cases and adapters are ready for
 that follow-up. No `omi init` command is claimed here. Live template copy, permissions/token scopes,
 and filesystem behavior outside the WSL/Linux baseline remain unverified by these offline tests.
+
+> Status note (2026-11-15, OMI-153): the project install directory is now `.omi/`; historical decision text above is unchanged.

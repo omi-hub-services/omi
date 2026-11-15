@@ -167,7 +167,7 @@ Coordinator scan (2026-11-14, reported by the Coordinator; the author did not re
 - Final package `omi-squad-0.1.0.tgz` built from `a0a1af8`: 1160 files, no credential. The only
   `github_pat_` hits are the detector patterns in `dist/application/contracts/credential-input.js`,
   `dist/interfaces/ipc/ipc-server.js` and `dist/interfaces/cli/presenters/startup-error-presenter.js`.
-- Runtime artifacts and contexts under `.omi-squad/local` of both beta repos (install backups
+- Runtime artifacts and contexts under `.omi/local` of both beta repos (install backups
   excluded): 92 and 85 files, no match.
 - Both `state.sqlite` databases (binary grep): no match.
 

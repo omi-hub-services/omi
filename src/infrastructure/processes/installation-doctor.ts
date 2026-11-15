@@ -203,7 +203,7 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
       "Requires a Linux checkout with a reversible Windows UNC mapping",
       "Keep the project on the Linux filesystem (not /mnt/<drive>), not behind a symlink",
     );
-    const shim = join(input.projectDir, ".omi-squad", "bin", "omi");
+    const shim = join(input.projectDir, ".omi", "bin", "omi");
     const reached = reachable
       ? await probe.command(
           wslExe,
@@ -265,7 +265,7 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
     const read = async <T>(schema: z.ZodType<T>, args: readonly string[]) =>
       authenticated ? parseWith(schema, await gh(args)) : undefined;
     const config = await probe.projectConfig(input.projectDir);
-    const configFix = "Fix .omi-squad/config/project.yaml (repository, project, policies)";
+    const configFix = "Fix .omi/config/project.yaml (repository, project, policies)";
     const login = (await read(loginSchema, ["api", "user"]))?.login.toLowerCase();
     const actors = config?.policies.github_approval_actors ?? [];
     check(

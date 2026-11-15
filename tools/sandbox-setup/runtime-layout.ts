@@ -15,7 +15,7 @@ export interface RuntimeLayout {
 
 export function runtimeLayout(projectDir: string): RuntimeLayout {
   const root = resolve(projectDir);
-  const squad = join(root, ".omi-squad");
+  const squad = join(root, ".omi");
   const configDir = join(squad, "config");
   const stateDir = join(squad, "local", "state");
   return {

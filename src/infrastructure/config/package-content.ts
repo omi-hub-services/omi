@@ -56,7 +56,7 @@ export async function readPackageContent(directory: string) {
       if (name.startsWith("templates/project/") && !name.endsWith("/.gitkeep")) {
         const text = new TextDecoder("utf-8", { fatal: true }).decode(content);
         assertCredentialFree(text);
-        const target = name.slice("templates/project/".length).replace(/^\.omi-squad\//, "");
+        const target = name.slice("templates/project/".length).replace(/^\.omi\//, "");
         if (templates[target] !== undefined) throw new Error("DUPLICATE_TEMPLATE_TARGET");
         templates[target] = text;
       }

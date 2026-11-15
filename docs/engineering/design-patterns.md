@@ -290,7 +290,7 @@ Clock, ID generator và logger cũng là dependency khi ảnh hưởng determini
 
 ## Đối chiếu vận hành v0.1 (2026-11-13)
 
-Script-first có một nguồn: `templates/project/.omi-squad/rules/script-first.md` (mandatory:
+Script-first có một nguồn: `templates/project/.omi/rules/script-first.md` (mandatory:
 false); không copy policy vào prompt/CLI. Runtime và repo dùng chung policy theo ADR-0036.
 LLM phán đoán khi gate từ chối; không dùng raw git/gh để bỏ qua gate.
 

@@ -8,7 +8,7 @@ import {
 } from "../../../src/infrastructure/config/load-resolution-catalog.ts";
 import { resolveRoleContext } from "../../../src/application/services/resolve-role-context.ts";
 
-const shipped = join(import.meta.dirname, "../../../templates/project/.omi-squad");
+const shipped = join(import.meta.dirname, "../../../templates/project/.omi");
 const temps: string[] = [];
 
 function copyTemplate(): string {

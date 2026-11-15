@@ -67,7 +67,7 @@ limits: { max_parallel_workers: 2, step_timeout_seconds: 60, max_rework_cycles: 
 policies: { mandatory_approvals: [] }
 `;
 function writeConfig(models: string) {
-  const config = join(dir, ".omi-squad", "config");
+  const config = join(dir, ".omi", "config");
   mkdirSync(config, { recursive: true });
   writeFileSync(join(config, "project.yaml"), VALID_PROJECT);
   writeFileSync(join(config, "models.yaml"), models);
@@ -88,7 +88,7 @@ models:
 capability_profiles: { standard: { min_effort: medium } }
 verified_models: { standard: [worker] }
 `);
-    const squad = join(dir, ".omi-squad");
+    const squad = join(dir, ".omi");
     for (const path of ["roles", "rules", "workflows", "provenance"])
       mkdirSync(join(squad, path), { recursive: true });
     writeFileSync(join(squad, "provenance/skills.lock.json"), JSON.stringify({ skills: [] }));
@@ -132,7 +132,7 @@ verified_models: { standard: [private-corp-alias] }
   }, 10000);
 
   it("prints config issue paths without file contents and exits while stdin stays open", async () => {
-    const config = join(dir, ".omi-squad", "config");
+    const config = join(dir, ".omi", "config");
     mkdirSync(config, { recursive: true });
     writeFileSync(join(config, "project.yaml"), "schema_version: 1\nrepository: nope\n");
     const failed = startFailing(dir);
@@ -144,7 +144,7 @@ verified_models: { standard: [private-corp-alias] }
   }, 10000);
 
   it("reports a credential-bearing config by code without echoing the value", async () => {
-    const config = join(dir, ".omi-squad", "config");
+    const config = join(dir, ".omi", "config");
     mkdirSync(config, { recursive: true });
     writeFileSync(
       join(config, "project.yaml"),
@@ -166,7 +166,7 @@ describe("runtime executable composition", () => {
       },
       { timeout: 5000 },
     );
-    const socketPath = join(dir, ".omi-squad/local/ipc/runtime.sock");
+    const socketPath = join(dir, ".omi/local/ipc/runtime.sock");
     expect(
       await sendCommand({
         socketPath,
@@ -179,7 +179,7 @@ describe("runtime executable composition", () => {
     first.child.stdin.end("stop\n");
     expect(await first.exit).toBe(0);
     expect(existsSync(socketPath)).toBe(false);
-    const db = openStateDatabase(join(dir, ".omi-squad/local/state/state.sqlite"));
+    const db = openStateDatabase(join(dir, ".omi/local/state/state.sqlite"));
     try {
       expect(db.prepare("SELECT kind FROM events ORDER BY sequence").all()).toEqual([
         { kind: "session.started" },

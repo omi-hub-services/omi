@@ -15,12 +15,12 @@ compatibility matrix), [packaging.md](packaging.md) (install, update, conflicts,
 **The executable.** The package is `omi-squad`; its bin is `dist/bootstrap/cli.js`. There is no
 command called `omi` on `PATH`. In this handbook `<cli>` means one of:
 
-- WSL2: the project shim `.omi-squad/bin/omi` (created by `install --apply`, see packaging.md);
-- Windows: `node '\\wsl.localhost\<distro>\<project>\.omi-squad\bin\omi.cjs'`;
+- WSL2: the project shim `.omi/bin/omi` (created by `install --apply`, see packaging.md);
+- Windows: `node '\\wsl.localhost\<distro>\<project>\.omi\bin\omi.cjs'`;
 - from a built checkout or extracted package: `node <package>/dist/bootstrap/cli.js`.
 
 Run `<cli>` with the **project root as the working directory**: the socket defaults to
-`<cwd>/.omi-squad/local/ipc/runtime.sock`. `--socket <path>` overrides it; `--json` prints one
+`<cwd>/.omi/local/ipc/runtime.sock`. `--socket <path>` overrides it; `--json` prints one
 JSON document `{"schemaVersion":1,"ok":…,"exitCode":…,"result"|"error":…}` for success and failure.
 
 **Where each part runs** (ADR-0012): the Coordinator (Claude Code session) on Windows; the runtime,
@@ -93,7 +93,7 @@ stderr as `error[CODE]: message`.
 ### Status and watch
 
 `<cli> status [--project <path>] [--json]` reads the existing
-`.omi-squad/local/state/state.sqlite` in read-only mode alongside live GitHub Project and PR
+`.omi/local/state/state.sqlite` in read-only mode alongside live GitHub Project and PR
 reads. It groups open non-Epic tasks by Status, lists PR checks and the latest runtime-recorded
 review (a review of another head is `stale`), running attempts, profile quota and the next
 unblocked Ready task in priority/milestone/Issue order. JSON follows the envelope above; the
@@ -139,7 +139,7 @@ node <package>/dist/bootstrap/cli.js install --project /home/user/project --pack
 - `install` without `--apply` writes nothing and prints `preview: <version>; changes: <template paths>`.
   `bridge/skill/*` targets `.claude/skills/omi-squad/`; `bridge/CLAUDE.md` and `bridge/AGENTS.md`
   identify marked spans in the root instructions. The preview includes all bridge targets.
-- `--apply` backs up, installs the package under `.omi-squad/tool/`, and writes the shims and templates.
+- `--apply` backs up, installs the package under `.omi/tool/`, and writes the shims and templates.
 - `doctor` prints `WSL2 installation checks passed` (exit 0) or `error[DOCTOR_FAILED]: <check>: <detail>; …`
   (exit 6) naming each failed check (`interop`, `distribution-version`, `windows-launch`, `session-runtime-launch`, …). `session-runtime-launch` fails when the project
   shim cannot start Node.js (for example nvm removed): rerun `install --apply` with a working Node.js
@@ -163,7 +163,7 @@ When it fails:
 | Symptom                                           | Meaning / action                                                                                         |
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `INVALID_INSTALLATION_TARGET`                     | The project is the framework source repo or inside it, under `/mnt/<drive>`, a symlinked path, or inside the package dir. Use a project on the Linux filesystem outside this repository. |
-| `UNMANAGED_TOOL_INSTALLATION`                     | `.omi-squad/tool`, `bin/omi` or `bin/omi.cjs` exists without a framework lock. Remove or move it yourself; the installer will not overwrite it. |
+| `UNMANAGED_TOOL_INSTALLATION`                     | `.omi/tool`, `bin/omi` or `bin/omi.cjs` exists without a framework lock. Remove or move it yourself; the installer will not overwrite it. |
 | `Template conflicts: <paths>`                     | See §7.                                                                                                   |
 | `doctor` fails on `interop`                       | No enabled `WSLInterop*` entry in `/proc/sys/fs/binfmt_misc/` (`WSLInterop` or `WSLInterop-late`) or `WSL_INTEROP` is not accessible. Enable `[interop] enabled = true` in `/etc/wsl.conf` and restart the distro. |
 | `doctor` fails on `wsl-exe`                       | `wsl.exe` is on neither PATH nor `/mnt/c/Windows/System32`. Set `[interop] appendWindowsPath = true` in `/etc/wsl.conf` (then `wsl.exe --shutdown`) or add `/mnt/c/Windows/System32` to PATH. `distribution-version` and `windows-launch` then fail only as "cannot be checked"; fix `wsl-exe` first. |
@@ -203,13 +203,13 @@ project.yaml has no checks.project-check`.
 ```
 
 `--variant new` chooses the empty-repository workflow; `existing` is the default. Preview writes
-nothing, including directories. Apply creates `.omi-squad/config/project.yaml`, the onboarding
+nothing, including directories. Apply creates `.omi/config/project.yaml`, the onboarding
 workflow, `config/codebase.yaml`, and `config/onboarding-plan.md`. Every existing file is kept,
 including user comments; repeating apply is safe. Init never contacts GitHub or executes detected
 commands. Invalid baseline/path/variant returns exit 2 without echoing the input. Existing-project
 mapping and Project-template copy use cases remain outside this local CLI path (ADR-0029).
 
-Init/install supplies `.omi-squad/config/models.yaml` with Claude Code (`claude-sonnet-5-5`,
+Init/install supplies `.omi/config/models.yaml` with Claude Code (`claude-sonnet-5-5`,
 `claude-opus-5-5`) and Codex (`gpt-6.1-sol`) defaults for the workflow capability profiles.
 Existing project edits are preserved by init and the installer's three-way merge; divergent
 upstream/local changes report a conflict before writing. The runtime
@@ -218,7 +218,7 @@ can still refuse plan/dispatch with their own typed reasons.
 
 ### Change models
 
-Edit the project-owned `.omi-squad/config/models.yaml` (schema: `models-config.v1.schema.json`).
+Edit the project-owned `.omi/config/models.yaml` (schema: `models-config.v1.schema.json`).
 Under `models`, change the CLI `model` ID and its verified `supported_efforts`, keeping the correct
 `executor` (`claude-code` or `codex`). Keep the capability profile IDs referenced by workflows
 (`analysis`, `coding`, `testing`, `review`); `min_effort` is a floor, while task/step policy chooses
@@ -281,7 +281,7 @@ a configured project (§1).
 1. **Start the session (Windows, foreground).** Starts the WSL runtime, then the Coordinator:
 
    ```text
-   node <package>\dist\bootstrap\cli.js session start --project /home/user/project --runtime /home/user/project/.omi-squad/tool/node_modules/omi-squad/dist/bootstrap/runtime.js --distribution Ubuntu-24.04
+   node <package>\dist\bootstrap\cli.js session start --project /home/user/project --runtime /home/user/project/.omi/tool/node_modules/omi-squad/dist/bootstrap/runtime.js --distribution Ubuntu-24.04
    ```
 
    Flags: `--project`, `--runtime` (absolute Linux paths, both required), `--distribution`,
@@ -419,7 +419,7 @@ returns an empty array. Legacy decisions without versioned request snapshots are
 Unknown statuses return usage exit 2 without contacting the runtime.
 
 Run `<cli> workflows validate [--json]` from the installed project's root before starting a
-session or after editing workflows, roles, rules or skills. It reads `.omi-squad/workflows/*.yaml`
+session or after editing workflows, roles, rules or skills. It reads `.omi/workflows/*.yaml`
 and the installed resolution catalog, including skill provenance, with the runtime's loaders;
 it needs neither a running runtime nor `project.yaml`/`models.yaml`. It checks workflow schemas
 and role/rule/skill references, not model capabilities or project check commands. Exit 0 means
@@ -570,8 +570,8 @@ node <new-package>/dist/bootstrap/cli.js update … --apply
 For a pinned GitHub Release, use the installed WSL2 shim:
 
 ```sh
-.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0
-.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0 --apply
+.omi/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0
+.omi/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0 --apply
 ```
 
 Choose an actually published `x.y.z` version. `gh release download` uses your existing gh login
@@ -599,10 +599,10 @@ the manual restore after an interrupted publish are in packaging.md.
 
 **Runs in flight.** A run pins its workflow template by sha-256 and keeps it: an update that changes
 a template never switches a running run to the new one (new runs use the new template). The
-runtime resolves the pinned template from the installed `.omi-squad/workflows/` first, then from the
-content-addressed archive `.omi-squad/local/workflow-archive/<sha256>.yaml`. The archive is filled
+runtime resolves the pinned template from the installed `.omi/workflows/` first, then from the
+content-addressed archive `.omi/local/workflow-archive/<sha256>.yaml`. The archive is filled
 when the runtime starts (installed templates), by `update --apply` (the templates it replaces) and
-from existing `.omi-squad/local/backups/install-*/templates.json`, so runs planned before this
+from existing `.omi/local/backups/install-*/templates.json`, so runs planned before this
 archive existed still resolve. An entry is used only if its bytes hash to its name. If no template
 has the pinned hash, dispatch/retry refuse with `TEMPLATE_UNAVAILABLE` and `template_hash=<hash>`;
 restore that template file's exact bytes into the archive under that name, or start a new run.
@@ -616,10 +616,10 @@ restore that template file's exact bytes into the archive under that name, or st
 | Runtime refuses to start (owner exists)      | Another runtime owns the project; stop it. A crashed owner's lease expires (60 s) and is then reclaimed.      |
 | A run was interrupted                        | `status --run <id>`, then `resume --run <id>` (§5).                                                           |
 | Switching Coordinator account/session        | `session new` or `coordinator switch --to <label>`, then start a new session and `resume` each run.           |
-| Failed `update`/`install`                    | The old tool and files stay active on SQL or provisioning failure. Backups: `.omi-squad/local/backups/`; restore by hand as in packaging.md. |
+| Failed `update`/`install`                    | The old tool and files stay active on SQL or provisioning failure. Backups: `.omi/local/backups/`; restore by hand as in packaging.md. |
 | Worker may still be writing                  | Do not reuse its worktree because a lease expired: prove the process is gone first (ADR-0030).               |
 
-Safety rules: never delete `.omi-squad/local/state/` or the worktrees to "reset" a run; never copy
+Safety rules: never delete `.omi/local/state/` or the worktrees to "reset" a run; never copy
 native modules from Windows; backups are local, not disaster recovery. The runtime backs up SQLite
 before pending migrations.
 
@@ -627,7 +627,7 @@ before pending migrations.
 
 Three commands put work on the GitHub Project and move it into the queue. They talk to GitHub
 directly (the `gh` login of the machine), not to the runtime, so no session is needed. All take
-`--project <path>` and read the repository and Project from `<path>/.omi-squad/config/project.yaml`
+`--project <path>` and read the repository and Project from `<path>/.omi/config/project.yaml`
 (`PROJECT_NOT_CONFIGURED` otherwise). Preview and refusals write nothing.
 
 **The readiness gate** (pure, one implementation for all three commands and for `dispatch`). A task
@@ -699,7 +699,7 @@ Workers continue receiving only assigned, hash-checked skills/rules inline: Clau
 slash commands and profile user settings, and Codex refuses a profile with installed skills
 (ADR-0019). This is discovery/context isolation, not an OS restriction on a worker with shell access.
 
-Use `.omi-squad/bin/omi` in WSL2, or `node .omi-squad/bin/omi.cjs` from the Windows project root.
+Use `.omi/bin/omi` in WSL2, or `node .omi/bin/omi.cjs` from the Windows project root.
 The latter is the existing bound skill bridge launcher. File flags refer to paths **inside WSL2**;
 store notes, messages and review bodies in the project's `.tmp/` directory. No prompt or free text
 is assembled into a shell string. Every new command supports the normal `--json` envelope.
@@ -826,15 +826,15 @@ listed there is `untested`. This table adds only what the CLI itself depends on:
 
 | Path in the project                                                                 | Git      | You may edit?                                                    |
 | ----------------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------- |
-| `.omi-squad/config/project.yaml`, `models.yaml`                                      | tracked  | Yes, the project owns them; no credentials in them              |
-| `.omi-squad/workflows/`, `roles/`, `rules/`, `skills/`, `provenance/`               | tracked  | Yes, but a local edit can conflict with `update` (§7); keep a note of why |
-| `.omi-squad/framework.lock.json`, `.omi-squad/bin/`, `.omi-squad/tool/package*.json`, retained tarball | tracked | **No**: installer-managed; change only through `install`/`update` |
-| `.omi-squad/tool/node_modules/`                                                      | ignored  | **No**                                                           |
-| `.omi-squad/local/` (`state/`, `runs/`, `profiles/`, `credentials/`, `ipc/`, `locks/`, `tmp/`, `backups/`) | ignored | **No**: runtime state, checkpoints, logs, sockets; never commit or paste into prompts, Issues or PRs |
+| `.omi/config/project.yaml`, `models.yaml`                                      | tracked  | Yes, the project owns them; no credentials in them              |
+| `.omi/workflows/`, `roles/`, `rules/`, `skills/`, `provenance/`               | tracked  | Yes, but a local edit can conflict with `update` (§7); keep a note of why |
+| `.omi/framework.lock.json`, `.omi/bin/`, `.omi/tool/package*.json`, retained tarball | tracked | **No**: installer-managed; change only through `install`/`update` |
+| `.omi/tool/node_modules/`                                                      | ignored  | **No**                                                           |
+| `.omi/local/` (`state/`, `runs/`, `profiles/`, `credentials/`, `ipc/`, `locks/`, `tmp/`, `backups/`) | ignored | **No**: runtime state, checkpoints, logs, sockets; never commit or paste into prompts, Issues or PRs |
 | Task worktrees (a sibling directory outside the checkout)                           | n/a      | **No**: workers own them; the Coordinator changes code only through workers and PRs |
 | Native `~/.claude*`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` profile directories           | n/a      | Only through the native tools' own login; the framework does not edit native config |
 
-Ignore `.omi-squad/local/` and `.omi-squad/tool/node_modules/` in the project's Git setup (packaging.md).
+Ignore `.omi/local/` and `.omi/tool/node_modules/` in the project's Git setup (packaging.md).
 The framework source repository is separate: never install or run omi-squad inside it
 (`INVALID_INSTALLATION_TARGET`), and keep temp/debug output in `.tmp/` (AGENTS.md §5).
 
@@ -1000,7 +1000,7 @@ own head and merge-base with `develop`. A missing or malformed claim is ignored,
 (git SHAs) and still redacts secret-prefixed and other long tokens.
 
 A worker writes its artifacts only into the attempt's absolute artifact directory
-(`<store>/attempts/<attemptId>`, under `.omi-squad/local/runs`), never into the task worktree or
+(`<store>/attempts/<attemptId>`, under `.omi/local/runs`), never into the task worktree or
 branch. The runtime creates it before the start and grants exactly that one directory (Claude Code
 `--add-dir`, Codex `--add-dir`) to `workspace-write` workers; read-only workers get none. The prompt
 names the absolute directory, while the `path` in the result stays store-relative

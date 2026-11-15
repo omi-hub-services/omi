@@ -69,6 +69,8 @@ import { importTaskSnapshots } from "../application/use-cases/tasks/import-task-
 import type { GithubRestClient } from "../infrastructure/github/github-rest-client.js";
 import { inspectInstallation } from "../application/use-cases/project/inspect-installation.js";
 import { createProjectInstallation } from "../infrastructure/config/install-project-package.js";
+import { migrateProjectDirectory } from "../application/use-cases/project/migrate-project-directory.js";
+import { migrateProjectDirectory as migrateDirectory } from "../infrastructure/config/migrate-project-directory.js";
 import { createInstallationDoctor } from "../infrastructure/processes/installation-doctor.js";
 import { fileURLToPath } from "node:url";
 import type { AttemptStore } from "../application/ports/attempt-store.js";
@@ -208,7 +210,7 @@ export function createOverviewCommands(
     const config = await createOnboardingProjectConfigStore(projectDir).read();
     if (config === undefined) throw new Error("PROJECT_NOT_CONFIGURED");
     const database = openReadOnlyStateDatabase(
-      join(projectDir, ".omi-squad", "local", "state", "state.sqlite"),
+      join(projectDir, ".omi", "local", "state", "state.sqlite"),
     );
     try {
       const client = createGithubRestClient({
@@ -252,13 +254,13 @@ export function createOverviewCommands(
       const deps = await open(input.projectDir);
       let workflows: WorkflowCatalog;
       try {
-        const directory = join(input.projectDir, ".omi-squad", "workflows");
+        const directory = join(input.projectDir, ".omi", "workflows");
         workflows = await loadWorkflowCatalog(
           directory,
           readdirSync(directory, { withFileTypes: true })
             .filter((entry) => entry.isFile() && entry.name.endsWith(".yaml"))
             .map((entry) => entry.name.slice(0, -5)),
-          { localDir: join(input.projectDir, ".omi-squad", "local"), persist: false },
+          { localDir: join(input.projectDir, ".omi", "local"), persist: false },
         );
       } catch (error) {
         deps.database.close();
@@ -383,9 +385,9 @@ export function createReworkUseCase(
   return (input: unknown) => recordReworkEvent(dependencies, input);
 }
 
-/** Where the runtime listens for a project (architecture.md §4: `.omi-squad/local/ipc/`). */
+/** Where the runtime listens for a project (architecture.md §4: `.omi/local/ipc/`). */
 export function defaultSocketPath(projectDir: string): string {
-  return join(projectDir, ".omi-squad", "local", "ipc", "runtime.sock");
+  return join(projectDir, ".omi", "local", "ipc", "runtime.sock");
 }
 
 /** The package version, read once at start-up (the same file for `src/` and for `dist/`). */
@@ -448,11 +450,11 @@ export function createTaskCommands(
 
 /** Unexpected IPC handler errors, kept beside the worker logs and out of the run artifacts. */
 export const ipcErrorLogPath = (projectDir: string): string =>
-  join(projectDir, ".omi-squad", "local", "logs", "ipc-errors.log");
+  join(projectDir, ".omi", "local", "logs", "ipc-errors.log");
 
-/** Worker logs live in `.omi-squad/local/logs`, outside the immutable run artifacts. */
+/** Worker logs live in `.omi/local/logs`, outside the immutable run artifacts. */
 const workerLogDirectory = (projectDir: string): string =>
-  join(projectDir, ".omi-squad", "local", "logs");
+  join(projectDir, ".omi", "local", "logs");
 
 /** Manual log retention: the same use case that runs after a task is closed. */
 export function createLogCommands(): LogCommands {
@@ -482,13 +484,14 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
     workflows: {
       validate: () =>
         validateWorkflows({
-          read: () => loadWorkflowValidationCatalog(join(process.cwd(), ".omi-squad")),
+          read: () => loadWorkflowValidationCatalog(join(process.cwd(), ".omi")),
         }),
     },
     tasks: createTaskCommands(),
     overview: createOverviewCommands(),
     logs: createLogCommands(),
     installation: {
+      migrateDirectory: (input) => migrateProjectDirectory(migrateDirectory, input),
       initialize: async (input) =>
         initializeProject(
           {
@@ -960,7 +963,7 @@ export async function createProjectRunCommandUseCases(
   const { database, session, projectDir } = options;
   const runs = createSqliteRecoveryRunReader(database);
   // An uninitialised project can still expose status and typed refusals for every run command.
-  if (!existsSync(join(projectDir, ".omi-squad", "config", "project.yaml"))) {
+  if (!existsSync(join(projectDir, ".omi", "config", "project.yaml"))) {
     const refuse = () => ({ ok: false as const, reason: "PROJECT_NOT_CONFIGURED" });
     return {
       runs,
@@ -994,7 +997,7 @@ export async function createProjectRunCommandUseCases(
       },
     };
   }
-  const config = await loadRuntimeConfig(join(projectDir, ".omi-squad"));
+  const config = await loadRuntimeConfig(join(projectDir, ".omi"));
   const now = options.now ?? Date.now;
   const nextId = randomUUID;
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -1002,7 +1005,7 @@ export async function createProjectRunCommandUseCases(
   const plans = createSqliteRunPlanStore(database, { fence: session.lease, now });
   const attempts = createSqliteAttemptStore(database, { fence: session.lease, now });
   const profiles = createProfileStores(database, { fence: session.lease, now });
-  const root = join(projectDir, ".omi-squad", "local", "runs");
+  const root = join(projectDir, ".omi", "local", "runs");
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const artifacts = createLocalArtifactStore(root, database);
   const checkpoints = createLocalCheckpointStore(root, database);
@@ -1096,8 +1099,8 @@ export async function createProjectRunCommandUseCases(
   };
   const dispatch: DispatchStepDependencies = {
     catalog: config.catalog,
-    skills: createFileSkillSource(join(projectDir, ".omi-squad")),
-    rules: createFileRuleSource(join(projectDir, ".omi-squad")),
+    skills: createFileSkillSource(join(projectDir, ".omi")),
+    rules: createFileRuleSource(join(projectDir, ".omi")),
     steps: createSqliteStepRunReader(database),
     attempts,
     artifacts,

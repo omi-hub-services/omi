@@ -14,7 +14,7 @@ import { FakeGithubBoard } from "../../contract/github/fake-github-board.ts";
 
 it("reads status beside a stopped runtime with only project config and existing state, without writes", async () => {
   const directory = mkdtempSync(join(tmpdir(), "omi-status-composition-"));
-  const squad = join(directory, ".omi-squad");
+  const squad = join(directory, ".omi");
   mkdirSync(join(squad, "config"), { recursive: true });
   mkdirSync(join(squad, "local/state"), { recursive: true });
   writeFileSync(join(squad, "config/project.yaml"), stringify(baseline));

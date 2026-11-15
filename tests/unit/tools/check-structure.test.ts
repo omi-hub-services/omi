@@ -20,7 +20,7 @@ describe("findViolations", () => {
     ["docs/run.log", "state, log or key material"],
     ["tests/fixtures/state.sqlite", "state, log or key material"],
     ["tools/credentials.json", "credential file"],
-    ["templates/project/.omi-squad/local/state/x.json", "omi-squad local runtime state"],
+    ["templates/project/.omi/local/state/x.json", "omi-squad local runtime state"],
   ])("refuses to commit %s", (file, reason) => {
     expect(findViolations([file]).join("\n")).toContain(reason);
   });

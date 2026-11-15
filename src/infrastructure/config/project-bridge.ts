@@ -10,7 +10,7 @@ export function installationTarget(root: string, path: string): string {
     return join(root, ".claude/skills/omi-squad", path.slice("bridge/skill/".length));
   if (path === "bridge/CLAUDE.md" || path === "bridge/AGENTS.md")
     return join(root, path.slice("bridge/".length));
-  return join(root, ".omi-squad", path);
+  return join(root, ".omi", path);
 }
 
 export function isProjectInstruction(path: string): boolean {

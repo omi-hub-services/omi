@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { renderWorkerPrompt } from "../../../src/application/services/render-worker-prompt.js";
 
 it("keeps the shared prompt renderable outside installed project templates", () => {
-  expect(existsSync("templates/project/.omi-squad/worker-prompt.md")).toBe(false);
+  expect(existsSync("templates/project/.omi/worker-prompt.md")).toBe(false);
   const skeleton = readFileSync("templates/prompts/worker-prompt.md", "utf8");
   expect(
     renderWorkerPrompt(skeleton, {

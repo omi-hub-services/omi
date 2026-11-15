@@ -8,10 +8,10 @@ description: Read framework delivery status and recommend one next action in the
 Run the installed framework CLI from the project root:
 
 ```
-.omi-squad/bin/omi status --project .
+.omi/bin/omi status --project .
 ```
 
-On Windows use `node .omi-squad/bin/omi.cjs` with the same arguments; the installed launcher
+On Windows use `node .omi/bin/omi.cjs` with the same arguments; the installed launcher
 binds the WSL distribution and project. Use `--json` when a field is needed.
 
 Data collection is script-first. Report counts, work in flight, PR checks, review state,

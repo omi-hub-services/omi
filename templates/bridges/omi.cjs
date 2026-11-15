@@ -1,5 +1,5 @@
 /* global Buffer, process, __dirname */
-// Windows entrypoint: node "\\wsl.localhost\<distro>\<project>\.omi-squad\bin\omi.cjs" <args>
+// Windows entrypoint: node "\\wsl.localhost\<distro>\<project>\.omi\bin\omi.cjs" <args>
 const { spawnSync } = require("node:child_process");
 const { resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -25,7 +25,7 @@ if (/^--omi-(?:runtime|node-version|worker-version)$/.test(args[0] ?? "")) {
       "--project",
       project,
       "--runtime",
-      `${project}/.omi-squad/tool/node_modules/omi-squad/dist/bootstrap/runtime.js`,
+      `${project}/.omi/tool/node_modules/omi-squad/dist/bootstrap/runtime.js`,
       ...args.slice(2),
     ];
     import(pathToFileURL(cli).href).catch(() => {
@@ -36,15 +36,7 @@ if (/^--omi-(?:runtime|node-version|worker-version)$/.test(args[0] ?? "")) {
 } else {
   const result = spawnSync(
     "wsl.exe",
-    [
-      "--distribution",
-      distribution,
-      "--cd",
-      project,
-      "--exec",
-      `${project}/.omi-squad/bin/omi`,
-      ...args,
-    ],
+    ["--distribution", distribution, "--cd", project, "--exec", `${project}/.omi/bin/omi`, ...args],
     { shell: false, stdio: "inherit", windowsHide: true },
   );
   process.exitCode = result.status ?? 1;

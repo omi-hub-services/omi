@@ -143,9 +143,9 @@ describe("credential guard", () => {
     ".claude-profiles/work/settings.json",
     ".codex-profiles/work/config.toml",
     "${CLAUDE_CONFIG_DIR}/settings.json",
-    ".omi-squad/local/credentials/<profile-id>/",
-    ".omi-squad/local/credentials/profile/settings.json",
-    ".omi-squad/local/profiles/registry.json",
+    ".omi/local/credentials/<profile-id>/",
+    ".omi/local/credentials/profile/settings.json",
+    ".omi/local/profiles/registry.json",
     ".npmrc\nregistry=https://registry.example.invalid/",
   ])("accepts config documentation without credential files or values %j", (text) => {
     expect(() => {

@@ -1,18 +1,18 @@
 import type { CodebaseDetection, OnboardingVariant } from "../contracts/project-onboarding.js";
 
 export const ONBOARDING_PATHS = {
-  config: ".omi-squad/config/project.yaml",
-  codebase: ".omi-squad/config/codebase.yaml",
-  plan: ".omi-squad/config/onboarding-plan.md",
+  config: ".omi/config/project.yaml",
+  codebase: ".omi/config/codebase.yaml",
+  plan: ".omi/config/onboarding-plan.md",
   workflow: (variant: OnboardingVariant): string =>
-    `.omi-squad/workflows/onboarding-${variant === "new" ? "empty-repo" : "takeover"}.yaml`,
+    `.omi/workflows/onboarding-${variant === "new" ? "empty-repo" : "takeover"}.yaml`,
 } as const;
 
 /** JSON scalars are valid YAML, so quoting through JSON.stringify keeps repository text inert. */
 const scalar = (value: string): string => JSON.stringify(value);
 const list = (values: readonly string[]): string => `[${values.map(scalar).join(", ")}]`;
 
-/** `.omi-squad/config/codebase.yaml`: detected facts only, deterministic for a given input. */
+/** `.omi/config/codebase.yaml`: detected facts only, deterministic for a given input. */
 export function renderCodebaseConfig(detection: CodebaseDetection): string {
   const commands = Object.entries(detection.commands)
     .filter((entry): entry is [string, string] => entry[1] !== undefined)

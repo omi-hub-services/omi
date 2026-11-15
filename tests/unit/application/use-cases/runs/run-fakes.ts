@@ -80,7 +80,7 @@ export class FakeSkillSource implements SkillSource {
     this.files.set("tdd", {
       sha256: h("a"),
       skillMd: "# TDD\nWrite the failing test first.\n",
-      bundledFiles: [".omi-squad/skills/tdd/references/cycle.md"],
+      bundledFiles: [".omi/skills/tdd/references/cycle.md"],
     });
     this.files.set("receiving-code-review", {
       sha256: h("b"),
