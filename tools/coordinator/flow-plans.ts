@@ -405,6 +405,7 @@ export function planMerge(
 // ── close ────────────────────────────────────────────────────────────────────
 export interface IssueForClose {
   readonly number: number;
+  readonly workflow?: string | null;
   readonly state: string;
   readonly body: string;
   readonly comments: readonly string[];
@@ -427,7 +428,8 @@ export interface ReferencingPull {
 
 /**
  * Ticks the Issue's AC from the `AC-<n>` lines of the Coordinator's agent review PASS on the
- * merged head of the most recently merged (by `mergedAt`) PR into develop with `Issue: #N`.
+ * merged head of the most recently merged (by `mergedAt`) eligible PR with `Issue: #N`.
+ * Release Issues also accept main; all other workflows accept develop only.
  * Refuses on a missing PASS, a missing line or a `not met`; done when every box is ticked.
  */
 export function planTickCriteria(
@@ -437,13 +439,14 @@ export function planTickCriteria(
   carries: ReadonlyMap<number, CarryJudgement> = new Map(),
 ): Plan {
   const n = String(issue.number);
+  const bases = issue.workflow === "release" ? [BASE_BRANCH, "main"] : [BASE_BRANCH];
   // GitHub's ISO timestamps share one format (UTC, `Z`), so they sort as strings.
   const pr = pulls
-    .filter((p) => p.merged && p.baseRefName === BASE_BRANCH)
+    .filter((p) => p.merged && bases.includes(p.baseRefName))
     .filter((p) => linkedIssue(p.body) === issue.number)
     .sort((a, b) => (a.mergedAt ?? "").localeCompare(b.mergedAt ?? ""))
     .at(-1);
-  if (!pr) return refuse(`no merged PR into ${BASE_BRANCH} has the line "Issue: #${n}"`);
+  if (!pr) return refuse(`no merged PR into ${bases.join(" or ")} has the line "Issue: #${n}"`);
   const p = `PR #${String(pr.number)}`;
   const review = latestAgentReview(pr.comments);
   if (review?.verdict !== "PASS" || !pr.headRefOid.startsWith(review.head)) {

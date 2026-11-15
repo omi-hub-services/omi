@@ -942,7 +942,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       const n = issueNumber(a);
       const comment = readFileSync(required(values["comment-file"], "--comment-file"), "utf8");
       const issue = await readIssue(ctx, n);
-      const target = { number: n, ...issue };
+      const target = { number: n, ...issue, workflow: issue.readiness.workflow };
       const carries = await carriesFor(ctx, issue.pulls, dry);
       return go(planClose(target, comment, issue.field, issue.item, issue.pulls, carries));
     }
