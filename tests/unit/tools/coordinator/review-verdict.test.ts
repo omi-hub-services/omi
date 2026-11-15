@@ -17,6 +17,20 @@ describe("checkReview", () => {
     expect(checkReview(good, ctx)).toEqual({ ok: true, verdict: "PASS", head: "9d0fba0" });
   });
 
+  it("accepts a release-workflow PASS with PO and post-merge AC deferred to Coordinator steps", () => {
+    const releaseContext = { acCount: 3, prHead: HEAD, workflow: "release" };
+    const body = `${verdict()}
+AC-1: met — release diff independently reviewed on the PR head
+AC-2: deferred — PO native approval before merge
+AC-3: deferred — tag and Release assets after merge`;
+
+    expect(checkReview(body, releaseContext)).toEqual({
+      ok: true,
+      verdict: "PASS",
+      head: "9d0fba0",
+    });
+  });
+
   it("accepts a full SHA that equals the head", () => {
     expect(checkReview(good.replace("9d0fba0", HEAD), ctx).ok).toBe(true);
   });
