@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadWorkflowCatalog } from "../../../src/infrastructure/config/load-workflow-catalog.ts";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
-const original = readFileSync(resolve("tests/fixtures/workflows/feature-with-qa.yaml"), "utf8");
+const original = readFileSync(
+  resolve("tests/fixtures/workflow-archive/feature-with-qa.yaml"),
+  "utf8",
+);
 const updated = readFileSync(resolve("templates/project/workflows/feature.yaml"), "utf8");
 
 const dirs: string[] = [];
