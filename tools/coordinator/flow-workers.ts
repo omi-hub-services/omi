@@ -424,19 +424,20 @@ async function postStepReport(
     : [];
   // One dispatch (packet) is posted once. A native resume keeps step, round and session of the
   // earlier run (OMI-173), so those cannot tell it apart; the packet id can.
-  const packetLine = `**Packet:** ${meta.packet}`;
-  if (
-    input.comments.some(
-      (c) => c.author === COORDINATOR_LOGIN && c.body.split("\n").includes(packetLine),
-    )
-  ) {
+  // The packet comes from the header of a validated report only, never from a worker's summary.
+  const sameKey = parsed.filter(
+    (p) =>
+      p.marker.step === meta.step &&
+      p.marker.round === meta.round &&
+      p.marker.session === input.session,
+  );
+  // reports posted before the Packet header keep the legacy step+round+session dedupe
+  if (parsed.some((p) => p.packet === meta.packet) || sameKey.some((p) => p.packet === null)) {
     console.log(`${label}: done: ${meta.step} round ${String(meta.round)} already reported`);
     return 0;
   }
-  // a new run of a step/round/session already on the Issue is a rework: it gets the next round
-  const sameRun = prior.some(
-    (p) => p.step === meta.step && p.round === meta.round && p.session === input.session,
-  );
+  // a new packet for a step/round/session already on the Issue is a rework: it gets the next round
+  const sameRun = sameKey.length > 0;
   const round = sameRun
     ? 1 + Math.max(...prior.filter((p) => p.step === meta.step).map((p) => p.round))
     : meta.round;

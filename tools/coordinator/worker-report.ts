@@ -166,6 +166,8 @@ export interface ParsedMarker {
   /** From the Worker line of the same comment, for a native resume. */
   readonly tool: "claude" | "codex" | null;
   readonly profile: string | null;
+  /** From the `**Packet:**` header line (OMI-173); null for reports posted before it existed. */
+  readonly packet: string | null;
   /** From the `**Skipped:**` line of the same comment. */
   readonly skipped: readonly string[];
 }
@@ -194,6 +196,7 @@ export function parseStepMarkers(
         },
         tool: (worker?.[1] as "claude" | "codex" | undefined) ?? null,
         profile: worker?.[2] ?? null,
+        packet: /^\*\*Packet:\*\* ([a-z][a-z0-9]*-\d+-[a-z0-9]+)$/m.exec(header)?.[1] ?? null,
         skipped:
           /^\*\*Skipped:\*\* ([a-z][a-z0-9,-]*) \(recorded scope decision\)$/m
             .exec(header)?.[1]

@@ -328,6 +328,35 @@ describe("worker-report --post", () => {
     expect(p?.input).toContain("round=2 session=sess-1");
   });
 
+  it("a report without a Packet header (legacy) keeps the step/round/session dedupe", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const prior = {
+      author: COORDINATOR_LOGIN,
+      body: `**Worker:** claude / minibox · m · high · session sess-1\n${stepMarker(marker({ session: "sess-1", next: "review" }))}`,
+    };
+    const r = rig();
+    expect(await post(r, [prior])).toBe(0);
+    expect(posts(r.seen)).toHaveLength(0);
+  });
+
+  it("a summary that names this packet does not suppress its report", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const prior = {
+      author: COORDINATOR_LOGIN,
+      body: [
+        "**Packet:** implement-1-oldpacket1",
+        "**Summary:** text",
+        "**Packet:** implement-1-k3x9a1b2c3",
+        "**Findings:** none",
+        "**Next:** x",
+        stepMarker(marker({ session: "sess-1", next: "review" })),
+      ].join("\n"),
+    };
+    const r = rig();
+    expect(await post(r, [prior])).toBe(0);
+    expect(posts(r.seen)).toHaveLength(1);
+  });
+
   describe("Architect pseudo-step (OMI-173)", () => {
     const ARCH_LOG = "omi-159-minibox-20261115-111111-architect-1-a1b2c3d4e5.jsonl";
     const archMeta = { step: "architect", round: 1, packet: "architect-1-a1b2c3d4e5" };
