@@ -787,6 +787,13 @@ export async function syncCommand(
   return (await execute(ctx, `${label} (comment)`, post, false)) ? 0 : 1;
 }
 
+/** The step template of a worker-dispatched Workflow; null for delivery routes or no template. */
+async function stepWorkflow(name: string | null) {
+  const route = resolveWorkflowRoute(name ?? "");
+  const template = await loadTemplate(route.id);
+  return route.kind === "delivery" || !template.ok ? null : template.workflow;
+}
+
 export async function main(argv: readonly string[], context?: Context): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...argv],
@@ -988,13 +995,12 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       const issue = await readIssue(ctx, n);
       let post;
       if (values.post) {
-        const route = resolveWorkflowRoute(issue.readiness.workflow ?? "");
-        const template = await loadTemplate(route.id);
-        if (route.kind === "delivery" || !template.ok) {
+        const workflow = await stepWorkflow(issue.readiness.workflow);
+        if (workflow === null) {
           console.error(`${label}: refused: no workflow template to compute the next step`);
           return 1;
         }
-        post = { number: n, comments: issue.authored, workflow: template.workflow };
+        post = { number: n, comments: issue.authored, workflow };
       }
       return workerReportCommand(ctx, {
         planKey: issue.planKey,
@@ -1003,11 +1009,16 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         ...(post === undefined ? {} : { post }),
       });
     }
-    case "next":
-      return nextCommand({
-        number: issueNumber(a),
-        comments: (await readIssue(ctx, issueNumber(a))).authored,
-      });
+    case "next": {
+      const n = issueNumber(a);
+      const issue = await readIssue(ctx, n);
+      const workflow = await stepWorkflow(issue.readiness.workflow);
+      if (workflow === null) {
+        console.error(`${label}: refused: no workflow template to read the step roles`);
+        return 1;
+      }
+      return nextCommand({ number: n, comments: issue.authored, workflow });
+    }
     case "commit-worker":
       return commitWorkerCommand(ctx, {
         branch: taskBranch(a),

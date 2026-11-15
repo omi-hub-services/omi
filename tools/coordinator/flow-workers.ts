@@ -76,6 +76,18 @@ const would = (label: string, command: Command): void => {
   console.log(`${label}: would run: ${formatCommand(command)}`);
 };
 
+/**
+ * `analyze` is recorded as skipped only when the packet's own evidence block (the one after its
+ * last `Workflow packet:` line, rendered by `flow.ts prompt`) holds the scope-approved record;
+ * the same words in Issue text come earlier and are ignored.
+ */
+function scopeSkipped(packet: string): string[] {
+  const at = packet.lastIndexOf("\nWorkflow packet: ");
+  return at >= 0 && /^Workflow packet:[^\n]*\n\nscope-approved: /.test(packet.slice(at + 1))
+    ? ["analyze"]
+    : [];
+}
+
 /** A foreground worker may run for hours; the runner's 2-minute default would kill it. */
 const WORKER_TIMEOUT_MS = 8 * 3_600_000;
 
@@ -199,6 +211,7 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
           ...reported,
           head,
           packet: packetId,
+          skipped: scopeSkipped(packet),
         };
   const writeMeta: Command | null =
     meta === null
@@ -351,6 +364,7 @@ async function readDispatchMeta(
       round: asNumber(m.round, "round"),
       head,
       packet: asString(m.packet, "packet"),
+      skipped: Array.isArray(m.skipped) ? (m.skipped as unknown[]) : [],
     };
     const ok =
       (tool === "claude" || tool === "codex") &&
@@ -360,8 +374,9 @@ async function readDispatchMeta(
       /^[a-z][a-z0-9,-]*$/.test(meta.step) &&
       Number.isSafeInteger(meta.round) &&
       meta.round >= 1 &&
-      (head === null || /^[0-9a-f]{40}$/.test(head));
-    return ok ? meta : null;
+      (head === null || /^[0-9a-f]{40}$/.test(head)) &&
+      meta.skipped.every((s) => typeof s === "string" && /^[a-z][a-z0-9-]*$/.test(s));
+    return ok ? { ...meta, skipped: meta.skipped as string[] } : null;
   } catch {
     return null;
   }
@@ -392,7 +407,9 @@ async function postStepReport(
   if (input.session === null || !WORD.test(input.session)) {
     return refuse(label, "the worker log has no usable session/thread id");
   }
-  const prior = parseStepMarkers(input.comments, COORDINATOR_LOGIN).map((p) => p.marker);
+  const parsed = parseStepMarkers(input.comments, COORDINATOR_LOGIN);
+  const prior = parsed.map((p) => p.marker);
+  const skipped = [...new Set([...parsed.flatMap((p) => p.skipped), ...(meta.skipped ?? [])])];
   if (
     prior.some((p) => p.step === meta.step && p.round === meta.round && p.session === input.session)
   ) {
@@ -407,10 +424,29 @@ async function postStepReport(
       round: meta.round,
       session: input.session,
       status: input.result.status,
-      next: computeNext(input.workflow, prior, { step: meta.step, status: input.result.status }),
+      next: computeNext(
+        input.workflow,
+        prior,
+        { step: meta.step, status: input.result.status },
+        skipped,
+      ),
     };
   } catch (error) {
     return refuse(label, error instanceof Error ? error.message : String(error));
+  }
+  // The guard sees everything the worker wrote, not only what survives the body cap.
+  try {
+    assertCredentialFree([
+      input.result.summary,
+      ...(input.result.nextAction === undefined ? [] : [input.result.nextAction]),
+      ...input.result.findings.flatMap((f) => [
+        f.id,
+        f.message,
+        ...(f.location ? [f.location] : []),
+      ]),
+    ]);
+  } catch {
+    return refuse(label, "the report contains a credential-like value; nothing was posted");
   }
   const body = renderStepReport({
     planKey: input.planKey,
@@ -443,13 +479,15 @@ async function postStepReport(
 export function nextCommand(input: {
   readonly number: number;
   readonly comments: readonly AuthoredComment[];
+  readonly workflow: Pick<Workflow, "steps">;
 }): number {
-  const newest = parseStepMarkers(input.comments, COORDINATOR_LOGIN).at(-1);
+  const all = parseStepMarkers(input.comments, COORDINATOR_LOGIN);
+  const newest = all.at(-1);
   if (newest === undefined) {
     console.error(`next ${String(input.number)}: refused: no step report on the Issue yet`);
     return 1;
   }
-  console.log(formatNext(newest).join("\n"));
+  console.log(formatNext(newest, input.workflow, all).join("\n"));
   return 0;
 }
 

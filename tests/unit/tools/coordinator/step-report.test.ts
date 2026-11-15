@@ -119,6 +119,41 @@ describe("renderStepReport", () => {
     expect(body.length).toBeLessThanOrEqual(STEP_REPORT_LIMIT);
     expect(body).toContain("<!-- omi-squad:step-report");
   });
+
+  it("budgets summary and findings together and keeps Worker, Next and the marker", () => {
+    const findings = Array.from({ length: 8 }, (_, i) => ({
+      id: `finding-${String(i)}`,
+      severity: "major" as const,
+      message: "m".repeat(2000),
+      location: "l".repeat(512),
+    }));
+    for (const summary of ["s", "word ".repeat(700)]) {
+      const body = renderStepReport({
+        planKey: "OMI-159",
+        meta,
+        session: "sess-1",
+        result: result({ summary, findings }),
+        marker: marker(),
+      });
+      expect(body.length).toBeLessThanOrEqual(STEP_REPORT_LIMIT);
+      expect(body).toContain("**Worker:** claude / minibox");
+      expect(body).toContain("**Next:**");
+      expect(body.trimEnd().endsWith("next=verify -->")).toBe(true);
+    }
+  });
+
+  it("shows a skipped step recorded from scope evidence, and parse reads it back", () => {
+    const body = renderStepReport({
+      planKey: "OMI-159",
+      meta: { ...meta, skipped: ["analyze"] },
+      session: "sess-1",
+      result: result(),
+      marker: marker(),
+    });
+    expect(body).toContain("**Skipped:** analyze (recorded scope decision)");
+    const [parsed] = parseStepMarkers([{ author: COORDINATOR_LOGIN, body }], COORDINATOR_LOGIN);
+    expect(parsed?.skipped).toEqual(["analyze"]);
+  });
 });
 
 describe("computeNext", () => {
@@ -146,12 +181,34 @@ describe("computeNext", () => {
   it("a combined verify,review packet satisfies both steps", async () => {
     const w = await workflow("feature");
     const prior = [marker({ step: "implement" })];
-    expect(computeNext(w, prior, { step: "verify,review", status: "succeeded" })).toBe("open-pr");
+    expect(computeNext(w, prior, { step: "verify,review", status: "succeeded" }, ["analyze"])).toBe(
+      "open-pr",
+    );
   });
 
-  it("a step skipped by a recorded scope decision (analyze) counts as satisfied", async () => {
+  it("a step is skipped only through recorded scope evidence, never by inference", async () => {
     const w = await workflow("feature");
-    expect(computeNext(w, [], { step: "implement", status: "succeeded" })).toBe("verify");
+    expect(computeNext(w, [], { step: "implement", status: "succeeded" }, ["analyze"])).toBe(
+      "verify",
+    );
+    expect(computeNext(w, [], { step: "implement", status: "succeeded" })).toBe("analyze");
+  });
+
+  it("an explicitly failed upstream step is not satisfied by a downstream success", async () => {
+    const w = await workflow("docs");
+    const prior = [marker({ step: "write", status: "failed" })];
+    expect(computeNext(w, prior, { step: "verify", status: "succeeded" })).toBe("write");
+  });
+
+  it("reworked upstream work invalidates the downstream results older than it", async () => {
+    const w = await workflow("docs");
+    const prior = [
+      marker({ step: "write" }),
+      marker({ step: "verify" }),
+      marker({ step: "accept", status: "failed" }),
+    ];
+    // write succeeds again: verify (older than the new write) must run again, not accept
+    expect(computeNext(w, prior, { step: "write", status: "succeeded" })).toBe("verify");
   });
 
   it("failed resumes the same step with findings; blocked waits for the PO", async () => {
@@ -215,7 +272,7 @@ function rig(
     let stdout = "";
     if (c.file === "gh" && c.args[0] === "api") stdout = `${COORDINATOR_LOGIN}\n`;
     else if (last.startsWith("ls -t")) stdout = `/home/u/omi-runs/${LOG_NAME}\n`;
-    else if (last.includes("-meta-")) stdout = JSON.stringify(meta);
+    else if (last.includes("-meta-")) stdout = JSON.stringify({ ...meta, skipped: ["analyze"] });
     else if (last.startsWith("cat ")) stdout = claudeLog(over.summary ?? "Did the work.");
     return Promise.resolve({ code: 0, stdout, stderr: "" });
   };
@@ -268,48 +325,87 @@ describe("worker-report --post", () => {
     expect(posts(r.seen)).toHaveLength(0);
     expect(err.mock.calls.flat().join("\n")).toContain("credential");
   });
+
+  it("refuses a credential-like value that truncation would have cut from the body", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const r = rig({
+      summary: `${"filler ".repeat(500)} ghp_abcdefghijklmnopqrstuvwxyz0123456789`,
+    });
+    expect(await post(r)).toBe(1);
+    expect(posts(r.seen)).toHaveLength(0);
+    expect(err.mock.calls.flat().join("\n")).toContain("credential");
+  });
 });
 
 describe("next", () => {
   const out = () => vi.mocked(console.log).mock.calls.flat().join("\n");
-  const ctxFor = (m: StepMarker) => ({
-    number: 323,
-    comments: [
-      {
-        author: COORDINATOR_LOGIN,
-        body: `**Worker:** codex / prof-a · gpt-5 · high · session ${m.session}\n\n${stepMarker(m)}`,
-      },
-    ],
+  const comment = (m: StepMarker, profile = "prof-a") => ({
+    author: COORDINATOR_LOGIN,
+    body: `**Worker:** codex / ${profile} · gpt-5 · high · session ${m.session}\n\n${stepMarker(m)}`,
   });
-
-  it("prints the next step and the exact pick-profile / prompt / dispatch commands", () => {
+  const run = async (ms: StepMarker[], wf = "feature") => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.mocked(console.log).mockClear();
-    expect(nextCommand(ctxFor(marker()))).toBe(0);
+    return nextCommand({
+      number: 323,
+      comments: ms.map((m) => comment(m)),
+      workflow: await workflow(wf),
+    });
+  };
+
+  it("prints the next step and the exact pick-profile / prompt / dispatch commands", async () => {
+    expect(await run([marker()])).toBe(0);
     expect(out()).toContain("pick-profile 323 --step verify --round 1");
     expect(out()).toContain("prompt 323 --step verify --round 1");
     expect(out()).toContain("dispatch 323 --profile");
   });
 
-  it("failed: resumes the same native session with findings", () => {
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.mocked(console.log).mockClear();
-    expect(nextCommand(ctxFor(marker({ status: "failed", next: "implement" })))).toBe(0);
+  it("failed work step: resumes the same native session with findings", async () => {
+    expect(await run([marker({ status: "failed", next: "implement" })])).toBe(0);
     expect(out()).toContain("--findings");
     expect(out()).toContain("--round 2");
     expect(out()).toContain("--profile prof-a --kind codex --resume sess-1");
   });
 
-  it("blocked: Waiting PO, no dispatch command", () => {
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.mocked(console.log).mockClear();
-    expect(nextCommand(ctxFor(marker({ status: "blocked", next: "waiting-po" })))).toBe(0);
+  it("failed quality step: never resumes it; the implementer reworks with findings, then a fresh run", async () => {
+    const ms = [
+      marker({ step: "implement", session: "impl-sess", next: "verify" }),
+      marker({ step: "verify", session: "qa-sess", status: "failed", next: "verify" }),
+    ];
+    expect(await run(ms)).toBe(0);
+    const text = out();
+    expect(text).not.toContain("--resume qa-sess");
+    expect(text).toContain("--step implement --round 2 --findings");
+    expect(text).toContain("--resume impl-sess");
+    expect(text).toContain("prompt 323 --step verify --round 2 --notes");
+    expect(text).toMatch(/dispatch 323 --profile <p> --kind <claude\|codex> --prompt <prompt.md>/);
+  });
+
+  it("failed quality step without a recorded implementer: fresh packet, no --resume", async () => {
+    expect(await run([marker({ step: "review", status: "failed", next: "review" })])).toBe(0);
+    expect(out()).not.toContain("--resume");
+    expect(out()).toContain("prompt 323 --step review --round 2 --notes");
+  });
+
+  it("docs: failed accept points at the write step", async () => {
+    const ms = [
+      marker({ step: "write", session: "w-sess", next: "verify" }),
+      marker({ step: "accept", status: "failed", next: "accept" }),
+    ];
+    expect(await run(ms, "docs")).toBe(0);
+    expect(out()).toContain("--step write --round 2 --findings");
+    expect(out()).not.toContain("--resume sess-1");
+  });
+
+  it("blocked: Waiting PO, no dispatch command", async () => {
+    expect(await run([marker({ status: "blocked", next: "waiting-po" })])).toBe(0);
     expect(out()).toContain("WAITING-PO");
     expect(out()).not.toContain("dispatch 323");
   });
 
-  it("refuses when the Issue has no step report", () => {
+  it("refuses when the Issue has no step report", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(nextCommand({ number: 323, comments: [] })).toBe(1);
+    expect(await run([])).toBe(1);
   });
 });
