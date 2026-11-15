@@ -57,7 +57,7 @@ describe("mapTemplatePos (observed lifecycle step -> template step)", () => {
     expect(await pos("feature", "Done")).toEqual({ kind: "done" });
   });
 
-  it("docs follows its own steps: write, verify, accept", async () => {
+  it("docs follows its own steps: write, accept", async () => {
     expect(await pos("docs", "Work")).toEqual({ kind: "node", id: "write" });
     expect(await pos("docs", "Review")).toEqual({ kind: "node", id: "accept" });
   });

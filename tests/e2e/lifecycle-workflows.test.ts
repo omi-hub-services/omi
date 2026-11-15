@@ -197,7 +197,7 @@ describe("lifecycle templates use the shared workflow engine", () => {
       const review = workflow.steps.find((step) => step.role === "reviewer");
       expect(review?.skills).toContain("independent-review");
       expect(review?.needs).toEqual([
-        id === "docs" ? "verify" : id === "bugfix" ? "fix" : "implement",
+        id === "docs" ? "write" : id === "bugfix" ? "fix" : "implement",
       ]);
       expect(workflow.gates).toContainEqual({
         id: "ready-to-merge",

@@ -62,5 +62,17 @@ the PO; never bypass it with raw Git or GitHub commands. Workers must not load t
 7. End cleanly with `.omi/bin/omi session new`; use `coordinator switch --to <profile>`
    for a PO-directed Coordinator profile switch. Use `pause`/`resume` for checkpoint handoffs.
 
+For idea-to-issues use `define-requirements` → `decompose` → `review`; keep
+`requirements-approved` before decomposition. Docs uses `write` → `accept`: the fresh
+reviewer checks examples, links and implementation agreement with both independent-review
+and verification-before-completion. Keep the docs-acceptance and ready-to-merge gates.
+Pinned older runs retain their original steps.
+
+UI/UX and CI/CD approve cost once before the first step for the planned run. Bind the
+cost decision to the run and its estimate hash; scope IDs are `<step-id>.round-<N>`
+for every planned step and round. Dispatch rechecks that decision without asking again
+while it covers the current estimate and scope. Extra rework outside that plan or a changed
+estimate requires a fresh PO cost approval before dispatch; unknown cost blocks.
+
 Ask the PO about unclear scope/AC, uncovered architecture or cost decisions, release into
 main, or a gate requiring a PO decision. Do not buy quota or change approved scope yourself.
