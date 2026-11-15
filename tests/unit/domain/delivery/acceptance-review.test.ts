@@ -7,11 +7,11 @@ import {
 
 describe("hasSecuritySection", () => {
   it.each([
-    "Security: checked injection - no exec added",
+    "Security: checked — no exec added",
     "**Security:** no findings - diff has no input handling",
-    "## Security:\n- secrets: no findings, grep of the diff",
-    "- Security:\n  trust boundaries: checked",
-  ])("accepts a section with content: %s", (body) => {
+    "## Security:\n- secrets: no findings: grep of the diff found none",
+    "- Security:\n  trust boundaries: checked — src/x.ts:4\n## Verdict:\nready",
+  ])("accepts a section with a status and evidence: %s", (body) => {
     expect(hasSecuritySection(`AC-1: met — x\n${body}`)).toBe(true);
   });
   it.each([
@@ -20,6 +20,14 @@ describe("hasSecuritySection", () => {
     "Security:",
     "**Security:**\n\n",
     "Insecurity: none",
+    "Security:\n\n## Verdict:\nready",
+    "Security:\n## Verdict:\n- trust boundaries: checked — evidence outside the section",
+    "Security: TODO",
+    "Security: checked — TBD",
+    "Security:\n- secrets: no findings — n/a",
+    "Security:\n- secrets: no findings — -",
+    "Security:\n- secrets: ok",
+    "Security:\n- secrets: checked",
   ])("refuses a missing or empty section: %s", (body) => {
     expect(hasSecuritySection(body)).toBe(false);
   });

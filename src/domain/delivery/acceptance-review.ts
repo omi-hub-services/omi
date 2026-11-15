@@ -72,16 +72,32 @@ export function acceptanceReviewRefusals(
 
 const SECURITY_HEADING = /^\s*(?:#{1,6}\s+)?(?:[-*+]\s+)?\**Security:\**(.*)$/i;
 
+/** Ends the section: the next Markdown heading, or the review's other well-known parts. */
+const SECTION_END =
+  /^\s*(?:#{1,6}\s|\**(?:VERDICT|Verdict|Not checked|Must fix|Should fix|Nice to have|What this change does)\b|(?:[-*+]\s+)?AC-\d+\s*:)/;
+/** `checked` or `no findings`, then a separator and non-empty evidence. */
+const AREA_STATUS = /\b(?:checked|no findings)\b\s*(?:—|–|--?|:)\s*(\S.*)$/i;
+const PLACEHOLDER = /^(?:todo|tbd|n\/?a|none|nothing|-+|\.+|\?+)\W*$/i;
+
 /**
- * Whether a security-relevant review has its `Security:` section with some content, on the same
- * line or after it. Whether the content is good is the reviewer's and the Coordinator's judgment.
+ * Whether a security-relevant review has a bounded `Security:` section (up to the next heading or
+ * review part) with at least one area line saying `checked` or `no findings` plus real evidence.
+ * Empty, heading-only and placeholder sections (TODO, TBD, n/a, `-`) are refused. Whether the
+ * evidence is true stays the reviewer's and the Coordinator's judgment.
  */
 export function hasSecuritySection(review: string): boolean {
   const lines = review.split(/\r?\n/);
   const at = lines.findIndex((line) => SECURITY_HEADING.test(line));
   if (at < 0) return false;
-  const rest = SECURITY_HEADING.exec(lines[at] ?? "")?.[1] ?? "";
-  return rest.trim() !== "" || lines.slice(at + 1).some((line) => line.trim() !== "");
+  const section = [SECURITY_HEADING.exec(lines[at] ?? "")?.[1] ?? ""];
+  for (const line of lines.slice(at + 1)) {
+    if (SECTION_END.test(line)) break;
+    section.push(line);
+  }
+  return section.some((line) => {
+    const evidence = AREA_STATUS.exec(line)?.[1]?.trim();
+    return evidence !== undefined && !PLACEHOLDER.test(evidence);
+  });
 }
 
 /** One unambiguous presentation header; old repository comments may use a SHA prefix. */

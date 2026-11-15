@@ -1182,6 +1182,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         issueBody: issue.body,
         workflow: issue.readiness.workflow,
         securityRisk: securityReviewRisk(issue.body, issue.readiness.area, values.risk),
+        planKey: issue.readiness.planKey,
         body: readFileSync(required(values.file, "--file"), "utf8"),
         dryRun: dry,
       });

@@ -24,6 +24,13 @@ describe("security review", () => {
     expect(why(checkReview(`${good}\nSecurity:\n`, security))).toMatch(/Security:/);
   });
 
+  it.each(["Security:\n\n## Verdict:\nready", "Security: TODO", "Security:\n- secrets: checked"])(
+    "refuses a heading-only, placeholder or evidence-less section: %s",
+    (tail) => {
+      expect(why(checkReview(`${good}\n${tail}`, security))).toMatch(/Security:/);
+    },
+  );
+
   it("accepts a security-relevant review with a Security: section", () => {
     expect(checkReview(section, security)).toEqual({ ok: true, verdict: "PASS", head: "9d0fba0" });
   });

@@ -457,11 +457,14 @@ it("adds the security-review skill and the Security: requirement only with the s
   expect(risky).toContain("Review focus: security");
   expect(risky).toContain(skill);
   expect(risky).toContain("starts with the line `Security:`");
+  // The script records the requirement on the packet's second line, for dispatch metadata.
+  expect(risky.split("\n")[1]).toBe("<!-- omi-security-review required -->");
   output.length = 0;
   expect(await main(["prompt", "185", "--step", "review", "--risk", "gates"], fake().ctx)).toBe(0);
   const plain = output.join("\n");
   expect(plain).not.toContain(skill);
   expect(plain).not.toContain("starts with the line `Security:`");
+  expect(plain).not.toContain("omi-security-review");
 });
 it("does not add the security-review skill to a non-review step", async () => {
   const skill = readFileSync("templates/project/.omi/skills/security-review/SKILL.md", "utf8");

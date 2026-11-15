@@ -212,8 +212,13 @@ describe("recordStepResult", () => {
       });
     });
 
-    it("fails a security-risk review whose Security: section is empty", async () => {
-      const { result } = await securityReview("AC-1: met — evidence\nSecurity:\n", exec);
+    it.each([
+      "Security:\n",
+      "Security:\n\n## Verdict:\nready",
+      "Security: TODO",
+      "Security:\n- secrets: checked",
+    ])("fails a security-risk review whose Security: section is unusable: %s", async (tail) => {
+      const { result } = await securityReview(`AC-1: met — evidence\n${tail}`, exec);
       expect(result).toMatchObject({ failure: "REVIEW_SECURITY_SECTION_MISSING" });
     });
 

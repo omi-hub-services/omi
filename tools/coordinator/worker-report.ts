@@ -135,6 +135,8 @@ export interface DispatchMeta {
   readonly packet: string;
   /** `["analyze"]` when the Coordinator passed `dispatch --scope-approved`; never read from text. */
   readonly skipped?: readonly string[];
+  /** True when the review packet carried the script's security marker; `review-comment` then needs `Security:`. */
+  readonly securityReview?: boolean;
 }
 
 export interface StepMarker {
