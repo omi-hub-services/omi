@@ -28,6 +28,30 @@ it.skipIf(!liveDocker)(
     await lifecycle("build", { projectDir: process.cwd() });
     const fixture = await createDockerFixture();
     try {
+      expect(
+        (
+          await fixture.docker([
+            "ps",
+            "-a",
+            "--filter",
+            "name=buildx_buildkit_omi-live-build-builder",
+            "--format",
+            "{{.Names}}",
+          ])
+        ).trim(),
+      ).toBe("");
+      expect(
+        (
+          await fixture.docker([
+            "volume",
+            "ls",
+            "--filter",
+            "name=buildx_buildkit_omi-live-build-builder",
+            "--format",
+            "{{.Name}}",
+          ])
+        ).trim(),
+      ).toBe("");
       const output = await fixture.docker([
         "exec",
         "-w",

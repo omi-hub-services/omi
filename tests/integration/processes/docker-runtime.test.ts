@@ -91,12 +91,9 @@ it("prunes only its own builder after a successful build", async () => {
   expect(calls.some((command) => command.args.join(" ") === "image rm omi-worker:0.1.0")).toBe(
     true,
   );
-  expect(calls.at(-1)?.args).toEqual([
-    "buildx",
-    "prune",
-    "--builder",
-    "omi-demo-builder",
-    "--force",
+  expect(calls.slice(-2).map((command) => command.args)).toEqual([
+    ["buildx", "prune", "--builder", "omi-demo-builder", "--force"],
+    ["buildx", "rm", "--force", "omi-demo-builder"],
   ]);
 });
 
@@ -115,6 +112,40 @@ it("does not delete images after a failed build", async () => {
   );
   expect(calls.some((command) => command.args[0] === "image")).toBe(false);
 });
+
+it.each(["success", "create", "build", "image", "prune"])(
+  "removes the dedicated builder after %s",
+  async (stage) => {
+    const calls: DockerCommand[] = [];
+    const lifecycle = createDockerLifecycle({
+      version: "0.1.1",
+      settings: () => Promise.resolve(settings),
+      run: (command) => {
+        calls.push(command);
+        const args = command.args;
+        const failed =
+          (stage === "create" &&
+            args[0] === "buildx" &&
+            ["inspect", "create"].includes(args[1] ?? "")) ||
+          (stage === "build" && args[0] === "buildx" && args[1] === "build") ||
+          (stage === "image" && args[0] === "image") ||
+          (stage === "prune" && args[0] === "buildx" && args[1] === "prune");
+        return Promise.resolve({ code: failed ? 1 : 0, stdout: "" });
+      },
+    });
+    if (stage === "success") await lifecycle("build", { projectDir: "/tmp/demo" });
+    else
+      await expect(lifecycle("build", { projectDir: "/tmp/demo" })).rejects.toThrow(
+        "DOCKER_COMMAND_FAILED",
+      );
+    expect(
+      calls.some(
+        (command) => command.args.join(" ") === "buildx prune --builder omi-demo-builder --force",
+      ),
+    ).toBe(true);
+    expect(calls.at(-1)?.args).toEqual(["buildx", "rm", "--force", "omi-demo-builder"]);
+  },
+);
 
 describe("Docker runtime boundary", () => {
   it("forwards only environment names in exec argv", async () => {

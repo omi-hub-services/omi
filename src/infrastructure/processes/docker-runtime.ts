@@ -117,39 +117,46 @@ export function createDockerLifecycle(options: {
     const profileVolumes = project.loginProfiles.map((id) => `omi-profile-${id}`);
     if (action === "build") {
       const builder = `${project.container}-builder`;
-      const exists = await run({ file: "docker", args: ["buildx", "inspect", builder] });
-      if (exists.code !== 0)
-        await docker(["buildx", "create", "--name", builder, "--driver", "docker-container"]);
-      await docker([
-        "buildx",
-        "build",
-        "--builder",
-        builder,
-        "--load",
-        "--tag",
-        project.image,
-        options.templateDir ??
-          fileURLToPath(new URL("../../../templates/docker/", import.meta.url)),
-      ]);
-      const tags = await docker([
-        "image",
-        "ls",
-        "omi-worker",
-        "--format",
-        "{{.Repository}}:{{.Tag}}",
-      ]);
-      for (const tag of tags.split(/\r?\n/).filter(Boolean)) {
-        if (!/^omi-worker:[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(tag)) continue;
-        if (tag !== project.image) await docker(["image", "rm", tag]);
+      try {
+        const exists = await run({ file: "docker", args: ["buildx", "inspect", builder] });
+        if (exists.code !== 0)
+          await docker(["buildx", "create", "--name", builder, "--driver", "docker-container"]);
+        await docker([
+          "buildx",
+          "build",
+          "--builder",
+          builder,
+          "--load",
+          "--tag",
+          project.image,
+          options.templateDir ??
+            fileURLToPath(new URL("../../../templates/docker/", import.meta.url)),
+        ]);
+        const tags = await docker([
+          "image",
+          "ls",
+          "omi-worker",
+          "--format",
+          "{{.Repository}}:{{.Tag}}",
+        ]);
+        for (const tag of tags.split(/\r?\n/).filter(Boolean)) {
+          if (!/^omi-worker:[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(tag)) continue;
+          if (tag !== project.image) await docker(["image", "rm", tag]);
+        }
+        await docker([
+          "image",
+          "prune",
+          "--force",
+          "--filter",
+          "label=org.opencontainers.image.title=omi-worker",
+        ]);
+      } finally {
+        try {
+          await docker(["buildx", "prune", "--builder", builder, "--force"]);
+        } finally {
+          await docker(["buildx", "rm", "--force", builder]);
+        }
       }
-      await docker([
-        "image",
-        "prune",
-        "--force",
-        "--filter",
-        "label=org.opencontainers.image.title=omi-worker",
-      ]);
-      await docker(["buildx", "prune", "--builder", builder, "--force"]);
       return;
     }
     await docker(["version", "--format", "{{.Server.Version}}"]);

@@ -16,7 +16,9 @@ added. Architecture §3 records the new template responsibility.
 Secrets cross only the environment of a single exec, with names in argv; container creation
 has no secret environment. Clone uses an ephemeral Git credential helper, never a token URL.
 Login profiles have independent named volumes. Build cache uses a dedicated builder per
-project, so pruning cannot remove another project's cache. Older worker tags are removed
+project, so pruning cannot remove another project's cache. A finally path prunes and removes
+that builder, including its helper container and state volume, after successful or failed builds.
+Older worker tags are removed
 only after a successful build. Image and CLI versions are exact existing compatibility pins.
 
 Worker lifetime uses the existing owner pipe and owned process groups (ADR-0028); Docker
@@ -26,6 +28,11 @@ ADR-0035 retention. No blanket process-name killing or global Docker prune is pe
 
 Docker live acceptance is run by the Coordinator. This decision does not supersede the WSL
 ADRs until migration acceptance, and does not grant release or merge approval.
+
+Normal leader exit stops its remaining process group before waiting for output pipes to close;
+an orphan can otherwise retain those pipes indefinitely. Output is still drained and validated
+before the exit promise resolves. Disposing the owner watch pauses its channel so an open owner
+pipe does not keep a completed worker's wrapper alive. New watches explicitly resume the channel.
 
 ## Installed runtime relay and watch boundary
 

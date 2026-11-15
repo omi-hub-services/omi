@@ -12,7 +12,8 @@ node .omi/bin/omi.cjs doctor --project . --json
 ```
 
 Build uses the packaged template, existing compatibility pins, a dedicated project builder,
-and prunes that builder's cache after success. Older worker tags and dangling labelled worker
+and prunes and removes that builder after successful or failed builds, including its helper
+container and state volume. Older worker tags and dangling labelled worker
 images are removed without forcing removal of images still used by a container. An in-use
 old image causes a fixed failure rather than forcibly breaking another project.
 
@@ -43,6 +44,10 @@ identity matches, checks the worktree again, removes the worktree with ignored d
 removes task scratch and compresses completed logs through the shared retention policy.
 Unknown ownership refuses cleanup. Normal supervision kills descendants before completion.
 Processes that deliberately create a separate session remain outside ADR-0028's group model.
+
+Normal completion kills remaining members of the worker's owned group when its leader exits,
+then drains output. The wrapper pauses its owner channel before returning, so the Coordinator
+does not have to close its pipe for a completed dispatch to return.
 
 ## Coordinator live acceptance
 

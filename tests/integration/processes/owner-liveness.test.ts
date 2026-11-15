@@ -25,6 +25,22 @@ function watch(
 }
 
 describe("watchOwnerLiveness", () => {
+  it("pauses the owner channel when the worker completes before its owner", () => {
+    const watcher = watch();
+    expect(channel.isPaused()).toBe(false);
+    watcher.dispose();
+    expect(channel.isPaused()).toBe(true);
+  });
+
+  it("can watch a previously paused owner channel again", async () => {
+    const first = watch();
+    first.dispose();
+    expect(channel.isPaused()).toBe(true);
+    const second = watch();
+    channel.write("stop\n");
+    await expect(second.gone).resolves.toEqual({ reason: "stop-requested" });
+    second.dispose();
+  });
   it("reports an abrupt exit: the owner's end of the pipe closes without a goodbye", async () => {
     const watcher = watch();
     channel.destroy();
