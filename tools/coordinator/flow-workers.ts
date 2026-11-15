@@ -35,14 +35,32 @@ import {
   runsPath,
 } from "./worker-launch.ts";
 import {
+  computeNext,
+  formatNext,
   formatReport,
   validateWorkerResult,
   isCodexLog,
   newestLogCommand,
   parseClaudeReport,
   parseCodexReport,
+  parseStepMarkers,
+  renderStepReport,
+  type DispatchMeta,
+  type StepMarker,
   type WorkerReport,
 } from "./worker-report.ts";
+import type { Workflow } from "../../src/application/contracts/workflow.ts";
+import type { StepResult } from "../../src/application/contracts/result.ts";
+import {
+  asNumber,
+  asObject,
+  asString,
+  optString,
+  parseJson,
+  type AuthoredComment,
+} from "./json-shape.ts";
+const { assertCredentialFree } =
+  await import("../../src/application/contracts/credential-input.ts");
 
 export interface WorkerCtx {
   readonly toolRoot?: string;
@@ -71,6 +89,8 @@ export interface DispatchInput {
   readonly resume: string | null;
   /** Text of the prompt file; with `resume` it is the follow-up message. */
   readonly prompt: string;
+  /** `--scope-approved <ref>` from the Coordinator: analyze is recorded as skipped. */
+  readonly scopeApproved?: string | null;
   readonly dryRun: boolean;
 }
 
@@ -104,6 +124,7 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
 
   let level = input.complexity;
   let packetBase = "adhoc"; // a packet without quality metadata has no step or attempt to name it
+  let reported: { readonly step: string; readonly round: number } | null = null;
   const packet = input.prompt.startsWith(`${NATIVE_RESUME_HEADER}\n\n`)
     ? input.prompt.slice(NATIVE_RESUME_HEADER.length + 2)
     : input.prompt;
@@ -112,6 +133,7 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
       const raw = /^<!-- omi-quality (.+) -->\r?\n/.exec(packet)?.[1];
       const quality = stepQualitySchema.parse(JSON.parse(raw ?? "") as unknown);
       packetBase = `${quality.step}-${String(quality.round)}`;
+      reported = { step: quality.steps.join(","), round: quality.round };
       if (input.resume !== null && ["analyze", "verify", "review"].includes(quality.step)) {
         return refuse(label, "analysis, QA and review require fresh independent workers");
       }
@@ -158,14 +180,50 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
     input: input.prompt,
   };
   const note = `${kind} ${input.profile} ${model} ${effort}${input.resume === null ? "" : ` resume ${input.resume}`}`;
+  // The signature of the step report (OMI-159): recorded here, never read from the worker's claims.
+  const metaFile = runsPath(task, `meta-${packetId}.json`);
+  const head = input.dryRun
+    ? null
+    : await ctx
+        .run(wslGit(ctx.target)(["rev-parse", "HEAD"]))
+        .then((r) =>
+          r.code === 0 && /^[0-9a-f]{40}$/.test(r.stdout.trim()) ? r.stdout.trim() : null,
+        );
+  const meta: DispatchMeta | null =
+    reported === null
+      ? null
+      : {
+          task,
+          tool: kind,
+          profile: input.profile,
+          model,
+          effort,
+          ...reported,
+          head,
+          packet: packetId,
+          skipped: input.scopeApproved == null ? [] : ["analyze"],
+        };
+  const writeMeta: Command | null =
+    meta === null
+      ? null
+      : {
+          ...wslCommand(
+            `mkdir -p $HOME/omi-runs; cat > ${metaFile}.tmp && mv -f ${metaFile}.tmp ${metaFile}`,
+            ctx.target,
+            30_000,
+          ),
+          input: JSON.stringify(meta),
+        };
 
   if (input.dryRun) {
     console.log(`${label}: ${note}`);
     would(label, write);
+    if (writeMeta !== null) would(label, writeMeta);
     would(label, launch);
     return 0;
   }
   await runChecked(ctx.run, write);
+  if (writeMeta !== null) await runChecked(ctx.run, writeMeta);
   console.log(`${label}: ${note}`);
   const result = await ctx.run(launch);
   const out = result.stdout.trim();
@@ -190,6 +248,12 @@ export async function workerReportCommand(
     readonly planKey: string | null;
     readonly dryRun: boolean;
     readonly step?: string | null;
+    /** `--post`: sign the report from the dispatch metadata and post it on the Issue. */
+    readonly post?: {
+      readonly number: number;
+      readonly comments: readonly AuthoredComment[];
+      readonly workflow: Pick<Workflow, "steps">;
+    };
   },
 ): Promise<number> {
   const label = `worker-report ${input.planKey ?? "?"}`;
@@ -240,7 +304,187 @@ export async function workerReportCommand(
   if (report.report === null) return 1;
   if (!validated?.success)
     return refuse(label, "worker report does not satisfy the framework step-result-v1 contract");
+  if (input.post !== undefined) {
+    return postStepReport(ctx, label, {
+      task,
+      planKey: input.planKey ?? "",
+      logName: name,
+      session: report.resumeId,
+      result: validated.data,
+      ...input.post,
+    });
+  }
   return validated.data.status === "succeeded" ? 0 : 1;
+}
+
+const WORD = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+async function coordinatorLoginRefusal(ctx: Pick<WorkerCtx, "run">): Promise<string | null> {
+  const login = (
+    await runChecked(ctx.run, { file: "gh", args: ["api", "user", "--jq", ".login"] })
+  ).trim();
+  return login === COORDINATOR_LOGIN
+    ? null
+    : `gh is logged in as "${login}", not the Coordinator account ${COORDINATOR_LOGIN}`;
+}
+
+/** Reads the dispatch metadata of the log's packet; null when it is missing or malformed. */
+async function readDispatchMeta(
+  ctx: WorkerCtx,
+  task: string,
+  logName: string,
+): Promise<DispatchMeta | null> {
+  const packet = /-\d{8}-\d{6}-([a-z][a-z0-9]*-\d+-[a-z0-9]+)\.jsonl$/.exec(logName)?.[1];
+  if (packet === undefined) return null;
+  const read = await ctx.run(
+    wslCommand(`cat ${runsPath(task, `meta-${packet}.json`)}`, ctx.target, 30_000),
+  );
+  if (read.code !== 0) return null;
+  try {
+    const m = asObject(parseJson(read.stdout, "dispatch metadata"), "meta");
+    const tool = asString(m.tool, "tool");
+    const head = optString(m.head, "head");
+    const meta = {
+      task: asString(m.task, "task"),
+      tool: tool as DispatchMeta["tool"],
+      profile: asString(m.profile, "profile"),
+      model: asString(m.model, "model"),
+      effort: asString(m.effort, "effort"),
+      step: asString(m.step, "step"),
+      round: asNumber(m.round, "round"),
+      head,
+      packet: asString(m.packet, "packet"),
+      skipped: Array.isArray(m.skipped) ? (m.skipped as unknown[]) : [],
+    };
+    const ok =
+      (tool === "claude" || tool === "codex") &&
+      meta.task === task &&
+      meta.packet === packet &&
+      [meta.profile, meta.model, meta.effort].every((v) => WORD.test(v)) &&
+      /^[a-z][a-z0-9,-]*$/.test(meta.step) &&
+      Number.isSafeInteger(meta.round) &&
+      meta.round >= 1 &&
+      (head === null || /^[0-9a-f]{40}$/.test(head)) &&
+      (meta.skipped.length === 0 || (meta.skipped.length === 1 && meta.skipped[0] === "analyze"));
+    return ok ? { ...meta, skipped: meta.skipped as string[] } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Signs the worker's step result with the Coordinator's dispatch metadata and posts it on the
+ * Issue (OMI-159). The same step/round/session is posted once.
+ */
+async function postStepReport(
+  ctx: WorkerCtx,
+  label: string,
+  input: {
+    readonly task: string;
+    readonly planKey: string;
+    readonly logName: string;
+    readonly session: string | null;
+    readonly result: StepResult;
+    readonly number: number;
+    readonly comments: readonly AuthoredComment[];
+    readonly workflow: Pick<Workflow, "steps">;
+  },
+): Promise<number> {
+  const meta = await readDispatchMeta(ctx, input.task, input.logName);
+  if (meta === null) {
+    return refuse(label, `no dispatch metadata for ${input.logName} (dispatched before OMI-159?)`);
+  }
+  if (input.session === null || !WORD.test(input.session)) {
+    return refuse(label, "the worker log has no usable session/thread id");
+  }
+  const parsed = parseStepMarkers(input.comments, COORDINATOR_LOGIN);
+  const prior = parsed.map((p) => p.marker);
+  // only an `analyze` step without needs can be skipped by a recorded scope decision
+  const skippable = input.workflow.steps.some((s) => s.id === "analyze" && s.needs.length === 0);
+  const skipped = skippable
+    ? [...new Set([...parsed.flatMap((p) => p.skipped), ...(meta.skipped ?? [])])].filter(
+        (id) => id === "analyze",
+      )
+    : [];
+  if (
+    prior.some((p) => p.step === meta.step && p.round === meta.round && p.session === input.session)
+  ) {
+    console.log(`${label}: done: ${meta.step} round ${String(meta.round)} already reported`);
+    return 0;
+  }
+  let marker: StepMarker;
+  try {
+    marker = {
+      issue: input.number,
+      step: meta.step,
+      round: meta.round,
+      session: input.session,
+      status: input.result.status,
+      next: computeNext(
+        input.workflow,
+        prior,
+        { step: meta.step, status: input.result.status },
+        skipped,
+      ),
+    };
+  } catch (error) {
+    return refuse(label, error instanceof Error ? error.message : String(error));
+  }
+  // The guard sees everything the worker wrote, not only what survives the body cap.
+  try {
+    assertCredentialFree([
+      input.result.summary,
+      ...(input.result.nextAction === undefined ? [] : [input.result.nextAction]),
+      ...input.result.findings.flatMap((f) => [
+        f.id,
+        f.message,
+        ...(f.location ? [f.location] : []),
+      ]),
+    ]);
+  } catch {
+    return refuse(label, "the report contains a credential-like value; nothing was posted");
+  }
+  const body = renderStepReport({
+    planKey: input.planKey,
+    meta,
+    session: input.session,
+    result: input.result,
+    marker,
+  });
+  try {
+    assertCredentialFree(body);
+  } catch {
+    return refuse(label, "the report contains a credential-like value; nothing was posted");
+  }
+  const login = await coordinatorLoginRefusal(ctx);
+  if (login !== null) return refuse(label, login);
+  const post: Command = {
+    file: "gh",
+    args: ["issue", "comment", String(input.number), "-R", REPO_SLUG, "--body-file", "-"],
+    input: body,
+  };
+  const out = (await runChecked(ctx.run, post)).trim();
+  if (out) console.log(out);
+  console.log(
+    `${label}: ok (${meta.step} round ${String(meta.round)} ${marker.status}, next ${marker.next})`,
+  );
+  return 0;
+}
+
+/** Read-only: the next step and its exact commands, from the newest Coordinator step marker. */
+export function nextCommand(input: {
+  readonly number: number;
+  readonly comments: readonly AuthoredComment[];
+  readonly workflow: Pick<Workflow, "steps">;
+}): number {
+  const all = parseStepMarkers(input.comments, COORDINATOR_LOGIN);
+  const newest = all.at(-1);
+  if (newest === undefined) {
+    console.error(`next ${String(input.number)}: refused: no step report on the Issue yet`);
+    return 1;
+  }
+  console.log(formatNext(newest, input.workflow, all).join("\n"));
+  return 0;
 }
 
 /** Commits a worker's changes (Codex cannot) in the allowed paths only, then prints the SHA. */
@@ -316,15 +560,8 @@ export async function reviewCommentCommand(
     workflow: input.workflow,
   });
   if (!checked.ok) return refuse(label, checked.reasons.join("; "));
-  const login = (
-    await runChecked(ctx.run, { file: "gh", args: ["api", "user", "--jq", ".login"] })
-  ).trim();
-  if (login !== COORDINATOR_LOGIN) {
-    return refuse(
-      label,
-      `gh is logged in as "${login}", not the Coordinator account ${COORDINATOR_LOGIN}`,
-    );
-  }
+  const login = await coordinatorLoginRefusal(ctx);
+  if (login !== null) return refuse(label, login);
   const post: Command = {
     file: "gh",
     args: ["pr", "comment", String(input.pr), "-R", REPO_SLUG, "--body-file", "-"],
