@@ -1,6 +1,6 @@
 {
   "name": "omi-squad",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Project-local framework that turns a Claude Code session into a Coordinator for a squad of Claude Code/Codex agents working on GitHub Issues and Projects.",
   "type": "module",

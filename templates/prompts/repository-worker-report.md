@@ -17,6 +17,8 @@ contracts all use this document shape. Put the human report described above in `
 including the AC verdict lines. The repository ids below identify this script packet only;
 they never create a runtime run, attempt, approval or review record.
 
+In the repository flow `artifacts`, `checks` and `skillsApplied` stay empty arrays: quote checks and skills in `summary`. If you add an entry anyway, any entry must be an object `{"id","evidenceRef"}`, never a string or `{name,result}`.
+
 Output contracts for this packet: {{output_contracts}}
 Use this shape (replace sample values with the evidence; preserve packet ids):
 {{result_example}}

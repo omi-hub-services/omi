@@ -1,12 +1,29 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile, readdir, symlink } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  rename,
+  writeFile,
+  readdir,
+  symlink,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...original, rm: vi.fn(original.rm), rename: vi.fn(original.rename) };
+});
 
 const roots: string[] = [];
 afterEach(async () => {
+  vi.mocked(rm).mockReset();
+  vi.mocked(rename).mockReset();
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 const A = "a".repeat(40),
@@ -172,6 +189,81 @@ it("reports first-install status without network or fallback execution", async (
     await r.manage({ action: "status", repoRoot: r.repoRoot, checkout: r.checkout }, r.run),
   ).toMatchObject({ initialized: false, installedSha: null });
   expect(r.commands).toEqual([]);
+});
+it.each(["refresh", "rollback"] as const)(
+  "removes the previous checkout after a successful %s",
+  async (action) => {
+    const r = await rig();
+    await mkdir(r.checkout);
+    await writeFile(join(r.checkout, "keep"), "old");
+    if (action === "rollback") {
+      await writeFile(
+        r.file,
+        JSON.stringify({
+          schemaVersion: 1,
+          sha: B,
+          source: "develop",
+          previous: { sha: A, source: "develop" },
+        }),
+      );
+      r.heads.set(r.checkout, B);
+    }
+    const result = await r.manage(
+      { action, repoRoot: r.repoRoot, checkout: r.checkout, to: B },
+      r.run,
+    );
+    expect(result).toMatchObject({ initialized: true });
+    expect(JSON.parse(await readFile(r.file, "utf8"))).toMatchObject({
+      sha: action === "refresh" ? B : A,
+    });
+    expect((await readdir(r.root)).filter((name) => name.includes(".previous-"))).toEqual([]);
+  },
+);
+it.each(["checkout", "record"] as const)(
+  "restores the previous checkout when the %s rename fails",
+  async (failure) => {
+    const r = await rig();
+    await mkdir(r.checkout);
+    await writeFile(join(r.checkout, "keep"), "old");
+    const before = await readFile(r.file, "utf8");
+    const original = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    vi.mocked(rename).mockImplementation(async (from, to) => {
+      if (
+        (failure === "checkout" && String(from).includes(".stage-")) ||
+        (failure === "record" && to === r.file)
+      )
+        throw new Error("swap failed");
+      await original.rename(from, to);
+    });
+    await expect(
+      r.manage({ action: "refresh", repoRoot: r.repoRoot, checkout: r.checkout, to: B }, r.run),
+    ).rejects.toThrow("swap failed");
+    expect(await readFile(r.file, "utf8")).toBe(before);
+    expect(await readFile(join(r.checkout, "keep"), "utf8")).toBe("old");
+    expect(await readdir(r.root)).toEqual(["omi-coordinator-pin", "repo"]);
+  },
+);
+it("warns and reports success when removing the backup fails", async () => {
+  const r = await rig();
+  await mkdir(r.checkout);
+  await writeFile(join(r.checkout, "keep"), "old");
+  const original = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  vi.mocked(rm).mockImplementation(async (path, options) => {
+    if (String(path).includes(".previous-")) {
+      expect(JSON.parse(await readFile(r.file, "utf8"))).toMatchObject({ sha: B });
+      throw new Error("backup removal denied");
+    }
+    await original.rm(path, options);
+  });
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  await expect(
+    r.manage({ action: "refresh", repoRoot: r.repoRoot, checkout: r.checkout, to: B }, r.run),
+  ).resolves.toMatchObject({ initialized: true });
+  expect(warning).toHaveBeenCalledWith(expect.stringContaining("backup removal denied"));
+  expect(JSON.parse(await readFile(r.file, "utf8"))).toMatchObject({ sha: B });
+  expect(existsSync(join(r.checkout, "tools/coordinator/flow.ts"))).toBe(true);
+  expect((await readdir(r.root)).some((name) => name.includes(".previous-"))).toBe(true);
+  expect((await readdir(r.root)).some((name) => name.endsWith(".lock"))).toBe(false);
 });
 it("refuses overlapping checkouts and symlink aliases", async () => {
   const r = await rig();

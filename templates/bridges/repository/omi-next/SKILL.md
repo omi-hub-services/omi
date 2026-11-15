@@ -197,12 +197,19 @@ node "$coordinatorPin/tools/coordinator/flow.ts" cleanup <branch>
 
 - `merge` refuses unless required checks are green, the newest agent review (Coordinator
   account) is `PASS` on exactly `<sha>`, and the merge state is `CLEAN` or `HAS_HOOKS`.
-- `close` finds the PR of this repository merged last (`mergedAt`) into develop with
+- `close` finds the PR of this repository merged last (`mergedAt`) into develop (also main
+  when the Issue's Workflow is `release`) with
   `Issue: #N`, requires the newest agent review (Coordinator account) on it to be `PASS` on its
   merged head, and ticks the Issue's Acceptance criteria checkboxes
   from the `AC-<n>` lines (only that section of the body changes). It refuses, and closes
   nothing, when a criterion has no line or is `not met`; fix that with a new review comment,
   not by editing the Issue by hand.
+- For a release Issue, before merging the release PR from develop into main, dispatch a fresh
+  independent worker to review that PR at its current head. The Coordinator posts the verdict
+  through `flow.ts review-comment <pr> --file <f>`; PASS must cover every AC on that head.
+  Follow the existing PO approval and release merge gates, then merge, tag through the approved
+  release procedure, and run `flow.ts close N --comment-file <f>`. Review, approval and carried-PASS
+  requirements remain in force; tagging and publishing are not automated by `close`.
 - `cleanup --dry-run` only reads (no fetch); the real run fetches first.
 - `cleanup` also archives the task's worker logs in `~/omi-runs` (OMI-056): moved to
   `archive/` and gzipped, empty `.err` and `omi-NNN-current` deleted, the newest `.jsonl` of each
