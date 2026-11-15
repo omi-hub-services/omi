@@ -58,11 +58,13 @@ export function resolveQualityPolicy(input: QualityPolicyInput) {
     input.scope.approvalRef.trim(),
   );
   const effort: Effort =
-    input.step === "analyze" || (input.step === "review" && input.round === 1)
-      ? "medium"
-      : qualityStep
-        ? "low"
-        : (input.developerEffort ?? input.complexity);
+    input.step === "architect"
+      ? "high"
+      : input.step === "analyze" || (input.step === "review" && input.round === 1)
+        ? "medium"
+        : qualityStep
+          ? "low"
+          : (input.developerEffort ?? input.complexity);
   return {
     reviewFocus: workflowReviewFocus(input.risks),
     skipAnalyze,
@@ -203,7 +205,7 @@ export function resumeSkills(stepSkills: readonly string[]): readonly string[] {
 }
 
 /** Quality step ids (see qualityStepId): fresh independent runs, never a rework of the author's work. */
-const NON_WORK_STEPS: readonly string[] = ["analyze", "verify", "review", "accept"];
+const NON_WORK_STEPS: readonly string[] = ["analyze", "architect", "verify", "review", "accept"];
 
 /** A rework dispatch: a work step (not analyze/verify/review/accept) after its first round. */
 export function isReworkDispatch(stepId: string, round: number): boolean {

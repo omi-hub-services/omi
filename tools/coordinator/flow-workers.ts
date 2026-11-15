@@ -134,8 +134,14 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
       const quality = stepQualitySchema.parse(JSON.parse(raw ?? "") as unknown);
       packetBase = `${quality.step}-${String(quality.round)}`;
       reported = { step: quality.steps.join(","), round: quality.round };
-      if (input.resume !== null && ["analyze", "verify", "review"].includes(quality.step)) {
-        return refuse(label, "analysis, QA and review require fresh independent workers");
+      if (
+        input.resume !== null &&
+        ["analyze", "architect", "verify", "review"].includes(quality.step)
+      ) {
+        return refuse(
+          label,
+          "analysis, Architect, QA and review require fresh independent workers",
+        );
       }
       const decision = resolveQualityPolicy({
         qualityPolicy: quality.policy,

@@ -130,6 +130,9 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
                                               worker profile by quota (--probe: 1 Haiku call/profile)
   prompt <issue> --step <id> [--worktree <dir>] [--branch <b>] [--notes <f> | --findings <f>] [--out <f>]
                                               render the workflow step packet; --dry-run previews without writing
+                                              --architect [--round n --previous-verdict <f> --delta <f>] renders the
+                                              Architect packet (after two Coordinator FAILs); --architect-decision <f>
+                                              carries the decision into a work-step packet
   dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] [--scope-approved <ref>] --prompt <file>
                                               WSL: unchanged prompt to ~/omi-runs, then the worker
                                               in the foreground (model/effort from the effort policy;
@@ -855,6 +858,8 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       "check-log": { type: "string" },
       "previous-verdict": { type: "string" },
       delta: { type: "string" },
+      architect: { type: "boolean", default: false },
+      "architect-decision": { type: "string" },
       worktree: { type: "string" },
       branch: { type: "string" },
       notes: { type: "string" },
@@ -940,6 +945,8 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         head: values.head,
         previousVerdict: values["previous-verdict"],
         delta: values.delta,
+        architect: values.architect,
+        architectDecision: values["architect-decision"],
         worktree: values.worktree,
         branch: values.branch,
         notes: values.notes,

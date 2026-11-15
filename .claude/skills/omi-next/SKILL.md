@@ -283,6 +283,16 @@ first post `gh pr comment <pr> --body "**ARCHITECT:** <reason>"` from the Coordi
 (reason required; ADR-0014, OMI-074): `/omi-watch` lights the Architect node from it and warns
 at two FAILs without it.
 
+**Architect packet (OMI-165).** Render it with the script; do not borrow the `analyze` step:
+
+```
+node "$coordinatorPin/tools/coordinator/flow.ts" prompt N --architect --round <n> --previous-verdict <verdict.md> --delta <diff.md> --notes <notes.md> --out <architect.md>
+node "$coordinatorPin/tools/coordinator/flow.ts" pick-profile N --step architect --round <n>
+node "$coordinatorPin/tools/coordinator/flow.ts" dispatch N --profile <p> --kind claude|codex --prompt <architect.md>
+```
+
+The packet uses the `architect` role (read-only, fresh; `dispatch` refuses `--resume` for it), lists every Coordinator FAIL since the last PASS, and asks for the simplest design that removes the defect classes within the approved scope. Effort is high. `--architect` is refused with fewer than two Coordinator `**VERDICT:** FAIL` comments since the last PASS, or when an Architect packet already exists for the cycle; render it before posting the `**ARCHITECT:**` comment. The worker's step-result-v1 summary (4000-character cap) carries the decision, code changes with file:line anchors, regression tests and an AC-n assessment. Save it to a file and pass it to the next work-step packet with `--architect-decision <decision.md>` (`prompt --step <work> --findings <f> --architect-decision <decision.md>`, or with `--notes`): it appears verbatim in its own section, and later QA and review packets of that task can carry it the same way.
+
 **Parallel tasks, one review each (OMI-069, ADR-0014).** Before step 4, merge `origin/develop`
 into a finished branch so the review sees the current base. A PR that goes `BEHIND` _after_ its
 PASS (another task merged first) is synced with a script, not re-reviewed:
