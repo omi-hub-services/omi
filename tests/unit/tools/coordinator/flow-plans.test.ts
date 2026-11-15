@@ -337,6 +337,46 @@ describe("planClose", () => {
     planClose({ ...fresh, ...over }, "Evidence: PR #62 merged", field, item, pulls);
   const heads = (plan: Plan) => argvs(plan).map((a) => a.split(" ").slice(0, 3).join(" "));
 
+  it("closes a release workflow Issue from a reviewed merged PR into main", () => {
+    const release = { ...fresh, workflow: "release" };
+    const plan = planClose(release, "Evidence: release merged", field, item, [
+      { ...merged, baseRefName: "main" },
+    ]);
+    expect(plan.kind).toBe("run");
+    expect(steps(plan)[0]?.input).toContain("- [x] one\n- [x] two");
+  });
+
+  it.each(["feature", "bugfix", "docs", "deploy", null])(
+    "ignores main for workflow %s",
+    (workflow) => {
+      const issue = { ...fresh, workflow };
+      expect(
+        planClose(issue, "Evidence", field, item, [{ ...merged, baseRefName: "main" }]),
+      ).toEqual({ kind: "refuse", reason: 'no merged PR into develop has the line "Issue: #61"' });
+    },
+  );
+
+  it.each<[string, Partial<ReferencingPull>, RegExp]>([
+    ["missing PASS", { comments: [] }, /needs an agent review PASS/],
+    ["missing AC", { comments: [pass(HEAD)] }, /no line for AC-1/],
+    ["wrong head", { comments: [pass("1111111", verdicts)] }, /needs an agent review PASS/],
+    ["foreign PASS", { comments: [pass(HEAD, verdicts, "someone-else")] }, /ignored VERDICT/],
+    ["unmet AC", { comments: [pass(HEAD, "AC-1: not met — x\nAC-2: met — y")] }, /not met/],
+  ])("refuses release closure with %s", (_label, change, reason) => {
+    const issue = { ...fresh, workflow: "release" };
+    expect(
+      planClose(issue, "Evidence", field, item, [{ ...merged, baseRefName: "main", ...change }]),
+    ).toEqual({ kind: "refuse", reason: expect.stringMatching(reason) as unknown });
+  });
+
+  it("selects the most recently merged eligible PR for a release", () => {
+    const issue = { ...fresh, workflow: "release" };
+    const main = { ...merged, number: 63, baseRefName: "main", mergedAt: "2026-11-11T10:00:00Z" };
+    const plan = planClose(issue, "Evidence", field, item, [main, merged]);
+    expect(plan.kind).toBe("run");
+    expect(plan).toHaveProperty("note", "ticks 2 of 2 AC from the review on PR #63");
+  });
+
   it("ticks the AC, comments once with the marker, closes, then sets Done", () => {
     const s = steps(close({}));
     expect(heads(close({}))).toEqual([

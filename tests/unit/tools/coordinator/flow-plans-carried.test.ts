@@ -79,20 +79,23 @@ describe("planMerge with a carried PASS", () => {
   });
 });
 
-describe("planClose with a carried PASS", () => {
+describe.each([
+  ["feature", "develop"],
+  ["release", "main"],
+])("planClose with a carried PASS for %s into %s", (workflow, baseRefName) => {
   const field: StatusField = {
     projectId: "P",
     fieldId: "F",
     options: [{ id: "done", name: "Done" }],
   };
   const body = "## Acceptance criteria\n- [ ] one\n- [ ] two\n";
-  const issue = { number: 61, state: "OPEN", body, comments: [] };
+  const issue = { number: 61, state: "OPEN", body, comments: [], workflow };
   const verdicts = "AC-1: met — a\nAC-2: met — b";
   const merged: ReferencingPull = {
     number: 62,
     merged: true,
     mergedAt: "2026-11-11T10:00:00Z",
-    baseRefName: "develop",
+    baseRefName,
     headRefOid: NEW,
     body: "Issue: #61",
     comments: [plain(OLD, verdicts), carried(NEW, OLD, verdicts)],
