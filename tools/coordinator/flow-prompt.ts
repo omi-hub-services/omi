@@ -25,6 +25,13 @@ import {
   optObject,
   optString,
 } from "./json-shape.ts";
+import {
+  ARCHITECT_INSTRUCTIONS,
+  architectGate,
+  parseArchitectRole,
+  readTaskPullComments,
+  renderHistory,
+} from "./flow-architect.ts";
 import { runChecked, wslCommand } from "./process-runner.ts";
 import { loadTemplate } from "./watch-workflow.ts";
 import { NATIVE_RESUME_HEADER } from "./worker-launch.ts";
@@ -47,6 +54,15 @@ query($owner: String!, $repo: String!, $number: Int!, $after: String, $itemsAfte
       pageInfo { hasNextPage endCursor } }
   } }
 }`;
+
+/** What a packet needs of a step; the Architect step comes from its role file, not a workflow. */
+interface PacketStep {
+  readonly id: string;
+  readonly role: string;
+  readonly skills: readonly string[];
+  readonly rules: readonly string[];
+  readonly output_contract: string;
+}
 
 interface PacketComment {
   readonly body: string;
@@ -160,6 +176,10 @@ export interface PromptInput {
   readonly head?: string | undefined;
   readonly previousVerdict?: string | undefined;
   readonly delta?: string | undefined;
+  /** Render the Architect packet from the `architect` role instead of a workflow step. */
+  readonly architect?: boolean | undefined;
+  /** File with the Architect's decision, carried verbatim into a work-step packet. */
+  readonly architectDecision?: string | undefined;
   readonly number: number;
   readonly step: string | undefined;
   readonly worktree: string | undefined;
@@ -173,7 +193,13 @@ export interface PromptInput {
 /** Renders without launching a worker; --dry-run previews and never writes even with --out. */
 export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise<number> {
   try {
-    if (!input.step) throw new Error("--step is required (use the workflow's actual step id)");
+    const architect = input.architect === true;
+    if (architect && (input.findings !== undefined || input.architectDecision !== undefined))
+      throw new Error("--architect cannot be combined with --findings or --architect-decision");
+    if (architect && input.step !== undefined && input.step !== "architect")
+      throw new Error("--architect renders the architect step only; drop --step");
+    const stepArg = architect ? "architect" : input.step;
+    if (!stepArg) throw new Error("--step is required (use the workflow's actual step id)");
     if (input.notes !== undefined && input.findings !== undefined) {
       throw new Error("--notes and --findings cannot be used together");
     }
@@ -188,7 +214,7 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
     };
     const issue = await readPromptIssue(ctx, input.number);
     const route = resolveWorkflowRoute(issue.workflow);
-    const releaseReview = issue.workflow === "release" && input.step === "review";
+    const releaseReview = issue.workflow === "release" && stepArg === "review";
     if (route.kind === "delivery" && !releaseReview)
       throw new Error(
         `Workflow ${issue.workflow} uses the gated ${route.id} delivery use case, not worker dispatch`,
@@ -200,7 +226,7 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       read,
     );
     if (!template.ok) throw new Error(template.reason);
-    const requested = input.step.split(",");
+    const requested = stepArg.split(",");
     const round = Number(input.round ?? "1");
     if (!Number.isSafeInteger(round) || round < 1)
       throw new Error("--round must be a positive integer");
@@ -229,16 +255,23 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
     const primary = requested.at(-1) ?? "";
     if (
       requested.length > 1 &&
-      (!combined || plan.packets[primary]?.map((s) => s.id).join(",") !== input.step)
+      (!combined || plan.packets[primary]?.map((s) => s.id).join(",") !== stepArg)
     )
       throw new Error("policy requires separate verify/review packets");
-    const step = template.workflow.steps.find((s) => s.id === (combined ? primary : input.step));
-    if (!step) throw new Error(`workflow ${template.workflow.id} has no step ${input.step}`);
+    const architectRole = architect
+      ? parseArchitectRole(await read("templates/project/.omi/roles/architect.yaml"))
+      : null;
+    const step: PacketStep | undefined = architectRole
+      ? { id: "architect", role: "architect", output_contract: "step-result-v1", ...architectRole }
+      : template.workflow.steps.find((s) => s.id === (combined ? primary : stepArg));
+    if (!step) throw new Error(`workflow ${template.workflow.id} has no step ${stepArg}`);
     if (step.id === "analyze" && plan.scopeEvidence !== undefined)
       throw new Error(
         `analyze skipped; scope-approved from ${plan.scopeEvidence} (${input.scopeApproved ?? ""})`,
       );
-    const packetSteps = combined ? (plan.packets[primary] ?? [step]) : [step];
+    const packetSteps: readonly PacketStep[] = combined
+      ? (plan.packets[primary] ?? [step])
+      : [step];
     const quality = {
       policy: template.workflow.quality_policy,
       step: qualityStepId(step),
@@ -270,6 +303,19 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       (await runChecked(ctx.run, wslCommand("git rev-parse --abbrev-ref HEAD", target))).trim();
     if (!branch.trim() || branch === "HEAD")
       throw new Error("detached or empty branch; supply --branch");
+    if (architect) {
+      const gate = architectGate(
+        await readTaskPullComments(ctx.run, branch),
+        issue.comments,
+        round,
+      );
+      if (gate.refusal !== null) throw new Error(gate.refusal);
+      evidence.push(ARCHITECT_INSTRUCTIONS, renderHistory(gate.fails));
+    }
+    if (input.architectDecision !== undefined)
+      evidence.push(
+        `## Architect decision (verbatim)\n${await readFile(input.architectDecision, "utf8")}`,
+      );
     const resume = input.findings !== undefined;
     const sections = async (kind: "skills" | "rules", ids: readonly string[]) => {
       const sections: string[] = [];
