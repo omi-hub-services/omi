@@ -320,6 +320,24 @@ describe("workerReportCommand", () => {
     expect(text).toContain("thread id: T9");
   });
 
+  it("names the failing schema path and message when the summary is over 4000 characters", async () => {
+    const long = JSON.stringify({
+      type: "result",
+      session_id: "S1",
+      num_turns: 1,
+      result: resultDocument("x".repeat(4500)),
+    });
+    const f = fake((c) => {
+      if (payload(c).includes("ls -t"))
+        return { stdout: "/home/u/omi-runs/omi-077-ggtintran-20261112-1.jsonl\n" };
+      if (payload(c).startsWith("cat ")) return { stdout: long };
+      return undefined;
+    });
+    expect(await workerReportCommand(f.ctx, { planKey: "OMI-077", dryRun: false })).toBe(1);
+    expect(err.join("\n")).toMatch(/summary/);
+    expect(err.join("\n")).toMatch(/4000/);
+  });
+
   it("refuses when the task has no log", async () => {
     const f = fake(() => ({ stdout: "" }));
     expect(await workerReportCommand(f.ctx, { planKey: "OMI-077", dryRun: false })).toBe(1);

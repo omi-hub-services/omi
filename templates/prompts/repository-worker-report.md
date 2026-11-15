@@ -14,7 +14,7 @@
 Finish with only one JSON document satisfying the framework step-result-v1 schema. The workflow's
 analysis-result-v1, implementation-result-v1, verification-result-v1 and review-result-v1
 contracts all use this document shape. Put the human report described above in `summary`,
-including the AC verdict lines. The repository ids below identify this script packet only;
+including the AC verdict lines. `summary` is limited to 4000 characters; keep it shorter, or the report is refused. The repository ids below identify this script packet only;
 they never create a runtime run, attempt, approval or review record.
 
 In the repository flow `artifacts`, `checks` and `skillsApplied` stay empty arrays: quote checks and skills in `summary`. If you add an entry anyway, any entry must be an object `{"id","evidenceRef"}`, never a string or `{name,result}`.

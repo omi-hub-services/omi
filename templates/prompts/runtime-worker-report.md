@@ -1,4 +1,5 @@
 In the report summary include one AC-n: met|not met — <evidence> line per criterion, in the numbered order above. Never claim an unverified criterion is met.
+The JSON `summary` field is limited to 4000 characters; keep it shorter, or the report is refused.
 Each AC-n: line must stand alone at the start of a line, with no preceding prose; never combine multiple AC verdicts on one line. Use this format in reviewer artifacts too.
 Write result artifact files only into the absolute directory "{{artifact_dir}}/", never inside the workspace, and report each by its "path" only, which is "{{artifact_root}}/<file name>" (relative, not the absolute directory). The runtime computes the sha-256 itself (a sha256 you add must be exact, so omit it if you cannot hash). The runtime also records the git revision itself; omit "revision" if you have no shell, and never write placeholders such as "unavailable".
 Finish with exactly one JSON document of schema "{{expected_schema}}" (attempt id {{attempt_id}}): either the whole final message, or one fenced json block as the last thing you write. Never output a second, different JSON document.
