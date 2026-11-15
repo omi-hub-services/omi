@@ -155,7 +155,7 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
                                               --post: signed step report comment on the Issue, from dispatch metadata)
   next <issue>                                read-only: next step and exact commands from the newest step report
   commit-worker <branch> --message-file <f>   WSL: stage source, tooling and managed root files, commit, print SHA
-  regression-evidence --worktree <dir> --test-file <f> --test-name <n> --out <f> [--base <sha>]
+  regression-evidence [--worktree <wsl dir>] --test-file <f> --test-name <n> --out <f> [--base <sha>]
                                               run the fix worker's regression test on the base with the fix
                                               reverted and on the head; writes the script evidence for review-comment
   review-comment <pr> --file <f>              check VERDICT/REVIEWED_HEAD/AC-n lines, post as the Coordinator`;
@@ -1199,7 +1199,9 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       });
     case "regression-evidence":
       return regressionEvidenceCommand({
-        worktree: required(values.worktree, "--worktree"),
+        ...(values.worktree === undefined ? {} : { worktree: values.worktree }),
+        run: ctx.run,
+        target: ctx.target,
         testFile: required(values["test-file"], "--test-file"),
         testName: required(values["test-name"], "--test-name"),
         out: required(values.out, "--out"),
