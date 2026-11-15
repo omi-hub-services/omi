@@ -422,6 +422,7 @@ async function postStepReport(
         (id) => id === "analyze",
       )
     : [];
+  // A resumed dispatch has its own round: `prompt` refuses a round that is already reported.
   if (
     prior.some((p) => p.step === meta.step && p.round === meta.round && p.session === input.session)
   ) {

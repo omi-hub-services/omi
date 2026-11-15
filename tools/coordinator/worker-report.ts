@@ -151,6 +151,8 @@ export interface StepMarker {
 }
 
 export const STEP_REPORT_LIMIT = 3000;
+/** Pseudo-step id of the Architect run (OMI-165/173): not a workflow step. */
+export const ARCHITECT_STEP = "architect";
 export const FLOW = 'node "$coordinatorPin/tools/coordinator/flow.ts"';
 
 export const stepMarker = (m: StepMarker): string =>
@@ -239,7 +241,11 @@ export function parseStepResults(
  */
 export function computeNext(
   workflow: {
-    readonly steps: readonly { readonly id: string; readonly needs: readonly string[] }[];
+    readonly steps: readonly {
+      readonly id: string;
+      readonly needs: readonly string[];
+      readonly role?: string;
+    }[];
   },
   prior: readonly StepMarker[],
   current: { readonly step: string; readonly status: StepMarker["status"] },
@@ -247,10 +253,22 @@ export function computeNext(
   skipped: readonly string[] = [],
 ): string {
   const ids = workflow.steps.map((s) => s.id);
+  if (current.step === ARCHITECT_STEP) {
+    // OMI-173: a pseudo-step outside the workflow. It decides, the newest work step resumes with it.
+    if (current.status !== "succeeded") return "waiting-po";
+    const workIds = workflow.steps.filter((s) => s.role === "developer").map((s) => s.id);
+    const work = [...prior]
+      .reverse()
+      .flatMap((p) => p.step.split(","))
+      .find((id) => workIds.includes(id));
+    if (work === undefined) throw new Error("no work step is reported on the Issue to resume");
+    return work;
+  }
   // newest report per step, with its position: a result is only valid while every upstream
   // result is valid and not newer than it (reworked upstream work invalidates what followed)
   const latest = new Map<string, { status: StepMarker["status"]; seq: number }>();
   [...prior, current].forEach((e, seq) => {
+    if (e.step === ARCHITECT_STEP) return; // a decision, not a workflow result
     for (const id of e.step.split(",")) {
       if (!ids.includes(id)) throw new Error(`workflow has no step ${id}`);
       latest.set(id, { status: e.status, seq });
@@ -303,7 +321,9 @@ export function renderStepReport(input: {
         ? "no workflow step remains: check, push, open-pr (omi-next step 4)"
         : marker.status === "failed"
           ? `rework after the failed ${marker.next}`
-          : `dispatch ${marker.next}`;
+          : marker.step === ARCHITECT_STEP
+            ? `resume ${marker.next} with --architect-decision`
+            : `dispatch ${marker.next}`;
   const suggestion =
     result.nextAction === undefined
       ? ""
@@ -382,7 +402,19 @@ export function formatNext(
     `${FLOW} prompt ${n} --step ${step} --round ${String(round)}${scope} --notes <notes.md> --out <prompt.md>`,
     `${FLOW} dispatch ${n} --profile <p> --kind <claude|codex> --prompt <prompt.md>`,
   ];
-  if (marker.status === "blocked") {
+  if (marker.step === ARCHITECT_STEP && marker.status === "succeeded") {
+    // the failed work step resumes natively with the findings and the Architect's decision
+    const work = [...all].reverse().find((e) => e.marker.step === marker.next);
+    const round =
+      1 +
+      Math.max(0, ...all.filter((e) => e.marker.step === marker.next).map((e) => e.marker.round));
+    return [
+      `architect round ${String(marker.round)} succeeded: ${marker.next} resumes with the Architect decision (round ${String(round)}).`,
+      `${FLOW} prompt ${n} --step ${marker.next} --round ${String(round)} --findings <findings.md> --architect-decision <decision.md> --out <resume.md>`,
+      `${FLOW} dispatch ${n} --profile ${work?.profile ?? "<profile of the report>"} --kind ${work?.tool ?? "<claude|codex of the report>"} --resume ${work?.marker.session ?? "<session of the report>"} --prompt <resume.md>`,
+    ];
+  }
+  if (marker.step === ARCHITECT_STEP || marker.status === "blocked") {
     return [
       `Waiting PO after ${marker.step} round ${String(marker.round)}: the Coordinator posts a "**WAITING-PO:** <reason>" comment and asks the PO. No dispatch.`,
     ];

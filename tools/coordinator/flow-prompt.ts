@@ -38,7 +38,7 @@ import {
 import { runChecked, wslCommand } from "./process-runner.ts";
 import { loadTemplate } from "./watch-workflow.ts";
 import { NATIVE_RESUME_HEADER, SECURITY_REVIEW_MARKER } from "./worker-launch.ts";
-import { parseStepResults } from "./worker-report.ts";
+import { parseStepMarkers, parseStepResults } from "./worker-report.ts";
 
 const ISSUE_PACKET_QUERY = `
 query($owner: String!, $repo: String!, $number: Int!, $after: String, $itemsAfter: String) {
@@ -233,6 +233,16 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
     const round = Number(input.round ?? "1");
     if (!Number.isSafeInteger(round) || round < 1)
       throw new Error("--round must be a positive integer");
+    // shortcut: two dispatches of one round before either report is posted cannot be seen here; the second report is skipped
+    if (!architect) {
+      const reported = parseStepMarkers(issue.comments, COORDINATOR_LOGIN)
+        .map((p) => p.marker)
+        .filter((m) => m.step.split(",").includes(stepArg));
+      if (reported.some((m) => m.round === round))
+        throw new Error(
+          `${stepArg} round ${String(round)} is already reported; use --round ${String(Math.max(...reported.map((m) => m.round)) + 1)}`,
+        );
+    }
     const risks = input.risk?.split(",") ?? [];
     if (risks.some((r) => !["security", "gates", "data"].includes(r)))
       throw new Error("--risk must name security,gates,data");

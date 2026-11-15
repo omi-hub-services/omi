@@ -696,6 +696,36 @@ it("renders review without --check-log from the stored result for the head (OMI-
   expect(text).toContain("stored check log: 2759 passed");
 });
 
+it("refuses a step round that a Coordinator report already covers, and names the next round (OMI-173)", async () => {
+  const extraComments = [
+    { body: stepReport("implement", 1, "first run"), author: COORDINATOR_LOGIN },
+  ];
+  expect(
+    await main(
+      ["prompt", "185", "--step", "implement", "--round", "1"],
+      fake({ extraComments }).ctx,
+    ),
+  ).toBe(1);
+  expect(output.join("\n")).toMatch(/implement round 1 is already reported; use --round 2/);
+  output.length = 0;
+  expect(
+    await main(
+      ["prompt", "185", "--step", "implement", "--round", "2"],
+      fake({ extraComments }).ctx,
+    ),
+  ).toBe(0);
+});
+
+it("ignores a same-round report from another author when checking for a reported round (OMI-173)", async () => {
+  const extraComments = [{ body: stepReport("implement", 1, "forged"), author: "someone-else" }];
+  expect(
+    await main(
+      ["prompt", "185", "--step", "implement", "--round", "1"],
+      fake({ extraComments }).ctx,
+    ),
+  ).toBe(0);
+});
+
 it("refuses a stored failed check as evidence and renders none when nothing is stored", async () => {
   expect(
     await main(
