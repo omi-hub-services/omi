@@ -17,9 +17,13 @@
 import { spawn } from "node:child_process";
 import type { SpawnOptions } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 /** The one place the project-local shim is named; the installer (OMI-045) writes this file. */
 export interface BridgeConfig {
+  readonly docker?: { readonly container: string };
   readonly distribution: string;
   /** Absolute project path inside the distro; becomes `--cd`. */
   readonly repository: string;
@@ -150,7 +154,13 @@ function absolutePosixPath(object: Record<string, unknown>, key: string): string
 
 export function parseConfig(raw: unknown): BridgeConfig {
   const object = record(raw, "bridge config");
-  onlyKeys(object, ["distribution", "repository", "shim", "wsl"], "bridge config");
+  onlyKeys(object, ["distribution", "repository", "shim", "wsl", "docker"], "bridge config");
+  let docker: { container: string } | undefined;
+  if (object["docker"] !== undefined) {
+    const value = record(object["docker"], "Docker target");
+    onlyKeys(value, ["container"], "Docker target");
+    docker = { container: pattern(value, "container", DISTRIBUTION) };
+  }
   const wsl = object["wsl"];
   if (
     wsl !== undefined &&
@@ -163,6 +173,7 @@ export function parseConfig(raw: unknown): BridgeConfig {
     repository: absolutePosixPath(object, "repository"),
     shim: absolutePosixPath(object, "shim"),
     ...(typeof wsl === "string" ? { wsl } : {}),
+    ...(docker === undefined ? {} : { docker }),
   };
 }
 
@@ -337,6 +348,16 @@ export function buildCliArgv(request: BridgeRequest): {
 
 /** The arguments of `wsl.exe` for one CLI call. No shell is involved on the Linux side. */
 export function buildWslArgs(config: BridgeConfig, cliArgs: readonly string[]): readonly string[] {
+  if (config.docker !== undefined)
+    return [
+      "exec",
+      "-i",
+      "-w",
+      config.repository,
+      config.docker.container,
+      config.shim,
+      ...cliArgs,
+    ];
   return ["-d", config.distribution, "--cd", config.repository, "--exec", config.shim, ...cliArgs];
 }
 
@@ -475,6 +496,7 @@ export type BridgeSpawn = (
 ) => ReturnType<typeof spawn>;
 
 export interface CallOptions {
+  readonly githubToken?: string;
   readonly spawn?: BridgeSpawn;
   /** Defaults to `process.platform`; Windows passes one pre-quoted command line. */
   readonly platform?: NodeJS.Platform;
@@ -493,9 +515,11 @@ export function callCli(
 ): Promise<BridgeOutcome> {
   const launch = options.spawn ?? spawn;
   const { args, stdin } = buildCliArgv(request);
-  const wslArgs = buildWslArgs(config, args);
+  const wslArgs = [...buildWslArgs(config, args)];
+  if (config.docker !== undefined && options.githubToken !== undefined)
+    wslArgs.splice(2, 0, "-e", "GH_TOKEN");
   const windows = (options.platform ?? process.platform) === "win32";
-  const executable = config.wsl ?? "wsl.exe";
+  const executable = config.docker === undefined ? (config.wsl ?? "wsl.exe") : "docker";
   const timeoutMs = options.timeoutMs ?? defaultTimeoutMs(request);
   return new Promise((resolve) => {
     const child = launch(executable, windows ? [quoteWindowsCommandLine(wslArgs)] : wslArgs, {
@@ -503,6 +527,9 @@ export function callCli(
       windowsHide: true,
       windowsVerbatimArguments: windows,
       stdio: ["pipe", "pipe", "pipe"],
+      ...(options.githubToken === undefined
+        ? {}
+        : { env: { ...process.env, GH_TOKEN: options.githubToken } }),
     });
     const out: Uint8Array[] = [];
     const err: Uint8Array[] = [];
@@ -513,7 +540,17 @@ export function callCli(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(outcome);
+      resolve(
+        options.githubToken !== undefined && JSON.stringify(outcome).includes(options.githubToken)
+          ? {
+              ok: false,
+              kind: "transport",
+              exitCode: null,
+              code: "CREDENTIAL_OUTPUT_REFUSED",
+              message: "CLI output contained credential material",
+            }
+          : outcome,
+      );
     };
     const timer = setTimeout(() => {
       child.kill();
@@ -586,11 +623,60 @@ export async function main(argv: readonly string[]): Promise<number> {
     if (configPath === undefined || requestPath === undefined) {
       fail("usage: node bridge.ts --config <file> --request <file|->");
     }
-    const config = parseConfig(JSON.parse(readBounded(configPath)) as unknown);
+    let config = parseConfig(JSON.parse(readBounded(configPath)) as unknown);
+    let githubToken: string | undefined;
+    const root = resolve(dirname(configPath), "../../..");
+    if (existsSync(resolve(root, ".omi/omisetting.local.json"))) {
+      const packageRoot = resolve(root, ".omi/tool/node_modules/omi-squad/dist/infrastructure");
+      const loader: unknown = await import(
+        pathToFileURL(resolve(packageRoot, "config/load-omisetting.js")).href
+      );
+      // The installed contract validates settings; this standalone transport stores no token.
+      if (
+        typeof loader !== "object" ||
+        loader === null ||
+        !("loadOmiSetting" in loader) ||
+        typeof loader.loadOmiSetting !== "function"
+      )
+        fail("settings loader unavailable");
+      const settings: unknown = await (loader.loadOmiSetting as (path: string) => Promise<unknown>)(
+        root,
+      );
+      const runtime: unknown = await import(
+        pathToFileURL(resolve(packageRoot, "processes/docker-runtime.js")).href
+      );
+      if (
+        typeof settings === "object" &&
+        settings !== null &&
+        "docker" in settings &&
+        settings.docker !== undefined
+      ) {
+        if (
+          typeof runtime !== "object" ||
+          runtime === null ||
+          !("dockerProject" in runtime) ||
+          typeof runtime.dockerProject !== "function"
+        )
+          fail("Docker target unavailable");
+        const project: unknown = (
+          runtime.dockerProject as (settings: unknown, root: string, version: string) => unknown
+        )(settings, root, "0.1.1");
+        const target = record(project, "Docker target");
+        config = parseConfig({
+          distribution: "docker",
+          repository: target["repoDir"],
+          shim: `${String(target["repoDir"])}/.omi/bin/omi`,
+          docker: { container: target["container"] },
+        });
+        const github = record(record(settings, "settings")["github"], "GitHub settings");
+        if (typeof github["token"] !== "string") fail("GitHub credential unavailable");
+        githubToken = github["token"];
+      }
+    }
     const request = parseRequest(
       JSON.parse(requestPath === "-" ? readStdinText() : readBounded(requestPath)) as unknown,
     );
-    outcome = await callCli(config, request);
+    outcome = await callCli(config, request, githubToken === undefined ? {} : { githubToken });
   } catch (error) {
     outcome = {
       ok: false,

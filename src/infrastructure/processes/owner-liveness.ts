@@ -127,6 +127,7 @@ export function watchOwnerLiveness(options: OwnerLivenessOptions): OwnerLiveness
   options.channel.on("end", onClosed);
   options.channel.on("close", onClosed);
   options.channel.on("error", onClosed);
+  options.channel.resume();
   if (options.channel.destroyed) onClosed();
   armHeartbeat();
 
@@ -135,6 +136,8 @@ export function watchOwnerLiveness(options: OwnerLivenessOptions): OwnerLiveness
     dispose: () => {
       settled = true;
       stopWatchingChannel();
+      // Removing listeners alone leaves an open stdin pipe active after normal completion.
+      options.channel.pause();
       removeSignalHandlers();
     },
   };

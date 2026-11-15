@@ -16,7 +16,7 @@ export interface OverviewCommands {
   status(projectDir: string): Promise<StatusReport>;
   watch(input: {
     projectDir: string;
-    port: number;
+    port?: number;
     intervalMs: number;
     onListening: (url: string) => void;
   }): Promise<void>;
@@ -70,19 +70,23 @@ export function registerStatusCommand(
     .command("watch")
     .description("Watch runtime workflow diagrams in a local browser")
     .option("--project <path>", "project directory", ".")
-    .option("--port <number>", "loopback port (0 chooses an available port)", "4381")
+    .option(
+      "--port <number>",
+      "watch port (defaults to project settings; 0 chooses an available port)",
+    )
     .option("--interval <seconds>", "snapshot refresh interval", "5")
     .action(async (_options: unknown, command: Command) => {
       const options = command.optsWithGlobals<
-        GlobalOptions & { project: string; port: string; interval: string }
+        GlobalOptions & { project: string; port?: string; interval: string }
       >();
-      const port = Number(options.port);
+      const port = options.port === undefined ? undefined : Number(options.port);
       const seconds = Number(options.interval);
       if (
-        !/^\d+$/.test(options.port) ||
-        !Number.isInteger(port) ||
-        port < 0 ||
-        port > 65535 ||
+        (options.port !== undefined &&
+          (!/^\d+$/.test(options.port) ||
+            !Number.isInteger(port) ||
+            Number(port) < 0 ||
+            Number(port) > 65535)) ||
         !Number.isFinite(seconds) ||
         seconds <= 0 ||
         seconds > 2147483
@@ -93,7 +97,7 @@ export function registerStatusCommand(
       if (overview === undefined) throw new Error("OVERVIEW_NOT_WIRED");
       await overview.watch({
         projectDir: options.project,
-        port,
+        ...(port === undefined ? {} : { port }),
         intervalMs: Math.max(1, Math.round(seconds * 1000)),
         onListening: (url) => {
           context.emit(presentSuccess({ url }, `watch: ${url}`, formatOf(options)));

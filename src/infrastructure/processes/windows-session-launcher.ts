@@ -3,6 +3,7 @@ import type { EventEmitter } from "node:events";
 import type { SessionLaunchInput } from "../../application/contracts/session-launch.js";
 import { sessionLaunchSchema } from "../../application/contracts/session-launch.js";
 import { SESSION_HEARTBEAT_PERIOD_MS, SESSION_STOP_TIMEOUT_MS } from "./session-timing.js";
+import type { DockerTarget } from "./docker-runtime.js";
 
 export type SessionSpawn = (
   executable: string,
@@ -50,24 +51,43 @@ export async function launchWindowsSession(
     heartbeatPeriodMs?: number;
     stopTimeoutMs?: number;
     startupTimeoutMs?: number;
+    docker?: DockerTarget;
+    runtimeEnv?: Readonly<Record<string, string>>;
   } = {},
 ) {
   const input = sessionLaunchSchema.parse(raw);
   const launch = options.spawn ?? spawn;
   const signals = options.signalSource ?? process;
   const stopTimeout = options.stopTimeoutMs ?? SESSION_STOP_TIMEOUT_MS;
-  const args = [
-    ...(input.distribution === undefined ? [] : ["--distribution", input.distribution]),
-    "--cd",
-    input.projectDir,
-    "--exec",
-    // The project shim owns the pinned Node path; bare `node` is absent from wsl.exe's PATH under nvm.
-    `${input.projectDir}/.omi/bin/omi`,
-    "--omi-runtime",
-    input.runtimePath,
-    input.projectDir,
-  ];
-  const runtime = launch("wsl.exe", args, { shell: false, stdio: ["pipe", "pipe", "inherit"] });
+  const args =
+    options.docker === undefined
+      ? [
+          ...(input.distribution === undefined ? [] : ["--distribution", input.distribution]),
+          "--cd",
+          input.projectDir,
+          "--exec",
+          // The project shim owns the pinned Node path; bare `node` is absent from wsl.exe's PATH under nvm.
+          `${input.projectDir}/.omi/bin/omi`,
+          "--omi-runtime",
+          input.runtimePath,
+          input.projectDir,
+        ]
+      : [
+          "exec",
+          "-i",
+          ...Object.keys(options.runtimeEnv ?? {}).flatMap((name) => ["-e", name]),
+          "-w",
+          options.docker.repoDir,
+          options.docker.container,
+          "node",
+          `${options.docker.repoDir}/.omi/tool/node_modules/omi-squad/dist/bootstrap/runtime.js`,
+          options.docker.repoDir,
+        ];
+  const runtime = launch(options.docker === undefined ? "wsl.exe" : "docker", args, {
+    shell: false,
+    stdio: ["pipe", "pipe", "inherit"],
+    ...(options.runtimeEnv === undefined ? {} : { env: { ...process.env, ...options.runtimeEnv } }),
+  });
   const runtimeExit = childExit(runtime);
   const lifecycle = { stopped: false };
   let coordinator: ChildProcess | undefined;

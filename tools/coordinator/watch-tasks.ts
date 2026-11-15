@@ -8,7 +8,7 @@ import {
   COORDINATOR_LOGIN,
   PRIORITY_ORDER,
   RUNS_DIR_FROM_HOME,
-  type WslTarget,
+  type CoordinatorTarget,
 } from "./coordinator-settings.ts";
 import type { Workflow } from "../../src/application/contracts/workflow.ts";
 import type { Hold } from "../../src/domain/workflows/workflow-diagram.ts";
@@ -377,7 +377,7 @@ export function parsePromptProbe(stdout: string): Record<string, PromptInfo | nu
 /** Null when the read failed; plan keys that are not `OMI-NNN` are never put in the payload. */
 export async function readPrompts(
   run: Runner,
-  target: WslTarget,
+  target: CoordinatorTarget,
   planKeys: readonly string[],
   packets: readonly string[] = [],
 ): Promise<Record<string, PromptInfo | null> | null> {
@@ -424,7 +424,7 @@ const isActive = (i: ProjectItem) =>
 /** Never throws: a failed GitHub read becomes `available: false` with its first line. */
 export async function readTasks(
   run: Runner,
-  target: WslTarget,
+  target: CoordinatorTarget,
   workers: Workers | null = null,
   load: (id: string) => Promise<TemplateRead> = loadTemplate,
 ): Promise<TasksRead> {

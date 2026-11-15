@@ -1,4 +1,5 @@
 import { backupState } from "../infrastructure/persistence/sqlite/backup-state.js";
+import { loadOmiSetting } from "../infrastructure/config/load-omisetting.js";
 import { wslPathSchema } from "../application/contracts/session-launch.js";
 // WSL executable and composition root. Never start it inside the framework source repository.
 import { randomUUID } from "node:crypto";
@@ -105,7 +106,11 @@ export async function runSessionRuntime(
           runs: composition.commands,
           tasks: composition.tasks,
           activeRuns: composition.runs,
-          profiles: createProfileUseCases(database, () => runtime.accepting),
+          profiles: createProfileUseCases(
+            database,
+            () => runtime.accepting,
+            await loadOmiSetting(projectDir),
+          ),
           approvals: composition.approvals,
         });
         await server.start();

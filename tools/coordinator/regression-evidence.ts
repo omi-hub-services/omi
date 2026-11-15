@@ -4,7 +4,7 @@
 // `review-comment --regression-evidence` reads.
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
-import { BASE_BRANCH, wslTarget, type WslTarget } from "./coordinator-settings.ts";
+import { BASE_BRANCH, coordinatorTarget, type CoordinatorTarget } from "./coordinator-settings.ts";
 import {
   createProcessRunner,
   joinSteps,
@@ -39,7 +39,7 @@ const SETUP_FAILED = 199;
 /** Mirrors createRegressionExecutor, but every git and npm step runs in the WSL checkout. */
 function wslRegressionExecutor(
   run: Runner,
-  target: WslTarget,
+  target: CoordinatorTarget,
   baseSha: string,
   testFile: string,
   timeoutMs: number,
@@ -87,7 +87,7 @@ export interface RegressionEvidenceInput {
   /** Path inside the WSL checkout; defaults to the configured work checkout. */
   readonly worktree?: string;
   readonly run?: Runner;
-  readonly target?: WslTarget;
+  readonly target?: CoordinatorTarget;
   readonly testFile: string;
   readonly testName: string;
   readonly out: string;
@@ -111,7 +111,7 @@ export async function regressionEvidenceCommand(input: RegressionEvidenceInput):
   const timeoutMs = input.timeoutMs ?? 600_000;
   const run = input.run ?? createProcessRunner();
   const target = {
-    ...(input.target ?? wslTarget()),
+    ...(input.target ?? (await coordinatorTarget())),
     ...(input.worktree ? { repoDir: input.worktree } : {}),
   };
   let evidence;

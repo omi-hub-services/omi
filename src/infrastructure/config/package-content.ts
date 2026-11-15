@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -89,4 +90,20 @@ export async function readPackageContent(directory: string) {
     artifactHash: digest.digest("hex"),
     base: templateFilesSchema.parse(templates),
   };
+}
+
+/** The package version, read once at start-up (the same file for `src/` and for `dist/`). */
+export function readPackageVersion(): string {
+  const parsed: unknown = JSON.parse(
+    readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
+  );
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    "version" in parsed &&
+    typeof parsed.version === "string"
+  ) {
+    return parsed.version;
+  }
+  throw new Error("package.json has no string version");
 }

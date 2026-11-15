@@ -1,7 +1,12 @@
 import { loadOmiSetting } from "../infrastructure/config/load-omisetting.js";
-import { settingsCredentialPolicy } from "../application/contracts/omisetting.js";
+import { dockerRuntimeEnvironment } from "../infrastructure/config/docker-runtime-environment.js";
+import { settingsCredentialPolicy, type OmiSetting } from "../application/contracts/omisetting.js";
 import { resolveWorkerCredentials } from "../application/services/resolve-worker-credentials.js";
 import { createProfileLogin } from "../infrastructure/profiles/login-profile.js";
+import {
+  createDockerLifecycle,
+  dockerProject,
+} from "../infrastructure/processes/docker-runtime.js";
 import { createRunMergeEvidenceReader } from "../application/services/build-run-merge-evidence.js";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { loadWorkflowCatalog } from "../infrastructure/config/load-workflow-catalog.js";
@@ -160,7 +165,7 @@ import { probeRegisteredProfile } from "../application/use-cases/profiles/probe-
 import { createSqliteExecutorSelectionStore } from "../infrastructure/profiles/sqlite-executor-selection-store.js";
 import { createSqliteStateUnitOfWork } from "../infrastructure/persistence/sqlite/sqlite-state-unit-of-work.js";
 import type { StateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
-import { readFileSync } from "node:fs";
+import { readPackageVersion } from "../infrastructure/config/package-content.js";
 import { readBoundedText } from "../infrastructure/processes/read-bounded-text.js";
 import {
   commitWorker,
@@ -206,7 +211,10 @@ import { openReadOnlyStateDatabase } from "../infrastructure/persistence/sqlite/
 import { createSqliteRunOverviewReader } from "../infrastructure/persistence/sqlite/sqlite-run-overview-reader.js";
 import { createSqlitePullReviewReader } from "../infrastructure/persistence/sqlite/sqlite-pull-review-reader.js";
 import { createGithubOpenPulls } from "../infrastructure/github/github-open-pulls.js";
-import { createWatchServer } from "../infrastructure/observability/watch-server.js";
+import {
+  createWatchServer,
+  configuredWatchPort,
+} from "../infrastructure/observability/watch-server.js";
 import type { OverviewCommands } from "../interfaces/cli/commands/status-command.js";
 
 /** Views use an existing read-only DB, including while the session runtime is stopped. */
@@ -258,6 +266,7 @@ export function createOverviewCommands(
       }
     },
     async watch(input) {
+      const port = await configuredWatchPort(input.projectDir, input.port);
       const deps = await open(input.projectDir);
       let workflows: WorkflowCatalog;
       try {
@@ -278,7 +287,7 @@ export function createOverviewCommands(
         finish = resolve;
       });
       const server = createWatchServer({
-        port: input.port,
+        port,
         intervalMs: input.intervalMs,
         readSnapshot: createWatchSnapshotReader({
           runs: deps.runs,
@@ -397,21 +406,7 @@ export function defaultSocketPath(projectDir: string): string {
   return join(projectDir, ".omi", "local", "ipc", "runtime.sock");
 }
 
-/** The package version, read once at start-up (the same file for `src/` and for `dist/`). */
-export function readPackageVersion(): string {
-  const parsed: unknown = JSON.parse(
-    readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
-  );
-  if (
-    typeof parsed === "object" &&
-    parsed !== null &&
-    "version" in parsed &&
-    typeof parsed.version === "string"
-  ) {
-    return parsed.version;
-  }
-  throw new Error("package.json has no string version");
-}
+export { readPackageVersion };
 
 export interface CliWiringOptions {
   readonly socketPath: string;
@@ -539,7 +534,19 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
       doctor: (input) => inspectInstallation(createInstallationDoctor(), input),
     },
     profileLogin: createProfileLogin(),
-    launchSession: launchWindowsSession,
+    docker: createDockerLifecycle({}),
+    launchSession: async (input) => {
+      const settings = await loadOmiSetting(process.cwd());
+      return launchWindowsSession(
+        input,
+        settings?.docker === undefined
+          ? {}
+          : {
+              docker: dockerProject(settings, process.cwd()),
+              runtimeEnv: dockerRuntimeEnvironment(settings),
+            },
+      );
+    },
     readStdin: () => readStandardInput(process.stdin),
     readText: (path) => readBoundedText(path, 65_536),
     defaultSocketPath: options.socketPath,
@@ -714,9 +721,22 @@ export function createTaskImportUseCase(options: {
     );
 }
 
-export function createProfileUseCases(database: StateDatabase, canSave: () => boolean) {
+export function createProfileUseCases(
+  database: StateDatabase,
+  canSave: () => boolean,
+  settings?: OmiSetting,
+) {
   const registry = createSqliteProfileRegistry(database);
-  const executors = { "claude-code": new ClaudeCodeExecutor(), codex: new CodexExecutor() };
+  const credentials = (tool: "claude-code" | "codex") => (home: string) =>
+    resolveWorkerCredentials(settings, registry.list(), tool, home);
+  const credentialPolicy = settings === undefined ? {} : settingsCredentialPolicy(settings);
+  const executors = {
+    "claude-code": new ClaudeCodeExecutor({
+      credentials: credentials("claude-code"),
+      credentialPolicy,
+    }),
+    codex: new CodexExecutor({ credentials: credentials("codex"), credentialPolicy }),
+  };
   return {
     registerProfile: (input: unknown) =>
       canSave()

@@ -18,8 +18,10 @@ import { registerLogCommands, type LogCommands } from "./log-commands.js";
 import { registerTaskCommands, type TaskCommands } from "./task-commands.js";
 import { registerWorkflowCommands, type WorkflowCommands } from "./workflow-commands.js";
 import { registerSyncCommand } from "./sync-command.js";
+import { registerDockerCommands } from "./docker-commands.js";
 
 export interface CliEnvironment extends CliOutput {
+  readonly docker?: import("../../../application/ports/docker-runtime.js").DockerLifecycle;
   readonly profileLogin?: import("../../../application/ports/profile-login.js").ProfileLogin;
   readonly readText?: CliContext["readText"];
   readonly sendCommand: CliContext["sendCommand"];
@@ -55,6 +57,7 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
       outputError: () => undefined,
     });
   registerInstallationCommands(program, context, environment.installation);
+  registerDockerCommands(program, context, environment.docker);
   registerStatusCommand(program, context, environment.overview);
   registerSessionCommands(program, context, environment.launchSession);
   registerApprovalCommands(program, context);

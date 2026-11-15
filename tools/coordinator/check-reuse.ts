@@ -2,7 +2,7 @@
 // checkout's ~/omi-runs/checks, keyed by (check id, exact head SHA, command). Local only; nothing
 // is written to GitHub. The runtime counterpart is application/services/reuse-check-runs.ts.
 import { createHash } from "node:crypto";
-import { RUNS_DIR_FROM_HOME, type WslTarget } from "./coordinator-settings.ts";
+import { RUNS_DIR_FROM_HOME, type CoordinatorTarget } from "./coordinator-settings.ts";
 import { asNumber, asObject, asString, parseJson } from "./json-shape.ts";
 import { wslCommand, type Runner } from "./process-runner.ts";
 import "../register-ts-imports.ts";
@@ -34,7 +34,7 @@ const fileFor = (checkId: string, head: string, command: readonly string[]): str
 /** The stored result for exactly this key, or null; unreadable or mismatching files are missing. */
 export async function readStoredCheck(
   run: Runner,
-  target: WslTarget,
+  target: CoordinatorTarget,
   head: string,
   checkId: string = CHECK_ID,
   command: readonly string[] = CHECK_ARGV,
@@ -70,7 +70,7 @@ function asStringArray(value: unknown): string[] {
 /** Atomically replaces the stored result of the key; a later run on the same key overwrites it. */
 export async function storeCheck(
   run: Runner,
-  target: WslTarget,
+  target: CoordinatorTarget,
   check: StoredCheck,
 ): Promise<void> {
   const file = fileFor(check.checkId, check.head, check.command);

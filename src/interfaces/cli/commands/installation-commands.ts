@@ -166,23 +166,25 @@ export function registerInstallationCommands(
   }
   program
     .command("doctor")
-    .requiredOption("--project <path>", "absolute Linux project path")
-    .requiredOption("--distribution <name>", "bound WSL2 distro")
+    .requiredOption("--project <path>", "project path")
+    .option("--distribution <name>", "bound distro for WSL projects")
     .action(async (_options: unknown, command: Command) => {
       const options = command.optsWithGlobals<
-        GlobalOptions & { project: string; distribution: string }
+        GlobalOptions & { project: string; distribution?: string }
       >();
       try {
         if (actions === undefined) throw new Error("DOCTOR_NOT_WIRED");
         const result = await actions.doctor({
           projectDir: options.project,
-          distribution: options.distribution,
+          ...(options.distribution === undefined ? {} : { distribution: options.distribution }),
         });
         context.emit(
           result.supported
             ? presentSuccess(
                 result,
-                "Installation, GitHub and worker CLI checks passed",
+                result.checks
+                  .map((check) => `${check.status}: ${check.name}: ${check.detail}`)
+                  .join("\n"),
                 formatOf(options),
               )
             : presentFailure(

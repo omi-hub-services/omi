@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { TransportError } from "./github-transport.js";
+import { dockerServiceEnvironment } from "../config/docker-runtime-environment.js";
 import type { GithubTransport, HttpRequest, HttpResponse } from "./github-transport.js";
 
 /** What running `gh` produced. `timedOut` is set when the process was killed for taking too long. */
@@ -30,7 +31,7 @@ const EXIT_NOT_FOUND = 127;
 
 /**
  * GitHub transport over the authenticated `gh` CLI (architecture.md §11): argv and stdin only, no
- * shell, and no token ever enters this process or a command line, because `gh` owns the login.
+ * shell. Credentials use only the child environment or native login, never the command line.
  *
  * `gh api --include` prints the status line and headers before the body, also for error statuses
  * (where it additionally exits non-zero). The parse below therefore trusts the printed response
@@ -98,7 +99,12 @@ export function runGh(
         timeout: timeoutMs,
         maxBuffer: 32 * 1024 * 1024,
         windowsHide: true,
-        env: { ...process.env, GH_PROMPT_DISABLED: "1", GH_PAGER: "", NO_COLOR: "1" },
+        env: {
+          ...dockerServiceEnvironment(),
+          GH_PROMPT_DISABLED: "1",
+          GH_PAGER: "",
+          NO_COLOR: "1",
+        },
       },
       (error, stdout) => {
         if (error === null) {

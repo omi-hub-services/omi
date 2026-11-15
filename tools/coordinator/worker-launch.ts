@@ -8,6 +8,8 @@ import { RUNS_DIR_FROM_HOME } from "./coordinator-settings.ts";
 import "../register-ts-imports.ts";
 const { REPOSITORY_WORKER_ALLOWED_TOOLS, REPOSITORY_WORKER_DENIED_TOOLS } =
   await import("../../src/infrastructure/executors/claude-code/claude-code-invocation.ts");
+const { repositoryWorkerArgs } =
+  await import("../../src/infrastructure/processes/repository-worker-invocation.ts");
 export const CLAUDE_ALLOWED_TOOLS = REPOSITORY_WORKER_ALLOWED_TOOLS;
 export const CLAUDE_DENIED_TOOLS = REPOSITORY_WORKER_DENIED_TOOLS;
 
@@ -71,28 +73,7 @@ const redirects = (spec: LaunchSpec, stem: string) =>
 
 export function claudeLaunchPayload(spec: LaunchSpec): string {
   assertSpec(spec);
-  const resume = spec.resume === null ? [] : ["--resume", spec.resume];
-  const argv = [
-    "claude",
-    "-p",
-    "--disable-slash-commands",
-    "--model",
-    spec.model,
-    "--effort",
-    spec.effort,
-    ...resume,
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--max-turns",
-    "200",
-    "--permission-mode",
-    "acceptEdits",
-    "--allowedTools",
-    ...CLAUDE_ALLOWED_TOOLS,
-    "--disallowedTools",
-    ...CLAUDE_DENIED_TOOLS,
-  ];
+  const argv = repositoryWorkerArgs("claude", spec);
   return [
     WSL_NODE_ENV,
     `export CLAUDE_CONFIG_DIR=$HOME/.claude-profiles/${spec.profile};`,
@@ -106,17 +87,7 @@ export function claudeLaunchPayload(spec: LaunchSpec): string {
 /** `-s`, `-m`, `-c` and `-o` come before `resume` so they are parsed as `exec` options. */
 export function codexLaunchPayload(spec: LaunchSpec): string {
   assertSpec(spec);
-  const argv = [
-    "codex",
-    "exec",
-    "--json",
-    "-s",
-    "workspace-write",
-    "-m",
-    spec.model,
-    "-c",
-    `model_reasoning_effort=${spec.effort}`,
-  ];
+  const argv = repositoryWorkerArgs("codex", spec);
   const resume = spec.resume === null ? [] : ["resume", spec.resume];
   return [
     WSL_NODE_ENV,
@@ -128,4 +99,25 @@ export function codexLaunchPayload(spec: LaunchSpec): string {
     [...resume, "-"].join(" "),
     redirects(spec, `codex-${spec.profile}`),
   ].join(" ");
+}
+
+export function dockerLaunchPayload(
+  spec: LaunchSpec,
+  kind: "claude" | "codex",
+  entry = ".omi/tool/node_modules/omi-squad/dist/infrastructure/processes/docker-worker.js",
+): string {
+  assertSpec(spec);
+  return [
+    "node",
+    entry,
+    spec.task,
+    spec.profile,
+    kind,
+    spec.model,
+    spec.effort,
+    spec.resume ?? "-",
+    spec.packet,
+  ]
+    .map(shellQuote)
+    .join(" ");
 }

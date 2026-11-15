@@ -223,16 +223,20 @@ function supervise(
     }
   });
 
+  child.once("exit", () => {
+    // Descendants may hold the pipes open, so stopping the group cannot wait for close.
+    state.exited = true;
+    for (const timer of timers) clearTimeout(timer);
+    if (isGroupAlive(pid)) {
+      state.leftoverProcessesKilled = true;
+      killGroup(pid, "SIGKILL");
+    }
+  });
+
   const exit = new Promise<ProcessExit>((resolveExit) => {
     child.once("close", (exitCode, signal) => {
-      state.exited = true;
-      for (const timer of timers) clearTimeout(timer);
       if (stdoutBuffer !== "" && !state.stdoutOverflow && guardOutput(stdoutBuffer))
         options.onStdoutLine(stdoutBuffer);
-      if (isGroupAlive(pid)) {
-        state.leftoverProcessesKilled = true;
-        killGroup(pid, "SIGKILL");
-      }
       resolveExit({
         exitCode: state.credentialViolation ? 1 : exitCode,
         signal,

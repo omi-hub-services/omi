@@ -5,6 +5,8 @@
 // subcommands: "refused:" and exit 1 for a gate, --dry-run changes nothing.
 import { countAcceptanceCriteria } from "./acceptance-criteria.ts";
 import "../register-ts-imports.ts";
+const { loadOmiSetting } = await import("../../src/infrastructure/config/load-omisetting.ts");
+const { settingsCredentialPolicy } = await import("../../src/application/contracts/omisetting.ts");
 const { stepQualitySchema } = await import("../../src/application/contracts/workflow.ts");
 const { resolveQualityPolicy } = await import("../../src/domain/workflows/workflow-policy.ts");
 import type { Complexity } from "./effort-policy.ts";
@@ -13,12 +15,13 @@ import {
   EFFORT_POLICY,
   REPO_SLUG,
   WORKER_PROFILES,
-  type WslTarget,
+  type CoordinatorTarget,
 } from "./coordinator-settings.ts";
 import { assertTaskBranch } from "./flow-plans.ts";
 import { wslGit } from "./git-probe.ts";
 import {
   formatCommand,
+  dockerExecCommand,
   runChecked,
   wslCommand,
   type Command,
@@ -28,6 +31,7 @@ import { checkReview } from "./review-verdict.ts";
 import { judgeCommit, STAGE_PATHS } from "./worker-commit.ts";
 import {
   claudeLaunchPayload,
+  dockerLaunchPayload,
   codexLaunchPayload,
   NATIVE_RESUME_HEADER,
   SECURITY_REVIEW_MARKER,
@@ -67,8 +71,9 @@ const { assertCredentialFree } =
 
 export interface WorkerCtx {
   readonly toolRoot?: string;
+  readonly projectDir?: string;
   readonly run: Runner;
-  readonly target: WslTarget;
+  readonly target: CoordinatorTarget;
 }
 
 const refuse = (label: string, reason: string): number => {
@@ -110,7 +115,18 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
     return refuse(label, `--kind must be claude or codex, got "${input.kind}"`);
   }
   const kind = input.kind;
-  if (!WORKER_PROFILES.some((p) => p.tool === kind && p.profile === input.profile)) {
+  const localSettings =
+    ctx.target.kind === "docker"
+      ? await loadOmiSetting(ctx.projectDir ?? process.cwd())
+      : undefined;
+  const configuredProfile = localSettings?.profiles.find(
+    (profile) => profile.tool === kind && profile.id === input.profile,
+  );
+  if (
+    ctx.target.kind === "docker"
+      ? configuredProfile === undefined
+      : !WORKER_PROFILES.some((p) => p.tool === kind && p.profile === input.profile)
+  ) {
     const known = WORKER_PROFILES.filter((p) => p.tool === kind).map((p) => p.profile);
     return refuse(
       label,
@@ -175,11 +191,34 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
     resume: input.resume,
     packet: packetId,
   };
-  const launch = wslCommand(
-    kind === "claude" ? claudeLaunchPayload(spec) : codexLaunchPayload(spec),
+  let launch = wslCommand(
+    ctx.target.kind === "docker"
+      ? dockerLaunchPayload(spec, kind, ctx.target.workerEntry)
+      : kind === "claude"
+        ? claudeLaunchPayload(spec)
+        : codexLaunchPayload(spec),
     ctx.target,
     WORKER_TIMEOUT_MS,
   );
+  if (ctx.target.kind === "docker" && localSettings !== undefined) {
+    const env = {
+      GH_TOKEN: localSettings.github.token,
+      ...(configuredProfile?.auth.type === "token"
+        ? { CLAUDE_CODE_OAUTH_TOKEN: configuredProfile.auth.token }
+        : {}),
+    };
+    const command = dockerExecCommand(
+      ctx.target,
+      dockerLaunchPayload(spec, kind, ctx.target.workerEntry),
+      Object.keys(env),
+    );
+    launch = { ...command, env, keepStdinOpen: true, timeoutMs: WORKER_TIMEOUT_MS };
+    try {
+      assertCredentialFree(input.prompt, settingsCredentialPolicy(localSettings));
+    } catch {
+      return refuse(label, "packet contains configured credential material");
+    }
+  }
   const file = runsPath(task, promptFile(input.resume, packetId));
   const write: Command = {
     ...wslCommand(

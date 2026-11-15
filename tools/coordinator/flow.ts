@@ -22,9 +22,9 @@ import {
   REPO,
   REPO_SLUG,
   RUNS_RETENTION,
-  WORKER_PROFILES,
-  wslTarget,
-  type WslTarget,
+  coordinatorProfiles,
+  coordinatorTarget,
+  type CoordinatorTarget,
 } from "./coordinator-settings.ts";
 import {
   assertSha,
@@ -163,7 +163,7 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
 export interface Context {
   readonly toolRoot?: string;
   readonly run: Runner;
-  readonly target: WslTarget;
+  readonly target: CoordinatorTarget;
   readonly hostCwd: string;
   readonly isWindows: boolean;
 }
@@ -446,8 +446,22 @@ export async function cleanup(ctx: Context, branch: string, dryRun: boolean): Pr
   const label = `cleanup ${branch}`;
   const options = { fetch: !dryRun };
   assertTaskBranch(branch);
-  const wsl = await probeCleanupWsl(ctx.run, ctx.target, branch, options);
+  let wsl = await probeCleanupWsl(ctx.run, ctx.target, branch, options);
   const cleanupCtx = { ...ctx, target: wsl.target };
+  const task = /^task\/omi-(\d+)-/.exec(branch)?.[1];
+  if (ctx.target.kind === "docker" && task !== undefined && wsl.state !== null) {
+    const gate = planCleanup(branch, "wsl", wsl.state);
+    if (gate.kind === "refuse") return execute(cleanupCtx, label, gate, dryRun);
+    const command = wslCommand(
+      `node .omi/tool/node_modules/omi-squad/dist/infrastructure/processes/docker-task-cleanup.js ${task}`,
+      cleanupCtx.target,
+    );
+    if (dryRun) console.log(formatCommand(command));
+    else {
+      await runChecked(ctx.run, command);
+      wsl = await probeCleanupWsl(ctx.run, ctx.target, branch, { fetch: false });
+    }
+  }
   const wslOk = await execute(
     cleanupCtx,
     `${label} (wsl)`,
@@ -459,7 +473,6 @@ export async function cleanup(ctx: Context, branch: string, dryRun: boolean): Pr
   const hostPlan = planCleanup(branch, "host", hostState);
   const hostOk = await execute(ctx, `${label} (host)`, hostPlan, dryRun);
   if (!hostOk) return false;
-  const task = /^task\/omi-(\d+)-/.exec(branch)?.[1];
   return task === undefined || (await retainRuns(cleanupCtx, label, new Set([task]), dryRun));
 }
 
@@ -476,7 +489,7 @@ export async function retainRuns(
   const listing = parseRunsListing(
     await runChecked(ctx.run, wslCommand(RUNS_LISTING, ctx.target, 30_000)),
   );
-  const decisions = planRetention(listing, tasks, RUNS_RETENTION);
+  const decisions = planRetention(listing, tasks, RUNS_RETENTION, ctx.target.kind === "docker");
   const kept = decisions.filter((d) => d.action === "keep").length;
   const script = retentionScript(decisions);
   if (script === null) {
@@ -641,7 +654,13 @@ export async function pickProfileCommand(
     throw new Error(`--kind must be one of ${WORKER_KINDS.join(", ")}`);
   }
   const label = `pick-profile ${String(issue)}`;
-  const quota = await readQuota(ctx.run, ctx.target, WORKER_PROFILES, QUOTA_SETTINGS, probe);
+  const quota = await readQuota(
+    ctx.run,
+    ctx.target,
+    await coordinatorProfiles(ctx.hostCwd),
+    QUOTA_SETTINGS,
+    probe,
+  );
   if (!quota.available) {
     if (json)
       console.log(
@@ -968,7 +987,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
   const dry = values["dry-run"];
   const ctx: Context = context ?? {
     run: createProcessRunner(),
-    target: wslTarget(),
+    target: await coordinatorTarget(),
     hostCwd: process.cwd(),
     isWindows: process.platform === "win32",
   };

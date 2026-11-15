@@ -138,23 +138,40 @@
       "description": "Worker accounts; choose unique IDs and authenticate each with its tool."
     },
     "docker": {
-      "description": "Reserved Docker configuration; does not start or configure Docker in this release.",
+      "description": "Enables the project Docker runtime; omit to retain the existing WSL binding.",
       "type": "object",
       "properties": {
         "container": {
-          "description": "Optional future Docker container name; defaults to omi-<repo> when the Docker runtime lands.",
+          "description": "Docker container name; defaults to omi-<repo>.",
           "type": "string",
-          "minLength": 1
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
         },
         "image": {
-          "description": "Optional future locally built image tag; defaults to omi-worker:<framework-version>.",
+          "description": "Locally built image tag; defaults to omi-worker:<framework-version>.",
           "type": "string",
-          "minLength": 1
+          "pattern": "^omi-worker:[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
         },
         "memory": {
-          "description": "Optional future Docker memory limit, e.g. 8g; defaults to 8g. Docker runtime is a separate feature.",
+          "description": "Docker memory limit, e.g. 8g; defaults to 8g.",
           "type": "string",
           "pattern": "^\\d+[bkmg]$"
+        },
+        "watchPort": {
+          "description": "Watch port published on host loopback; default 4381. Use distinct ports for simultaneous projects.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "memoryWarningPercent": {
+          "description": "Doctor memory warning threshold, percent; default 80.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 100
+        },
+        "workVolumeWarningGb": {
+          "description": "Doctor work volume warning threshold in GB; default 20.",
+          "type": "number",
+          "exclusiveMinimum": 0
         }
       },
       "additionalProperties": false

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { GitWorkspaceError } from "../../application/ports/git-workspace.js";
+import { dockerServiceEnvironment } from "../config/docker-runtime-environment.js";
 
 /** Local Git only. Ambient repository/index overrides must never redirect a command. */
 interface GitCommandOptions {
@@ -14,7 +15,7 @@ export function gitCommand(
   options: GitCommandOptions = {},
 ): { readonly stdout: string; readonly code: number } {
   const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+    Object.entries(dockerServiceEnvironment()).filter(([key]) => !key.startsWith("GIT_")),
   );
   const result = spawnSync(
     "git",

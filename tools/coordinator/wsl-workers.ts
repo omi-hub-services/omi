@@ -1,7 +1,7 @@
 // WSL worker probe: one bash payload lists processes and the newest stream-json log in
 // ~/omi-runs; parsing is pure. Only event metadata (type, subtype, ids, counters) is read from
 // the latest log. Per-process summaries retain only a bounded last action, never full argv/logs.
-import { RUNS_DIR_FROM_HOME, type WslTarget } from "./coordinator-settings.ts";
+import { RUNS_DIR_FROM_HOME, type CoordinatorTarget } from "./coordinator-settings.ts";
 import { runChecked, WSL_NODE_ENV, wslCommand, type Runner } from "./process-runner.ts";
 import { join } from "node:path";
 import { z } from "zod";
@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 const git = (args, cwd = process.cwd()) => execFileSync('git', ['-c', 'core.fsmonitor=false', ...args], { cwd, encoding: 'utf8' });
-const root = join(homedir(), 'github', 'omi-wt') + '/';
+const root = process.cwd().startsWith('/work/') ? '/work/' : join(homedir(), 'github', 'omi-wt') + '/';
 const worktrees = git(['worktree', 'list', '--porcelain', '-z']).split('\u0000\u0000').flatMap(block => {
   const lines = block.split('\u0000');
   const path = lines.find(s => s.startsWith('worktree '))?.slice(9);
@@ -49,7 +49,7 @@ async function localRead<T extends object>(
 }
 
 /** Read-only local snapshot; each failed source degrades independently. No fetch or pin refresh. */
-export async function readLocalState(run: Runner, target: WslTarget, hostCwd: string) {
+export async function readLocalState(run: Runner, target: CoordinatorTarget, hostCwd: string) {
   const [wsl, host, pin] = await Promise.all([
     localRead(async () =>
       localWslSchema.parse(
@@ -474,7 +474,7 @@ export type Workers =
   | { readonly available: false; readonly reason: string };
 
 /** Never throws: a missing wsl.exe, a stopped distro or a probe error becomes "unavailable". */
-export async function readWorkers(run: Runner, target: WslTarget): Promise<Workers> {
+export async function readWorkers(run: Runner, target: CoordinatorTarget): Promise<Workers> {
   try {
     const stdout = await runChecked(run, wslCommand(WORKER_PROBE, target, 30_000));
     const report = parseWorkerProbe(stdout);

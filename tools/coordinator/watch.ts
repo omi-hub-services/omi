@@ -3,11 +3,11 @@ import { emitKeypressEvents } from "node:readline";
 import { parseArgs } from "node:util";
 import {
   QUOTA_SETTINGS,
-  WORKER_PROFILES,
-  wslTarget,
+  coordinatorProfiles,
+  coordinatorTarget,
   type QuotaSettings,
   type WorkerProfile,
-  type WslTarget,
+  type CoordinatorTarget,
 } from "./coordinator-settings.ts";
 import { createProcessRunner, type Runner } from "./process-runner.ts";
 import { modelLeftText, tokenExpiredText, windowLeft, type QuotaReport } from "./quota.ts";
@@ -172,7 +172,7 @@ export interface WatchTerminal {
 
 export interface WatchOptions {
   readonly run: Runner;
-  readonly target: WslTarget;
+  readonly target: CoordinatorTarget;
   readonly terminal: WatchTerminal;
   readonly intervalMs: number;
   readonly profiles: readonly WorkerProfile[];
@@ -281,8 +281,8 @@ async function main(): Promise<void> {
   try {
     await runWatch({
       run: createProcessRunner(),
-      target: wslTarget(),
-      profiles: WORKER_PROFILES,
+      target: await coordinatorTarget(),
+      profiles: await coordinatorProfiles(),
       settings: QUOTA_SETTINGS,
       intervalMs,
       signal: signal.signal,

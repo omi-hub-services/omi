@@ -85,3 +85,12 @@ it("accepts existing registry profile IDs without narrowing their spelling", () 
     }).profiles[0]?.id,
   ).toBe("Codex_Main.1");
 });
+
+it("accepts a described Docker watch port", () => {
+  expect(parseOmiSetting({ ...settings, docker: { watchPort: 5381 } }).docker?.watchPort).toBe(
+    5381,
+  );
+});
+it.each([0, -1, 65536, 1.5, "5381"])("rejects invalid Docker watch port %s", (watchPort) => {
+  expect(() => parseOmiSetting({ ...settings, docker: { watchPort } })).toThrow("docker.watchPort");
+});

@@ -1,8 +1,15 @@
 import { createServer, type ServerResponse } from "node:http";
 import type { WatchSnapshot } from "../../application/contracts/watch-snapshot.js";
+import { loadOmiSetting } from "../config/load-omisetting.js";
 import { PAGE_CSP, PAGE_HTML } from "./watch-page.js";
 
 export const HEALTH_BODY = "omi-watch";
+export function watchBindAddress(env: NodeJS.ProcessEnv = process.env): "127.0.0.1" | "0.0.0.0" {
+  return env.OMI_DOCKER_RUNTIME === "1" ? "0.0.0.0" : "127.0.0.1";
+}
+export async function configuredWatchPort(projectDir: string, port?: number): Promise<number> {
+  return port ?? (await loadOmiSetting(projectDir))?.docker?.watchPort ?? 4381;
+}
 export interface WatchServer {
   listen(): Promise<{ port: number }>;
   close(): Promise<void>;
@@ -137,7 +144,7 @@ export function createWatchServer(options: {
       started = true;
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
-        server.listen(options.port ?? 4381, "127.0.0.1", () => {
+        server.listen(options.port ?? 4381, watchBindAddress(), () => {
           server.off("error", reject);
           resolve();
         });

@@ -1,13 +1,13 @@
 // `flow.ts check` with SHA-keyed reuse (OMI-168, ADR-0042): a check that already passed on the
 // exact head is not run again; a failed or missing result runs and replaces the stored one.
 import { CHECK_ARGV, CHECK_ID, readStoredCheck, storeCheck } from "./check-reuse.ts";
-import type { WslTarget } from "./coordinator-settings.ts";
+import type { CoordinatorTarget } from "./coordinator-settings.ts";
 import type { Plan } from "./flow-plans.ts";
 import type { Runner } from "./process-runner.ts";
 
 export interface CheckDeps {
   readonly run: Runner;
-  readonly target: WslTarget;
+  readonly target: CoordinatorTarget;
   /** Executes a plan, appending the command output to `out`; true when it succeeded. */
   readonly exec: (plan: Plan, out: string[]) => Promise<boolean>;
   readonly dryRun: boolean;

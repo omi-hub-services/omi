@@ -2,6 +2,8 @@
 // keep/archive/delete decisions come out; flow.ts does the I/O. What wsl-workers.ts (newest
 // `*.jsonl`) and quota.ts (newest `omi-*.jsonl` per profile) read at the root is never moved.
 import { RUNS_DIR_FROM_HOME, type RunsRetention } from "./coordinator-settings.ts";
+import "../register-ts-imports.ts";
+const { planLogRetention } = await import("../../src/domain/runs/log-retention-policy.ts");
 
 export interface RunFile {
   readonly name: string;
@@ -45,7 +47,25 @@ export function planRetention(
   listing: RunsListing,
   tasks: ReadonlySet<string>,
   settings: RunsRetention,
+  completedDockerTask = false,
 ): RetentionDecision[] {
+  if (completedDockerTask)
+    return planLogRetention(
+      {
+        now: listing.now * 1000,
+        root: listing.root.map((file) => ({
+          ...file,
+          taskId: logTask(file.name) ?? "",
+          profile: JSONL.exec(file.name)?.[1] ?? null,
+          mtimeMs: file.mtime * 1000,
+          running: file.live,
+        })),
+        archive: listing.archive.map((file) => ({ ...file, mtimeMs: file.mtime * 1000 })),
+      },
+      tasks,
+      settings,
+      true,
+    );
   const newest = new Map<string, RunFile>();
   for (const file of listing.root) {
     const m = JSONL.exec(file.name);

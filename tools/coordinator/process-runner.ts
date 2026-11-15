@@ -2,11 +2,18 @@
 // (`spawn` with `shell: false`); the single exception is the WSL step, which hands one
 // `bash -lc` payload to wsl.exe (or to bash directly when already inside Linux). Tests inject a
 // fake Runner instead.
+import "../register-ts-imports.ts";
+const { loadOmiSetting } = await import("../../src/infrastructure/config/load-omisetting.ts");
+const { assertKnownCredentialFree } =
+  await import("../../src/application/contracts/credential-input.ts");
+const { dockerExecCommand } = await import("../../src/infrastructure/processes/docker-runtime.ts");
 import { spawn } from "node:child_process";
-import type { WslTarget } from "./coordinator-settings.ts";
+import type { CoordinatorTarget } from "./coordinator-settings.ts";
 
 export interface Command {
   readonly file: string;
+  readonly env?: Readonly<Record<string, string>>;
+  readonly keepStdinOpen?: boolean;
   readonly args: readonly string[];
   readonly cwd?: string;
   /** Written to stdin (e.g. GraphQL request JSON, a comment body). */
@@ -26,10 +33,26 @@ export type Runner = (command: Command) => Promise<RunResult>;
 
 /** A process that could not start (e.g. wsl.exe missing) resolves with code 127, never throws. */
 export function createProcessRunner(): Runner {
-  return (command) =>
-    new Promise((resolve) => {
+  return async (original) => {
+    let command = original;
+    if (
+      command.file === "docker" &&
+      command.args[0] === "exec" &&
+      command.env?.GH_TOKEN === undefined
+    ) {
+      const settings = await loadOmiSetting(process.cwd());
+      if (settings?.docker !== undefined) {
+        command = {
+          ...command,
+          args: ["exec", "-e", "GH_TOKEN", ...command.args.slice(1)],
+          env: { ...command.env, GH_TOKEN: settings.github.token },
+        };
+      }
+    }
+    return new Promise((resolve) => {
       const child = spawn(command.file, [...command.args], {
         cwd: command.cwd,
+        env: { ...process.env, ...command.env },
         shell: false,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
@@ -38,11 +61,26 @@ export function createProcessRunner(): Runner {
       });
       let stdout = "";
       let stderr = "";
+      const heartbeat = command.keepStdinOpen
+        ? setInterval(() => {
+            if (child.stdin.writable && child.stdin.writableLength === 0)
+              child.stdin.write("heartbeat\n");
+          }, 5000)
+        : undefined;
       let settled = false;
       const finish = (result: RunResult) => {
         if (settled) return;
         settled = true;
-        resolve(result);
+        clearInterval(heartbeat);
+        const sensitiveValues = Object.entries(command.env ?? {})
+          .filter(([name]) => name === "GH_TOKEN" || name === "CLAUDE_CODE_OAUTH_TOKEN")
+          .map(([, value]) => value);
+        try {
+          assertKnownCredentialFree([result.stdout, result.stderr], { sensitiveValues });
+          resolve(result);
+        } catch {
+          resolve({ code: 1, stdout: "", stderr: "Process output refused: credential material" });
+        }
       };
       child.stdout.setEncoding("utf8").on("data", (d: string) => (stdout += d));
       child.stderr.setEncoding("utf8").on("data", (d: string) => (stderr += d));
@@ -53,8 +91,10 @@ export function createProcessRunner(): Runner {
         finish({ code: code ?? (signal ? 128 : 1), stdout, stderr });
       });
       child.stdin.on("error", () => undefined);
-      child.stdin.end(command.input ?? "");
+      if (command.keepStdinOpen) child.stdin.write(command.input ?? "");
+      else child.stdin.end(command.input ?? "");
     });
+  };
 }
 
 const SAFE_WORD = /^[A-Za-z0-9_/.:=@%+,-]+$/;
@@ -78,7 +118,17 @@ const WINDOWS_UNSAFE = /["\\\r\n]/;
 export const WSL_NODE_ENV = "[ -s $HOME/.nvm/nvm.sh ] && . $HOME/.nvm/nvm.sh >/dev/null 2>&1;";
 
 /** Runs a bash payload in the WSL checkout. */
-export function wslCommand(payload: string, target: WslTarget, timeoutMs?: number): Command {
+export function wslCommand(
+  payload: string,
+  target: CoordinatorTarget,
+  timeoutMs?: number,
+): Command {
+  if (target.kind === "docker") {
+    return {
+      ...dockerExecCommand(target, payload.replaceAll(WSL_NODE_ENV, "")),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    };
+  }
   if (WINDOWS_UNSAFE.test(payload)) {
     throw new Error(`WSL payload must not contain double quotes, backslashes or newlines`);
   }
@@ -111,3 +161,5 @@ export async function runChecked(runner: Runner, command: Command): Promise<stri
   }
   return result.stdout;
 }
+
+export { dockerExecCommand };

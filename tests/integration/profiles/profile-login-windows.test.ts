@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
@@ -11,6 +11,8 @@ it("runs the Windows bridge with typed WSL argv and logs into only the selected 
   try {
     await mkdir(join(dir, ".omi/bin"), { recursive: true });
     await mkdir(join(dir, "bin"));
+    await mkdir(join(dir, ".omi/tool/node_modules"), { recursive: true });
+    await symlink(root, join(dir, ".omi/tool/node_modules/omi-squad"));
     const settings = JSON.stringify({
       version: 1,
       github: { token: "FAKE_GITHUB_VALUE", gitUser: { name: "bot", email: "bot@example.com" } },

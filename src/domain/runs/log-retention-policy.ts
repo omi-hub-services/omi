@@ -52,6 +52,7 @@ export function planLogRetention(
   listing: LogListing,
   doneTasks: ReadonlySet<string>,
   settings: LogRetentionSettings,
+  completedDockerTask = false,
 ): LogDecision[] {
   const newest = new Map<string, WorkerLog>();
   for (const file of listing.root) {
@@ -69,6 +70,11 @@ export function planLogRetention(
       decisions.push({ name: file.name, action, reason });
     };
     if (file.running) decide("keep", "a running worker writes it");
+    else if (completedDockerTask)
+      decide(
+        /-(?:prompt|resume|tmp|process)-/.test(file.name) ? "delete" : "archive",
+        "completed Docker task",
+      );
     else if (file.mtimeMs > recent)
       decide("keep", `written in the last ${String(settings.recentMinutes)} min`);
     else if (keepNewest.has(file.name)) decide("keep", "newest log of its profile");

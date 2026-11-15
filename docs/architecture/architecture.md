@@ -60,6 +60,7 @@ Repository này chứa mã nguồn **omi-squad**, khác với project sẽ cài 
 | `templates/project/` | Bộ cấu hình/workflow/role/skill/rule được cài vào project | Runtime state, secret, mã nghiệp vụ framework |
 | `templates/bridges/` | Mẫu tích hợp Claude Code/Codex, hướng dẫn Coordinator | Bản sao logic điều phối |
 | `templates/prompts/` | Authoritative worker prompt text; runtime embeds generated assets checked for drift; never installed as project-managed files | Project-editable configuration, runtime state |
+| `templates/docker/` | Pinned worker image and first-start clone script (ADR-0045) | Credentials, project state, per-task images |
 | `migrations/` | Migration SQLite đánh số thứ tự | Migration database của project đích |
 | `schemas/` | JSON Schema sinh từ contract, phục vụ CLI/agent | Schema viết tay trùng nguồn contract |
 | `tests/` | Unit, integration, contract, E2E, fixtures | Mã production |

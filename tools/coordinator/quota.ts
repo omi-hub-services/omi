@@ -11,7 +11,7 @@ import {
   QUOTA_MIN_INTERVAL_MS,
   type QuotaSettings,
   type WorkerProfile,
-  type WslTarget,
+  type CoordinatorTarget,
 } from "./coordinator-settings.ts";
 import { asObject, type JsonObject } from "./json-shape.ts";
 import {
@@ -32,7 +32,7 @@ const PROFILE_NAME = /^[A-Za-z0-9_.-]+$/;
 export type QuotaMode = boolean | "expired";
 
 export function quotaCommand(
-  target: WslTarget,
+  target: CoordinatorTarget,
   profiles: readonly WorkerProfile[],
   mode: QuotaMode,
 ): Command {
@@ -317,7 +317,7 @@ export type QuotaReport =
 /** Never throws: a missing wsl.exe, node or codex degrades to "unavailable" or a profile note. */
 export async function readQuota(
   run: Runner,
-  target: WslTarget,
+  target: CoordinatorTarget,
   profiles: readonly WorkerProfile[],
   settings: QuotaSettings,
   mode: QuotaMode,
@@ -745,6 +745,7 @@ import { join } from "node:path";
 const argv = process.argv.slice(process.argv[1] === "-" ? 2 : 1);
 const [runs, probe, ...targets] = argv;
 const home = homedir();
+const profileHome = (tool, profile) => home === "/work" ? join(tool === "codex" ? "/profiles" : "/work/.profiles", profile) : join(home, tool === "codex" ? ".codex-profiles" : ".claude-profiles", profile);
 const emit = (o) => { process.stdout.write(JSON.stringify(o) + "\n"); };
 const fail = (tool, profile, message) => emit({ kind: "error", tool, profile, message });
 const MAX_LOGS = 30;
@@ -835,7 +836,7 @@ function logs() {
 
 function codex(profile) {
   return new Promise((resolve) => {
-    const env = { ...process.env, CODEX_HOME: join(home, ".codex-profiles", profile) };
+    const env = { ...process.env, CODEX_HOME: profileHome("codex", profile) };
     const child = spawn("codex", ["app-server"], { env, stdio: ["pipe", "pipe", "ignore"] });
     let buf = "";
     let done = false;
@@ -877,7 +878,7 @@ function codex(profile) {
 // quiet: the caller re-reads usage next, so the probe only refreshes the token and the cache.
 function claudeProbe(profile, quiet) {
   return new Promise((resolve) => {
-    const env = { ...process.env, CLAUDE_CONFIG_DIR: join(home, ".claude-profiles", profile) };
+    const env = { ...process.env, CLAUDE_CONFIG_DIR: profileHome("claude", profile) };
     delete env.ANTHROPIC_API_KEY;
     delete env.ANTHROPIC_AUTH_TOKEN;
     const args = ["-p", "--model", "haiku", "--max-turns", "1", "--tools", "", "--output-format", "stream-json", "--verbose"];
@@ -924,7 +925,7 @@ async function persistFailure(profile) {
 
 function readOauth(profile) {
   try {
-    const raw = JSON.parse(readFileSync(join(home, ".claude-profiles", profile, ".credentials.json"), "utf8"));
+    const raw = JSON.parse(readFileSync(join(profileHome("claude", profile), ".credentials.json"), "utf8"));
     return raw && raw.claudeAiOauth;
   } catch { return undefined; }
 }
@@ -986,7 +987,7 @@ async function claudeUsage(profile, autoProbe) {
 async function fetchClaudeUsage(profile) {
   let oauth;
   try {
-    const raw = JSON.parse(readFileSync(join(home, ".claude-profiles", profile, ".credentials.json"), "utf8"));
+    const raw = JSON.parse(readFileSync(join(profileHome("claude", profile), ".credentials.json"), "utf8"));
     oauth = raw && raw.claudeAiOauth;
   } catch { return usageFail(profile, "no readable credentials"); }
   if (!oauth || typeof oauth.accessToken !== "string" || oauth.accessToken === "") return usageFail(profile, "no access token");
