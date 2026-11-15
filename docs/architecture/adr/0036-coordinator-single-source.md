@@ -134,8 +134,9 @@ dirty or mismatched existing installations are refused. Failed preparation leave
 checkout and tracked pin unchanged. The record is atomically updated only with activation;
 activation failure restores the prior checkout. Rollback uses the previous SHA/source and the
 same gates, and swaps the two record entries. Run refresh/rollback between Coordinator commands,
-not while another command is importing code from the pin. Retained previous checkouts are not
-automatically deleted.
+not while another command is importing code from the pin. After activation and the atomic record
+update succeed, the backup made by that run is removed. Removal failure only warns; it does not
+fail a completed refresh or rollback. Older retained backups are not swept (OMI-148).
 
 Skill installation expands `{{pin_bootstrap}}` from the single packaged
 `templates/prompts/coordinator-pin-bootstrap.md` asset. It resolves the verified external path
