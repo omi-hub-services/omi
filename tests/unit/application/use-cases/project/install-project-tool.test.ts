@@ -20,6 +20,57 @@ const notes = `# Changelog
 ### Breaking
 - Old change
 `;
+
+it("refuses changes to an installed Docker binding", async () => {
+  for (const changed of [
+    { projectDir: "/relocated", docker: { container: "omi-project" } },
+    { projectDir: "/project", docker: { container: "omi-other" } },
+  ]) {
+    for (const apply of [false, true]) {
+      const h = setup();
+      const snapshot = await h.store.inspect();
+      const installed = {
+        ...snapshot.installed,
+        distribution: undefined,
+        docker: { container: "omi-project" },
+      };
+      h.store.inspect.mockResolvedValue({
+        ...snapshot,
+        installed,
+        candidate: { ...installed, ...changed },
+      });
+      await expect(
+        installProjectTool(h.store, {
+          projectDir: changed.projectDir,
+          packageDir: "/offline",
+          apply,
+        }),
+      ).rejects.toThrow("PROJECT_BINDING_CHANGED");
+      expect(h.store.apply).not.toHaveBeenCalled();
+    }
+  }
+});
+
+it("updates an unchanged Docker binding", async () => {
+  const h = setup();
+  const snapshot = await h.store.inspect();
+  const installed = {
+    ...snapshot.installed,
+    distribution: undefined,
+    docker: { container: "omi-project" },
+  };
+  h.store.inspect.mockResolvedValue({ ...snapshot, installed, candidate: installed });
+  expect(
+    (
+      await installProjectTool(h.store, {
+        projectDir: "/project",
+        packageDir: "/offline",
+        apply: true,
+      })
+    ).status,
+  ).toBe("installed");
+});
+
 function setup(changelog = notes, installedVersion = "0.1.0") {
   const lock = (version: string): FrameworkLock => ({
     ...request,

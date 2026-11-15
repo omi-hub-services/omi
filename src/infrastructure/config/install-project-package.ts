@@ -15,7 +15,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import type {
@@ -37,6 +37,8 @@ import {
 } from "./project-bridge.js";
 import { archiveWorkflowTemplate } from "./workflow-template-archive.js";
 import { runCommand } from "../processes/run-command.js";
+import { dockerProject } from "../processes/docker-runtime.js";
+import { loadOmiSetting } from "./load-omisetting.js";
 import { openStateDatabase } from "../persistence/sqlite/sqlite-connection.js";
 import { applyMigrations, loadMigrations } from "../persistence/sqlite/migration-runner.js";
 import { backupState } from "../persistence/sqlite/backup-state.js";
@@ -104,13 +106,17 @@ export function createProjectInstallation(options: {
   }
   async function inspect(input: InstallationInput) {
     const root = await realpath(input.projectDir);
+    const settings = await loadOmiSetting(root);
+    const docker = settings?.docker === undefined ? undefined : dockerProject(settings, root);
+    if (docker === undefined && input.distribution === undefined)
+      throw new Error("WSL_INSTALLATION_REQUIRES_DISTRIBUTION: pass --distribution");
     const sourceRoot = await realpath(options.sourceRoot);
     if (
       root !== resolve(input.projectDir) ||
       root === sourceRoot ||
-      root.startsWith(`${sourceRoot}/`) ||
-      /^\/mnt\/[a-z](?:\/|$)/i.test(root) ||
-      root.startsWith(`${await realpath(input.packageDir)}/`)
+      root.startsWith(`${sourceRoot}${sep}`) ||
+      (docker === undefined && /^\/mnt\/[a-z](?:\/|$)/i.test(root)) ||
+      root.startsWith(`${await realpath(input.packageDir)}${sep}`)
     )
       throw new Error("INVALID_INSTALLATION_TARGET");
     await assertDirectory(root);
@@ -138,10 +144,12 @@ export function createProjectInstallation(options: {
       ...content,
       base: {
         ...content.base,
-        "bridge/skill/bridge.config.json": `${JSON.stringify({ distribution: input.distribution, repository: root, shim: join(squad, "bin", "omi") }, null, 2)}\n`,
+        "bridge/skill/bridge.config.json": `${JSON.stringify(docker === undefined ? { distribution: input.distribution, repository: root, shim: join(squad, "bin", "omi") } : { distribution: "docker", docker: { container: docker.container }, repository: docker.repoDir, shim: `${docker.repoDir}/.omi/bin/omi` }, null, 2)}\n`,
       },
       schemaVersion: 1,
-      distribution: input.distribution,
+      ...(docker === undefined
+        ? { distribution: input.distribution }
+        : { docker: { container: docker.container } }),
       projectDir: root,
     });
     const local: TemplateFiles = {};
@@ -396,7 +404,7 @@ export function createProjectInstallation(options: {
       await write(
         join(squad, "bin", "omi.cjs"),
         windowsShim
-          .replaceAll("__OMI_DISTRO__", input.distribution)
+          .replaceAll("__OMI_DISTRO__", plan.candidate.distribution ?? "")
           .replaceAll("__OMI_PROJECT_BASE64__", Buffer.from(input.projectDir).toString("base64")),
       );
       await write(

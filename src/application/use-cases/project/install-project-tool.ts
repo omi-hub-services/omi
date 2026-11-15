@@ -48,10 +48,13 @@ async function installPackage(
 ) {
   const input = installationInputSchema.parse(raw);
   const snapshot = await store.inspect(input);
+  // Only WSL-to-Docker replacement may change an existing project binding.
   if (
     snapshot.installed !== undefined &&
-    (snapshot.installed.projectDir !== input.projectDir ||
-      snapshot.installed.distribution !== input.distribution)
+    (snapshot.installed.docker !== undefined || snapshot.candidate.docker === undefined) &&
+    (snapshot.installed.projectDir !== snapshot.candidate.projectDir ||
+      snapshot.installed.distribution !== snapshot.candidate.distribution ||
+      snapshot.installed.docker?.container !== snapshot.candidate.docker?.container)
   )
     throw new Error("PROJECT_BINDING_CHANGED");
   let notes = { changelog: "", breaking: false };

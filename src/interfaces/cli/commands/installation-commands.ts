@@ -30,7 +30,7 @@ export function registerInstallationCommands(
   program
     .command("migrate-dir")
     .description("Move the legacy installation with git mv, then rewrite managed paths")
-    .requiredOption("--project <path>", "absolute Linux project path")
+    .requiredOption("--project <path>", "absolute host project path")
     .action(async (_options: unknown, command: Command) => {
       const options = command.optsWithGlobals<GlobalOptions & { project: string }>();
       const format = formatOf(options);
@@ -92,8 +92,8 @@ export function registerInstallationCommands(
     const installation = program
       .command(verb)
       .description("Preview a project-local package installation; --apply writes after backup")
-      .requiredOption("--project <path>", "absolute Linux project path")
-      .requiredOption("--distribution <name>", "bound WSL2 distro")
+      .requiredOption("--project <path>", "absolute host project path")
+      .option("--distribution <name>", "bound WSL2 distro (required without Docker settings)")
       .option("--apply", "apply the previewed installation");
     if (verb === "install")
       installation.requiredOption(
@@ -115,7 +115,7 @@ export function registerInstallationCommands(
           package?: string;
           version?: string;
           acceptBreaking?: boolean;
-          distribution: string;
+          distribution?: string;
           apply?: boolean;
         }
       >();

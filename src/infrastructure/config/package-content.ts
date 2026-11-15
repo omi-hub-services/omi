@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile, realpath } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { z } from "zod";
 import { templateFilesSchema } from "../../application/contracts/project-installation.js";
 import { assertCredentialFree } from "../../application/contracts/credential-input.js";
@@ -26,7 +26,7 @@ export async function readOptional(path: string): Promise<string | undefined> {
 /** No symlinks in package assets or target managed paths. */
 export async function assertPlainParents(root: string, path: string): Promise<void> {
   let current = root;
-  for (const part of relative(root, path).split("/")) {
+  for (const part of relative(root, path).split(sep)) {
     if (part === "..") throw new Error("INVALID_INSTALLATION_PATH");
     current = join(current, part);
     try {
@@ -51,7 +51,7 @@ export async function readPackageContent(directory: string) {
     if (info.isDirectory()) {
       for (const name of (await readdir(path)).sort()) await walk(join(path, name));
     } else if (info.isFile()) {
-      const name = relative(root, path);
+      const name = relative(root, path).split(sep).join("/");
       const content = await readFile(path);
       digest.update(JSON.stringify([name, content.length])).update(content);
       if (name.startsWith("templates/project/") && !name.endsWith("/.gitkeep")) {
