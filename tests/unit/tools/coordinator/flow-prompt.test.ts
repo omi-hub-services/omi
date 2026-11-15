@@ -197,6 +197,16 @@ it.each([
   expect(output.join("\n")).toContain(`Workflow ${workflow} · step ${step}`);
 });
 
+it("tells the bugfix fix worker to report regressionTest, and no other step", async () => {
+  expect(await main(["prompt", "185", "--step", "fix"], fake({ workflow: "bugfix" }).ctx)).toBe(0);
+  expect(output.join("\n")).toContain('"regressionTest": {"file"');
+  output.length = 0;
+  expect(await main(["prompt", "185", "--step", "review"], fake({ workflow: "bugfix" }).ctx)).toBe(
+    0,
+  );
+  expect(output.join("\n")).not.toContain("regressionTest");
+});
+
 it("reads pinned tool assets independently of the worker checkout", async () => {
   const f = fake({ skeletonMarker: "PACKAGED MARKER\n" });
   expect(

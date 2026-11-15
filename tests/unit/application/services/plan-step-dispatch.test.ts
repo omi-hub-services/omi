@@ -239,13 +239,30 @@ describe("required checks of a workflow step", () => {
         steps: [{ ...workflow.steps[0], id: "review", role: "reviewer" }],
         gates: [{ id: policy, after: "review", policy }],
       });
-      const r = setup([profile], () => Promise.resolve(task), [profile], { workflow: merged });
+      const r = setup([profile], () => Promise.resolve(task), [profile], {
+        workflow: merged,
+        config: projectConfigSchema.parse({
+          ...config,
+          checks: { "regression-test": { command: ["npm", "run", "test:unit", "--"] } },
+        }),
+      });
       expect(await r.planner.plan({ ...request, stepId: "review" })).toMatchObject({
         requiredChecks: [policy],
         checkEvidenceSteps: [],
       });
     },
   );
+
+  it("refuses a step with a regression-test gate when checks.regression-test is not configured", async () => {
+    const gated = workflowSchema.parse({
+      ...workflow,
+      gates: [{ id: "regression-test", after: workflow.steps[0]?.id, policy: "regression-test" }],
+    });
+    const r = setup([profile], () => Promise.resolve(task), [profile], { workflow: gated });
+    await expect(r.planner.plan(request)).rejects.toThrow(
+      "CHECK_UNCONFIGURED: checks.regression-test",
+    );
+  });
 
   const verifyWorkflow = workflowSchema.parse({
     ...workflow,

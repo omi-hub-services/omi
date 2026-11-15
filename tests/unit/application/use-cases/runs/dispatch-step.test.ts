@@ -32,6 +32,16 @@ describe("dispatchStep", () => {
     expect(prompt).toContain("one AC-n: met|not met — <evidence> line per criterion");
     expect(prompt).toContain("Each AC-n: line must stand alone at the start of a line");
   });
+  it("tells a step with a regression-test gate to report regressionTest, and no other step", async () => {
+    const gated = rig();
+    dispatched(
+      await dispatchStep(gated.deps, dispatchInput({ requiredChecks: ["regression-test"] })),
+    );
+    expect(gated.executor.started[0]?.prompt).toContain('"regressionTest": {"file"');
+    const plain = rig();
+    dispatched(await dispatchStep(plain.deps, dispatchInput()));
+    expect(plain.executor.started[0]?.prompt).not.toContain("regressionTest");
+  });
   it("tells the worker to report every manifest skill with its own evidence artifact, and lists them (OMI-135)", async () => {
     const r = rig();
     dispatched(await dispatchStep(r.deps, dispatchInput()));

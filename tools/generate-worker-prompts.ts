@@ -11,6 +11,7 @@ const assets = {
   report: "runtime-worker-report.md",
   qualityChecks: "runtime-quality-checks.md",
   developerChecks: "runtime-developer-checks.md",
+  regressionReport: "regression-test-report.md",
   skillInstructions: "runtime-skill-instructions.md",
 };
 const content = Object.fromEntries(

@@ -24,6 +24,18 @@ export async function validateWorkflows(
     );
   }
   for (const { workflow, file } of loaded.workflows) {
+    // The runtime runs the regression test itself; without a command the gate always fails closed.
+    if (
+      loaded.configuredChecks !== undefined &&
+      !loaded.configuredChecks.includes("regression-test") &&
+      workflow.gates.some((gate) => gate.policy === "regression-test")
+    ) {
+      errors.push({
+        file,
+        path: "gates",
+        message: `gate "regression-test" requires check "regression-test" but project.yaml has no checks.regression-test`,
+      });
+    }
     workflow.steps.forEach((step, index) => {
       // A required check without a command would fail every dispatch (CHECK_UNCONFIGURED).
       for (const id of step.required_checks) {

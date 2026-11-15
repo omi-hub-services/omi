@@ -222,6 +222,19 @@ it("names the workflow step that needs a project check the project does not conf
     project,
     "schema_version: 1\nchecks:\n  project-check:\n    command: [npm, test]\n",
   );
+  const missingRegression = await run();
+  expect(missingRegression.status).toBe(1);
+  expect((JSON.parse(missingRegression.stdout) as WorkflowValidationResult).errors).toEqual([
+    expect.objectContaining({
+      file: join(squad, "workflows/bugfix.yaml"),
+      path: "gates",
+      message: expect.stringContaining("checks.regression-test") as unknown,
+    }),
+  ]);
+  writeFileSync(
+    project,
+    "schema_version: 1\nchecks:\n  project-check:\n    command: [npm, test]\n  regression-test:\n    command: [npm, run, test:unit, --]\n",
+  );
   expect((await run()).status).toBe(0);
 });
 
