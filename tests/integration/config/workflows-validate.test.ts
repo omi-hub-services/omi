@@ -16,6 +16,40 @@ import { validateWorkflows } from "../../../src/application/use-cases/project/va
 import { runCli } from "../../../src/interfaces/cli/commands/create-program.ts";
 import { createCliEnvironment } from "../../../src/bootstrap/container.ts";
 import { loadWorkflowValidationCatalog } from "../../../src/infrastructure/config/load-runtime-config.ts";
+import { parse } from "yaml";
+import { workflowSchema } from "../../../src/application/contracts/workflow.ts";
+
+it.each(["feature", "refactor", "bugfix", "onboarding-empty-repo"])(
+  "%s uses one review worker with script checks and verification skills",
+  (id) => {
+    const workflow = workflowSchema.parse(
+      parse(readFileSync(`templates/project/workflows/${id}.yaml`, "utf8")),
+    );
+    expect(workflow.steps.some((step) => step.id === "verify")).toBe(false);
+    const review = workflow.steps.find((step) => step.id === "review");
+    expect(review?.skills).toEqual(
+      expect.arrayContaining(["independent-review", "verification-before-completion"]),
+    );
+    expect(review?.rules).toContain("evidence-and-tests");
+    expect(review?.required_checks).toContain("project-check");
+    expect(
+      workflow.gates
+        .filter((gate) =>
+          ["regression-test", "existing-tests-unchanged", "existing-tests-passing"].includes(
+            gate.id,
+          ),
+        )
+        .every((gate) => gate.after === "review"),
+    ).toBe(true);
+  },
+);
+
+it.each(["ui-ux", "onboarding-takeover", "ci-cd"])("%s retains specialist verification", (id) => {
+  const workflow = workflowSchema.parse(
+    parse(readFileSync(`templates/project/workflows/${id}.yaml`, "utf8")),
+  );
+  expect(workflow.steps.some((step) => /verify/.test(step.id))).toBe(true);
+});
 
 const dirs: string[] = [];
 afterEach(() => {

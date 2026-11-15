@@ -512,7 +512,7 @@ it("hands QA script-run logs before starting the worker", async () => {
   expect(ran).toBe(1);
   const prompt = r.executor.started[0]?.prompt ?? "";
   expect(prompt).toContain("script check: passed");
-  expect(prompt).toContain("QA judges the supplied script-run check evidence; do not rerun tests.");
+  expect(prompt).toContain("Judge the supplied script-run check evidence; do not rerun tests.");
   expect(prompt).toContain("verify + review");
 });
 
@@ -553,7 +553,7 @@ it("supplies the previous verdict and Git delta to a repeated quality worker", a
   expect(r.executor.started[0]?.prompt).toContain("diff: added missing error case");
 });
 
-it("refuses a combined packet when the actual changed files touch a gate", async () => {
+it("keeps a pinned combined packet dispatchable when changed files touch a gate", async () => {
   const r = rig();
   const workspaces = Object.assign(r.workspaces, {
     changedPaths: () => ({ ok: true as const, value: ["src/domain/approvals/approval-policy.ts"] }),
@@ -566,11 +566,9 @@ it("refuses a combined packet when the actual changed files touch a gate", async
       }),
     ),
   ).toMatchObject({
-    ok: false,
-    reason: "CONTEXT_REJECTED",
-    detail: "RISK_REQUIRES_SEPARATE_WORKERS",
+    ok: true,
   });
-  expect(r.executor.started).toHaveLength(0);
+  expect(r.executor.started).toHaveLength(1);
 });
 
 it("names diverged develop refs instead of flattening them into the risk refusal", async () => {
@@ -648,7 +646,7 @@ it("refuses a delta review when the previous verdict exists but the delta cannot
   expect(r.workspaces.released).toEqual([1]);
 });
 
-it("refuses a high-complexity combined packet even without a changed-path reader", async () => {
+it("keeps a pinned high-complexity combined packet dispatchable", async () => {
   const r = rig();
   expect(
     await dispatchStep(
@@ -659,11 +657,9 @@ it("refuses a high-complexity combined packet even without a changed-path reader
       }),
     ),
   ).toMatchObject({
-    ok: false,
-    reason: "CONTEXT_REJECTED",
-    detail: "RISK_REQUIRES_SEPARATE_WORKERS",
+    ok: true,
   });
-  expect(r.executor.started).toHaveLength(0);
+  expect(r.executor.started).toHaveLength(1);
 });
 
 async function verifiedQaForSeparateReview() {

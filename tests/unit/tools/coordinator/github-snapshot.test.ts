@@ -367,7 +367,7 @@ describe("parseSnapshotPage", () => {
       { author: COORDINATOR_LOGIN, body: "**WAITING-PO:** x" },
     ]);
     expect(p.pulls?.[0]?.checks).toEqual([
-      { name: "check", state: "pass", completedAt: null, startedAt: null },
+      { name: "check", state: "pass", conclusion: "SKIPPED", completedAt: null, startedAt: null },
       { name: "ci/x", state: "pending", startedAt: null },
     ]);
     expect(p.pulls?.[0]?.comments).toEqual([

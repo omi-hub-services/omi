@@ -151,6 +151,7 @@ it("persists a quality execution plan while retaining the original template hash
     ok: true,
     steps: [
       { stepId: "implement", status: "ready" },
+      { stepId: "verify", status: "pending" },
       { stepId: "review", status: "pending" },
     ],
   });

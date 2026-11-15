@@ -516,7 +516,15 @@ describe("reviewCommentCommand", () => {
   const HEAD = "9d0fba0123456789012345678901234567890abc";
   const body = "**VERDICT:** PASS · **REVIEWED_HEAD:** `9d0fba0`\n\nAC-1: met — a\nAC-2: met — b\n";
   const issueBody = "## Acceptance criteria\n- [ ] one\n- [ ] two\n\n## Dependencies\nNone.\n";
-  const input = { pr: 160, prState: "OPEN", prHead: HEAD, issueBody, body, dryRun: false };
+  const input = {
+    pr: 160,
+    prState: "OPEN",
+    prHead: HEAD,
+    checkStatus: "pass" as const,
+    issueBody,
+    body,
+    dryRun: false,
+  };
   const gh = (login = "minibox-claude-code") =>
     fake((c) =>
       c.args[0] === "api" && c.args[1] === "user" ? { stdout: `${login}\n` } : undefined,
@@ -586,11 +594,11 @@ it("dispatches first review at medium and delta review at low automatically", as
   }
 });
 
-it("refuses a combined packet if the current Issue complexity is high", async () => {
+it("dispatches an archived combined packet regardless of current complexity", async () => {
   const f = fake(() => ({ stdout: "exit=0\n" }));
   const prompt = `<!-- omi-quality ${JSON.stringify({ policy: "lean", step: "review", steps: ["verify", "review"], round: 1 })} -->\nfull packet`;
-  expect(await dispatchCommand(f.ctx, { ...dispatchInput, complexity: "high", prompt })).toBe(1);
-  expect(f.seen).toHaveLength(0);
+  expect(await dispatchCommand(f.ctx, { ...dispatchInput, complexity: "high", prompt })).toBe(0);
+  expect(f.seen.length).toBeGreaterThan(0);
 });
 it("refuses native resume for an independent review packet", async () => {
   const f = fake(() => ({ stdout: "exit=0\n" }));

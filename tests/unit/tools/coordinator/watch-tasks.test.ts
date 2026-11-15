@@ -805,12 +805,12 @@ describe("template position, worker step and hold of a task view", () => {
   });
 
   it("takes the step of a running worker from its prompt header, not from the lifecycle", async () => {
-    const qa = await card("feature", {}, [worker], {
-      prompts: { "OMI-074": header("verify", "qa") },
+    const qa = await card("ui-ux", {}, [worker], {
+      prompts: { "OMI-074": header("verify", "designer", "ui-ux") },
     });
     expect(qa.pos).toEqual({ kind: "node", id: "verify" });
-    expect(qa.workerStep).toEqual({ step: "verify", role: "qa" });
-    expect(qa.role).toBe("qa");
+    expect(qa.workerStep).toEqual({ step: "verify", role: "designer" });
+    expect(qa.role).toBe("designer");
     const reviewer = await card("feature", { status: "In Review" }, [worker], {
       prompts: { "OMI-074": header("review", "reviewer") },
       pulls: [openPull()],
@@ -924,13 +924,13 @@ describe("template position, worker step and hold of a task view", () => {
       prompts: { "OMI-074": header("review", "reviewer") },
     });
     expect(t.workerStep).toBeNull();
-    expect(t.pos).toEqual({ kind: "node", id: "verify" });
-    expect(t.role).toBe("qa");
+    expect(t.pos).toEqual({ kind: "node", id: "review" });
+    expect(t.role).toBe("reviewer");
   });
 
   it("maps no-worker states: verify (qa), review, ready-to-merge on PASS", async () => {
     const verify = await card("feature");
-    expect(verify.pos).toEqual({ kind: "node", id: "verify" });
+    expect(verify.pos).toEqual({ kind: "node", id: "review" });
     const inReview = { status: "In Review" };
     const review = await card("feature", inReview, [], { pulls: [openPull()] });
     expect(review.pos).toEqual({ kind: "node", id: "review" });
@@ -960,10 +960,10 @@ describe("template position, worker step and hold of a task view", () => {
   it("Blocked and Waiting PO keep the node the task stands at and carry the hold", async () => {
     const b = await card("feature", { blockers: [open(158)] });
     expect(b.step).toBe("Blocked");
-    expect(b.pos).toEqual({ kind: "node", id: "verify" });
+    expect(b.pos).toEqual({ kind: "node", id: "review" });
     expect(b.hold).toEqual({ kind: "blocked", by: [158] });
     const w = await card("feature", { comments: [wait()] });
-    expect(w.pos).toEqual({ kind: "node", id: "verify" });
+    expect(w.pos).toEqual({ kind: "node", id: "review" });
     expect(w.hold).toEqual({ kind: "waiting-po" });
     expect(w.role).toBe("PO");
     expect((await card("feature")).hold).toBeNull();

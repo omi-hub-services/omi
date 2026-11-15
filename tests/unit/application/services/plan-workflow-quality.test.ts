@@ -41,17 +41,17 @@ const facts = {
     approvalRef: "approval-1",
   },
 };
-it("projects one independent review worker with both original step packets and all gates", () => {
+it("preserves archived QA and review steps with all gates", () => {
   expect(quality).toHaveProperty("planWorkflowQuality", expect.any(Function));
   const plan = quality.planWorkflowQuality(workflow, facts);
-  expect(plan.workflow.steps.map((s) => s.id)).toEqual(["implement", "review"]);
+  expect(plan.workflow.steps.map((s) => s.id)).toEqual(["implement", "verify", "review"]);
   expect(plan.workflow.steps[0]?.needs).toEqual([]);
-  expect(plan.workflow.steps[1]).toMatchObject({
+  expect(plan.workflow.steps[2]).toMatchObject({
     role: "reviewer",
-    needs: ["implement"],
-    skills: ["verify", "review"],
+    needs: ["verify"],
+    skills: ["review"],
   });
-  expect(plan.packets.review?.map((s) => s.id)).toEqual(["verify", "review"]);
+  expect(plan.packets.review?.map((s) => s.id)).toEqual(["review"]);
   expect(plan.workflow.gates).toEqual(workflow.gates);
   expect(plan.scopeEvidence).toBe("issue:190");
 });
@@ -78,7 +78,7 @@ it("keeps high risk work separate and never takes scope approval from Issue text
   ]);
 });
 
-it("combines documentation acceptance by reviewer role while preserving its step id", () => {
+it("preserves archived documentation acceptance and QA step ids", () => {
   const docs = {
     ...workflow,
     id: "docs",
@@ -86,8 +86,8 @@ it("combines documentation acceptance by reviewer role while preserving its step
     gates: [],
   };
   const plan = quality.planWorkflowQuality(docs, facts);
-  expect(plan.workflow.steps.map((s) => s.id)).toEqual(["implement", "accept"]);
-  expect(plan.packets.accept?.map((s) => s.id)).toEqual(["verify", "accept"]);
+  expect(plan.workflow.steps.map((s) => s.id)).toEqual(["implement", "verify", "accept"]);
+  expect(plan.packets.accept?.map((s) => s.id)).toEqual(["accept"]);
 });
 
 it("keeps every combined step's verified models and effort floor", () => {

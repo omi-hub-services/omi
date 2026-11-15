@@ -60,11 +60,11 @@ const worker = (over: Partial<WorkerProcess> = {}): WorkerProcess => ({
   packet: `omi-${/\d+/.exec(over.task ?? "OMI-004")?.[0] ?? "004"}-prompt-x-1-abc123.md`,
   ...over,
 });
-const prompt = (step: string | null, role = "developer"): PromptInfo => ({
+const prompt = (step: string | null, role = "developer", workflow = "feature"): PromptInfo => ({
   skills: ["minimal-change"],
   rules: ["project-baseline", "evidence-and-tests"],
   mandatoryRules: ["project-baseline"],
-  header: step === null ? null : { workflow: "feature", step, role },
+  header: step === null ? null : { workflow, step, role },
 });
 const tasksRead = async (
   planKeys: string[],
@@ -132,15 +132,19 @@ describe("buildSnapshot: the repo's data in the shared WatchSnapshot contract", 
 
   // OMI-111 regression: QA and review of one task run in parallel and share the plan key
   it("keeps a card for both the QA and the review worker of one task, each with its own packet", async () => {
-    const qa = { ...prompt("verify", "qa"), skills: ["qa-verification"] };
-    const review = { ...prompt("review", "reviewer"), skills: ["independent-review"] };
+    const qa = { ...prompt("verify", "designer", "ui-ux"), skills: ["qa-verification"] };
+    const review = { ...prompt("review", "reviewer", "ui-ux"), skills: ["independent-review"] };
     const s = buildSnapshot(
       input({
-        tasks: await tasksRead(["OMI-004"], {
-          "OMI-004": review, // the newest packet of the task must not leak into the QA card
-          "omi-004-prompt-verify-1-aaa111.md": qa,
-          "omi-004-prompt-review-1-bbb222.md": review,
-        }),
+        tasks: await tasksRead(
+          ["OMI-004"],
+          {
+            "OMI-004": review, // the newest packet of the task must not leak into the QA card
+            "omi-004-prompt-verify-1-aaa111.md": qa,
+            "omi-004-prompt-review-1-bbb222.md": review,
+          },
+          "ui-ux",
+        ),
         workers: {
           available: true,
           latestLog: null,
@@ -154,7 +158,7 @@ describe("buildSnapshot: the repo's data in the shared WatchSnapshot contract", 
     expect(s.tasks).toHaveLength(2);
     expect(new Set(s.tasks.map((c) => c.runId)).size).toBe(2);
     expect(s.tasks.map((c) => [c.planKey, c.who?.step, c.who?.role, c.loaded?.skills])).toEqual([
-      ["OMI-004", "verify", "qa", ["qa-verification"]],
+      ["OMI-004", "verify", "designer", ["qa-verification"]],
       ["OMI-004", "review", "reviewer", ["independent-review"]],
     ]);
   });
@@ -162,7 +166,11 @@ describe("buildSnapshot: the repo's data in the shared WatchSnapshot contract", 
   it("draws the task from its template and puts the QA worker at verify, not at implement", async () => {
     const s = buildSnapshot(
       input({
-        tasks: await tasksRead(["OMI-004"], { "OMI-004": prompt("verify", "qa") }),
+        tasks: await tasksRead(
+          ["OMI-004"],
+          { "OMI-004": prompt("verify", "designer", "ui-ux") },
+          "ui-ux",
+        ),
         workers: { available: true, latestLog: null, processes: [worker()] },
       }),
     );
@@ -171,9 +179,9 @@ describe("buildSnapshot: the repo's data in the shared WatchSnapshot contract", 
     expect(card).toMatchObject({
       planKey: "OMI-004",
       issueNumber: 100,
-      workflow: "feature",
+      workflow: "ui-ux",
       step: "verify",
-      role: "qa",
+      role: "designer",
       runStatus: "running",
       who: {
         executor: "claude",
@@ -182,21 +190,26 @@ describe("buildSnapshot: the repo's data in the shared WatchSnapshot contract", 
         effort: "high",
         startedAt: null,
         step: "verify",
-        role: "qa",
+        role: "designer",
         elapsedSeconds: 1092,
       },
     });
     expect(card?.layout.nodes.map((n) => n.id)).toEqual([
-      "analyze",
-      "scope-approved",
+      "design-cost-approved",
+      "design",
+      "design-evidence",
+      "implement-cost-approved",
       "implement",
+      "verify-cost-approved",
       "verify",
+      "visual-evidence",
+      "review-cost-approved",
       "review",
       "ready-to-merge",
     ]);
     expect(card?.layout.nodes.filter((n) => n.current).map((n) => n.id)).toEqual(["verify"]);
-    expect(card?.layout.nodes.find((n) => n.id === "implement")?.state).toBe("done");
-    expect(card?.layout.template.text).toBe("feature");
+    expect(card?.layout.nodes.find((n) => n.id === "design")?.state).toBe("done");
+    expect(card?.layout.template.text).toBe("ui-ux");
   });
 
   it("says unknown for the step and role of a running worker whose prompt has no header", async () => {
@@ -214,7 +227,7 @@ describe("buildSnapshot: the repo's data in the shared WatchSnapshot contract", 
       input({
         tasks: await tasksRead(["OMI-004", "OMI-005", "OMI-006"], {
           "OMI-004": prompt("implement"),
-          "OMI-005": prompt("verify", "qa"),
+          "OMI-005": prompt("review", "reviewer"),
           "OMI-006": prompt("review", "reviewer"),
         }),
         workers: {
@@ -230,7 +243,7 @@ describe("buildSnapshot: the repo's data in the shared WatchSnapshot contract", 
     );
     expect(s.tasks.map((c) => [c.planKey, c.who?.step, c.who?.role])).toEqual([
       ["OMI-004", "implement", "developer"],
-      ["OMI-005", "verify", "qa"],
+      ["OMI-005", "review", "reviewer"],
       ["OMI-006", "review", "reviewer"],
     ]);
   });

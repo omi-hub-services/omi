@@ -161,7 +161,20 @@ export function createDispatchPlanner(deps: {
       role: step.role,
       stepSkills: step.skills,
       stepRules: step.rules,
-      requiredChecks: step.required_checks,
+      requiredChecks: [
+        ...new Set([
+          ...step.required_checks,
+          ...(workflow?.gates
+            .filter(
+              (gate) =>
+                gate.after === step.id &&
+                ["regression-test", "existing-tests-unchanged", "existing-tests-passing"].includes(
+                  gate.policy,
+                ),
+            )
+            .map((gate) => gate.policy) ?? []),
+        ]),
+      ],
       execution: {
         profileHome: selection.profileHome,
         model: selection.model,

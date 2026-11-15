@@ -559,6 +559,84 @@ describe("recordStepResult", () => {
 });
 
 describe("checks the runtime ran itself", () => {
+  it.each(["valid", "prose", "wrong-base", "green-base", "wrong-head"])(
+    "validates hashed regression script evidence: %s",
+    async (scenario) => {
+      const r = rig();
+      r.deps.catalog = {
+        ...r.deps.catalog,
+        roles: r.deps.catalog.roles.map((entry) => ({
+          ...entry,
+          definition: { ...entry.definition, id: "reviewer" },
+        })),
+      };
+      const { attempt, handle } = await started(
+        r,
+        dispatchInput({ role: "reviewer", requiredChecks: ["regression-test"] }),
+      );
+      const evidence = r.artifacts.publish(
+        `${attempt.artifactRoot}/regression.json`,
+        scenario === "prose"
+          ? "red then green"
+          : JSON.stringify({
+              base: {
+                revision: scenario === "wrong-base" ? HEAD : BASE,
+                command: ["npm", "test"],
+                exitCode: scenario === "green-base" ? 0 : 1,
+              },
+              head: {
+                revision: scenario === "wrong-head" ? BASE : HEAD,
+                command: ["npm", "test"],
+                exitCode: 0,
+              },
+            }),
+      );
+      const report = goodResult(r, attempt.id, {
+        summary: "AC-1: met — regression evidence checked",
+      });
+      const outcome = await record(r, attempt.id, handle, {
+        ...report,
+        artifacts: [...report.artifacts, evidence],
+        checks: [{ id: "regression-test", evidenceRef: evidence.path }],
+      });
+      expect(outcome).toMatchObject({
+        stepStatus: scenario === "valid" ? "succeeded" : "failed",
+        ...(scenario === "valid" ? {} : { failure: "REGRESSION_EVIDENCE_INVALID" }),
+      });
+    },
+  );
+
+  it.each([
+    [undefined, "CHECK_NOT_RUN"],
+    [{ status: "failed", exitCode: 1, revision: HEAD }, "CHECK_FAILED"],
+    [{ status: "passed", exitCode: 0, revision: BASE }, "CHECK_REVISION_MISMATCH"],
+    [{ status: "passed", exitCode: 0, revision: HEAD }, undefined],
+  ] as const)("gates a merged reviewer on runtime check %j", async (run, failure) => {
+    const r = rig();
+    r.deps.catalog = {
+      ...r.deps.catalog,
+      roles: r.deps.catalog.roles.map((entry) => ({
+        ...entry,
+        definition: { ...entry.definition, id: "reviewer" },
+      })),
+    };
+    const { attempt, handle } = await started(
+      r,
+      dispatchInput({ role: "reviewer", requiredChecks: ["project-check"] }),
+    );
+    const outcome = recordStepResult(r.deps, {
+      attemptId: attempt.id,
+      execution: await r.executor.collectResult(handle),
+      result: goodResult(r, attempt.id, { summary: "AC-1: met — checked", checks: [] }),
+      checkRuns:
+        run === undefined ? [] : [checkRun(r, attempt.id, { checkId: "project-check", ...run })],
+    });
+    expect(outcome).toMatchObject({
+      stepStatus: failure === undefined ? "succeeded" : "failed",
+      ...(failure === undefined ? {} : { failure }),
+    });
+  });
+
   const RUNTIME_CHECKS = { has: (id: string) => id === "unit-tests" };
 
   function checkRun(r: Rig, attemptId: string, overrides: Record<string, unknown> = {}) {

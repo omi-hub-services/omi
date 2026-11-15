@@ -226,7 +226,6 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       read,
     );
     if (!template.ok) throw new Error(template.reason);
-    const requested = stepArg.split(",");
     const round = Number(input.round ?? "1");
     if (!Number.isSafeInteger(round) || round < 1)
       throw new Error("--round must be a positive integer");
@@ -242,43 +241,32 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
         approvalRefs: input.scopeApproved === undefined ? [] : [input.scopeApproved],
       },
     };
-    const facts = taskQualityFacts(template.workflow, task, requested.at(-1) ?? "", round);
-    const plan = planWorkflowQuality(template.workflow, {
-      ...facts,
-      risks: {
-        security: facts.risks.security || risks.includes("security"),
-        gates: facts.risks.gates || risks.includes("gates"),
-        data: facts.risks.data || risks.includes("data"),
-      },
-    });
-    const combined = requested.length === 2;
-    const primary = requested.at(-1) ?? "";
-    if (
-      requested.length > 1 &&
-      (!combined || plan.packets[primary]?.map((s) => s.id).join(",") !== stepArg)
-    )
-      throw new Error("policy requires separate verify/review packets");
+    const facts = taskQualityFacts(template.workflow, task, stepArg, round);
+    const reviewRisks = {
+      security: facts.risks.security || risks.includes("security"),
+      gates: facts.risks.gates || risks.includes("gates"),
+      data: facts.risks.data || risks.includes("data"),
+    };
+    const plan = planWorkflowQuality(template.workflow, { ...facts, risks: reviewRisks });
     const architectRole = architect
       ? parseArchitectRole(await read("templates/project/.omi/roles/architect.yaml"))
       : null;
     const step: PacketStep | undefined = architectRole
       ? { id: "architect", role: "architect", output_contract: "step-result-v1", ...architectRole }
-      : template.workflow.steps.find((s) => s.id === (combined ? primary : stepArg));
+      : template.workflow.steps.find((s) => s.id === stepArg);
     if (!step) throw new Error(`workflow ${template.workflow.id} has no step ${stepArg}`);
     if (step.id === "analyze" && plan.scopeEvidence !== undefined)
       throw new Error(
         `analyze skipped; scope-approved from ${plan.scopeEvidence} (${input.scopeApproved ?? ""})`,
       );
-    const packetSteps: readonly PacketStep[] = combined
-      ? (plan.packets[primary] ?? [step])
-      : [step];
+    const packetSteps: readonly PacketStep[] = [step];
     const quality = {
       policy: template.workflow.quality_policy,
       step: qualityStepId(step),
       steps: packetSteps.map((s) => s.id),
       round,
     };
-    const evidence: string[] = [renderQualityInstructions(quality)];
+    const evidence: string[] = [renderQualityInstructions(quality, round > 1, reviewRisks)];
     if (releaseReview)
       evidence.push(
         "## Release review\nUse exactly one AC-n line per criterion. For criteria owned by PO approval or a post-merge Coordinator step, use `AC-n: deferred — <Coordinator step>`. PASS requires every non-deferred AC met; an unmet review-time criterion still requires FAIL. Deferral grants no approval: native PO approval remains required before merge. After merge/tag/publishing, post a new exact-head PASS with evidence for each criterion; close still requires every AC met before ticking or closing.",

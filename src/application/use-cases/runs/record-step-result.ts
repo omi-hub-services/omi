@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validRegressionEvidence } from "../../services/validate-review-evidence.js";
 import {
   acceptanceReviewRefusals,
   parseAcReviewLines,
@@ -92,7 +93,8 @@ export type StepFailureReason =
   | "SKILL_EVIDENCE_MISSING"
   /** The result reports a skill the attempt was not given. */
   | "SKILL_NOT_ASSIGNED"
-  | "REVIEW_AC_LINES_INVALID";
+  | "REVIEW_AC_LINES_INVALID"
+  | "REGRESSION_EVIDENCE_INVALID";
 
 export type RecordStepResult =
   | {
@@ -381,7 +383,9 @@ function verify(
   // Setting revision explicitly (even to undefined) drops the worker's claim.
   const verified: VerifiedResult = { ...report, artifacts, revision };
 
-  const runtimeChecks = attempt.requiredChecks.filter((id) => deps.checks?.has(id) === true);
+  const runtimeChecks = attempt.requiredChecks.filter(
+    (id) => id === "project-check" || deps.checks?.has(id) === true,
+  );
   // The worker's own check list is informational for these ids; only the runtime's run counts.
   const reported = new Set(report.checks.map((check) => check.id));
   const evidenceChecks = attempt.requiredChecks.filter((id) => !runtimeChecks.includes(id));
@@ -390,6 +394,26 @@ function verify(
   }
   const checkFailure = verifyRuntimeChecks(deps, attempt, verified, runtimeChecks, checkRuns);
   if (checkFailure !== undefined) return { failure: checkFailure, report };
+
+  if (attempt.role.id === "reviewer" && attempt.requiredChecks.includes("regression-test")) {
+    const ref = report.checks.find((check) => check.id === "regression-test")?.evidenceRef;
+    const artifact = artifacts.find((entry) => entry.path === ref);
+    try {
+      if (
+        artifact === undefined ||
+        !validRegressionEvidence(
+          JSON.parse(
+            new TextDecoder("utf-8", { fatal: true }).decode(deps.artifacts.read(artifact)),
+          ) as unknown,
+          revision?.baseSha ?? "",
+          revision?.headSha ?? "",
+        )
+      )
+        return { failure: "REGRESSION_EVIDENCE_INVALID", report };
+    } catch {
+      return { failure: "REGRESSION_EVIDENCE_INVALID", report };
+    }
+  }
 
   // The worker saw exactly the manifest's skills (inlined at dispatch); it must account for each.
   const given = new Set(attempt.skills.map((skill) => skill.id));

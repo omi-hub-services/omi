@@ -231,6 +231,22 @@ it("gives the next attempt the findings remembered for its step run", async () =
 });
 
 describe("required checks of a workflow step", () => {
+  it.each(["regression-test", "existing-tests-unchanged", "existing-tests-passing"])(
+    "moves the %s after-review gate into the runtime request",
+    async (policy) => {
+      const merged = workflowSchema.parse({
+        ...workflow,
+        steps: [{ ...workflow.steps[0], id: "review", role: "reviewer" }],
+        gates: [{ id: policy, after: "review", policy }],
+      });
+      const r = setup([profile], () => Promise.resolve(task), [profile], { workflow: merged });
+      expect(await r.planner.plan({ ...request, stepId: "review" })).toMatchObject({
+        requiredChecks: [policy],
+        checkEvidenceSteps: [],
+      });
+    },
+  );
+
   const verifyWorkflow = workflowSchema.parse({
     ...workflow,
     steps: [{ ...workflow.steps[0], required_checks: ["project-check"] }],

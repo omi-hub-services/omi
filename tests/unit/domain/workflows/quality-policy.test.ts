@@ -15,13 +15,16 @@ const input = {
   },
 };
 
-it.each(["task-default", "lean"])("combines ordinary low/medium work for %s", (qualityPolicy) => {
-  expect(policy).toHaveProperty("resolveQualityPolicy", expect.any(Function));
-  for (const complexity of ["low", "medium"] as const)
-    expect(policy.resolveQualityPolicy({ ...input, qualityPolicy, complexity })).toMatchObject({
-      combineVerifyReview: true,
-    });
-});
+it.each(["task-default", "lean"])(
+  "adds risk focus without changing worker count for %s",
+  (qualityPolicy) => {
+    expect(policy).toHaveProperty("resolveQualityPolicy", expect.any(Function));
+    for (const complexity of ["low", "medium"] as const)
+      expect(policy.resolveQualityPolicy({ ...input, qualityPolicy, complexity })).toMatchObject({
+        reviewFocus: [],
+      });
+  },
+);
 it.each(["task-default", "lean", "strict", "unknown", "bounded-rework"])(
   "keeps independent review and SHA checks for %s",
   (qualityPolicy) => {
@@ -29,25 +32,22 @@ it.each(["task-default", "lean", "strict", "unknown", "bounded-rework"])(
       independentReview: true,
       exactShaCheck: true,
     });
-    expect(
-      policy.resolveQualityPolicy({ ...input, qualityPolicy, complexity: "high" })
-        .combineVerifyReview,
-    ).toBe(false);
+    expect(policy.resolveQualityPolicy({ ...input, qualityPolicy })).not.toHaveProperty(
+      "combineVerifyReview",
+    );
     for (const risk of ["security", "gates", "data"] as const)
       expect(
         policy.resolveQualityPolicy({
           ...input,
           qualityPolicy,
           risks: { ...input.risks, [risk]: true },
-        }).combineVerifyReview,
-      ).toBe(false);
+        }).reviewFocus,
+      ).toContain(risk);
   },
 );
-it("strict and unknown policies fail closed to separate workers", () => {
+it("strict and unknown policies retain independent review", () => {
   for (const qualityPolicy of ["strict", "unknown"])
-    expect(policy.resolveQualityPolicy({ ...input, qualityPolicy }).combineVerifyReview).toBe(
-      false,
-    );
+    expect(policy.resolveQualityPolicy({ ...input, qualityPolicy }).independentReview).toBe(true);
 });
 it("skips analysis only with measurable AC, a map and a recorded approval of the Issue", () => {
   expect(policy.resolveQualityPolicy(input)).toMatchObject({

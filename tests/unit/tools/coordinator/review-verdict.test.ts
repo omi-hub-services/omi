@@ -13,6 +13,18 @@ const why = (r: ReviewCheck) => (r.ok ? "" : r.reasons.join(" "));
 const good = `${verdict()}\n\nAC-1: met — tests added\nAC-2: met — docs updated\n\nNotes.`;
 
 describe("checkReview", () => {
+  it("requires script regression evidence for a passing bugfix review", () => {
+    const baseSha = "b".repeat(40);
+    const bugfix = { ...ctx, workflow: "bugfix", baseSha };
+    expect(checkReview(good, bugfix).ok).toBe(false);
+    const regressionEvidence = {
+      base: { revision: baseSha, command: ["npm", "test"], exitCode: 1 },
+      head: { revision: HEAD, command: ["npm", "test"], exitCode: 0 },
+    };
+    expect(checkReview(good, { ...bugfix, regressionEvidence }).ok).toBe(true);
+    expect(checkReview(good, { ...bugfix, baseSha: HEAD, regressionEvidence }).ok).toBe(false);
+  });
+
   it("accepts PASS with every AC met on the PR head", () => {
     expect(checkReview(good, ctx)).toEqual({ ok: true, verdict: "PASS", head: "9d0fba0" });
   });

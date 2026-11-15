@@ -345,6 +345,15 @@ State step: `pending`, `ready`, `running`, `waiting_approval`, `waiting_resource
 
 ## 9. Scheduling, concurrency và rework
 
+[ADR-0042: Workflow consolidation](adr/0042-workflow-consolidation.md) governs quality:
+feature, refactor, bugfix and onboarding-empty-repo use one fresh independent review worker
+per round, with verification skills and script gates for exact-SHA checks, AC-n coverage
+and bugfix red/base–green/head regression evidence. Specialist QA remains in ui-ux,
+onboarding-takeover and ci-cd. Risks add review focus; round 1 uses medium effort and
+later delta rounds low. Archived templates retain their original steps. ADR-0042 also
+records the decided sibling changes for fix, handoff/check reuse, small steps and cost gates.
+
+
 Scheduler chỉ chọn task thuộc scope được PO giao; validate DAG dependency trước. Giới hạn đề xuất: hai task đồng thời, tối đa bốn worker toàn project, một worker/profile và một writer/worktree. Đây là mặc định có thể cấu hình, không phải giới hạn sản phẩm.
 
 Worker đọc/review chỉ bắt đầu khi revision đã cố định. Nếu nhiều step sửa cùng task chạy song song, cấp worktree riêng và một step tích hợp có người chịu trách nhiệm. Sau tích hợp phải chạy lại kiểm tra/review trên kết quả hợp nhất.
@@ -526,8 +535,8 @@ removing gates. Its original step packets remain attached to the independent rev
 The graph and scope evidence are persisted in `run.planned`, with the original template hash;
 no mutable global policy or schema migration is needed. Selection, dispatch and repo prompt
 rendering consume the same domain policy; repo tooling does not own a second cost decision.
-See ADR-0014, “Workflow cost policy”, and the operations handbook for step effort, required check
-logs, delta verdicts, conservative risk refusal and Project Workflow routes. Existing approval,
+See ADR-0042 (superseding ADR-0014’s historical grouping policy), and the operations handbook for step effort, required check
+logs, delta verdicts, risk focus and Project Workflow routes. Existing approval,
 review independence and fixed-revision delivery checks remain mandatory.
 
 ### Đối chiếu source và CLI (2026-11-13)

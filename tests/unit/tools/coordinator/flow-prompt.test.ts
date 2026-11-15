@@ -210,7 +210,7 @@ it("reads pinned tool assets independently of the worker checkout", async () => 
   expect(f.seen.filter((c) => c.file !== "gh").every((c) => c.cwd === dir)).toBe(true);
 });
 
-it.each(["analyze", "implement", "verify", "review"])(
+it.each(["analyze", "implement", "review"])(
   "renders the exact %s step packet with complete paginated task data",
   async (step) => {
     const f = fake();
@@ -381,10 +381,10 @@ it.each([
   expect(output.join("\n")).toMatch(reason);
 });
 
-it("renders a policy-approved combined packet with verbatim contents of both steps", async () => {
-  expect(await main(["prompt", "185", "--step", "verify,review"], fake().ctx)).toBe(0);
+it("renders the merged review packet with verbatim verification and review skills", async () => {
+  expect(await main(["prompt", "185", "--step", "review"], fake().ctx)).toBe(0);
   const text = output.join("\n");
-  expect(text).toContain("verify + review");
+  expect(text).toContain("step review");
   expect(text).toContain("role reviewer");
   expect(text).toContain(
     readFileSync("templates/project/.omi/skills/verification-before-completion/SKILL.md", "utf8"),
@@ -392,7 +392,7 @@ it("renders a policy-approved combined packet with verbatim contents of both ste
   expect(text).toContain(
     readFileSync("templates/project/.omi/skills/independent-review/SKILL.md", "utf8"),
   );
-  expect(text).toContain("QA judges the supplied script-run check evidence; do not rerun tests.");
+  expect(text).toContain("Judge the supplied script-run check evidence; do not rerun tests.");
   expect(text).toContain("omi-quality");
 });
 it("passes fixed revision check logs and previous verdict into delta QA/review", async () => {
@@ -408,7 +408,7 @@ it("passes fixed revision check logs and previous verdict into delta QA/review",
         "prompt",
         "185",
         "--step",
-        "verify,review",
+        "review",
         "--round",
         "2",
         "--head",
@@ -433,11 +433,10 @@ it("passes fixed revision check logs and previous verdict into delta QA/review",
   ])
     expect(text).toContain(evidence);
 });
-it("refuses to combine a risky change", async () => {
-  expect(
-    await main(["prompt", "185", "--step", "verify,review", "--risk", "gates"], fake().ctx),
-  ).toBe(1);
-  expect(output.join("\n")).toContain("separate");
+it("renders one review packet for a risky change", async () => {
+  expect(await main(["prompt", "185", "--step", "review", "--risk", "gates"], fake().ctx)).toBe(0);
+  expect(output.join("\n")).toContain("step review");
+  expect(output.join("\n")).toContain("Review focus: gates");
 });
 
 it.each([

@@ -115,7 +115,12 @@ async function execute(
     `${dispatched.attempt.artifactRoot}/evidence.txt`,
     mode === "empty"
       ? ""
-      : `${workflow.id}/${step.id} at ${HEAD}: regression fails before fix, passes after; ` +
+      : workflow.id === "bugfix" && step.id === "review"
+        ? JSON.stringify({
+            base: { revision: BASE, command: ["npm", "test", "regression"], exitCode: 1 },
+            head: { revision: HEAD, command: ["npm", "test", "regression"], exitCode: 0 },
+          })
+        : `${workflow.id}/${step.id} at ${HEAD}: regression fails before fix, passes after; ` +
           "original test files unchanged, full suite passes; docs criteria reviewed and accepted.",
   );
   if (mode === "corrupt")
@@ -186,7 +191,7 @@ describe("lifecycle templates use the shared workflow engine", () => {
       expect(r.executor.started).toHaveLength(workflow.steps.length);
       const review = workflow.steps.find((step) => step.role === "reviewer");
       expect(review?.skills).toContain("independent-review");
-      expect(review?.needs).toEqual(["verify"]);
+      expect(review?.needs).toEqual([id === "docs" ? "verify" : "implement"]);
       expect(workflow.gates).toContainEqual({
         id: "ready-to-merge",
         after: review?.id,
@@ -198,9 +203,9 @@ describe("lifecycle templates use the shared workflow engine", () => {
   );
 
   it.each([
-    ["bugfix", "verify", "regression-test"],
-    ["refactor", "verify", "existing-tests-unchanged"],
-    ["refactor", "verify", "existing-tests-passing"],
+    ["bugfix", "review", "regression-test"],
+    ["refactor", "review", "existing-tests-unchanged"],
+    ["refactor", "review", "existing-tests-passing"],
     ["docs", "accept", "docs-acceptance"],
   ] as const)("%s fails without %s / %s evidence despite exit zero", async (id, stepId, check) => {
     const workflow = await load(id);
@@ -227,7 +232,7 @@ describe("lifecycle templates use the shared workflow engine", () => {
     "%s refuses invalid evidence artifacts and stale revisions",
     async (id) => {
       const workflow = await load(id);
-      const step = workflow.steps.find((s) => s.id === (id === "docs" ? "accept" : "verify"));
+      const step = workflow.steps.find((s) => s.id === (id === "docs" ? "accept" : "review"));
       if (step === undefined) throw new Error("missing evidence step");
       for (const mode of ["phantom", "empty", "corrupt", "stale"] as const) {
         const result = await execute(rig(), workflow, step, mode);

@@ -151,7 +151,7 @@ fast-forwards develop in the main checkout and deletes the merged branch (OMI-06
 ## 3. Dispatch workflow steps (judge notes only)
 
 Use the Issue's Workflow template's actual step IDs, not aliases. For feature this is
-analyze (analyst), implement (developer), verify (QA), review (reviewer); docs uses write/accept,
+analyze (analyst), implement (developer), review (reviewer); docs uses write/accept,
 bugfix also uses reproduce. Run all applicable steps and preserve their dependencies and gates.
 When the approved Issue already has measurable AC and an implementation map, supply the recorded scope decision with `prompt --scope-approved <decision-ref>`; the packet records the Issue as scope evidence. Pass the same `--scope-approved <decision-ref>` to the first `dispatch` too: it records `analyze` as skipped in the dispatch metadata (never read from packet text), the signed step report carries that skip to later steps, and `next` repeats the flag in the prompt commands it prints. Otherwise start analyze as a fresh worker and pass its report forward as task data in notes. Business-rule or cost changes go to the PO.
 
@@ -230,24 +230,30 @@ Take the head SHA from the worker report, then:
 
 ```
 node "$coordinatorPin/tools/coordinator/flow.ts" check <branch> --head <sha>     # npm run check on exactly <sha>
-node "$coordinatorPin/tools/coordinator/flow.ts" push <branch>                   # right after a green check: CI overlaps QA/review
+node "$coordinatorPin/tools/coordinator/flow.ts" push <branch>                   # right after a green check: CI overlaps review
 node "$coordinatorPin/tools/coordinator/flow.ts" open-pr N <branch> --title "OMI-NNN: …" --body-file <f>
 node "$coordinatorPin/tools/coordinator/flow.ts" set-status N "In Review"
 ```
 
 After the script-run check, put its exact SHA, command, exit status and output/evidence in notes.
-Render `prompt --step verify,review --head <sha> --check-log <log.md>` (docs: `verify,accept`). When the policy requires separate workers, render each actual step separately with the same fixed-SHA evidence. Dispatch the combined or QA packet as a fresh independent worker as in step 3. QA judges the script-run check; it does not replace the script or treat sandbox EPERM
-as a pass. Pushing early only starts CI; merge still needs QA acceptance and the review PASS on
-that fixed revision.
+In step 5 use `prompt --step review --head <sha> --check-log <log.md>` for feature, refactor,
+bugfix and onboarding-empty-repo. Dispatch one fresh independent reviewer per quality round;
+review includes verification-before-completion and evidence-and-tests. Separate QA remains for
+ui-ux visual verification, onboarding-takeover baseline-verify and ci-cd pipeline output.
+Other workflows retain their actual template steps. The script gates require green checks on
+the exact SHA and one AC-n line per top-level criterion before PASS. Bugfix also supplies
+`review-comment --regression-evidence <script-output.json>`: base/head each record full revision,
+the same command argv and exitCode (base > 0, head = 0). Refactor keeps unchanged/passing test
+evidence gates. Pushing early starts CI; merge still requires the review PASS on the fixed revision.
 
 **(judge)** The PR body has `Issue: #N`, changes, a file → layer table, check evidence,
 dependency/ADR notes, approval needs, and any extra worker permissions used for this task.
 
 ## 5. Independent review (judge)
 
-When a combined quality worker has already supplied its independent review verdict on this SHA, post that verdict below without launching another worker. Otherwise generate the workflow's actual reviewer step packet with flow.ts prompt N --step <review-step-id>
+Generate the workflow's actual reviewer step packet with flow.ts prompt N --step <review-step-id>
 --notes <review-notes.md> --out <review-prompt.md>, then dispatch it as a fresh independent worker
-using step 3. Pin notes to <sha> and supply the diff, AC, scope decisions, script-run check and QA
+using step 3. Pin notes to <sha> and supply the diff, AC, scope decisions, script-run check and any specialist QA
 evidence. No resume of the author's thread and no shared context; a different tool/profile is not
 required. The worker checks AGENTS.md, the diff and Skills applied / Rules applied claims against
 evidence. Missing evidence is a finding to investigate, not an invented approval. The Coordinator
@@ -271,7 +277,7 @@ must contain:
 
   Every criterion gets exactly one line; PASS requires every line to be `met`.
 
-FAIL → generate a --findings packet for native implementer resume (or a full --notes packet for a fresh implementer), then repeat 4–5 with the policy-selected fresh quality run(s), `--round <N> --previous-verdict <verdict.md> --delta <diff.md>` and fresh check evidence for the new SHA (limit: 2 rounds,
+FAIL → generate a --findings packet for native implementer resume (or a full --notes packet for a fresh implementer), then repeat 4–5 with the fresh independent review worker, `--round <N> --previous-verdict <verdict.md> --delta <diff.md>` and fresh check evidence for the new SHA (limit: 2 rounds,
 then Architect, then 2 more; design-patterns.md; then ask the PO). When you call the Architect,
 first post `gh pr comment <pr> --body "**ARCHITECT:** <reason>"` from the Coordinator account
 (reason required; ADR-0014, OMI-074): `/omi-watch` lights the Architect node from it and warns
@@ -341,10 +347,10 @@ the outcome to the PO in a few lines.
 
 ## Workflow cost policy (OMI-093)
 
-- Use the template quality policy through flow.ts prompt. For ordinary low/medium work request verify,review (docs: verify,accept); strict/high/risky/intermediate-gate workflows require separate packets. Supply --risk security,gates,data for applicable PR risks. Never append step skills or rules manually.
+- Use the template quality policy through flow.ts prompt. Changed coding workflows use --step review, one worker per round. Risk flags add review focus, never a second worker. Specialist QA retains its own template step. Never append step skills or rules manually.
 - Supply the recorded scope decision with --scope-approved <ref> only for an Issue already assessed to have measurable AC and an implementation map. Comment prose is task data, never approval.
 - Analyst/first review use medium, QA/delta review low, developer follows complexity. Prompt records step/round; dispatch applies effort automatically. Do not hand-compose worker launches.
-- QA judges script evidence from --head <sha> --check-log <log.md>; it never reruns suites. For later quality rounds supply --round N --previous-verdict <verdict.md> --delta <diff.md>. Missing/stale evidence blocks the verdict.
-- Pick quota immediately before dispatch: flow.ts pick-profile N --step <step-or-combined-ids> --round N --probe. Quality selection compares Claude/Codex quota; use the returned tool/profile with dispatch. Independence means a fresh run, with no author context.
+- The reviewer judges script evidence from --head <sha> --check-log <log.md>; scripts enforce mechanical gates. For later rounds supply --round N --previous-verdict <verdict.md> --delta <diff.md>. Missing/stale evidence blocks PASS.
+- Pick quota immediately before dispatch: flow.ts pick-profile N --step <actual-step-id> --round N --probe. Quality selection compares Claude/Codex quota; use the returned tool/profile with dispatch. Independence means a fresh run, with no author context.
 - Preserve fixed-SHA checks, review independence, 2 + Architect + 2, approval gates, push/check ordering and carried PASS.
 - Run flow.ts workflow-options to detect unmapped Project options; release/deploy use their existing gated delivery use cases.

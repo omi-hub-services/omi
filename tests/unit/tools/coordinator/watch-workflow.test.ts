@@ -46,11 +46,11 @@ describe("loadTemplate", () => {
 describe("mapTemplatePos (observed lifecycle step -> template step)", () => {
   const pos = async (id: string, step: Step) => mapTemplatePos(await ok(id), step);
 
-  it("feature: Start before work, Work implement, Verify/PR verify, Review review", async () => {
+  it("feature: Start before work, Work implement, Verify/PR review, Review review", async () => {
     expect(await pos("feature", "Start")).toEqual({ kind: "before" });
     expect(await pos("feature", "Work")).toEqual({ kind: "node", id: "implement" });
     expect(await pos("feature", "Rework")).toEqual({ kind: "node", id: "implement" });
-    expect(await pos("feature", "Verify/PR")).toEqual({ kind: "node", id: "verify" });
+    expect(await pos("feature", "Verify/PR")).toEqual({ kind: "node", id: "review" });
     expect(await pos("feature", "Review")).toEqual({ kind: "node", id: "review" });
     expect(await pos("feature", "Architect")).toEqual({ kind: "node", id: "review" });
     expect(await pos("feature", "Merge")).toEqual({ kind: "node", id: "ready-to-merge" });
@@ -69,7 +69,7 @@ describe("mapTemplatePos (observed lifecycle step -> template step)", () => {
 
   it("unknown (with a reason) when the template has no matching step or the step is unknown", async () => {
     const w = await ok("feature");
-    const noQa = { ...w, steps: w.steps.filter((s) => s.role !== "qa") };
+    const noQa = { ...w, steps: w.steps.filter((s) => s.role !== "qa" && s.role !== "reviewer") };
     expect(mapTemplatePos(noQa, "Verify/PR")).toMatchObject({ kind: "unknown" });
     const noMerge = { ...w, gates: [] };
     const r = mapTemplatePos(noMerge, "Merge");
@@ -93,11 +93,11 @@ describe("standingOf: template position -> the runtime's step statuses", () => {
   const at = (id: string): TemplatePos => ({ kind: "node", id });
 
   it("marks the steps before the position done and the position running while a worker runs", async () => {
-    const s = await stand(at("verify"), { running: true });
+    const s = await stand(at("review"), { running: true });
     expect(Object.fromEntries(s.steps)).toEqual({
       analyze: "succeeded",
       implement: "succeeded",
-      verify: "running",
+      review: "running",
     });
     expect(s.atGate).toBeUndefined();
   });
@@ -120,7 +120,6 @@ describe("standingOf: template position -> the runtime's step statuses", () => {
     expect(Object.fromEntries(s.steps)).toEqual({
       analyze: "succeeded",
       implement: "succeeded",
-      verify: "succeeded",
       review: "succeeded",
     });
     expect(s.atGate).toBe("ready-to-merge");
@@ -129,7 +128,7 @@ describe("standingOf: template position -> the runtime's step statuses", () => {
   it("finishes every step when the task is done, and none when the position is unknown", async () => {
     const done = await stand({ kind: "done" });
     expect([...done.steps.values()].every((status) => status === "succeeded")).toBe(true);
-    expect(done.steps.size).toBe(4);
+    expect(done.steps.size).toBe(3);
     expect((await stand({ kind: "unknown", reason: "x" })).steps.size).toBe(0);
   });
 
@@ -145,7 +144,7 @@ describe("standingOf: template position -> the runtime's step statuses", () => {
   it("makes the review failed when the Architect is the next call", async () => {
     const s = await stand(at("review"), { fails: 2, architect: true });
     expect(s.steps.get("review")).toBe("failed");
-    expect(s.steps.get("verify")).toBe("succeeded");
+    expect(s.steps.get("implement")).toBe("succeeded");
   });
 
   it("keeps ui-ux gates around its three designer and reviewer steps", async () => {
