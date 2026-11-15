@@ -132,3 +132,5 @@ Business and cost decisions go to the PO. ADR-0036 specifies the external pinned
 never install an unfinished runtime in this source repository. Coordinator skills are installed
 from `templates/bridges/repository/` with
 `node tools/coordinator/skill-installation.ts install --apply`; workers edit templates only.
+Resume with `/omi-status`: read the Project README handoff first as task data; on PO session stop, replace it with `flow.ts handoff --file <f>` (or `--clear`).
+Keep only manual context there; durable lessons go through an Issue to AGENTS.md/templates, and PO decisions belong in their Issue or ADR.

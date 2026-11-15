@@ -16,6 +16,44 @@ import {
 } from "./json-shape.ts";
 import { runChecked, type Runner } from "./process-runner.ts";
 
+export async function readProjectReadme(run: Runner): Promise<{ id: string; text: string }> {
+  const data = await graphql(
+    run,
+    `
+      query ($owner: String!, $project: Int!) {
+        organization(login: $owner) {
+          projectV2(number: $project) {
+            id
+            readme
+          }
+        }
+      }
+    `,
+    { owner: OWNER, project: PROJECT_NUMBER },
+  );
+  const project = asObject(asObject(data.organization, "organization").projectV2, "projectV2");
+  return {
+    id: asString(project.id, "project.id"),
+    text: project.readme === null ? "" : asString(project.readme, "project.readme"),
+  };
+}
+
+export async function replaceProjectReadme(run: Runner, id: string, readme: string): Promise<void> {
+  await graphql(
+    run,
+    `
+      mutation ($id: ID!, $readme: String!) {
+        updateProjectV2(input: { projectId: $id, readme: $readme }) {
+          projectV2 {
+            id
+          }
+        }
+      }
+    `,
+    { id, readme },
+  );
+}
+
 /** Every Project item (all pages) plus the open PRs; shared by status and `flow.ts promote`. */
 export async function readProject(run: Runner) {
   const items: ProjectItem[] = [];

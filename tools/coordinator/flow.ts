@@ -48,7 +48,13 @@ import {
   type Step,
 } from "./flow-plans.ts";
 import { localGit, probeBranch, probeCleanupWsl, wslGit, type ProbeOptions } from "./git-probe.ts";
-import { graphql, readProject, readRequiredChecks } from "./github-reads.ts";
+import {
+  graphql,
+  readProject,
+  readProjectReadme,
+  replaceProjectReadme,
+  readRequiredChecks,
+} from "./github-reads.ts";
 import {
   agentReviewOn,
   latestAgentReview,
@@ -108,10 +114,13 @@ import { regressionEvidenceCommand } from "./regression-evidence.ts";
 import { loadTemplate } from "./watch-workflow.ts";
 import "../register-ts-imports.ts";
 const { nativeReviewsSchema } = await import("../../src/application/contracts/merge-delivery.ts");
+const { assertCredentialFree } =
+  await import("../../src/application/contracts/credential-input.ts");
 const { resolveQualityPolicy, resolveWorkflowRoute, workflowOptionIssues } =
   await import("../../src/domain/workflows/workflow-policy.ts");
 
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
+  handoff --file <f> | --clear                replace or empty the Project README handoff
   workflow-options                          read-only check of live Project Workflow/template routing
   new-issue --file <spec.md>                 validated Issue with Project fields and Backlog
   set-status <issue> <status>
@@ -155,6 +164,33 @@ export interface Context {
   readonly target: WslTarget;
   readonly hostCwd: string;
   readonly isWindows: boolean;
+}
+
+const HANDOFF_SECTIONS = [
+  "Stop reason",
+  "PO instructions for next session",
+  "Queue",
+  "Pending PO decisions not yet in an Issue",
+  "Manual steps in progress",
+];
+
+function validateHandoff(text: string): void {
+  assertCredentialFree(text);
+  if (text.length > 2000) throw new Error("handoff: maximum 2000 characters");
+  const found = new Set<string>();
+  let bullets = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    if (line.startsWith("## ")) {
+      const section = line.slice(3).trim();
+      if (!HANDOFF_SECTIONS.includes(section) || found.has(section))
+        throw new Error("handoff: unknown or duplicate section");
+      found.add(section);
+    } else if (found.size > 0 && /^[-*+] \S/.test(line)) bullets++;
+    else throw new Error("handoff: use fixed ## sections and single-line bullets only");
+  }
+  if (found.size !== HANDOFF_SECTIONS.length) throw new Error("handoff: missing section");
+  if (bullets > 15) throw new Error("handoff: maximum 15 bullet lines");
 }
 
 // ── GitHub reads ─────────────────────────────────────────────────────────────
@@ -847,6 +883,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
     options: {
       "dry-run": { type: "boolean", default: false },
       file: { type: "string" },
+      clear: { type: "boolean", default: false },
       "regression-evidence": { type: "string" },
       "test-file": { type: "string" },
       "test-name": { type: "string" },
@@ -898,6 +935,31 @@ export async function main(argv: readonly string[], context?: Context): Promise<
   const go = async (plan: Plan) => ((await execute(ctx, label, plan, dry)) ? 0 : 1);
 
   switch (sub) {
+    case "handoff": {
+      if (positionals.length !== 1 || values.clear === (values.file !== undefined))
+        throw new Error("handoff: use --file <f> or --clear");
+      const text = values.file === undefined ? "" : readFileSync(values.file, "utf8");
+      if (!values.clear) validateHandoff(text);
+      const login = (
+        await runChecked(ctx.run, { file: "gh", args: ["api", "user", "--jq", ".login"] })
+      ).trim();
+      if (login !== COORDINATOR_LOGIN) throw new Error("handoff: Coordinator login required");
+      const project = await readProjectReadme(ctx.run);
+      let readme = "";
+      if (!values.clear) {
+        const sha = (
+          await runChecked(ctx.run, localGit(ctx.hostCwd)(["rev-parse", `origin/${BASE_BRANCH}`]))
+        ).trim();
+        assertSha(sha);
+        readme = `# Coordinator handoff\n\nUpdated: ${new Date().toISOString()} · develop: ${sha} · Coordinator: ${login}\n\n${text}`;
+      }
+      if (dry) console.log(`handoff: would replace Project README\n${readme}`);
+      else {
+        await replaceProjectReadme(ctx.run, project.id, readme);
+        console.log(values.clear ? "handoff: cleared" : "handoff: replaced");
+      }
+      return 0;
+    }
     case "workflow-options": {
       const data = asObject(
         parseJson(
