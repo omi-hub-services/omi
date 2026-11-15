@@ -497,7 +497,8 @@ describe("release review command wiring", () => {
               pullRequest,
               issue: {
                 state: "OPEN",
-                body: "## Acceptance criteria\n- [ ] tag published\n",
+                // An implementation map without sensitive paths: no `Security:` section is needed.
+                body: "## Acceptance criteria\n- [ ] tag published\n\n## Implementation map\n- docs/notes.md\n",
                 comments: { nodes: [] },
                 timelineItems: { nodes: [] },
                 labels: { nodes: [], pageInfo: { hasNextPage: false } },

@@ -212,6 +212,7 @@ function buildPrompt(
   rules: readonly (RuleContent & { id: string; version: string })[],
   checkLogs: readonly string[],
   regressionGate: boolean,
+  risks: ReturnType<typeof workflowRisks>,
 ): string {
   return renderWorkerPrompt(workerPromptAssets.skeleton, {
     identity: `You are the "${packet.role}" worker for step "${packet.stepId}" (attempt ${packet.attemptId}).`,
@@ -220,13 +221,7 @@ function buildPrompt(
     notes: [
       ...(packet.quality === undefined
         ? []
-        : [
-            renderQualityInstructions(
-              packet.quality,
-              packet.reviewDelta !== undefined,
-              workflowRisks(packet.allowedScope.paths),
-            ),
-          ]),
+        : [renderQualityInstructions(packet.quality, packet.reviewDelta !== undefined, risks)]),
       ...checkLogs,
     ].join("\n"),
     task_context: [
@@ -344,6 +339,8 @@ export async function dispatchStep(
       return { ok: false, reason: "TASK_NOT_READY", detail: reasons.join("; ") };
   }
 
+  // The same risks pick the review's skills and render its instructions, from the Issue's paths and Area.
+  const risks = workflowRisks(command.context.allowedScope.paths, command.task.area);
   let resolved;
   try {
     resolved = resolveRoleContext(deps.catalog, {
@@ -352,7 +349,7 @@ export async function dispatchStep(
       stepSkills: [
         ...(command.quality === undefined
           ? command.stepSkills
-          : dispatchSkills(command.quality.step, command.stepSkills, command.quality.round)),
+          : dispatchSkills(command.quality.step, command.stepSkills, command.quality.round, risks)),
       ],
       stepRules: command.stepRules,
       excludedRules: command.excludedRules,
@@ -695,6 +692,7 @@ export async function dispatchStep(
           rules.contents,
           checkLogs,
           command.requiredChecks.includes("regression-test"),
+          risks,
         ),
         model: command.execution.model,
         effort: command.execution.effort,

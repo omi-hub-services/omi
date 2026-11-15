@@ -335,7 +335,7 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       await Promise.all(
         packetSteps.map(
           async (s) =>
-            `## Step ${s.id} · role ${s.role}\n\n${await sections("skills", dispatchSkills(qualityStepId(s), s.skills, resume ? Math.max(round, 2) : round))}`,
+            `## Step ${s.id} · role ${s.role}\n\n${await sections("skills", dispatchSkills(qualityStepId(s), s.skills, resume ? Math.max(round, 2) : round, reviewRisks))}`,
         ),
       )
     ).join("\n\n");

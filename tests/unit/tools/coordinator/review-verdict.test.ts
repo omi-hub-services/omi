@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   checkReview,
   linkedIssue,
+  securityReviewRisk,
   type ReviewCheck,
 } from "../../../../tools/coordinator/review-verdict.ts";
 
@@ -11,6 +12,40 @@ const verdict = (v = "PASS", sha = "9d0fba0") =>
 const ctx = { acCount: 2, prHead: HEAD };
 const why = (r: ReviewCheck) => (r.ok ? "" : r.reasons.join(" "));
 const good = `${verdict()}\n\nAC-1: met — tests added\nAC-2: met — docs updated\n\nNotes.`;
+
+describe("security review", () => {
+  const security = { ...ctx, securityRisk: true };
+  const section = `${good}\n\nSecurity:\n- Command injection: checked — argv array at src/x.ts:4`;
+
+  it("refuses a security-relevant PASS or FAIL without a Security: section", () => {
+    expect(why(checkReview(good, security))).toMatch(/Security:/);
+    const fail = `${verdict("FAIL")}\nAC-1: met — a\nAC-2: not met — b`;
+    expect(checkReview(fail, security).ok).toBe(false);
+    expect(why(checkReview(`${good}\nSecurity:\n`, security))).toMatch(/Security:/);
+  });
+
+  it("accepts a security-relevant review with a Security: section", () => {
+    expect(checkReview(section, security)).toEqual({ ok: true, verdict: "PASS", head: "9d0fba0" });
+  });
+
+  it("does not ask for the section without the security risk", () => {
+    expect(checkReview(good, ctx).ok).toBe(true);
+    expect(checkReview(good, { ...ctx, securityRisk: false }).ok).toBe(true);
+  });
+
+  it("derives the risk from the Issue paths, the Area or --risk security", () => {
+    const body = (path: string) => `## Implementation map\n- ${path}\n`;
+    expect(securityReviewRisk(body("src/infrastructure/process/exec-runner.ts"), null)).toBe(true);
+    expect(securityReviewRisk(body("src/interfaces/cli/commands/task.ts"), null)).toBe(false);
+    expect(securityReviewRisk(body("src/interfaces/cli/commands/task.ts"), "security")).toBe(true);
+    expect(securityReviewRisk(body("src/interfaces/cli/commands/task.ts"), null, "gates")).toBe(
+      false,
+    );
+    expect(
+      securityReviewRisk(body("src/interfaces/cli/commands/task.ts"), null, "data,security"),
+    ).toBe(true);
+  });
+});
 
 describe("checkReview", () => {
   it("requires script regression evidence for a passing bugfix review", () => {

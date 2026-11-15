@@ -109,7 +109,17 @@ export async function completeRunAttempt(
                   location: attempt.artifactRoot,
                 },
               ]
-            : [],
+            : recorded.failure === "REVIEW_SECURITY_SECTION_MISSING"
+              ? [
+                  {
+                    id: "review-security-section-missing",
+                    severity: "major",
+                    message:
+                      "REVIEW_SECURITY_SECTION_MISSING: add a `Security:` section with one line per security-review checklist area, each `checked` or `no findings` with evidence.",
+                    location: attempt.artifactRoot,
+                  },
+                ]
+              : [],
     );
     if (
       !(reported.success && reported.data.status === "blocked") &&

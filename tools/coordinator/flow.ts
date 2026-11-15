@@ -108,7 +108,7 @@ import {
   reviewCommentCommand,
   workerReportCommand,
 } from "./flow-workers.ts";
-import { linkedIssue } from "./review-verdict.ts";
+import { linkedIssue, securityReviewRisk } from "./review-verdict.ts";
 import { promptCommand } from "./flow-prompt.ts";
 import { regressionEvidenceCommand } from "./regression-evidence.ts";
 import { loadTemplate } from "./watch-workflow.ts";
@@ -1181,6 +1181,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         ).overall,
         issueBody: issue.body,
         workflow: issue.readiness.workflow,
+        securityRisk: securityReviewRisk(issue.body, issue.readiness.area, values.risk),
         body: readFileSync(required(values.file, "--file"), "utf8"),
         dryRun: dry,
       });

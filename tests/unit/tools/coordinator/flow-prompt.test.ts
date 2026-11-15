@@ -448,6 +448,28 @@ it("renders one review packet for a risky change", async () => {
   expect(output.join("\n")).toContain("step review");
   expect(output.join("\n")).toContain("Review focus: gates");
 });
+it("adds the security-review skill and the Security: requirement only with the security risk", async () => {
+  const skill = readFileSync("templates/project/.omi/skills/security-review/SKILL.md", "utf8");
+  expect(await main(["prompt", "185", "--step", "review", "--risk", "security"], fake().ctx)).toBe(
+    0,
+  );
+  const risky = output.join("\n");
+  expect(risky).toContain("Review focus: security");
+  expect(risky).toContain(skill);
+  expect(risky).toContain("starts with the line `Security:`");
+  output.length = 0;
+  expect(await main(["prompt", "185", "--step", "review", "--risk", "gates"], fake().ctx)).toBe(0);
+  const plain = output.join("\n");
+  expect(plain).not.toContain(skill);
+  expect(plain).not.toContain("starts with the line `Security:`");
+});
+it("does not add the security-review skill to a non-review step", async () => {
+  const skill = readFileSync("templates/project/.omi/skills/security-review/SKILL.md", "utf8");
+  expect(
+    await main(["prompt", "185", "--step", "implement", "--risk", "security"], fake().ctx),
+  ).toBe(0);
+  expect(output.join("\n")).not.toContain(skill);
+});
 
 it.each([
   ["feature", 0],
@@ -501,7 +523,9 @@ it("runtime dispatch and --findings packet carry the same skills for every work 
       };
       if (!isReworkDispatch(quality, 2)) {
         // The role's own skills may include it (reviewer); rework adds nothing for these steps.
-        const own = new Set([...roleSkills, ...step.skills]);
+        // dispatchInput's scope is broad, which is a security risk: review gains security-review.
+        const broad = { security: true, gates: true, data: true };
+        const own = new Set([...roleSkills, ...dispatchSkills(quality, step.skills, 1, broad)]);
         expect(await runtime(1)).toEqual(own);
         // Round-2 quality runs need verdict fixtures; the shared rule is checked directly.
         expect(new Set(dispatchSkills(quality, step.skills, 2))).toEqual(new Set(step.skills));

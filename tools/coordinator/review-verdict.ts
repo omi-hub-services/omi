@@ -3,9 +3,11 @@
 //   **VERDICT:** PASS|FAIL · **REVIEWED_HEAD:** `<sha>`
 //   AC-<n>: met|not met — <evidence>      (exactly one per top-level AC of the Issue)
 import "../register-ts-imports.ts";
-const { parseAcReviewLines, reviewHeader } =
+const { hasSecuritySection, parseAcReviewLines, reviewHeader } =
   await import("../../src/domain/delivery/acceptance-review.ts");
 const { linkedIssueNumber } = await import("../../src/domain/delivery/pull-issue-link.ts");
+const { implementationPaths } = await import("../../src/domain/tasks/implementation-map.ts");
+const { workflowRisks } = await import("../../src/domain/workflows/workflow-policy.ts");
 
 const { validRegressionEvidence } =
   await import("../../src/application/services/validate-review-evidence.ts");
@@ -24,9 +26,13 @@ export function checkReview(
     readonly workflow?: string | null | undefined;
     readonly baseSha?: string | null | undefined;
     readonly regressionEvidence?: unknown;
+    /** See `securityReviewRisk`; such a review needs its `Security:` section. */
+    readonly securityRisk?: boolean | undefined;
   },
 ): ReviewCheck {
   const reasons: string[] = [];
+  if (ctx.securityRisk === true && !hasSecuritySection(body))
+    reasons.push("a security-relevant review needs a `Security:` section with its evidence");
   const header = reviewHeader(body, true);
   const m = header === undefined ? undefined : ["", header.verdict, header.head];
   if (!m?.[1] || !m[2]) {
@@ -76,6 +82,18 @@ export function checkReview(
 
   if (reasons.length > 0 || !m?.[1] || !m[2]) return { ok: false, reasons };
   return { ok: true, verdict: m[1] === "PASS" ? "PASS" : "FAIL", head: m[2] };
+}
+
+/** The security risk the review packet was rendered with: Issue paths, Area, or `--risk security`. */
+export function securityReviewRisk(
+  issueBody: string,
+  area: string | null,
+  explicitRisk?: string,
+): boolean {
+  return (
+    workflowRisks(implementationPaths(issueBody), area).security ||
+    (explicitRisk?.split(",").includes("security") ?? false)
+  );
 }
 
 /** Issue number of the `Issue: #N` line every PR body carries (AGENTS.md section 8). */

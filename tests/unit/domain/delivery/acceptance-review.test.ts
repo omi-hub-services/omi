@@ -1,8 +1,29 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptanceReviewRefusals,
+  hasSecuritySection,
   parseAcReviewLines,
 } from "../../../../src/domain/delivery/acceptance-review.ts";
+
+describe("hasSecuritySection", () => {
+  it.each([
+    "Security: checked injection - no exec added",
+    "**Security:** no findings - diff has no input handling",
+    "## Security:\n- secrets: no findings, grep of the diff",
+    "- Security:\n  trust boundaries: checked",
+  ])("accepts a section with content: %s", (body) => {
+    expect(hasSecuritySection(`AC-1: met — x\n${body}`)).toBe(true);
+  });
+  it.each([
+    "AC-1: met — x",
+    "AC-1: met — Security: covered by a test",
+    "Security:",
+    "**Security:**\n\n",
+    "Insecurity: none",
+  ])("refuses a missing or empty section: %s", (body) => {
+    expect(hasSecuritySection(body)).toBe(false);
+  });
+});
 
 describe("parseAcReviewLines", () => {
   it("reads each verdict line with any accepted separator and an optional list marker", () => {

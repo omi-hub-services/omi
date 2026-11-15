@@ -70,6 +70,20 @@ export function acceptanceReviewRefusals(
   return refusals;
 }
 
+const SECURITY_HEADING = /^\s*(?:#{1,6}\s+)?(?:[-*+]\s+)?\**Security:\**(.*)$/i;
+
+/**
+ * Whether a security-relevant review has its `Security:` section with some content, on the same
+ * line or after it. Whether the content is good is the reviewer's and the Coordinator's judgment.
+ */
+export function hasSecuritySection(review: string): boolean {
+  const lines = review.split(/\r?\n/);
+  const at = lines.findIndex((line) => SECURITY_HEADING.test(line));
+  if (at < 0) return false;
+  const rest = SECURITY_HEADING.exec(lines[at] ?? "")?.[1] ?? "";
+  return rest.trim() !== "" || lines.slice(at + 1).some((line) => line.trim() !== "");
+}
+
 /** One unambiguous presentation header; old repository comments may use a SHA prefix. */
 export function reviewHeader(
   body: string,

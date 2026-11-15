@@ -552,6 +552,8 @@ export interface ReviewCommentInput {
   readonly regressionEvidence?: unknown;
   readonly issueBody: string;
   readonly workflow?: string | null;
+  /** The review packet's security risk (`securityReviewRisk`); the review then needs `Security:`. */
+  readonly securityRisk?: boolean;
   readonly body: string;
   readonly dryRun: boolean;
 }
@@ -573,6 +575,7 @@ export async function reviewCommentCommand(
     workflow: input.workflow,
     baseSha: input.baseSha,
     regressionEvidence: input.regressionEvidence,
+    securityRisk: input.securityRisk,
   });
   if (!checked.ok) return refuse(label, checked.reasons.join("; "));
   if (checked.verdict === "PASS" && input.checkStatus !== "pass")
