@@ -67,6 +67,21 @@ describe("checkReview", () => {
     expect(checkReview(good, { ...bugfix, baseSha: HEAD, regressionEvidence }).ok).toBe(false);
   });
 
+  it("accepts bugfix regression evidence recorded on the fork point after the base advanced", () => {
+    const forkPoint = "a".repeat(40);
+    const baseTip = "b".repeat(40);
+    const bugfix = { ...ctx, workflow: "bugfix", baseSha: baseTip, forkPoint };
+    const evidence = (revision: string) => ({
+      base: { revision, command: ["npm", "test"], exitCode: 1 },
+      head: { revision: HEAD, command: ["npm", "test"], exitCode: 0 },
+    });
+    expect(checkReview(good, { ...bugfix, regressionEvidence: evidence(forkPoint) }).ok).toBe(true);
+    expect(checkReview(good, { ...bugfix, regressionEvidence: evidence("c".repeat(40)) }).ok).toBe(
+      false,
+    );
+    expect(checkReview(good, { ...bugfix, regressionEvidence: evidence(baseTip) }).ok).toBe(false);
+  });
+
   it("accepts PASS with every AC met on the PR head", () => {
     expect(checkReview(good, ctx)).toEqual({ ok: true, verdict: "PASS", head: "9d0fba0" });
   });

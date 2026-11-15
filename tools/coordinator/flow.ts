@@ -1213,11 +1213,16 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         return 1;
       }
       const issue = await readIssue(ctx, n);
+      // The evidence base is the fork point, not the base tip, which moves as other PRs merge.
+      const fork = await ctx.run(
+        wslGit(ctx.target)(["merge-base", pr.headRefOid, `origin/${pr.baseRefName}`]),
+      );
       return reviewCommentCommand(ctx, {
         pr: pr.number,
         prState: pr.state,
         prHead: pr.headRefOid,
         baseSha: pr.baseRefOid,
+        forkPoint: fork.code === 0 ? fork.stdout.trim() : undefined,
         regressionEvidence:
           values["regression-evidence"] === undefined
             ? undefined

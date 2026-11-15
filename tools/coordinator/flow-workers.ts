@@ -555,6 +555,7 @@ export interface ReviewCommentInput {
   readonly prHead: string;
   readonly checkStatus: "pass" | "fail" | "pending" | "none";
   readonly baseSha?: string | null | undefined;
+  readonly forkPoint?: string | null | undefined;
   readonly regressionEvidence?: unknown;
   readonly issueBody: string;
   readonly workflow?: string | null;
@@ -619,6 +620,7 @@ export async function reviewCommentCommand(
     prHead: input.prHead,
     workflow: input.workflow,
     baseSha: input.baseSha,
+    forkPoint: input.forkPoint,
     regressionEvidence: input.regressionEvidence,
     securityRisk,
   });

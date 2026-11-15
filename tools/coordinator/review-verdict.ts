@@ -25,6 +25,8 @@ export function checkReview(
     readonly prHead: string;
     readonly workflow?: string | null | undefined;
     readonly baseSha?: string | null | undefined;
+    /** Merge base of the PR head and its base branch: where the regression evidence was recorded. */
+    readonly forkPoint?: string | null | undefined;
     readonly regressionEvidence?: unknown;
     /** See `securityReviewRisk`; such a review needs its `Security:` section. */
     readonly securityRisk?: boolean | undefined;
@@ -73,7 +75,7 @@ export function checkReview(
   if (
     m?.[1] === "PASS" &&
     ctx.workflow === "bugfix" &&
-    !validRegressionEvidence(ctx.regressionEvidence, ctx.baseSha ?? "", ctx.prHead)
+    !validRegressionEvidence(ctx.regressionEvidence, ctx.forkPoint ?? ctx.baseSha ?? "", ctx.prHead)
   ) {
     reasons.push(
       "bugfix needs script regression evidence red on the exact base and green on the exact head",
