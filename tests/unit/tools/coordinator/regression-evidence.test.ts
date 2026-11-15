@@ -78,6 +78,43 @@ it("refuses a run without an exit status and writes no evidence", async () => {
   expect(existsSync(r.out)).toBe(false);
 });
 
+it("runs git and both test runs in the WSL checkout and writes the evidence to the Coordinator path", async () => {
+  const out = join(dir, "wsl-evidence.json");
+  const target = { viaWslExe: true, distro: "Ubuntu-24.04", repoDir: "/home/u/omi" };
+  const calls: { file: string; args: readonly string[] }[] = [];
+  const runner = vi.fn((command: { file: string; args: readonly string[] }) => {
+    calls.push(command);
+    const payload = command.args.at(-1) ?? "";
+    const stdout = payload.startsWith("git merge-base")
+      ? `${base}\n`
+      : payload.startsWith("git rev-parse --verify")
+        ? `${base}\n`
+        : payload.startsWith("git rev-parse HEAD")
+          ? `${head}\n`
+          : "";
+    return Promise.resolve({ code: payload.includes("worktree add") ? 1 : 0, stdout, stderr: "" });
+  });
+  const status = await regressionEvidenceCommand({
+    testFile: "tests/unit/a.test.ts",
+    testName: "fixes it",
+    out,
+    run: runner,
+    target,
+  });
+  expect(status).toBe(0);
+  expect(
+    validRegressionEvidence(JSON.parse(readFileSync(out, "utf8")) as unknown, base, head),
+  ).toBe(true);
+  expect(calls.every((c) => c.file === "wsl.exe")).toBe(true);
+  expect(calls.every((c) => c.args.join(" ").includes("--cd /home/u/omi"))).toBe(true);
+  const payloads = calls.map((c) => c.args.at(-1) ?? "");
+  expect(payloads[0]).toBe("git merge-base HEAD origin/develop");
+  expect(payloads.some((p) => p.includes("worktree add --detach"))).toBe(true);
+  expect(
+    payloads.some((p) => p.includes("npm run test:unit -- tests/unit/a.test.ts -t 'fixes it'")),
+  ).toBe(true);
+});
+
 it.each(["src/a.test.ts", "../tests/unit/a.test.ts", "tests/other/a.test.ts"])(
   "refuses the test file %s",
   async (testFile) => {

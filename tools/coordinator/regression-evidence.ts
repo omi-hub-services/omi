@@ -3,16 +3,22 @@
 // reverted and on the head, and records the exit codes. The output is the file
 // `review-comment --regression-evidence` reads.
 import { writeFileSync } from "node:fs";
-import { BASE_BRANCH } from "./coordinator-settings.ts";
+import { BASE_BRANCH, wslTarget, type WslTarget } from "./coordinator-settings.ts";
+import {
+  createProcessRunner,
+  joinSteps,
+  runChecked,
+  shellQuote,
+  WSL_NODE_ENV,
+  wslCommand,
+  type Runner,
+} from "./process-runner.ts";
 import "../register-ts-imports.ts";
 const { regressionTestSchema } = await import("../../src/application/contracts/result.ts");
 const { produceRegressionEvidence } =
   await import("../../src/application/services/produce-regression-evidence.ts");
 const { validRegressionEvidence } =
   await import("../../src/application/services/validate-review-evidence.ts");
-const { createRegressionExecutor } =
-  await import("../../src/infrastructure/processes/regression-executor.ts");
-const { gitCommand } = await import("../../src/infrastructure/git/git-command.ts");
 
 type Executor = Parameters<typeof produceRegressionEvidence>[2];
 
@@ -26,8 +32,51 @@ export function regressionCommand(file: string): readonly string[] | undefined {
   return COMMANDS.find(([prefix]) => file.startsWith(prefix))?.[1];
 }
 
+/** Setup failure in the throwaway worktree; not a test result, so it yields no exit status. */
+const SETUP_FAILED = 199;
+
+/** Mirrors createRegressionExecutor, but every git and npm step runs in the WSL checkout. */
+function wslRegressionExecutor(
+  run: Runner,
+  target: WslTarget,
+  baseSha: string,
+  testFile: string,
+  timeoutMs: number,
+): Executor {
+  const exitOf = (code: number) => (code === SETUP_FAILED || code >= 127 ? null : code);
+  return async (where, argv) => {
+    const test = joinSteps([argv]);
+    if (where === "head") {
+      const revision = (await runChecked(run, wslCommand("git rev-parse HEAD", target))).trim();
+      const result = await run(wslCommand(`${WSL_NODE_ENV} ${test}`, target, timeoutMs));
+      return { revision, exitCode: exitOf(result.code) };
+    }
+    const revision = (
+      await runChecked(
+        run,
+        wslCommand(joinSteps([["git", "rev-parse", "--verify", `${baseSha}^{commit}`]]), target),
+      )
+    ).trim();
+    const q = shellQuote;
+    const tree = "$T/base";
+    const dir = testFile.slice(0, testFile.lastIndexOf("/"));
+    const payload =
+      `T=$(mktemp -d); ` +
+      `{ git worktree add --detach ${tree} ${q(revision)} && mkdir -p ${tree}/${q(dir)} && ` +
+      `cp ${q(testFile)} ${tree}/${q(testFile)} && ` +
+      `{ [ ! -d node_modules ] || ln -s ${q(target.repoDir)}/node_modules ${tree}/node_modules; }; } ` +
+      `&& { cd ${tree} && ${WSL_NODE_ENV} ${test}; rc=$?; } || rc=${String(SETUP_FAILED)}; ` +
+      `cd ${q(target.repoDir)}; git worktree remove --force ${tree}; rm -rf $T; exit $rc`;
+    const result = await run(wslCommand(payload, target, timeoutMs));
+    return { revision, exitCode: exitOf(result.code) };
+  };
+}
+
 export interface RegressionEvidenceInput {
-  readonly worktree: string;
+  /** Path inside the WSL checkout; defaults to the configured work checkout. */
+  readonly worktree?: string;
+  readonly run?: Runner;
+  readonly target?: WslTarget;
   readonly testFile: string;
   readonly testName: string;
   readonly out: string;
@@ -48,19 +97,21 @@ export async function regressionEvidenceCommand(input: RegressionEvidenceInput):
     );
     return 1;
   }
-  const base =
-    input.base ??
-    gitCommand(input.worktree, ["merge-base", "HEAD", `origin/${BASE_BRANCH}`]).stdout.trim();
-  const execute =
-    input.execute ??
-    createRegressionExecutor({
-      workspacePath: input.worktree,
-      baseSha: base,
-      testFile: test.data.file,
-      timeoutMs: input.timeoutMs ?? 600_000,
-    });
+  const timeoutMs = input.timeoutMs ?? 600_000;
+  const run = input.run ?? createProcessRunner();
+  const target = {
+    ...(input.target ?? wslTarget()),
+    ...(input.worktree ? { repoDir: input.worktree } : {}),
+  };
   let evidence;
   try {
+    const base =
+      input.base ??
+      (
+        await runChecked(run, wslCommand(`git merge-base HEAD origin/${BASE_BRANCH}`, target))
+      ).trim();
+    const execute =
+      input.execute ?? wslRegressionExecutor(run, target, base, test.data.file, timeoutMs);
     evidence = await produceRegressionEvidence(command, test.data, execute);
   } catch (error) {
     console.error(`${label}: refused: ${error instanceof Error ? error.message : String(error)}`);
