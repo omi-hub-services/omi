@@ -23,7 +23,7 @@ const MAX_LOG_CHARS = 16_000;
 const KEPT_TAIL_CHARS = 64_000;
 
 /** Not the runtime's own environment: only what a build tool needs to find itself. */
-function checkEnvironment(): Record<string, string> {
+export function checkEnvironment(): Record<string, string> {
   const names = ["PATH", "HOME", "LANG", "TMPDIR"];
   const env: Record<string, string> = { CI: "true" };
   for (const name of names) {

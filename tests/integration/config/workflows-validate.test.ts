@@ -39,10 +39,35 @@ it.each(["feature", "refactor", "bugfix", "onboarding-empty-repo"])(
             gate.id,
           ),
         )
-        .every((gate) => gate.after === "review"),
+        .every((gate) => gate.after === (gate.id === "regression-test" ? "fix" : "review")),
     ).toBe(true);
   },
 );
+
+it("bugfix is one fix step, then review, with scope approval before fix", () => {
+  const workflow = workflowSchema.parse(
+    parse(readFileSync("templates/project/workflows/bugfix.yaml", "utf8")),
+  );
+  expect(workflow.steps.map((step) => step.id)).toEqual(["fix", "review"]);
+  const fix = workflow.steps[0];
+  expect(fix).toMatchObject({
+    role: "developer",
+    output_contract: "implementation-result-v1",
+    required_checks: ["project-check"],
+    needs: [],
+  });
+  expect(fix?.skills).toEqual([
+    "systematic-debugging",
+    "test-driven-development",
+    "minimal-change",
+  ]);
+  expect(workflow.steps[1]?.needs).toEqual(["fix"]);
+  expect(workflow.gates).toContainEqual({
+    id: "scope-approved",
+    before: "fix",
+    policy: "approved-business-baseline",
+  });
+});
 
 it.each(["ui-ux", "onboarding-takeover", "ci-cd"])("%s retains specialist verification", (id) => {
   const workflow = workflowSchema.parse(

@@ -36,6 +36,10 @@ the PO; never bypass it with raw Git or GitHub commands. Workers must not load t
    review worker per quality round; its packet includes verification-before-completion and
    evidence-and-tests. Script gates enforce green checks on the exact SHA, complete AC-n
    lines and bugfix red/base–green/head regression evidence. Risk flags add review focus.
+   Bugfix is one `fix` step (reproduce and implement together) then review: the worker
+   reports `regressionTest {file, name}` and the runtime itself runs it on the base with the
+   fix reverted and on the head; the worker's own claim never counts. Runs pinned to the
+   older template still show `reproduce`/`implement`.
    Keep separate QA for ui-ux visual verification, onboarding-takeover baseline-verify and
    ci-cd pipeline output. Round 1 review uses medium effort; later delta reviews use low.
    Dispatch the independent reviewer step on a fixed revision. Judge its findings; never

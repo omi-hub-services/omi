@@ -191,7 +191,7 @@ it("reads the Workflow from later Project-item pages without duplicating comment
 it.each([
   ["docs", "write"],
   ["docs", "accept"],
-  ["bugfix", "reproduce"],
+  ["bugfix", "fix"],
 ])("accepts actual %s/%s IDs", async (workflow, step) => {
   expect(await main(["prompt", "185", "--step", step], fake({ workflow }).ctx)).toBe(0);
   expect(output.join("\n")).toContain(`Workflow ${workflow} · step ${step}`);

@@ -559,20 +559,35 @@ describe("recordStepResult", () => {
 });
 
 describe("checks the runtime ran itself", () => {
+  it("refuses the regression gate without script-recorded evidence, even with a worker claim", async () => {
+    const r = rig();
+    const { attempt, handle } = await started(
+      r,
+      dispatchInput({ requiredChecks: ["regression-test"] }),
+    );
+    const claimed = r.artifacts.publish(
+      `${attempt.artifactRoot}/regression.json`,
+      JSON.stringify({
+        base: { revision: BASE, command: ["npm", "test"], exitCode: 1 },
+        head: { revision: HEAD, command: ["npm", "test"], exitCode: 0 },
+      }),
+    );
+    const report = goodResult(r, attempt.id);
+    const outcome = await record(r, attempt.id, handle, {
+      ...report,
+      artifacts: [...report.artifacts, claimed],
+      checks: [{ id: "regression-test", evidenceRef: claimed.path }],
+    });
+    expect(outcome).toMatchObject({ stepStatus: "failed", failure: "REGRESSION_EVIDENCE_INVALID" });
+  });
+
   it.each(["valid", "prose", "wrong-base", "green-base", "wrong-head"])(
     "validates hashed regression script evidence: %s",
     async (scenario) => {
       const r = rig();
-      r.deps.catalog = {
-        ...r.deps.catalog,
-        roles: r.deps.catalog.roles.map((entry) => ({
-          ...entry,
-          definition: { ...entry.definition, id: "reviewer" },
-        })),
-      };
       const { attempt, handle } = await started(
         r,
-        dispatchInput({ role: "reviewer", requiredChecks: ["regression-test"] }),
+        dispatchInput({ requiredChecks: ["regression-test"] }),
       );
       const evidence = r.artifacts.publish(
         `${attempt.artifactRoot}/regression.json`,
@@ -594,10 +609,11 @@ describe("checks the runtime ran itself", () => {
       const report = goodResult(r, attempt.id, {
         summary: "AC-1: met — regression evidence checked",
       });
-      const outcome = await record(r, attempt.id, handle, {
-        ...report,
-        artifacts: [...report.artifacts, evidence],
-        checks: [{ id: "regression-test", evidenceRef: evidence.path }],
+      const outcome = recordStepResult(r.deps, {
+        attemptId: attempt.id,
+        execution: await r.executor.collectResult(handle),
+        result: report,
+        regressionEvidence: evidence,
       });
       expect(outcome).toMatchObject({
         stepStatus: scenario === "valid" ? "succeeded" : "failed",

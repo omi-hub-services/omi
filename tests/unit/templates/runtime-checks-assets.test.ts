@@ -10,7 +10,9 @@ it.each(["feature", "bugfix", "refactor"])(
     const workflow = workflowSchema.parse(
       parse(readFileSync(`templates/project/workflows/${id}.yaml`, "utf8")),
     );
-    const step = workflow.steps.find((entry) => entry.id === "implement");
+    const step = workflow.steps.find(
+      (entry) => entry.id === (id === "bugfix" ? "fix" : "implement"),
+    );
     expect(step?.required_checks).toContain("project-check");
   },
 );

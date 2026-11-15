@@ -7,6 +7,9 @@ import type { CheckRunRecord } from "../contracts/check-run.js";
 import type { Finding } from "../contracts/result.js";
 import type { StepFindingStore } from "../ports/step-findings.js";
 import type { CheckRunner } from "../ports/check-runner.js";
+import type { RegressionRunner } from "../ports/regression-runner.js";
+import type { ArtifactReference } from "../contracts/artifact.js";
+import { produceRegressionEvidence } from "./produce-regression-evidence.js";
 import type { DispatchStepDependencies } from "../use-cases/runs/dispatch-step.js";
 import type { AdvanceRunDependencies } from "../use-cases/runs/advance-run.js";
 import { advanceRun } from "../use-cases/runs/advance-run.js";
@@ -27,6 +30,8 @@ export interface CompletionRouting {
   readonly rework?: RecordReworkEventDependencies;
   /** Runs the required checks the project configured; their ids never pass on a worker's word. */
   readonly checks?: CheckRunner;
+  /** Produces the red-on-base / green-on-head regression evidence; without it that gate fails closed. */
+  readonly regression?: RegressionRunner;
   /** Receives a failed check's summary for the step's next attempt. */
   readonly findings?: Pick<StepFindingStore, "remember">;
   readonly selections?: ExecutorSelectionStore;
@@ -80,7 +85,14 @@ export async function completeRunAttempt(
       keepFinalMessage(deps, attempt, execution.finalMessage);
     }
     const checkRuns = await runRequiredChecks(deps, attempt, execution.outcome, reported);
-    const recorded = recordStepResult(deps, { attemptId, execution, result: report, checkRuns });
+    const regressionEvidence = await runRegressionTest(deps, attempt, execution.outcome, reported);
+    const recorded = recordStepResult(deps, {
+      attemptId,
+      execution,
+      result: report,
+      checkRuns,
+      ...(regressionEvidence === undefined ? {} : { regressionEvidence }),
+    });
     if (!recorded.ok) return;
     deps.findings?.remember(
       attempt.stepRunId,
@@ -240,6 +252,54 @@ function keepFinalMessage(
 }
 
 /**
+ * Runs the test the worker named against the base (fix reverted) and the head. Any problem
+ * (no runner, no named test, no merge-base, a run without an exit status) yields no evidence,
+ * and recording then refuses the gate.
+ */
+async function runRegressionTest(
+  deps: DispatchStepDependencies & CompletionRouting,
+  attempt: NonNullable<ReturnType<DispatchStepDependencies["attempts"]["get"]>>,
+  outcome: string,
+  reported: ReturnType<typeof stepResultSchema.safeParse>,
+): Promise<ArtifactReference | undefined> {
+  if (
+    deps.regression === undefined ||
+    attempt.status !== "running" ||
+    outcome !== "succeeded" ||
+    !attempt.requiredChecks.includes("regression-test") ||
+    !reported.success ||
+    reported.data.status !== "succeeded" ||
+    reported.data.regressionTest === undefined
+  ) {
+    return undefined;
+  }
+  const base = deps.workspaces.mergeBase?.(attempt.workspace.path);
+  if (base?.ok !== true) return undefined;
+  const test = reported.data.regressionTest;
+  try {
+    const evidence = await produceRegressionEvidence(
+      deps.regression.command,
+      test,
+      deps.regression.executor({
+        workspacePath: attempt.workspace.path,
+        baseSha: base.value,
+        testFile: test.file,
+      }),
+    );
+    return deps.artifacts.write({
+      id: deps.nextId(),
+      path: `${attempt.artifactRoot}/checks/regression-test.json`,
+      bytes: new TextEncoder().encode(JSON.stringify(evidence)),
+      producerAttemptId: attempt.id,
+      classification: "check-evidence",
+      createdAt: new Date(deps.now()).toISOString(),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Runs, in the attempt's worktree, every required check the runtime owns (OMI-085). Only a
  * result that could still be accepted is worth a run: the process succeeded, the worker claims
  * success and its revision is the worktree's head, so the check runs on exactly that revision.
@@ -258,7 +318,7 @@ async function runRequiredChecks(
   if (packet.quality?.step === "verify" || packet.quality?.step === "review")
     return packet.checkEvidence ?? [];
   if (!reported.success || reported.data.status !== "succeeded") return [];
-  const ids = attempt.requiredChecks.filter((id) => runner.has(id));
+  const ids = attempt.requiredChecks.filter((id) => id !== "regression-test" && runner.has(id));
   if (ids.length === 0) return [];
   // The check runs on the runtime's own head; recording refuses a worker claim that disagrees.
   const state = deps.workspaces.inspect(attempt.workspace.path);

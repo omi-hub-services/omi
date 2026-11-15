@@ -250,7 +250,8 @@ describe("completeRunAttempt runs the step's required checks itself", () => {
     const required = (id: string) =>
       workflowSchema
         .parse(parse(readFileSync(`templates/project/workflows/${id}.yaml`, "utf8")))
-        .steps.find((step) => step.id === "implement")?.required_checks ?? [];
+        .steps.find((step) => step.id === (id === "bugfix" ? "fix" : "implement"))
+        ?.required_checks ?? [];
 
     it.each(["feature", "bugfix", "refactor"])(
       "accepts the %s implement step when the runtime's project-check passes",
@@ -410,5 +411,62 @@ describe("completeRunAttempt reads the step result out of the final message", ()
     const s = setup();
     const attempt = await finish(s);
     expect(s.r.artifacts.files.has(`${attempt.artifactRoot}/final-message.txt`)).toBe(false);
+  });
+});
+
+describe("completeRunAttempt records script-run regression evidence", () => {
+  const test = { file: "tests/unit/x.test.ts", name: "fixes the bug" };
+  const wire = (s: ReturnType<typeof setup>, baseExit: number, headExit: number) => {
+    const executor = vi.fn(
+      () => (where: "base" | "head") =>
+        Promise.resolve(
+          where === "base"
+            ? { revision: BASE, exitCode: baseExit }
+            : { revision: HEAD, exitCode: headExit },
+        ),
+    );
+    Object.assign(s.deps, { regression: { command: ["npm", "run", "test:unit", "--"], executor } });
+    return executor;
+  };
+  const failure = (s: ReturnType<typeof setup>) =>
+    JSON.parse(s.r.unitOfWork.commits.at(-1)?.event.payload ?? "{}") as { failure?: string };
+  const fix = (s: ReturnType<typeof setup>, claimed: object = { regressionTest: test }) =>
+    finish(s, () => claimed, {}, false, undefined, ["regression-test"]);
+
+  it("accepts red on the base plus green on the head, using the runtime's merge-base", async () => {
+    const s = setup();
+    const executor = wire(s, 1, 0);
+    await fix(s);
+    expect(stepStatus(s)).toBe("succeeded");
+    expect(executor).toHaveBeenCalledWith(
+      expect.objectContaining({ baseSha: BASE, testFile: test.file }),
+    );
+  });
+
+  it.each([
+    ["a green base", 0, 0],
+    ["a red head", 1, 1],
+  ])("refuses %s", async (_label, baseExit, headExit) => {
+    const s = setup();
+    wire(s, baseExit, headExit);
+    await fix(s);
+    expect(stepStatus(s)).toBe("failed");
+    expect(failure(s)).toMatchObject({ failure: "REGRESSION_EVIDENCE_INVALID" });
+  });
+
+  it("refuses when the worker names no regression test, so nothing was run", async () => {
+    const s = setup();
+    const executor = wire(s, 1, 0);
+    await fix(s, {});
+    expect(executor).not.toHaveBeenCalled();
+    expect(stepStatus(s)).toBe("failed");
+    expect(failure(s)).toMatchObject({ failure: "REGRESSION_EVIDENCE_INVALID" });
+  });
+
+  it("refuses without a configured regression runner", async () => {
+    const s = setup();
+    await fix(s);
+    expect(stepStatus(s)).toBe("failed");
+    expect(failure(s)).toMatchObject({ failure: "REGRESSION_EVIDENCE_INVALID" });
   });
 });
