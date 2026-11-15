@@ -1,3 +1,4 @@
+import type { WorkerCredentials } from "../../../application/contracts/omisetting.js";
 const INHERITED_ENV = [
   "PATH",
   "HOME",
@@ -27,6 +28,7 @@ export const FORBIDDEN_AUTH_ENV = [
 export function buildCodexEnvironment(
   parent: NodeJS.ProcessEnv,
   profileHome: string,
+  credentials: WorkerCredentials = {},
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const name of INHERITED_ENV) {
@@ -34,5 +36,6 @@ export function buildCodexEnvironment(
     if (value !== undefined) env[name] = value;
   }
   env["CODEX_HOME"] = profileHome;
+  if (credentials.githubToken !== undefined) env["GH_TOKEN"] = credentials.githubToken;
   return env;
 }

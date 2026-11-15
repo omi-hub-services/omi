@@ -20,6 +20,7 @@ import { registerWorkflowCommands, type WorkflowCommands } from "./workflow-comm
 import { registerSyncCommand } from "./sync-command.js";
 
 export interface CliEnvironment extends CliOutput {
+  readonly profileLogin?: import("../../../application/ports/profile-login.js").ProfileLogin;
   readonly readText?: CliContext["readText"];
   readonly sendCommand: CliContext["sendCommand"];
   readonly defaultSocketPath: string;
@@ -58,7 +59,7 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
   registerSessionCommands(program, context, environment.launchSession);
   registerApprovalCommands(program, context);
   registerRunCommands(program, context);
-  registerProfileCommands(program, context);
+  registerProfileCommands(program, context, environment.profileLogin);
   registerTaskCommands(program, context, environment.tasks);
   registerSyncCommand(program, context);
   registerLogCommands(program, context, environment.logs);

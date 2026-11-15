@@ -57,9 +57,29 @@ function containsSecretLiteral(text: string): boolean {
 }
 const AWS_ACCESS_KEY = /\bAKIA[0-9A-Z]{16}\b/;
 
+/** Exact configured values, including JSON-decoded strings; safe for native tool source output. */
+export function assertKnownCredentialFree(value: unknown, policy: CredentialPolicy): void {
+  if (typeof value === "string") {
+    if (
+      policy.sensitiveValues?.some((secret) => secret.length > 0 && value.includes(secret)) === true
+    )
+      throw new CredentialInputError();
+  } else if (Array.isArray(value))
+    value.forEach((item) => {
+      assertKnownCredentialFree(item, policy);
+    });
+  else if (value !== null && typeof value === "object") {
+    for (const [key, child] of Object.entries(value)) {
+      assertKnownCredentialFree(key, policy);
+      assertKnownCredentialFree(child, policy);
+    }
+  }
+}
+
 /** Reject rather than silently altering pinned content. Heuristics plus caller-known secrets. */
 export function assertCredentialFree(value: unknown, policy: CredentialPolicy = {}): void {
   const inspectText = (text: string): void => {
+    assertKnownCredentialFree(text, policy);
     const normalized = text.replaceAll("\\", "/");
     if (
       CREDENTIAL_PATH.test(text) ||
@@ -68,8 +88,6 @@ export function assertCredentialFree(value: unknown, policy: CredentialPolicy = 
       SECRET_VALUE.test(text) ||
       AWS_ACCESS_KEY.test(text) ||
       /(?:^|[\s/])\.config\/gh\/hosts\.yml(?=$|[\s"'`}:),])/i.test(normalized) ||
-      policy.sensitiveValues?.some((secret) => secret.length > 0 && text.includes(secret)) ===
-        true ||
       policy.credentialRoots?.some((root) => {
         const canonical = root.replaceAll("\\", "/").replace(/\/+$/, "");
         return canonical.length > 0 && normalized.includes(canonical);

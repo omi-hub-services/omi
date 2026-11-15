@@ -45,3 +45,5 @@ credential giả; các trường hợp reject cũ chỉ đổi nhóm đối vớ
 Một config file vẫn có thể chứa secret không nhận diện được. Catalog phải được review,
 guard chạy trên metadata, bytes, JSON đã parse và packet; caller phải cung cấp giá trị và
 root nhạy cảm đã biết. Không dependency, migration hoặc cấu trúc module nào thay đổi.
+
+> Amended by ADR-0044 (OMI-155): configured Claude and GitHub tokens may be read from the gitignored local settings file and passed only through selected child environments.

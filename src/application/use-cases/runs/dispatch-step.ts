@@ -19,7 +19,7 @@ import { taskReadinessReasons } from "../../../domain/tasks/readiness-gate.js";
 import type { GithubTaskBoard } from "../../ports/github-task-board.js";
 import { transitionStep } from "../../../domain/runs/step-run.js";
 import { accessLevelSchema, MAX_EXECUTION_TIMEOUT_MS } from "../../contracts/agent-execution.js";
-import { CredentialInputError } from "../../contracts/credential-input.js";
+import { CredentialInputError, type CredentialPolicy } from "../../contracts/credential-input.js";
 import type { ExecutionHandle } from "../../contracts/agent-execution.js";
 import type { ArtifactReference } from "../../contracts/artifact.js";
 import { contextPacketSchema } from "../../contracts/context.js";
@@ -101,6 +101,7 @@ const dispatchStepSchema = z.strictObject({
 export type DispatchStepInput = z.input<typeof dispatchStepSchema>;
 
 export interface DispatchStepDependencies {
+  readonly credentialPolicy?: CredentialPolicy;
   readonly checks?: CheckRunner;
   /** Pinned, hash-verified catalog the resolver chooses from. */
   readonly catalog: ResolutionCatalog;
@@ -555,33 +556,36 @@ export async function dispatchStep(
     try {
       const reference = <T>(entries: readonly T[]) =>
         entries.map((entry) => ({ roles: [command.role], steps: [step.stepId], reference: entry }));
-      packet = assembleContext({
-        context: {
-          ...(command.quality === undefined ? {} : { quality: command.quality }),
-          ...(command.packetSteps === undefined
-            ? {}
-            : {
-                stepAssignments: command.packetSteps.map(({ id, role, skills, rules }) => ({
-                  id,
-                  role,
-                  skills,
-                  rules,
-                })),
-              }),
-          ...(checkEvidence.length === 0 ? {} : { checkEvidence }),
-          ...(reviewDelta === undefined ? {} : { reviewDelta }),
-          schemaVersion: 1,
-          runId: step.runId,
-          stepId: step.stepId,
-          attemptId,
-          ...taskContext,
-          role: command.role,
-          workspace: { path: created.value.path },
+      packet = assembleContext(
+        {
+          context: {
+            ...(command.quality === undefined ? {} : { quality: command.quality }),
+            ...(command.packetSteps === undefined
+              ? {}
+              : {
+                  stepAssignments: command.packetSteps.map(({ id, role, skills, rules }) => ({
+                    id,
+                    role,
+                    skills,
+                    rules,
+                  })),
+                }),
+            ...(checkEvidence.length === 0 ? {} : { checkEvidence }),
+            ...(reviewDelta === undefined ? {} : { reviewDelta }),
+            schemaVersion: 1,
+            runId: step.runId,
+            stepId: step.stepId,
+            attemptId,
+            ...taskContext,
+            role: command.role,
+            workspace: { path: created.value.path },
+          },
+          skills: reference(resolved.skills),
+          rules: reference(resolved.rules),
+          inputs: reference([...inputArtifacts, ...qaInputs]),
         },
-        skills: reference(resolved.skills),
-        rules: reference(resolved.rules),
-        inputs: reference([...inputArtifacts, ...qaInputs]),
-      });
+        deps.credentialPolicy,
+      );
     } catch (error) {
       if (
         error instanceof ZodError ||

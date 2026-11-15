@@ -1,3 +1,8 @@
+import type { WorkerCredentials } from "../../../application/contracts/omisetting.js";
+import {
+  assertKnownCredentialFree,
+  type CredentialPolicy,
+} from "../../../application/contracts/credential-input.js";
 import { randomUUID } from "node:crypto";
 import { readdirSync, statSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -34,6 +39,8 @@ import { probeCodex } from "./codex-probe.js";
 import { CodexStreamState } from "./codex-stream.js";
 
 export interface CodexExecutorOptions {
+  credentials?: (profileHome: string) => WorkerCredentials;
+  credentialPolicy?: CredentialPolicy;
   startProcess?: typeof startSupervisedProcess;
   executable?: string;
   parentEnv?: NodeJS.ProcessEnv;
@@ -76,6 +83,8 @@ export class CodexExecutor implements AgentExecutor {
   readonly executor = "codex" as const;
   private readonly startProcess: typeof startSupervisedProcess;
   private readonly executable: string;
+  private readonly credentials: (profileHome: string) => WorkerCredentials;
+  private readonly credentialPolicy: CredentialPolicy;
   private readonly parentEnv: NodeJS.ProcessEnv;
   private readonly graceMs: number;
   private readonly newExecutionId: () => string;
@@ -84,6 +93,8 @@ export class CodexExecutor implements AgentExecutor {
 
   constructor(options: CodexExecutorOptions = {}) {
     this.startProcess = options.startProcess ?? startSupervisedProcess;
+    this.credentials = options.credentials ?? (() => ({}));
+    this.credentialPolicy = options.credentialPolicy ?? {};
     this.executable = options.executable ?? "codex";
     this.parentEnv = options.parentEnv ?? process.env;
     this.graceMs = options.graceMs ?? 15_000;
@@ -97,7 +108,11 @@ export class CodexExecutor implements AgentExecutor {
       throw new AgentExecutorError("INVALID_REQUEST");
     return probeCodex({
       executable: this.executable,
-      env: buildCodexEnvironment(this.parentEnv, parsed.data.profileHome),
+      env: buildCodexEnvironment(
+        this.parentEnv,
+        parsed.data.profileHome,
+        this.credentials(parsed.data.profileHome),
+      ),
       cwd: tmpdir(),
       profileHome: parsed.data.profileHome,
     });
@@ -144,10 +159,15 @@ export class CodexExecutor implements AgentExecutor {
     };
     try {
       run.supervised = await this.startProcess({
+        credentialPolicy: this.credentialPolicy,
         executable: this.executable,
         args: buildCodexInvocationArgs(valid, run.outputPath),
         cwd: valid.workspace,
-        env: buildCodexEnvironment(this.parentEnv, valid.profileHome),
+        env: buildCodexEnvironment(
+          this.parentEnv,
+          valid.profileHome,
+          this.credentials(valid.profileHome),
+        ),
         stdin: valid.prompt,
         onStdoutLine: (line) => {
           for (const draft of run.stream.ingest(line)) run.events.publish(draft);
@@ -207,6 +227,13 @@ export class CodexExecutor implements AgentExecutor {
       let finalMessage: string | undefined;
       if (classification.outcome === "succeeded") {
         finalMessage = await readBoundedText(run.outputPath, 400_000);
+        if (finalMessage !== undefined) {
+          try {
+            assertKnownCredentialFree(finalMessage, this.credentialPolicy);
+          } catch {
+            finalMessage = undefined;
+          }
+        }
         if (finalMessage === undefined || finalMessage.length > 100_000) {
           classification = { outcome: "malformed-output", reason: "invalid_output_file" };
           finalMessage = undefined;

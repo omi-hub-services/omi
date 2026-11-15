@@ -248,7 +248,22 @@ side that uses them, and never shared (ADR-0012 §4, ADR-0031):
 | WSL2, one per account      | Claude worker| `CLAUDE_CONFIG_DIR=~/.claude-profiles/<id>`    | `CLAUDE_CONFIG_DIR=… claude` then `/login` (interactive)            |
 | WSL2, one per account      | Codex worker | `CODEX_HOME=~/.codex-profiles/<id>`            | `CODEX_HOME=… codex login` (ChatGPT subscription, file store)       |
 
-Rules: subscription logins only (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`,
+For installations with `.omi/omisetting.local.json`, follow
+[ADR-0044](../architecture/adr/0044-local-settings-credential-boundary.md): fill the installed
+`.omi/omisetting.example.json` into that gitignored local file. VS Code's schema hover explains
+every field. Obtain each Claude token with `claude setup-token`; the runtime selects that token,
+not the parent's environment. From Windows PowerShell, run
+`node <project>/.omi/bin/omi.cjs profile login codex-main` for a configured Codex login profile.
+The native Codex login opens its browser flow and writes only to that WSL profile's writable
+store; never copy a rotating auth file between hosts. `doctor` validates settings, checks Git
+tracking and probes the configured tokens. Profile registration metadata/model allowlists
+remain separate from this settings file.
+
+The native-login table and shortcut below also describe legacy projects without local settings.
+Configured workers accept only the selected Claude setup-token; provider API keys and inherited
+OAuth tokens remain excluded.
+
+Rules: subscription logins only (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, inherited `CLAUDE_CODE_OAUTH_TOKEN`,
 `OPENAI_API_KEY`, `CODEX_API_KEY` are unsupported, see compatibility.md); one directory per account;
 never copy or mount a profile directory across the Windows/WSL boundary (rotating refresh tokens
 would invalidate each other); several directories of one account share one quota.

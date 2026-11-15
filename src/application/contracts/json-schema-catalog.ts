@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { omisettingSchema } from "./omisetting.js";
 import { frameworkLockSchema, installationInputSchema } from "./project-installation.js";
 import { commandSchema } from "./command.js";
 import { contextPacketSchema } from "./context.js";
@@ -15,6 +16,7 @@ export interface GeneratedSchemaFile {
 }
 
 const CONTRACTS: readonly { name: string; schema: z.ZodType }[] = [
+  { name: "omisetting", schema: omisettingSchema },
   { name: "framework-lock", schema: frameworkLockSchema },
   { name: "project-installation", schema: installationInputSchema },
   { name: "workflow", schema: workflowSchema },
@@ -43,7 +45,10 @@ function toJsonSchema(schema: z.ZodType): Record<string, unknown> {
  */
 export function renderJsonSchemaFiles(): GeneratedSchemaFile[] {
   return CONTRACTS.map(({ name, schema }) => ({
-    fileName: `${name}.v${String(CONTRACT_SCHEMA_VERSION)}.schema.json`,
+    fileName:
+      name === "omisetting"
+        ? "omisetting.schema.json"
+        : `${name}.v${String(CONTRACT_SCHEMA_VERSION)}.schema.json`,
     content: `${JSON.stringify({ $comment: GENERATED_NOTICE, ...toJsonSchema(schema) }, null, 2)}\n`,
   }));
 }

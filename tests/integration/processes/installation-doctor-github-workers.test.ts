@@ -32,12 +32,21 @@ const defaults: Answers = {
 function probe(answers: Answers, projectConfig: ProjectConfig | null): WslProbe {
   const all = { ...defaults, ...answers };
   return {
+    settings: () =>
+      Promise.resolve({
+        version: 1,
+        github: { token: "fake-github", gitUser: { name: "bot", email: "bot@example.com" } },
+        profiles: [{ id: "codex-main", tool: "codex", auth: { type: "login" } }],
+      }),
     kernel: () => Promise.resolve("6.6.87-microsoft-standard-WSL2"),
     distro: () => "Ubuntu",
     interop: () => Promise.resolve(true),
     canonical: (path) => Promise.resolve(path),
     projectConfig: () => Promise.resolve(projectConfig ?? undefined),
     command: (executable, args) => {
+      if (executable === "git") return Promise.resolve("");
+      if (executable === "codex" && args[0] === "login")
+        return Promise.resolve("Logged in using ChatGPT");
       if (executable === "wsl.exe")
         return Promise.resolve(
           args[0] === "--list"
@@ -142,10 +151,10 @@ describe("doctor GitHub and worker CLI checks", () => {
   });
 
   it("reports a missing gh login without reaching later GitHub checks", async () => {
-    const { report, status } = await run({ "gh auth status": undefined });
+    const { report, status } = await run({ "gh api user": undefined });
     expect(report.supported).toBe(false);
     expect(status("github-auth")).toMatchObject({ ok: false, status: "fail" });
-    expect(status("github-auth")?.fix).toContain("gh auth login");
+    expect(status("github-auth")?.fix).toContain("github.token");
     expect(status("github-agent-identity")?.ok).toBe(false);
   });
 
@@ -290,4 +299,83 @@ describe("doctor WSL interop and wsl.exe reachability", () => {
       expect(status(name)?.fix).toContain("wsl-exe");
     }
   });
+});
+
+describe("doctor local settings", () => {
+  it("refuses a git-tracked local credential file", async () => {
+    const base = probe({}, config);
+    const doctor = createInstallationDoctor({
+      ...base,
+      settings: () =>
+        Promise.resolve({
+          version: 1,
+          github: { token: "fake-github", gitUser: { name: "bot", email: "bot@example.com" } },
+          profiles: [
+            { id: "claude-main", tool: "claude", auth: { type: "token", token: "fake-claude" } },
+          ],
+        }),
+      command: (executable, args, cwd) =>
+        executable === "git"
+          ? Promise.resolve(".omi/omisetting.local.json")
+          : base.command(executable, args, cwd),
+    });
+    const report = await inspectInstallation(doctor, request);
+    expect(report.checks.find((check) => check.name === "settings-untracked")).toMatchObject({
+      ok: false,
+    });
+    expect(report.supported).toBe(false);
+  });
+});
+
+it("reports missing or invalid settings without probing credentials", async () => {
+  const base = probe({}, config);
+  for (const settings of [
+    () => Promise.resolve(undefined),
+    () => Promise.reject(new Error("profiles[1].auth.token: invalid or missing value")),
+  ]) {
+    const report = await inspectInstallation(
+      createInstallationDoctor({ ...base, settings }),
+      request,
+    );
+    expect(report.supported).toBe(false);
+    expect(report.checks.find((check) => check.name === "settings-schema")?.ok).toBe(false);
+    expect(report.checks.find((check) => check.name === "github-auth")?.ok).toBe(false);
+  }
+});
+
+it("fails a rejected Claude token using only that profile's env and a path diagnostic", async () => {
+  const base = probe({}, config);
+  const environments: Readonly<Record<string, string>>[] = [];
+  const report = await inspectInstallation(
+    createInstallationDoctor({
+      ...base,
+      settings: () =>
+        Promise.resolve({
+          version: 1,
+          github: { token: "fake-github", gitUser: { name: "bot", email: "bot@example.com" } },
+          profiles: [
+            { id: "claude-one", tool: "claude", auth: { type: "token", token: "fake-claude-one" } },
+            { id: "claude-two", tool: "claude", auth: { type: "token", token: "fake-claude-two" } },
+          ],
+        }),
+      command: (executable, args, cwd, env) => {
+        if (executable === "claude" && args[0] === "auth") {
+          if (env !== undefined) environments.push(env);
+          return Promise.resolve('{"loggedIn":false}');
+        }
+        return base.command(executable, args, cwd);
+      },
+    }),
+    request,
+  );
+  expect(report.checks.find((check) => check.name === "profiles[1].auth.token")).toMatchObject({
+    ok: false,
+    detail: "profiles[1].auth.token: authentication failed",
+  });
+  expect(environments.map((env) => env["CLAUDE_CODE_OAUTH_TOKEN"])).toEqual([
+    "fake-claude-one",
+    "fake-claude-two",
+  ]);
+  expect(environments.every((env) => env["GH_TOKEN"] === undefined)).toBe(true);
+  expect(JSON.stringify(report)).not.toContain("fake-claude");
 });
