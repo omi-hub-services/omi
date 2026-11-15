@@ -302,8 +302,14 @@ export async function workerReportCommand(
     }),
   );
   if (report.report === null) return 1;
-  if (!validated?.success)
-    return refuse(label, "worker report does not satisfy the framework step-result-v1 contract");
+  if (!validated?.success) {
+    const issue = validated?.error.issues[0];
+    const detail = issue ? ` (${issue.path.join(".") || "<root>"}: ${issue.message})` : "";
+    return refuse(
+      label,
+      `worker report does not satisfy the framework step-result-v1 contract${detail}`,
+    );
+  }
   if (input.post !== undefined) {
     return postStepReport(ctx, label, {
       task,
