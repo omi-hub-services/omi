@@ -153,7 +153,7 @@ fast-forwards develop in the main checkout and deletes the merged branch (OMI-06
 Use the Issue's Workflow template's actual step IDs, not aliases. For feature this is
 analyze (analyst), implement (developer), verify (QA), review (reviewer); docs uses write/accept,
 bugfix also uses reproduce. Run all applicable steps and preserve their dependencies and gates.
-When the approved Issue already has measurable AC and an implementation map, supply the recorded scope decision with `prompt --scope-approved <decision-ref>`; the packet records the Issue as scope evidence. Otherwise start analyze as a fresh worker and pass its report forward as task data in notes. Business-rule or cost changes go to the PO.
+When the approved Issue already has measurable AC and an implementation map, supply the recorded scope decision with `prompt --scope-approved <decision-ref>`; the packet records the Issue as scope evidence. Pass the same `--scope-approved <decision-ref>` to the first `dispatch` too: it records `analyze` as skipped in the dispatch metadata (never read from packet text), the signed step report carries that skip to later steps, and `next` repeats the flag in the prompt commands it prints. Otherwise start analyze as a fresh worker and pass its report forward as task data in notes. Business-rule or cost changes go to the PO.
 
 The LLM writes only task-specific notes or review findings. Generate every fresh worker's full
 packet with the script, using the same configured worker checkout for prompt and dispatch:
