@@ -3,6 +3,112 @@
 // the latest log. Per-process summaries retain only a bounded last action, never full argv/logs.
 import { RUNS_DIR_FROM_HOME, type WslTarget } from "./coordinator-settings.ts";
 import { runChecked, WSL_NODE_ENV, wslCommand, type Runner } from "./process-runner.ts";
+import { join } from "node:path";
+import { z } from "zod";
+import { COORDINATOR_TOOL_ROOT } from "./tool-root.ts";
+
+// Git paths stay in argv, including spaces; stdin avoids Windows shell quoting of JS.
+export const LOCAL_STATE_PROBE = String.raw`
+import { execFileSync } from 'node:child_process';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+const git = (args, cwd = process.cwd()) => execFileSync('git', ['-c', 'core.fsmonitor=false', ...args], { cwd, encoding: 'utf8' });
+const root = join(homedir(), 'github', 'omi-wt') + '/';
+const worktrees = git(['worktree', 'list', '--porcelain', '-z']).split('\u0000\u0000').flatMap(block => {
+  const lines = block.split('\u0000');
+  const path = lines.find(s => s.startsWith('worktree '))?.slice(9);
+  if (!path?.startsWith(root)) return [];
+  const branch = lines.find(s => s.startsWith('branch '))?.slice(18) ?? '(detached)';
+  return [{ path, branch, dirty: git(['status', '--porcelain', '--untracked-files=normal'], path).length > 0 }];
+});
+const unpushedBranches = git(['for-each-ref', '--format=%(refname:short)', 'refs/heads/task/']).trim().split('\n').filter(Boolean).filter(branch => {
+  try { return git(['rev-list', '--count', branch, '--not', 'refs/remotes/origin/' + branch]).trim() !== '0'; }
+  catch { return true; }
+});
+console.log(JSON.stringify({ worktrees, unpushedBranches }));
+`;
+
+const localWslSchema = z.object({
+  worktrees: z.array(z.object({ path: z.string(), branch: z.string(), dirty: z.boolean() })),
+  unpushedBranches: z.array(z.string()),
+});
+const pinStatusSchema = z.object({
+  record: z.object({ sha: z.string().regex(/^[a-f0-9]{40}$/) }).nullable(),
+  initialized: z.boolean(),
+  reason: z.string().optional(),
+});
+type Unavailable = { available: false; reason: string };
+async function localRead<T extends object>(
+  read: () => Promise<T>,
+): Promise<({ available: true } & T) | Unavailable> {
+  try {
+    return { available: true, ...(await read()) };
+  } catch (error) {
+    return { available: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Read-only local snapshot; each failed source degrades independently. No fetch or pin refresh. */
+export async function readLocalState(run: Runner, target: WslTarget, hostCwd: string) {
+  const [wsl, host, pin] = await Promise.all([
+    localRead(async () =>
+      localWslSchema.parse(
+        JSON.parse(
+          await runChecked(run, {
+            ...wslCommand(`${WSL_NODE_ENV} node --input-type=module`, target, 15_000),
+            input: LOCAL_STATE_PROBE,
+          }),
+        ) as unknown,
+      ),
+    ),
+    localRead(async () => ({
+      modifiedTrackedFiles: (
+        await runChecked(run, {
+          file: "git",
+          args: ["status", "--porcelain", "-z", "--untracked-files=no"],
+          cwd: hostCwd,
+          timeoutMs: 15_000,
+        })
+      )
+        .split("\0")
+        .filter(Boolean),
+    })),
+    localRead(async () => {
+      const [raw, develop] = await Promise.all([
+        runChecked(run, {
+          file: process.execPath,
+          args: [
+            join(COORDINATOR_TOOL_ROOT, "tools/coordinator/pin.ts"),
+            "status",
+            "--repo",
+            hostCwd,
+          ],
+          cwd: hostCwd,
+          timeoutMs: 15_000,
+        }),
+        runChecked(run, {
+          file: "git",
+          args: ["rev-parse", "origin/develop"],
+          cwd: hostCwd,
+          timeoutMs: 15_000,
+        }),
+      ]);
+      const status = pinStatusSchema.parse(JSON.parse(raw) as unknown);
+      const developSha = z
+        .string()
+        .regex(/^[a-f0-9]{40}$/)
+        .parse(develop.trim());
+      return {
+        sha: status.record?.sha ?? null,
+        developSha,
+        matchesDevelop: status.record?.sha === developSha,
+        initialized: status.initialized,
+        reason: status.reason,
+      };
+    }),
+  ]);
+  return { wsl, host, pin };
+}
 
 const MAX_LINE = 65536;
 

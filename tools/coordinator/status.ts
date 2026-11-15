@@ -1,11 +1,13 @@
 // Coordinator status (ADR-0014): Project items by Status, Ready tasks whose blockers are all
 // closed, open PRs with checks/review, and WSL workers. Deterministic; no LLM.
 //   node tools/coordinator/status.ts [--json]
-// gh calls: one GraphQL query (plus one per extra 100 Project items) and one REST read of the
-// required checks; one wsl.exe call for workers, which degrades to "unavailable" on failure.
+// Reads Project/README, required checks and next steps; one WSL call each for workers and
+// local Git state. Local sources degrade independently to "unavailable" on failure.
 import { parseArgs } from "node:util";
+import { join } from "node:path";
+import { COORDINATOR_TOOL_ROOT } from "./tool-root.ts";
 import { QUOTA_SETTINGS, WORKER_PROFILES, wslTarget } from "./coordinator-settings.ts";
-import { readProject, readRequiredChecks } from "./github-reads.ts";
+import { readProject, readProjectReadme, readRequiredChecks } from "./github-reads.ts";
 import {
   classifyReview,
   findMismatches,
@@ -20,10 +22,65 @@ import {
   type ProjectItem,
   type ReadyTask,
 } from "./github-snapshot.ts";
-import { createProcessRunner } from "./process-runner.ts";
+import { createProcessRunner, type Runner } from "./process-runner.ts";
 import { promotableBacklog } from "./promote.ts";
 import { formatQuotaSection, readQuota, type QuotaReport } from "./quota.ts";
-import { readWorkers, type Workers } from "./wsl-workers.ts";
+import { readLocalState, readWorkers, type Workers } from "./wsl-workers.ts";
+
+export function handoffView(text: string, now: Date) {
+  const stamp = /^Updated: (\S+) · develop:/m.exec(text)?.[1];
+  const updatedAt = stamp !== undefined && Number.isFinite(Date.parse(stamp)) ? stamp : null;
+  return {
+    text,
+    updatedAt,
+    ageSeconds:
+      updatedAt === null
+        ? null
+        : Math.max(0, Math.floor((now.getTime() - Date.parse(updatedAt)) / 1000)),
+  };
+}
+
+export async function readNextLines(
+  run: Runner,
+  items: readonly Pick<ProjectItem, "kind" | "number" | "status">[],
+  hostCwd: string,
+) {
+  return Promise.all(
+    items
+      .filter(
+        (i) =>
+          i.kind === "Issue" &&
+          i.number !== null &&
+          ["In Progress", "In Review"].includes(i.status ?? ""),
+      )
+      .map(async (i) => {
+        try {
+          const result = await run({
+            file: process.execPath,
+            args: [
+              join(COORDINATOR_TOOL_ROOT, "tools/coordinator/flow.ts"),
+              "next",
+              String(i.number),
+            ],
+            cwd: hostCwd,
+            timeoutMs: 30_000,
+          });
+          return {
+            number: i.number,
+            result:
+              (result.code === 0 ? result.stdout : result.stderr || result.stdout)
+                .trim()
+                .split(/\r?\n/)[0] || "next: unavailable",
+          };
+        } catch (error) {
+          return {
+            number: i.number,
+            result: `next: unavailable (${error instanceof Error ? error.message : String(error)})`,
+          };
+        }
+      }),
+  );
+}
 
 const ACTIVE = new Set([
   "In Progress",
@@ -74,8 +131,13 @@ function readyView(r: ReadyTask) {
   };
 }
 
-function renderText(report: ReturnType<typeof buildReport>): string {
+export function renderText(report: ReturnType<typeof buildReport>): string {
   const out: string[] = [];
+  const handoff = report.handoff;
+  out.push(
+    `Coordinator handoff (${handoff.ageSeconds === null ? "age unknown" : `${duration(handoff.ageSeconds)} ago`}):`,
+  );
+  out.push(handoff.text || "  (empty)");
   out.push(`${report.project} — ${report.generatedAt}`);
   out.push(
     `Status: ${report.groups.map((g) => `${g.status} ${String(g.items.length)}`).join(" · ")}`,
@@ -85,6 +147,27 @@ function renderText(report: ReturnType<typeof buildReport>): string {
     out.push(`${g.status}:`);
     for (const i of g.items) out.push(`  ${short(ref(i))} ${i.priority ?? ""}`.trimEnd());
   }
+  for (const n of report.next) out.push(`  #${String(n.number)} ${n.result}`);
+  out.push("Local state:");
+  const local = report.localState;
+  if (!local.wsl.available) out.push(`  WSL: unavailable (${local.wsl.reason})`);
+  else {
+    out.push("  WSL worktrees (~/github/omi-wt/):");
+    if (!local.wsl.worktrees.length) out.push("    (none)");
+    for (const w of local.wsl.worktrees)
+      out.push(`    ${w.path} ${w.branch} ${w.dirty ? "dirty" : "clean"}`);
+    out.push(`  Unpushed task branches: ${local.wsl.unpushedBranches.join(", ") || "(none)"}`);
+  }
+  out.push(
+    local.host.available
+      ? `  Modified tracked host files: ${local.host.modifiedTrackedFiles.join(", ") || "(none)"}`
+      : `  Host: unavailable (${local.host.reason})`,
+  );
+  out.push(
+    local.pin.available
+      ? `  Pin: ${local.pin.sha ?? "uninitialized"} vs origin/develop ${local.pin.developSha} (${local.pin.matchesDevelop ? "matches" : "differs"}; initialized: ${String(local.pin.initialized)})${local.pin.reason ? ` — ${local.pin.reason}` : ""}`
+      : `  Pin: unavailable (${local.pin.reason})`,
+  );
   out.push("Backlog, all blockers closed (priority order, ready to promote):");
   if (report.backlog.length === 0) out.push("  (none)");
   for (const r of report.backlog) {
@@ -152,10 +235,16 @@ function buildReport(
   required: readonly string[],
   workers: Workers,
   quota: QuotaReport,
+  handoff: ReturnType<typeof handoffView>,
+  localState: Awaited<ReturnType<typeof readLocalState>>,
+  next: Awaited<ReturnType<typeof readNextLines>>,
 ) {
   const { unblocked, blocked } = partitionReady(project.items);
   const pulls = project.pulls.map((p) => pullView(p, required));
   return {
+    handoff,
+    localState,
+    next,
     generatedAt: new Date().toISOString(),
     project: project.title,
     groups: groupByStatus(project.items),
@@ -174,34 +263,50 @@ function buildReport(
   };
 }
 
+export function renderJson(report: ReturnType<typeof buildReport>): string {
+  const groups = report.groups.map((g) => ({
+    status: g.status,
+    count: g.items.length,
+    items: g.items.map((i) => ({
+      number: i.number,
+      planKey: i.planKey,
+      title: i.title,
+      priority: i.priority,
+    })),
+  }));
+  return JSON.stringify({ ...report, groups }, null, 2);
+}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({ options: { json: { type: "boolean", default: false } } });
   const run = createProcessRunner();
-  const [project, required, workers, quota] = await Promise.all([
+  const [project, required, workers, quota, readme, localState] = await Promise.all([
     readProject(run),
     readRequiredChecks(run),
     readWorkers(run, wslTarget()),
     readQuota(run, wslTarget(), WORKER_PROFILES, QUOTA_SETTINGS, false),
+    readProjectReadme(run),
+    readLocalState(run, wslTarget(), process.cwd()),
   ]);
-  const report = buildReport(project, required, workers, quota);
+  const next = await readNextLines(run, project.items, process.cwd());
+  const report = buildReport(
+    project,
+    required,
+    workers,
+    quota,
+    handoffView(readme.text, new Date()),
+    localState,
+    next,
+  );
   if (values.json) {
-    const groups = report.groups.map((g) => ({
-      status: g.status,
-      count: g.items.length,
-      items: g.items.map((i) => ({
-        number: i.number,
-        planKey: i.planKey,
-        title: i.title,
-        priority: i.priority,
-      })),
-    }));
-    console.log(JSON.stringify({ ...report, groups }, null, 2));
+    console.log(renderJson(report));
   } else console.log(renderText(report));
 }
 
-try {
-  await main();
-} catch (error) {
-  console.error(`status: ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
-}
+if (import.meta.main)
+  try {
+    await main();
+  } catch (error) {
+    console.error(`status: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
