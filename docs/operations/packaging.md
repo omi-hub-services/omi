@@ -48,16 +48,16 @@ package="$bootstrap/node_modules/omi-squad"
 node "$package/dist/bootstrap/cli.js" install --project /home/user/project --distribution Ubuntu-24.04 --package "$package" --json
 # Review the preview, then apply the same arguments:
 node "$package/dist/bootstrap/cli.js" install --project /home/user/project --distribution Ubuntu-24.04 --package "$package" --apply --json
-/home/user/project/.omi-squad/bin/omi doctor --project /home/user/project --distribution Ubuntu-24.04 --json
+/home/user/project/.omi/bin/omi doctor --project /home/user/project --distribution Ubuntu-24.04 --json
 ```
 
 The package argument is an **extracted package directory with its built assets**. The installer
-packs that directory with lifecycle scripts disabled, retains the tarball under `.omi-squad/tool/`,
+packs that directory with lifecycle scripts disabled, retains the tarball under `.omi/tool/`,
 and installs it with normal npm dependency/native-module setup. The tool manifest and npm lock
 refer to the retained relative tarball, so they do not depend on the bootstrap directory. The
 framework lock pins the version, artifact content hash, distro, project path and original template
 contents. No source files, application dependencies or native Claude/Codex settings are installed.
-Ignore `.omi-squad/local/` and `.omi-squad/tool/node_modules/` in the target project's Git setup;
+Ignore `.omi/local/` and `.omi/tool/node_modules/` in the target project's Git setup;
 keep its framework lock, shims, tool manifest/lock/tarball and project template files versioned.
 
 Install and update record the absolute path of the Node.js interpreter running the installer in
@@ -90,8 +90,8 @@ using a working Node.js or configure node on PATH).
 From Windows, use the installed shim through its UNC path:
 
 ```powershell
-node '\\wsl.localhost\Ubuntu-24.04\home\user\project\.omi-squad\bin\omi.cjs' status --json
-node '\\wsl.localhost\Ubuntu-24.04\home\user\project\.omi-squad\bin\omi.cjs' session start
+node '\\wsl.localhost\Ubuntu-24.04\home\user\project\.omi\bin\omi.cjs' status --json
+node '\\wsl.localhost\Ubuntu-24.04\home\user\project\.omi\bin\omi.cjs' session start
 ```
 
 Ordinary calls use `wsl.exe --distribution … --cd … --exec <project-shim>` with an argv array.
@@ -114,7 +114,7 @@ failure. It also runs read-only checks through the same probe (no writes, no tok
 | `worker-cli-claude`, `worker-cli-codex` | `--version` through `wsl.exe --exec <shim> --omi-worker-version <cli>` is classified `supported`; absent from both runtime and current shell is optional (`not-installed`); available only in the current shell fails by name with a reinstall/update fix |
 | `worker-cli-available` | at least one worker CLI is `supported` |
 
-The GitHub policy checks read `.omi-squad/config/project.yaml`; a missing or invalid file fails
+The GitHub policy checks read `.omi/config/project.yaml`; a missing or invalid file fails
 them. The JSON report has `version` (report shape, currently `1`) and each check has `ok`,
 `status` (`pass`/`fail`), `detail` and `fix` (the operator action); worker CLI checks add
 `classification`. Version ranges are those in [compatibility.md](compatibility.md). The doctor
@@ -129,10 +129,10 @@ with installation/update and session restart instructions.
 From an installed project's WSL2 shim, select one release version (not a tag or `latest`):
 
 ```sh
-/home/user/project/.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0
-/home/user/project/.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0 --apply
+/home/user/project/.omi/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0
+/home/user/project/.omi/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0 --apply
 # Only after reviewing and accepting any breaking entries:
-/home/user/project/.omi-squad/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0 --apply --accept-breaking
+/home/user/project/.omi/bin/omi update --project /home/user/project --distribution Ubuntu-24.04 --version 0.2.0 --apply --accept-breaking
 ```
 
 These examples assume that version has been released. The updater uses `gh release download`
@@ -162,8 +162,8 @@ are conflicts. Conflicts list paths and change nothing. This is a conservative w
 it does not guess how to merge overlapping YAML/Markdown. Resolve a conflict by making the local
 file equal to the incoming version or restoring the old base before retrying. Preserve custom
 content separately when choosing an upstream version. Files outside the template manifest remain
-project-owned. Templates under both `templates/project/.omi-squad/` and the existing onboarding
-`templates/project/workflows/` map to the same project `.omi-squad/` tree; duplicate targets fail.
+project-owned. Templates under both `templates/project/.omi/` and the existing onboarding
+`templates/project/workflows/` map to the same project `.omi/` tree; duplicate targets fail.
 
 The preview also lists `bridge/CLAUDE.md`, `bridge/AGENTS.md`, and `bridge/skill/*`. Instruction
 keys represent only the `<!-- omi-squad:start -->` / `<!-- omi-squad:end -->` span in the root
@@ -176,7 +176,7 @@ updates conflict. Invalid/duplicate markers or symlinked targets are refused bef
 
 Before upgrading state, the installer takes a SQLite backup through the backup API (including
 committed WAL data), checks integrity, and backs up config, template bytes, shims and prior tool
-manifests in `.omi-squad/local/backups/install-<id>/`. Existing config is parsed through the existing
+manifests in `.omi/local/backups/install-<id>/`. Existing config is parsed through the existing
 strict v1 loader. The only current config normalization materializes the already-supported default
 `effort_policy` when absent, preserving existing comments and explicit policies. Unknown schema
 versions are refused. No hypothetical legacy schema conversion or automatic schema downgrade is
@@ -184,7 +184,7 @@ provided. Runtime startup also takes a SQLite backup before pending migrations.
 
 Bridge backups contain full original instruction files at `bridge/CLAUDE.md` / `bridge/AGENTS.md`
 and skill files under `bridge/skill/`. For recovery, map those back to root instructions and
-`.claude/skills/omi-squad/` respectively. They are not paths under the target `.omi-squad/` tree.
+`.claude/skills/omi-squad/` respectively. They are not paths under the target `.omi/` tree.
 
 SQL upgrades reuse the existing checksummed transactional migration runner. A SQL failure rolls
 back that migration batch and leaves the old tool and project files active. Dependency provisioning

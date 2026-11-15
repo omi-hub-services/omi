@@ -171,3 +171,5 @@ PO-approved decisions for OMI-070 (#142):
 
 `session new` and `coordinator switch` are handoff-only: checkpoint and pause active runs
 and record the handoff. Neither command automatically relaunches a session or switches a login.
+
+> Status note (2026-11-15, OMI-153): the project install directory is now `.omi/`; historical decision text above is unchanged.

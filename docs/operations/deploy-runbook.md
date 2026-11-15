@@ -175,8 +175,8 @@ node --import ./tools/register-ts-imports.ts tools/sandbox-setup/main.ts local-s
 ```
 
 treats `<dir>` as the runtime's project directory and creates, where the runtime reads them,
-`<dir>/.omi-squad/local/state/state.sqlite` (migrated, with the project row),
-`<dir>/.omi-squad/config/project.yaml` and `<dir>/.omi-squad/local/runs/` (artifacts). It is
+`<dir>/.omi/local/state/state.sqlite` (migrated, with the project row),
+`<dir>/.omi/config/project.yaml` and `<dir>/.omi/local/runs/` (artifacts). It is
 repeatable. A directory from an earlier version, with `project.yaml`, `state.db` (+ `-wal`,
 `-shm`) and `artifacts/` at the top level, is moved into that layout by this command; `--dry-run`
 lists the moves first, and the command refuses, moving nothing, when both layouts exist. Stop any
@@ -242,7 +242,7 @@ environment approvals or protection changes. It consumes real GitHub quota when 
 Operational notes from the 2026-11-13 live run (OMI-098):
 
 - Rebuild `dist/` (`npm run build`) before starting the runtime; a stale build runs old code.
-- The state dir must be a git checkout of the sandbox repository (clone it), with `.omi-squad/`,
+- The state dir must be a git checkout of the sandbox repository (clone it), with `.omi/`,
   the live config and the review file listed in `.git/info/exclude`.
 - The runtime needs one heartbeat line on stdin at least every 10 seconds; keeping stdin open is
   not enough.

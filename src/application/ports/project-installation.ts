@@ -14,6 +14,7 @@ export interface InstallationPlan extends InstallationSnapshot {
   merged: TemplateFiles;
 }
 export interface ProjectInstallation {
+  assertDirectory(projectDir: string): Promise<void>;
   inspect(input: InstallationInput): Promise<InstallationSnapshot>;
   apply(plan: InstallationPlan): Promise<{ backupDir: string }>;
 }

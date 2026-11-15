@@ -32,7 +32,7 @@ const DIGEST = `sha256:${"c".repeat(64)}`;
 it("creates pending business and deploy requests through the runtime and never an approved one", async () => {
   dir = mkdtempSync(join(tmpdir(), "omi-approval-request-"));
   const project = join(dir, "project");
-  const squad = join(project, ".omi-squad");
+  const squad = join(project, ".omi");
   for (const path of ["config", "roles", "rules", "workflows", "provenance"])
     mkdirSync(join(squad, path), { recursive: true });
   expect(spawnSync("git", ["init", "--initial-branch=develop"], { cwd: project }).status).toBe(0);

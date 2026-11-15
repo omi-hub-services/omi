@@ -33,6 +33,7 @@ async function cli(extra: string[] = [], conflict = false) {
         install: (input) =>
           installProjectTool(
             {
+              assertDirectory: () => Promise.resolve(),
               inspect: () =>
                 Promise.resolve({
                   installed: lock,

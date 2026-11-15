@@ -16,7 +16,7 @@ Design sources (read before implementing):
   [docs/planning/github-project.md](docs/planning/github-project.md)
 - Decisions: [docs/architecture/adr/](docs/architecture/adr/)
 
-This repository is the framework **source**. The `.omi-squad/` tree that gets installed into a
+This repository is the framework **source**. The `.omi/` tree that gets installed into a
 target project is template content under `templates/project/`. Never install or run an
 unfinished omi-squad inside this repository, and never let runtime state, logs or credentials
 mix into the source tree.
@@ -85,7 +85,7 @@ with no tests.
   generated; CI checks drift once a generator exists.
 - Temp/debug output goes to `.tmp/` (gitignored) or runtime-local directories only.
 - Never commit credentials, tokens, `.env*`, logs, SQLite state, checkpoints or
-  `.omi-squad/local/`. Never put them in prompts, reports, PRs or GitHub comments.
+  `.omi/local/`. Never put them in prompts, reports, PRs or GitHub comments.
 
 ## 6. Changes that need an ADR
 
@@ -124,7 +124,7 @@ checked license.
 
 ## 9. Operational work: script first, LLM second
 
-Follow the authoritative [script-first rule](templates/project/.omi-squad/rules/script-first.md).
+Follow the authoritative [script-first rule](templates/project/.omi/rules/script-first.md).
 Repository commands are `node tools/coordinator/status.ts` and
 `node tools/coordinator/flow.ts`; use `/omi-status` and `/omi-next`. New Issues go through
 `node tools/coordinator/flow.ts new-issue --file <spec.md>` (`--dry-run` previews).

@@ -40,7 +40,7 @@ it.each(["dispatcher", "socket"])(
         .success,
     ).toBe(true);
     const dir = mkdtempSync(join(tmpdir(), "omi-release-ipc-"));
-    const squad = join(dir, ".omi-squad");
+    const squad = join(dir, ".omi");
     for (const path of ["config", "local/state", "local/artifacts"])
       mkdirSync(join(squad, path), { recursive: true });
     writeFileSync(

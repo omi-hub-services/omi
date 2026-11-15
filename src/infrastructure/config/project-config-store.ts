@@ -11,7 +11,7 @@ import { assertPlainParents } from "./package-content.js";
 
 /** Lazy config directory for local onboarding: a preview must not create even a directory. */
 export function createOnboardingProjectConfigStore(projectDir: string): ProjectConfigStore {
-  const directory = join(projectDir, ".omi-squad", "config");
+  const directory = join(projectDir, ".omi", "config");
   return {
     async read() {
       await assertPlainParents(projectDir, join(directory, "project.yaml"));

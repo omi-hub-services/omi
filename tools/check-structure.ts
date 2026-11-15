@@ -80,7 +80,7 @@ const FORBIDDEN_FILES: { pattern: RegExp; reason: string }[] = [
     reason: "state, log or key material",
   },
   { pattern: /(^|\/)(credentials?|auth)\.json$/, reason: "credential file" },
-  { pattern: /(^|\/)\.omi-squad\/local\//, reason: "omi-squad local runtime state" },
+  { pattern: /(^|\/)\.omi\/local\//, reason: "omi-squad local runtime state" },
 ];
 
 export function findViolations(files: readonly string[]): string[] {

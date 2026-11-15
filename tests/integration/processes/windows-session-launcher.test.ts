@@ -87,7 +87,7 @@ describe("Windows session launcher with Linux stand-ins", () => {
           "--cd",
           input.projectDir,
           "--exec",
-          `${input.projectDir}/.omi-squad/bin/omi`,
+          `${input.projectDir}/.omi/bin/omi`,
           "--omi-runtime",
           input.runtimePath,
           input.projectDir,

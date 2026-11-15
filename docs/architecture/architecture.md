@@ -44,7 +44,7 @@ Không dùng comment GitHub làm database runtime. Không dùng transcript Claud
 
 Việc tất định (đọc trạng thái GitHub/Project, git/`gh` cơ học, parse log và report, chuyển trạng thái, kiểm tra gate, dựng lệnh launch hay comment theo định dạng cố định) do script, CLI hoặc runtime làm, không do LLM suy luận. LLM chỉ dùng cho việc cần phán đoán: chọn việc, viết prompt hay spec, review, quyết định khi một bước thất bại hoặc bị từ chối. Script từ chối một bước là gate, không phải vật cản. Bước nào phải làm tay lặp lại thì đưa vào script.
 
-Nguyên tắc áp dụng cho mọi project dùng omi-squad, không chỉ repository này: nó được ship là rule `.omi-squad/rules/script-first.md` (không bắt buộc), gắn vào role developer, reviewer và qa, và runtime nhắc nó trong prompt worker. Với repository này nguyên tắc nằm ở `AGENTS.md` §9. Danh sách rà soát `src/` theo nguyên tắc này: `docs/engineering/script-first-audit.md`.
+Nguyên tắc áp dụng cho mọi project dùng omi-squad, không chỉ repository này: nó được ship là rule `.omi/rules/script-first.md` (không bắt buộc), gắn vào role developer, reviewer và qa, và runtime nhắc nó trong prompt worker. Với repository này nguyên tắc nằm ở `AGENTS.md` §9. Danh sách rà soát `src/` theo nguyên tắc này: `docs/engineering/script-first-audit.md`.
 
 ## 3. Cấu trúc repository phát triển framework
 
@@ -148,34 +148,41 @@ Tài liệu đặt ở `docs/product/product-overview.md`, `docs/architecture/ar
 
 ## 4. Cấu trúc khi cài vào project đích
 
+Install directory migration is owned by `application/use-cases/project/migrate-project-directory.ts`
+through `application/ports/project-directory-migration.ts`, with filesystem/Git I/O in
+`infrastructure/config/migrate-project-directory.ts` and the thin installation CLI handler.
+`omi migrate-dir --project <path>` moves the legacy tracked directory to `.omi`, rewrites
+managed lockfiles and bridges, and refuses an existing destination. Follow with `omi update`
+to install the current runtime; ordinary runtime readers only use `.omi`.
+
 | Đường dẫn trong project | Theo dõi bằng Git | Mục đích |
 |---|---|---|
-| `.omi-squad/config/project.yaml` | Có | Repo, Project, branches, limits, policies |
-| `.omi-squad/config/models.yaml` | Có | Capability requirement và model aliases; không credential |
-| `.omi-squad/workflows/*.yaml` | Có | Workflow project |
-| `.omi-squad/roles/*.yaml` | Có | Role và skills/rules cần nạp |
-| `.omi-squad/skills/<skill-id>/SKILL.md` | Có | Skill đã chuẩn hóa |
-| `.omi-squad/skills/<skill-id>/references/` | Có | Tài liệu hỗ trợ skill |
-| `.omi-squad/rules/*.md` | Có | Rules chung và chuyên môn |
-| `.omi-squad/provenance/skills.lock.json` | Có | Nguồn/commit/license của skills |
-| `.omi-squad/framework.lock.json` | Có | Phiên bản framework và hash artifact |
-| `.omi-squad/bin/omi` | Có | Shim gọi runtime local |
-| `.omi-squad/tool/package.json`, `package-lock.json` | Có | Khóa dependency cài đặt riêng project |
-| `.omi-squad/tool/node_modules/` | Không | Package runtime đã cài |
-| `.omi-squad/local/state/state.sqlite` | Không | Runtime state, WAL/SHM cùng vị trí |
-| `.omi-squad/local/runs/<run-id>/` | Không | Context, checkpoints, reports, logs |
-| `.omi-squad/local/logs/`, `archive/` | Không | Log worker `<taskId>--<profile>--<ts>.jsonl`; log task Done được nén vào `archive/` (ADR-0035) |
+| `.omi/config/project.yaml` | Có | Repo, Project, branches, limits, policies |
+| `.omi/config/models.yaml` | Có | Capability requirement và model aliases; không credential |
+| `.omi/workflows/*.yaml` | Có | Workflow project |
+| `.omi/roles/*.yaml` | Có | Role và skills/rules cần nạp |
+| `.omi/skills/<skill-id>/SKILL.md` | Có | Skill đã chuẩn hóa |
+| `.omi/skills/<skill-id>/references/` | Có | Tài liệu hỗ trợ skill |
+| `.omi/rules/*.md` | Có | Rules chung và chuyên môn |
+| `.omi/provenance/skills.lock.json` | Có | Nguồn/commit/license của skills |
+| `.omi/framework.lock.json` | Có | Phiên bản framework và hash artifact |
+| `.omi/bin/omi` | Có | Shim gọi runtime local |
+| `.omi/tool/package.json`, `package-lock.json` | Có | Khóa dependency cài đặt riêng project |
+| `.omi/tool/node_modules/` | Không | Package runtime đã cài |
+| `.omi/local/state/state.sqlite` | Không | Runtime state, WAL/SHM cùng vị trí |
+| `.omi/local/runs/<run-id>/` | Không | Context, checkpoints, reports, logs |
+| `.omi/local/logs/`, `archive/` | Không | Log worker `<taskId>--<profile>--<ts>.jsonl`; log task Done được nén vào `archive/` (ADR-0035) |
 | SQLite `profile_observations` | Không | Registry metadata/profile path qua runtime; migration `0006`, không có registry.json |
-| `.omi-squad/local/credentials/<profile-id>/` | Không | Nơi profile lưu auth khi adapter hỗ trợ |
-| `.omi-squad/local/ipc/`, `locks/`, `tmp/` | Không | Socket, lock, dữ liệu tạm |
-| `.omi-squad/local/backups/` | Không | Backup state có kiểm soát |
+| `.omi/local/credentials/<profile-id>/` | Không | Nơi profile lưu auth khi adapter hỗ trợ |
+| `.omi/local/ipc/`, `locks/`, `tmp/` | Không | Socket, lock, dữ liệu tạm |
+| `.omi/local/backups/` | Không | Backup state có kiểm soát |
 | `.claude/skills/omi-squad/SKILL.md` | Có | Bridge để Coordinator gọi CLI |
 | `.claude/skills/omi-{status,next,watch}/SKILL.md` | Có | Coordinator-only CLI procedures, installed through the same managed bridge; excluded from worker catalogs |
 | `CLAUDE.md`, `AGENTS.md` | Có | Đoạn hướng dẫn được merge có marker, giữ nội dung cũ |
 
 Worktree đặt ngoài checkout chính: một thư mục sibling dành riêng cho project, đường dẫn resolve từ cấu hình local. Không tạo worktree lồng trong thư mục nguồn đang được agent quét. Không copy state/credentials sang mỗi worktree. Worker nhận đường dẫn context/artifact cần thiết; runtime là chủ sở hữu state.
 
-Framework source không được copy toàn bộ vào app đích. Package runtime được cài có phiên bản trong `.omi-squad/tool/`; `.omi-squad/workflows/roles/skills/rules` là phần project sở hữu. Chỉ framework runtime chạy bằng Node; project đích vẫn có thể là Go, .NET hoặc công nghệ khác.
+Framework source không được copy toàn bộ vào app đích. Package runtime được cài có phiên bản trong `.omi/tool/`; `.omi/workflows/roles/skills/rules` là phần project sở hữu. Chỉ framework runtime chạy bằng Node; project đích vẫn có thể là Go, .NET hoặc công nghệ khác.
 
 ## 5. Lifecycle Coordinator và runtime
 
@@ -422,7 +429,7 @@ phải là quyết định cấu trúc đúng request/hash/version (ADR-0026), k
 
 ## 13. CLI surface v0.1
 
-Tên executable là `omi-squad` trong package; project shim gọi bằng `.omi-squad/bin/omi`. Trong các ví dụ sau, `omi` là shorthand của shim, không yêu cầu cài global.
+Tên executable là `omi-squad` trong package; project shim gọi bằng `.omi/bin/omi`. Trong các ví dụ sau, `omi` là shorthand của shim, không yêu cầu cài global.
 
 `run --issue` là lệnh tiện lợi ghép `plan` rồi `dispatch` step ready đầu tiên qua đúng các command IPC và gate hiện có (approval, profile/quota, lease, `RUN_NOT_RUNNING`, `STEP_NOT_READY`); nó dừng sau dispatch đầu, không chờ, không chạy cả workflow, và trả nguyên mọi refusal. Luồng đầy đủ: `plan --issue` → `dispatch --run --step` → `wait` → `status` → `deliver`. Runtime giữ retry hạ tầng/rework có giới hạn; `resume` chỉ phục hồi run paused/interrupted, không mở lại task blocked. `run` là composition, không phải bypass: không thêm đường tắt hay alias nào (kể cả `retry`) bỏ gate PO.
 
@@ -453,7 +460,7 @@ Tên executable là `omi-squad` trong package; project shim gọi bằng `.omi-s
 | `omi new-issue --project <path> --file <file> [--apply]`, `omi promote --project <path> [issue]`, `omi set-status --project <path> <issue> <status>` | Intake/readiness; xem handbook §9 và help cho flag bắt buộc |
 | `omi watch --project <path>`, `omi coordinator switch --to <profile>` | Read-only watch và handoff Coordinator |
 | `omi approvals list [--status <pending\|approved\|rejected\|expired\|invalidated>] [--json]` | Read-only runtime IPC (`approval.list`); id, kind, subjectId, status, version, requestedAt và decidedAt (epoch ms hoặc null); không in subject hash, actor hay evidence |
-| `omi workflows validate [--json]` | Offline tại project hiện tại: kiểm `.omi-squad/workflows/*.yaml`, roles/rules/skills qua loader runtime và resolver; mọi lỗi có file + field/path; exit 0 hợp lệ, 1 lỗi; JSON `{ ok, errors: [{ file, path, message }] }` |
+| `omi workflows validate [--json]` | Offline tại project hiện tại: kiểm `.omi/workflows/*.yaml`, roles/rules/skills qua loader runtime và resolver; mọi lỗi có file + field/path; exit 0 hợp lệ, 1 lỗi; JSON `{ ok, errors: [{ file, path, message }] }` |
 | `omi approvals request <subject-id> --kind <business\|deploy> [--run <id>]` | Tạo request `pending` qua runtime IPC (`approval.request`), in request id và version; không có cờ quyết định (ADR-0037) |
 | `omi import-task <issue-number> [issue-number ...]` | Import Issue từ repository/Project trong `project.yaml` qua runtime IPC (`task.import`); in task id và `content_hash`, idempotent; không tạo/quyết approval |
 | `omi approvals decide <id> --expected-version <n> --decision <approved\|rejected> [--github-comment <id>]` | Chỉ runtime TTY hoặc GitHub actor được allowlist, theo ADR-0026 |

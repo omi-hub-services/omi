@@ -36,7 +36,7 @@ afterEach(async () => {
 async function setup() {
   const directory = mkdtempSync(join(tmpdir(), "omi-resource-wake-"));
   const projectDir = join(directory, "project");
-  const squad = join(projectDir, ".omi-squad");
+  const squad = join(projectDir, ".omi");
   for (const path of ["config", "roles", "rules", "workflows", "provenance", "local/state"])
     mkdirSync(join(squad, path), { recursive: true });
   const git = (...args: string[]) => {
@@ -46,7 +46,7 @@ async function setup() {
   git("init", "--initial-branch=develop");
   git("config", "user.name", "Fixture");
   git("config", "user.email", "fixture@example.test");
-  writeFileSync(join(projectDir, ".gitignore"), ".omi-squad/local/\n");
+  writeFileSync(join(projectDir, ".gitignore"), ".omi/local/\n");
   writeFileSync(
     join(squad, "config/project.yaml"),
     stringify({

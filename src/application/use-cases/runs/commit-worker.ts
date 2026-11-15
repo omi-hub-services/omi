@@ -36,7 +36,7 @@ export function commitWorker(deps: CommitWorkerDeps, input: unknown) {
   const allowed = (path: string) => {
     if (
       !relativePathSchema.safeParse(path).success ||
-      /^(?:\.claude|\.agents|\.codex|\.git|\.tmp)(?:\/|$)|^\.omi-squad\/local(?:\/|$)/.test(path)
+      /^(?:\.claude|\.agents|\.codex|\.git|\.tmp)(?:\/|$)|^\.omi\/local(?:\/|$)/.test(path)
     )
       return false;
     try {

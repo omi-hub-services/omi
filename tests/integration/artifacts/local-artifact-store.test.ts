@@ -122,10 +122,7 @@ describe("durable artifact publication", () => {
   it("assembles a v1 packet with a real curated skill pin and a sourced summary artifact", () => {
     const lockJson: unknown = JSON.parse(
       fs.readFileSync(
-        resolve(
-          import.meta.dirname,
-          "../../../templates/project/.omi-squad/provenance/skills.lock.json",
-        ),
+        resolve(import.meta.dirname, "../../../templates/project/.omi/provenance/skills.lock.json"),
         "utf8",
       ),
     );

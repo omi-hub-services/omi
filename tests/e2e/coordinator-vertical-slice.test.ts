@@ -94,7 +94,7 @@ const REVIEW_PASS =
 const config: BridgeConfig = {
   distribution: "Ubuntu",
   repository: "/home/dev/project",
-  shim: "/home/dev/project/.omi-squad/bin/omi",
+  shim: "/home/dev/project/.omi/bin/omi",
 };
 
 let directory: string;

@@ -52,3 +52,5 @@ needs the same behaviour behind ports.
 - The runtime does not write logs into `.omi-squad/local/logs/` yet; the naming above is the contract
   a writer must follow.
 - `omi-squad prune-logs` takes Done task ids from the caller; it does not read task status.
+
+> Status note (2026-11-15, OMI-153): the project install directory is now `.omi/`; historical decision text above is unchanged.

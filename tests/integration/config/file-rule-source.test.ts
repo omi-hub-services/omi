@@ -9,7 +9,7 @@ import {
 import { dispatchStep } from "../../../src/application/use-cases/runs/dispatch-step.ts";
 import { dispatchInput, rig } from "../../unit/application/use-cases/runs/run-fakes.ts";
 
-const shipped = resolve(import.meta.dirname, "../../../templates/project/.omi-squad");
+const shipped = resolve(import.meta.dirname, "../../../templates/project/.omi");
 const temps: string[] = [];
 function copyTemplate(): string {
   const dir = mkdtempSync(join(tmpdir(), "omi-rule-source-"));

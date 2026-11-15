@@ -30,6 +30,7 @@ function setup(changelog = notes, installedVersion = "0.1.0") {
   });
   const installed = lock(installedVersion);
   const store = {
+    assertDirectory: vi.fn<(projectDir: string) => Promise<void>>(() => Promise.resolve()),
     inspect: vi.fn(() =>
       Promise.resolve({ installed, candidate: lock("0.3.0"), local: installed.base }),
     ),
@@ -45,6 +46,14 @@ function setup(changelog = notes, installedVersion = "0.1.0") {
 }
 
 describe("release installation", () => {
+  it("refuses a legacy directory before downloading a release", async () => {
+    const h = setup();
+    h.store.assertDirectory.mockRejectedValue(new Error("run omi migrate-dir"));
+    await expect(installProjectTool(h.store, request, h.releases)).rejects.toThrow(
+      "omi migrate-dir",
+    );
+    expect(h.releases.prepare).not.toHaveBeenCalled();
+  });
   it("accepts an empty final Breaking section without a trailing newline", async () => {
     const h = setup("## [0.3.0] - 2026-11-13\n### Added\n- Feature\n### Breaking");
     const result = await installProjectTool(h.store, request, h.releases);

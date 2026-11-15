@@ -78,3 +78,5 @@ Environment of the bootstrap run: Windows 11 (no WSL Ubuntu distribution install
 `docker-desktop`), Git 2.55.0.windows.5, gh 2.100.0, portable Node 24.22.2 verified against the
 official `SHASUMS256.txt`. CI runs the same `npm run check` on `ubuntu-latest` with the `.nvmrc`
 version. The WSL2 target environment itself is verified by OMI-005.
+
+> Status note (2026-11-15, OMI-153): the project install directory is now `.omi/`; historical decision text above is unchanged.

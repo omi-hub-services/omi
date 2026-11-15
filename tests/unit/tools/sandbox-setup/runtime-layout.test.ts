@@ -22,9 +22,9 @@ const temp = () => {
 describe("runtimeLayout", () => {
   it("uses the paths the runtime reads", () => {
     const layout = runtimeLayout("/p");
-    expect(layout.configFile).toBe("/p/.omi-squad/config/project.yaml");
-    expect(layout.database).toBe("/p/.omi-squad/local/state/state.sqlite");
-    expect(layout.artifactsRoot).toBe("/p/.omi-squad/local/runs");
+    expect(layout.configFile).toBe("/p/.omi/config/project.yaml");
+    expect(layout.database).toBe("/p/.omi/local/state/state.sqlite");
+    expect(layout.artifactsRoot).toBe("/p/.omi/local/runs");
   });
 });
 

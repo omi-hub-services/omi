@@ -43,7 +43,7 @@ export async function runSessionRuntime(
     throw new RuntimeStartupError("PATH_INVALID", "project directory must be an absolute WSL path");
   if (resolve(projectDir) === resolve(import.meta.dirname, "../.."))
     throw new RuntimeStartupError("PATH_INVALID", "cannot run inside framework source");
-  const stateDir = join(projectDir, ".omi-squad", "local", "state");
+  const stateDir = join(projectDir, ".omi", "local", "state");
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const database = openStateDatabase(join(stateDir, "state.sqlite"));
   try {
@@ -52,7 +52,7 @@ export async function runSessionRuntime(
     if (database.prepare("SELECT 1 FROM sqlite_schema WHERE name='leases'").get() === undefined) {
       await backupState(
         database,
-        join(projectDir, ".omi-squad", "local", "backups", `migration-${randomUUID()}`),
+        join(projectDir, ".omi", "local", "backups", `migration-${randomUUID()}`),
       );
       applyMigrations(
         database,
@@ -86,7 +86,7 @@ export async function runSessionRuntime(
         if (readHistory(database).length < migrations.length)
           await backupState(
             database,
-            join(projectDir, ".omi-squad", "local", "backups", `migration-${randomUUID()}`),
+            join(projectDir, ".omi", "local", "backups", `migration-${randomUUID()}`),
           );
         applyMigrations(database, migrations);
         composition = await createProjectRunCommandUseCases({

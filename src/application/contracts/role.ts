@@ -8,7 +8,7 @@ const uniqueSlugs = z
   .refine((ids) => new Set(ids).size === ids.length, "must not list the same id twice");
 
 /**
- * Role template (`.omi-squad/roles/*.yaml`). A role names a responsibility and the skills and
+ * Role template (`.omi/roles/*.yaml`). A role names a responsibility and the skills and
  * rules it loads. It deliberately has no tool, model, profile or executor field: the schema is
  * strict, so such a field is rejected instead of silently binding execution (product-overview
  * §2, §8). Tool and model come from the step's capability profile at selection time.
@@ -27,7 +27,7 @@ export const roleSchema = z
 export type Role = z.infer<typeof roleSchema>;
 
 /**
- * Front matter of `.omi-squad/rules/*.md`. A mandatory rule is a gate: it is always resolved
+ * Front matter of `.omi/rules/*.md`. A mandatory rule is a gate: it is always resolved
  * for every role and step, and nothing may drop it.
  */
 export const ruleMetadataSchema = z

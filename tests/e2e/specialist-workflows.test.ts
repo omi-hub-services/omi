@@ -30,7 +30,7 @@ import {
 import { rig, BASE, HEAD, h, skillEvidence } from "../unit/application/use-cases/runs/run-fakes.ts";
 
 const templates = resolve(import.meta.dirname, "../../templates/project/workflows");
-const squadDir = resolve(templates, "../.omi-squad");
+const squadDir = resolve(templates, "../.omi");
 const catalog = loadResolutionCatalog(squadDir);
 const skills = createFileSkillSource(squadDir);
 const rules = createFileRuleSource(squadDir);
