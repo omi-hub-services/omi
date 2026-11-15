@@ -50,9 +50,27 @@ import {
   legacyProjectDirectory,
 } from "./migrate-project-directory.js";
 
-export type ProvisionPackage = (source: string, tool: string) => Promise<void>;
+export interface ProvisionOptions {
+  /** Docker project: the runtime lives in the image, so the host install builds no native modules. */
+  docker?: boolean;
+}
+export type ProvisionPackage = (
+  source: string,
+  tool: string,
+  options?: ProvisionOptions,
+) => Promise<void>;
+/** Windows cannot spawn npm/npm.cmd without a shell; run npm's own CLI script with the running Node. */
+function npmCommand(): { executable: string; prefix: string[] } {
+  return process.platform === "win32"
+    ? {
+        executable: process.execPath,
+        prefix: [join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js")],
+      }
+    : { executable: "npm", prefix: [] };
+}
 /** npm owns the isolated dependency tree; the application's manifest/lockfile are untouched. */
-export const provisionPackage: ProvisionPackage = async (source, tool) => {
+export const provisionPackage: ProvisionPackage = async (source, tool, options) => {
+  const npm = npmCommand();
   await mkdir(tool, { recursive: true });
   await writeFile(
     join(tool, "package.json"),
@@ -62,8 +80,8 @@ export const provisionPackage: ProvisionPackage = async (source, tool) => {
     Object.entries(process.env).filter((pair): pair is [string, string] => pair[1] !== undefined),
   );
   const packed = await runCommand({
-    executable: "npm",
-    args: ["pack", "--ignore-scripts", "--json", "--pack-destination", tool, source],
+    executable: npm.executable,
+    args: [...npm.prefix, "pack", "--ignore-scripts", "--json", "--pack-destination", tool, source],
     cwd: tool,
     env,
     timeoutMs: 120_000,
@@ -76,9 +94,11 @@ export const provisionPackage: ProvisionPackage = async (source, tool) => {
     .parse(JSON.parse(packed.stdout) as unknown);
   if (archive === undefined) throw new Error("PACKAGE_PACK_FAILED");
   const outcome = await runCommand({
-    executable: "npm",
+    executable: npm.executable,
     args: [
+      ...npm.prefix,
       "install",
+      ...(options?.docker === true ? ["--ignore-scripts"] : []),
       "--prefix",
       tool,
       "--global=false",
@@ -272,7 +292,9 @@ export function createProjectInstallation(options: {
         await cp(target, join(backupDir, path));
       }
       const tool = join(stage, "tool");
-      await (options.provision ?? provisionPackage)(input.packageDir, tool);
+      await (options.provision ?? provisionPackage)(input.packageDir, tool, {
+        docker: plan.candidate.docker !== undefined,
+      });
       const installedPackage = join(tool, "node_modules", "omi-squad");
       const content = await readPackageContent(installedPackage);
       if (content.artifactHash !== plan.candidate.artifactHash)
