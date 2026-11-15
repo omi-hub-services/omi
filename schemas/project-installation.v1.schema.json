@@ -4,16 +4,34 @@
   "type": "object",
   "properties": {
     "projectDir": {
-      "type": "string",
-      "maxLength": 4096,
-      "format": "starts_with",
-      "pattern": "^\\/.*"
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 4096,
+          "format": "starts_with",
+          "pattern": "^\\/.*"
+        },
+        {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:[A-Za-z]:[\\\\/]|\\\\\\\\[^\\\\/]+[\\\\/][^\\\\/]+[\\\\/])"
+        }
+      ]
     },
     "packageDir": {
-      "type": "string",
-      "maxLength": 4096,
-      "format": "starts_with",
-      "pattern": "^\\/.*"
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 4096,
+          "format": "starts_with",
+          "pattern": "^\\/.*"
+        },
+        {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:[A-Za-z]:[\\\\/]|\\\\\\\\[^\\\\/]+[\\\\/][^\\\\/]+[\\\\/])"
+        }
+      ]
     },
     "distribution": {
       "type": "string",
@@ -26,8 +44,7 @@
   },
   "required": [
     "projectDir",
-    "packageDir",
-    "distribution"
+    "packageDir"
   ],
   "additionalProperties": false
 }

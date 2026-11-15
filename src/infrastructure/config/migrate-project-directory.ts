@@ -1,5 +1,5 @@
 import { lstat, readdir, realpath, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { ProjectDirectoryMigration } from "../../application/ports/project-directory-migration.js";
 import { assertPlainParents, readOptional } from "./package-content.js";
 import { mergeProjectInstruction, projectInstructionBlock } from "./project-bridge.js";
@@ -76,7 +76,7 @@ export const migrateProjectDirectory: ProjectDirectoryMigration = async (project
   }
   await move(legacyProjectDirectory, ".omi");
   const movedPath = (path: string) =>
-    path.startsWith(`${previous}/`) ? directory + path.slice(previous.length) : path;
+    path.startsWith(`${previous}${sep}`) ? directory + path.slice(previous.length) : path;
   try {
     for (const write of writes) await writeFile(movedPath(write.path), write.after);
   } catch (error) {

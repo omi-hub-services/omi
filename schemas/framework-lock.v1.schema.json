@@ -19,11 +19,33 @@
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
     },
+    "docker": {
+      "type": "object",
+      "properties": {
+        "container": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
+        }
+      },
+      "required": [
+        "container"
+      ],
+      "additionalProperties": false
+    },
     "projectDir": {
-      "type": "string",
-      "maxLength": 4096,
-      "format": "starts_with",
-      "pattern": "^\\/.*"
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 4096,
+          "format": "starts_with",
+          "pattern": "^\\/.*"
+        },
+        {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:[A-Za-z]:[\\\\/]|\\\\\\\\[^\\\\/]+[\\\\/][^\\\\/]+[\\\\/])"
+        }
+      ]
     },
     "base": {
       "type": "object",
@@ -41,7 +63,6 @@
     "schemaVersion",
     "version",
     "artifactHash",
-    "distribution",
     "projectDir",
     "base"
   ],

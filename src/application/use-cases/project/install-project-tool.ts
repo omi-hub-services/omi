@@ -48,10 +48,12 @@ async function installPackage(
 ) {
   const input = installationInputSchema.parse(raw);
   const snapshot = await store.inspect(input);
+  // Docker settings also permit replacing a previously installed WSL binding on the host.
   if (
     snapshot.installed !== undefined &&
-    (snapshot.installed.projectDir !== input.projectDir ||
-      snapshot.installed.distribution !== input.distribution)
+    snapshot.candidate.docker === undefined &&
+    (snapshot.installed.projectDir !== snapshot.candidate.projectDir ||
+      snapshot.installed.distribution !== snapshot.candidate.distribution)
   )
     throw new Error("PROJECT_BINDING_CHANGED");
   let notes = { changelog: "", breaking: false };

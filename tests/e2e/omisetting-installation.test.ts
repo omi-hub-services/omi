@@ -31,13 +31,12 @@ it("installs an editable settings example and preserves gitignore and local sett
     const ignore = await readFile(join(dir, ".gitignore"), "utf8");
     expect(ignore).toContain("# existing\n");
     expect(ignore.trimEnd().split("\n").at(-1)).toBe("/.omi/omisetting.local.json");
-    await writeFile(join(dir, ".omi/omisetting.local.json"), "fake-local-bytes");
+    if (example === undefined) throw new Error("missing settings example");
+    await writeFile(join(dir, ".omi/omisetting.local.json"), example);
     await writeFile(examplePath, "user example");
     await installProjectTool(installation, input);
     expect(await readFile(examplePath, "utf8")).toBe("user example");
-    expect(await readFile(join(dir, ".omi/omisetting.local.json"), "utf8")).toBe(
-      "fake-local-bytes",
-    );
+    expect(await readFile(join(dir, ".omi/omisetting.local.json"), "utf8")).toBe(example);
     expect(await readFile(join(dir, ".gitignore"), "utf8")).toBe(ignore);
   } finally {
     await rm(dir, { recursive: true, force: true });

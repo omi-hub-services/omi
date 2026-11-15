@@ -1,10 +1,18 @@
 import { z } from "zod";
 import { wslPathSchema, sessionLaunchSchema } from "./session-launch.js";
 
+const installationPathSchema = z.union([
+  wslPathSchema,
+  z
+    .string()
+    .regex(/^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+[\\/])/)
+    .max(4096)
+    .refine((value) => wslPathSchema.safeParse(`/${value}`).success),
+]);
 export const installationInputSchema = z.strictObject({
-  projectDir: wslPathSchema,
-  packageDir: wslPathSchema,
-  distribution: sessionLaunchSchema.shape.distribution.unwrap(),
+  projectDir: installationPathSchema,
+  packageDir: installationPathSchema,
+  distribution: sessionLaunchSchema.shape.distribution,
   apply: z.boolean().default(false),
 });
 export type InstallationInput = z.infer<typeof installationInputSchema>;
@@ -22,13 +30,20 @@ const templatePathSchema = z
   )
   .refine((path) => path.split("/").every((part) => part !== ".." && part !== "." && part !== ""));
 export const templateFilesSchema = z.record(templatePathSchema, z.string().max(1024 * 1024));
-export const frameworkLockSchema = z.strictObject({
-  schemaVersion: z.literal(1),
-  version: z.string().regex(/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/),
-  artifactHash: z.string().regex(/^[a-f0-9]{64}$/),
-  distribution: sessionLaunchSchema.shape.distribution.unwrap(),
-  projectDir: wslPathSchema,
-  base: templateFilesSchema,
-});
+export const frameworkLockSchema = z
+  .strictObject({
+    schemaVersion: z.literal(1),
+    version: z.string().regex(/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/),
+    artifactHash: z.string().regex(/^[a-f0-9]{64}$/),
+    distribution: sessionLaunchSchema.shape.distribution,
+    docker: z
+      .strictObject({ container: sessionLaunchSchema.shape.distribution.unwrap() })
+      .optional(),
+    projectDir: installationPathSchema,
+    base: templateFilesSchema,
+  })
+  .refine((value) => (value.docker === undefined) !== (value.distribution === undefined), {
+    message: "Exactly one Docker or WSL binding is required",
+  });
 export type FrameworkLock = z.infer<typeof frameworkLockSchema>;
 export type TemplateFiles = z.infer<typeof templateFilesSchema>;
