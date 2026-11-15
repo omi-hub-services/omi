@@ -78,6 +78,106 @@ it("refuses a run without an exit status and writes no evidence", async () => {
   expect(existsSync(r.out)).toBe(false);
 });
 
+it("runs git and both test runs in the WSL checkout and writes the evidence to the Coordinator path", async () => {
+  const out = join(dir, "wsl-evidence.json");
+  const target = { viaWslExe: true, distro: "Ubuntu-24.04", repoDir: "/home/u/omi" };
+  const calls: { file: string; args: readonly string[]; input?: string }[] = [];
+  const runner = vi.fn((command: { file: string; args: readonly string[]; input?: string }) => {
+    calls.push(command);
+    const payload = command.args.at(-1) ?? "";
+    const stdout = payload.startsWith("git merge-base")
+      ? `${base}\n`
+      : payload.startsWith("git rev-parse --verify")
+        ? `${base}\n`
+        : payload.startsWith("git rev-parse HEAD")
+          ? `${head}\n`
+          : "";
+    return Promise.resolve({ code: payload.includes("worktree add") ? 1 : 0, stdout, stderr: "" });
+  });
+  const status = await regressionEvidenceCommand({
+    testFile: "tests/unit/a.test.ts",
+    testName: "fixes it",
+    out,
+    run: runner,
+    target,
+  });
+  expect(status).toBe(0);
+  expect(
+    validRegressionEvidence(JSON.parse(readFileSync(out, "utf8")) as unknown, base, head),
+  ).toBe(true);
+  expect(calls.every((c) => c.file === "wsl.exe")).toBe(true);
+  expect(calls.every((c) => c.args.join(" ").includes("--cd /home/u/omi"))).toBe(true);
+  const payloads = calls.map((c) => c.args.at(-1) ?? "");
+  expect(payloads[0]).toBe("git merge-base HEAD origin/develop");
+  expect(payloads.some((p) => p.includes("worktree add --detach"))).toBe(true);
+  const argvs = calls.filter((c) => c.input !== undefined).map((c) => c.input?.split("\0"));
+  expect(argvs).toHaveLength(2);
+  for (const argv of argvs) {
+    expect(argv).toEqual([
+      "tests/unit/a.test.ts",
+      "npm",
+      "run",
+      "test:unit",
+      "--",
+      "tests/unit/a.test.ts",
+      "-t",
+      "fixes it",
+    ]);
+  }
+  expect(payloads.some((p) => /base64|xargs/.test(p))).toBe(false);
+});
+
+const wslRun = (testName: string, runnerCode: (payload: string) => number) => {
+  const target = { viaWslExe: true, distro: "d", repoDir: "/home/u/omi" };
+  const payloads: string[] = [];
+  const inputs: string[] = [];
+  const runner = (command: { args: readonly string[]; input?: string }) => {
+    const payload = command.args.at(-1) ?? "";
+    payloads.push(payload);
+    if (command.input !== undefined) inputs.push(command.input);
+    const stdout = payload.startsWith("git rev-parse HEAD") ? `${head}\n` : `${base}\n`;
+    return Promise.resolve({ code: runnerCode(payload), stdout, stderr: "" });
+  };
+  const status = regressionEvidenceCommand({
+    testFile: "tests/unit/a.test.ts",
+    testName,
+    out: join(dir, "e.json"),
+    run: runner,
+    target,
+    base,
+  });
+  return { payloads, inputs, status };
+};
+
+it.each([`handles user's input`, `says "hi"`, String.raw`matches \d+ and a\\b`])(
+  "carries the test name %s to WSL on stdin, not in the payload",
+  async (name) => {
+    const r = wslRun(name, (p) => (p.includes("worktree add") ? 1 : 0));
+    expect(await r.status).toBe(0);
+    expect(r.inputs).toHaveLength(2);
+    expect(r.inputs.every((i) => i.split("\0").at(-1) === name)).toBe(true);
+  },
+);
+
+it.each([137, 126])(
+  "treats a base run that exits %i as no result and writes no evidence",
+  async (code) => {
+    const r = wslRun("fixes it", (p) => (p.includes("worktree add") ? code : 0));
+    expect(await r.status).toBe(1);
+    expect(existsSync(join(dir, "e.json"))).toBe(false);
+  },
+);
+
+it("removes the throwaway base worktree in a separate WSL call even when the run times out", async () => {
+  const r = wslRun("fixes it", (p) => (p.includes("worktree add") ? 128 : 0));
+  expect(await r.status).toBe(1);
+  const run = r.payloads.find((p) => p.includes("worktree add")) ?? "";
+  const path = /--detach (\S+)/.exec(run)?.[1] ?? "";
+  const cleanup = r.payloads.find((p) => p.startsWith("git worktree remove"));
+  expect(cleanup).toContain(path);
+  expect(cleanup).toContain(`rm -rf ${path.replace("/base", "")}`);
+});
+
 it.each(["src/a.test.ts", "../tests/unit/a.test.ts", "tests/other/a.test.ts"])(
   "refuses the test file %s",
   async (testFile) => {
