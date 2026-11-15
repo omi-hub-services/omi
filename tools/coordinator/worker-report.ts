@@ -148,6 +148,8 @@ export interface StepMarker {
   readonly status: "succeeded" | "failed" | "blocked";
   /** Next step ids (comma-joined), `open-pr` or `waiting-po`. */
   readonly next: string;
+  /** OMI-176: the summary was cut at the step-result cap; the full text is in the worker log. */
+  readonly truncated?: boolean;
 }
 
 export const STEP_REPORT_LIMIT = 3000;
@@ -156,10 +158,10 @@ export const ARCHITECT_STEP = "architect";
 export const FLOW = 'node "$coordinatorPin/tools/coordinator/flow.ts"';
 
 export const stepMarker = (m: StepMarker): string =>
-  `<!-- omi-squad:step-report issue=${String(m.issue)} step=${m.step} round=${String(m.round)} session=${m.session} status=${m.status} next=${m.next} -->`;
+  `<!-- omi-squad:step-report issue=${String(m.issue)} step=${m.step} round=${String(m.round)} session=${m.session} status=${m.status} next=${m.next}${m.truncated === true ? " truncated=true" : ""} -->`;
 
 const MARKER =
-  /<!-- omi-squad:step-report issue=(\d+) step=([a-z][a-z0-9,-]*) round=(\d+) session=([A-Za-z0-9][A-Za-z0-9._-]*) status=(succeeded|failed|blocked) next=([a-z][a-z0-9,-]*) -->/;
+  /<!-- omi-squad:step-report issue=(\d+) step=([a-z][a-z0-9,-]*) round=(\d+) session=([A-Za-z0-9][A-Za-z0-9._-]*) status=(succeeded|failed|blocked) next=([a-z][a-z0-9,-]*)( truncated=true)? -->/;
 
 export interface ParsedMarker {
   readonly marker: StepMarker;
@@ -191,6 +193,7 @@ export function parseStepMarkers(
           session: m[4] ?? "",
           status: m[5] as StepMarker["status"],
           next: m[6] ?? "",
+          ...(m[7] === undefined ? {} : { truncated: true }),
         },
         tool: (worker?.[1] as "claude" | "codex" | undefined) ?? null,
         profile: worker?.[2] ?? null,
@@ -210,7 +213,7 @@ export function parseStepMarkers(
 export function parseStepResults(
   comments: readonly { readonly author: string | null; readonly body: string }[],
   coordinator: string,
-): EarlierStepResult[] {
+): (EarlierStepResult & { readonly truncated?: boolean })[] {
   return comments.flatMap((c) =>
     parseStepMarkers([c], coordinator).flatMap(({ marker }) => {
       const s = c.body.indexOf("\n**Summary:** ");
@@ -228,6 +231,7 @@ export function parseStepResults(
         status: marker.status,
         summary,
         findings,
+        ...(marker.truncated === true ? { truncated: true } : {}),
       }));
     }),
   );
@@ -291,6 +295,46 @@ export function computeNext(
   };
   const ready = workflow.steps.filter((s) => !valid(s.id) && s.needs.every(valid)).map((s) => s.id);
   return ready.length === 0 ? "open-pr" : ready.join(",");
+}
+
+// ── Over-cap summary (OMI-176) ──────────────────────────────────────────────
+const SUMMARY_CAP = 4000;
+/** Last line of a truncated summary. The log name is the only thing read back from it. */
+export const TRUNCATION_POINTER =
+  /^… truncated \((\d+) characters\); full text: (omi-\d+-[A-Za-z0-9._-]+\.jsonl)$/m;
+
+/**
+ * The report text with its summary cut at a line boundary below the cap and a pointer line to the
+ * log, only when the summary length is the sole contract failure; otherwise null.
+ */
+export function truncateOverCapSummary(report: string, logName: string): string | null {
+  const extracted = extractStepResult(report);
+  if (!extracted.ok) return null;
+  const parsed = stepResultSchema.safeParse(extracted.value);
+  if (parsed.success) return null;
+  const only = parsed.error.issues.every(
+    (i) => i.code === "too_big" && i.path.length === 1 && i.path[0] === "summary",
+  );
+  const doc = extracted.value as Record<string, unknown>;
+  if (!only || typeof doc.summary !== "string") return null;
+  const pointer = `… truncated (${String(doc.summary.length)} characters); full text: ${logName}`;
+  const room = SUMMARY_CAP - pointer.length - 1;
+  let kept = "";
+  for (const line of doc.summary.split("\n")) {
+    const next = kept === "" ? line : `${kept}\n${line}`;
+    if (next.length > room) break;
+    kept = next;
+  }
+  // shortcut: a first line longer than the room is cut mid-line, nothing smaller is possible
+  if (kept === "") kept = doc.summary.slice(0, room);
+  return JSON.stringify({ ...doc, summary: `${kept}\n${pointer}` });
+}
+
+/** The untruncated summary out of a worker's raw report text, for a truncated step report. */
+export function fullSummary(report: string): string | null {
+  const extracted = extractStepResult(report);
+  const summary = extracted.ok ? (extracted.value as { summary?: unknown }).summary : undefined;
+  return typeof summary === "string" && summary !== "" ? summary : null;
 }
 
 // A worker's text must not be able to forge or close the machine marker.
@@ -363,6 +407,12 @@ export function renderStepReport(input: {
   }
   const cut = (s: string, max: number) =>
     s.length <= max ? s : `${s.slice(0, Math.max(0, max - 1))}…`;
+  // a truncated summary keeps its pointer line: it is the only way back to the full text
+  const pointer = marker.truncated === true ? TRUNCATION_POINTER.exec(summary)?.[0] : undefined;
+  const cutSummary = (s: string, max: number) =>
+    pointer === undefined || s.length <= max
+      ? cut(s, max)
+      : `${cut(s.slice(0, s.length - pointer.length).trimEnd(), Math.max(0, max - pointer.length - 1))}\n${pointer}`;
   let findings = full;
   if (fLen > fBudget) {
     const kept: string[] = [];
@@ -374,9 +424,9 @@ export function renderStepReport(input: {
     }
     findings = `\n${[...kept, `- … ${String(lines.length - kept.length)} more findings omitted`].join("\n")}`;
   }
-  const body = build(cut(summary, sBudget), findings);
+  const body = build(cutSummary(summary, sBudget), findings);
   const over = body.length - STEP_REPORT_LIMIT;
-  return over <= 0 ? body : build(cut(summary, Math.max(0, sBudget - over)), findings);
+  return over <= 0 ? body : build(cutSummary(summary, Math.max(0, sBudget - over)), findings);
 }
 
 const INDEPENDENT_ROLES = new Set(["analyst", "qa", "reviewer"]);

@@ -9,6 +9,8 @@ export interface EarlierStepResult {
   readonly summary: string;
   /** One rendered line per finding. */
   readonly findings: readonly string[];
+  /** The summary is the complete text (read back from a log), so the section does not cap it. */
+  readonly fullText?: boolean;
 }
 
 interface StepShape {
@@ -100,14 +102,13 @@ export function renderEarlierSteps(
   const budget = Math.floor((SECTION_LIMIT - head.length) / newest.length) - 2;
   const blocks = newest.map((r) => {
     const findings = quote(r.findings.join("\n"), FINDINGS_LIMIT);
-    return [
+    const block = [
       `### Step ${r.stepId} · round ${String(r.round)} · ${r.status}`,
       "Summary:",
-      quote(r.summary, SUMMARY_LIMIT),
+      quote(r.summary, r.fullText === true ? Number.POSITIVE_INFINITY : SUMMARY_LIMIT),
       ...(findings === "" ? [] : ["Findings:", findings]),
-    ]
-      .join("\n")
-      .slice(0, budget);
+    ].join("\n");
+    return r.fullText === true ? block : block.slice(0, budget);
   });
   return [head, ...blocks].join("\n\n");
 }

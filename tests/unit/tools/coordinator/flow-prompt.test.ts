@@ -57,6 +57,8 @@ function fake(
     extraComments?: { body: string; author: string | null }[];
     /** Content of the stored check result file; absent means none is stored. */
     storedCheck?: string;
+    /** Content of the worker log file the prompt reads by name. */
+    workerLog?: string;
   } = {},
 ) {
   const seen: Command[] = [];
@@ -157,6 +159,10 @@ function fake(
         stderr: "",
         stdout: options.detached ? "HEAD\n" : "task/omi-090-prompt-steps\n",
       };
+    if (payload.includes("omi-runs/omi-"))
+      return options.workerLog === undefined
+        ? { code: 1, stderr: "", stdout: "" }
+        : { code: 0, stderr: "", stdout: options.workerLog };
     if (payload.includes("omi-runs/checks/"))
       return options.storedCheck === undefined
         ? { code: 1, stderr: "", stdout: "" }
@@ -669,6 +675,60 @@ it("keeps --architect-decision as the only Architect decision when it is given",
   const text = output.join("\n");
   expect(text).toContain("EXPLICIT decision");
   expect(earlier(text)).not.toContain("MARKER decision");
+});
+
+const TRUNC_LOG = "omi-173-minibox-20261115-101010-architect-1-k3x9a1b2c3.jsonl";
+const FULL_DECISION = Array.from({ length: 150 }, (_, i) => `decision ${String(i)}`).join("\n");
+const POINTER = `… truncated (${String(FULL_DECISION.length)} characters); full text: ${TRUNC_LOG}`;
+const truncatedReport = () =>
+  stepReport("architect", 1, `decision 0\n${POINTER}`).replace(/ -->$/, " truncated=true -->");
+const fullLog = JSON.stringify({
+  type: "result",
+  session_id: "s1",
+  result: JSON.stringify({
+    schemaVersion: 1,
+    runId: "repo-173",
+    stepId: "architect",
+    attemptId: "repo-173-architect-1",
+    status: "succeeded",
+    summary: FULL_DECISION,
+    artifacts: [],
+    checks: [],
+    skillsApplied: [],
+    findings: [],
+  }),
+});
+
+it("hands the full text from the log for a truncated report (OMI-176)", async () => {
+  const f = fake({
+    workerLog: fullLog,
+    extraComments: [{ body: truncatedReport(), author: COORDINATOR_LOGIN }],
+  });
+  expect(await main(["prompt", "185", "--step", "implement"], f.ctx)).toBe(0);
+  const section = earlier(output.join("\n"));
+  expect(section).toContain("decision 149");
+  expect(section).not.toContain("… truncated (");
+});
+
+it("keeps the truncated text when the marker does not say truncated (OMI-176)", async () => {
+  const f = fake({
+    workerLog: fullLog,
+    extraComments: [
+      { body: truncatedReport().replace(" truncated=true", ""), author: COORDINATOR_LOGIN },
+    ],
+  });
+  expect(await main(["prompt", "185", "--step", "implement"], f.ctx)).toBe(0);
+  expect(earlier(output.join("\n"))).not.toContain("decision 149");
+});
+
+it("expands a truncated --architect-decision file from the log (OMI-176)", async () => {
+  const decision = join(dir, "decision.md");
+  writeFileSync(decision, `decision 0\n${POINTER}`);
+  const f = fake({ workerLog: fullLog });
+  expect(
+    await main(["prompt", "185", "--step", "implement", "--architect-decision", decision], f.ctx),
+  ).toBe(0);
+  expect(output.join("\n")).toContain("decision 149");
 });
 
 it("hands the previous review verdict to a rework round only", async () => {

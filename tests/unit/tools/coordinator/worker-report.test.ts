@@ -5,6 +5,7 @@ import {
   newestLogCommand,
   parseClaudeReport,
   parseCodexReport,
+  truncateOverCapSummary,
   validateWorkerResult,
 } from "../../../../tools/coordinator/worker-report.ts";
 
@@ -177,5 +178,48 @@ describe("validateWorkerResult", () => {
     expect(
       validateWorkerResult(`${block(doc)}\n${block({ ...doc, status: "failed" })}`).success,
     ).toBe(false);
+  });
+});
+
+describe("truncateOverCapSummary (OMI-176)", () => {
+  const doc = (over: Record<string, unknown>) =>
+    JSON.stringify({
+      schemaVersion: 1,
+      runId: "repo-1",
+      stepId: "architect",
+      attemptId: "repo-1-architect-1",
+      status: "succeeded",
+      summary: "x",
+      artifacts: [],
+      checks: [],
+      skillsApplied: [],
+      findings: [],
+      ...over,
+    });
+  const log = "omi-173-minibox-20261115-101010-architect-1-k3x9a1b2c3.jsonl";
+  const long = Array.from({ length: 120 }, (_, i) => `line ${String(i)} ${"w".repeat(30)}`).join(
+    "\n",
+  );
+
+  it("cuts at a line boundary below the cap and ends with the log pointer", () => {
+    expect(long.length).toBeGreaterThan(4000);
+    const cut = truncateOverCapSummary(doc({ summary: long }), log);
+    expect(cut).not.toBeNull();
+    const ok = validateWorkerResult(cut ?? "");
+    expect(ok.success).toBe(true);
+    const summary = ok.success ? ok.data.summary : "";
+    expect(summary.length).toBeLessThanOrEqual(4000);
+    expect(summary.split("\n").at(-1)).toBe(
+      `… truncated (${String(long.length)} characters); full text: ${log}`,
+    );
+    expect(long.startsWith(summary.split("\n").slice(0, -1).join("\n"))).toBe(true);
+  });
+
+  it("does not touch a report with another contract failure, even when the summary is long", () => {
+    expect(truncateOverCapSummary(doc({ summary: long, status: "great" }), log)).toBeNull();
+  });
+
+  it("does not touch a valid report", () => {
+    expect(truncateOverCapSummary(doc({}), log)).toBeNull();
   });
 });

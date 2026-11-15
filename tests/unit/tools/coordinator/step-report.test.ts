@@ -244,20 +244,21 @@ describe("parseStepMarkers", () => {
 
 // ── flow-workers I/O ─────────────────────────────────────────────────────────
 const LOG_NAME = "omi-159-minibox-20261115-101010-implement-1-k3x9a1b2c3.jsonl";
-const claudeLog = (summary: string) =>
+const claudeLog = (summary: string, status?: string) =>
   [
     JSON.stringify({ type: "system", subtype: "init", session_id: "sess-1" }),
     JSON.stringify({
       type: "result",
       session_id: "sess-1",
       num_turns: 5,
-      result: JSON.stringify(result({ summary })),
+      result: JSON.stringify(result({ summary, ...(status === undefined ? {} : { status }) })),
     }),
   ].join("\n");
 
 function rig(
   over: {
     summary?: string;
+    status?: string;
     comments?: { author: string | null; body: string }[];
     meta?: Partial<DispatchMeta>;
     log?: string;
@@ -272,7 +273,8 @@ function rig(
     else if (last.startsWith("ls -t")) stdout = `/home/u/omi-runs/${over.log ?? LOG_NAME}\n`;
     else if (last.includes("-meta-"))
       stdout = JSON.stringify({ ...meta, skipped: ["analyze"], ...over.meta });
-    else if (last.startsWith("cat ")) stdout = claudeLog(over.summary ?? "Did the work.");
+    else if (last.startsWith("cat "))
+      stdout = claudeLog(over.summary ?? "Did the work.", over.status);
     return Promise.resolve({ code: 0, stdout, stderr: "" });
   };
   const target = { viaWslExe: false, distro: "d", repoDir: "/home/u/omi" };
@@ -303,6 +305,32 @@ describe("worker-report --post", () => {
     expect(p?.input).toContain("Worker report — OMI-159 · step implement · round 1");
     expect(p?.input).toContain("session sess-1");
     expect(p?.input).toContain("status=succeeded next=review -->");
+  });
+
+  it("posts an over-cap summary truncated with the log pointer and truncated=true (OMI-176)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const long = Array.from(
+      { length: 140 },
+      (_, i) => `decision line ${String(i)} ${"d".repeat(20)}`,
+    ).join("\n");
+    const r = rig({ summary: long });
+    expect(await post(r)).toBe(0);
+    const text = posts(r.seen)[0]?.input ?? "";
+    expect(text).toContain(" truncated=true -->");
+    expect(text).toContain(
+      `… truncated (${String(long.length)} characters); full text: ${LOG_NAME}`,
+    );
+    expect(text.length).toBeLessThanOrEqual(STEP_REPORT_LIMIT);
+    const parsed = parseStepMarkers([{ author: COORDINATOR_LOGIN, body: text }], COORDINATOR_LOGIN);
+    expect(parsed[0]?.marker.truncated).toBe(true);
+  });
+
+  it("still refuses an over-cap summary when another field is invalid (OMI-176)", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const r = rig({ summary: "s".repeat(4100), status: "great" });
+    expect(await post(r)).toBe(1);
+    expect(posts(r.seen)).toHaveLength(0);
   });
 
   it("posts nothing when the same step/round/session is already on the Issue", async () => {
