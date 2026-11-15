@@ -538,6 +538,7 @@ export interface ReviewCommentInput {
   readonly prState: string;
   readonly prHead: string;
   readonly issueBody: string;
+  readonly workflow?: string | null;
   readonly body: string;
   readonly dryRun: boolean;
 }
@@ -548,11 +549,15 @@ export async function reviewCommentCommand(
   input: ReviewCommentInput,
 ): Promise<number> {
   const label = `review-comment ${String(input.pr)}`;
-  if (input.prState !== "OPEN")
-    return refuse(label, `PR #${String(input.pr)} is ${input.prState}, not OPEN`);
+  if (input.prState !== "OPEN" && !(input.workflow === "release" && input.prState === "MERGED"))
+    return refuse(
+      label,
+      `PR #${String(input.pr)} is ${input.prState}; needs OPEN or a MERGED release PR`,
+    );
   const checked = checkReview(input.body, {
     acCount: countAcceptanceCriteria(input.issueBody),
     prHead: input.prHead,
+    workflow: input.workflow,
   });
   if (!checked.ok) return refuse(label, checked.reasons.join("; "));
   const login = await coordinatorLoginRefusal(ctx);

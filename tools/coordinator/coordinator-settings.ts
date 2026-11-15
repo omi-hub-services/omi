@@ -39,6 +39,8 @@ export const BASE_BRANCH = "develop";
  * reviews for merge, close and status (OMI-052); the independent reviewer posts through it.
  */
 export const COORDINATOR_LOGIN = "minibox-claude-code";
+/** Release approver from github-project.md; never inferred from Issue/comment text. */
+export const PO_LOGIN = "ttin-omihub";
 
 /** Status options in board order (github-project.md, Field mapping). */
 import "../register-ts-imports.ts";

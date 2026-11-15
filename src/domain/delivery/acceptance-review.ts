@@ -9,7 +9,7 @@
  * is malformed, never silently skipped. Review text is data: these lines are the only part of it
  * that a gate reads (AGENTS.md §3).
  */
-export type AcVerdict = "met" | "not met";
+export type AcVerdict = "met" | "not met" | "deferred";
 
 export interface AcReviewLine {
   readonly number: number;
@@ -18,16 +18,21 @@ export interface AcReviewLine {
 }
 
 const LOOKS_LIKE_VERDICT = /^\s*(?:[-*+]\s+)?AC-(\d+)\s*:/;
-const VERDICT_LINE = /^\s*(?:[-*+]\s+)?AC-(\d+)\s*:\s*(met|not met)\s*(?:—|–|--?)\s*(\S.*)$/;
+const VERDICT_LINE =
+  /^\s*(?:[-*+]\s+)?AC-(\d+)\s*:\s*(met|not met|deferred)\s*(?:—|–|--?)\s*(\S.*)$/;
 
-/** Every verdict-looking line of a review, in order. */
-export function parseAcReviewLines(review: string): readonly AcReviewLine[] {
+/** Every verdict-looking line, in order. Deferred is opt-in for repository release review only. */
+export function parseAcReviewLines(review: string, allowDeferred = false): readonly AcReviewLine[] {
   const lines: AcReviewLine[] = [];
   for (const line of review.split(/\r?\n/)) {
     const start = LOOKS_LIKE_VERDICT.exec(line);
     if (start?.[1] === undefined) continue;
     const full = VERDICT_LINE.exec(line);
-    const verdict = full?.[2] === "met" || full?.[2] === "not met" ? full[2] : undefined;
+    const value = full?.[2];
+    const verdict =
+      value === "met" || value === "not met" || (allowDeferred && value === "deferred")
+        ? value
+        : undefined;
     lines.push({ number: Number(start[1]), verdict });
   }
   return lines;
@@ -60,7 +65,8 @@ export function acceptanceReviewRefusals(
   if ([...counts.values()].some((count) => count > 1)) refusals.push("AC_LINE_DUPLICATE");
   const numbers = Array.from({ length: criteriaCount }, (_, index) => index + 1);
   if (numbers.some((n) => !counts.has(n))) refusals.push("AC_LINE_MISSING");
-  if (lines.some((line) => line.verdict === "not met")) refusals.push("AC_NOT_MET");
+  if (lines.some((line) => line.verdict === "not met" || line.verdict === "deferred"))
+    refusals.push("AC_NOT_MET");
   return refusals;
 }
 

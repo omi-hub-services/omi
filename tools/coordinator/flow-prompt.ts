@@ -246,6 +246,10 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       round,
     };
     const evidence: string[] = [renderQualityInstructions(quality)];
+    if (releaseReview)
+      evidence.push(
+        "## Release review\nUse exactly one AC-n line per criterion. For criteria owned by PO approval or a post-merge Coordinator step, use `AC-n: deferred — <Coordinator step>`. PASS requires every non-deferred AC met; an unmet review-time criterion still requires FAIL. Deferral grants no approval: native PO approval remains required before merge. After merge/tag/publishing, post a new exact-head PASS with evidence for each criterion; close still requires every AC met before ticking or closing.",
+      );
     if (plan.scopeEvidence !== undefined)
       evidence.push(
         `scope-approved: ${plan.scopeEvidence}; recorded decision: ${input.scopeApproved ?? ""}`,
