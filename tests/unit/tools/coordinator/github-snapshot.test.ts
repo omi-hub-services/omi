@@ -7,6 +7,7 @@ import {
   ignoredVerdictWarnings,
   latestAgentReview,
   linkedIssue,
+  parseCheck,
   parseSnapshotPage,
   partitionReady,
   SNAPSHOT_QUERY,
@@ -133,6 +134,43 @@ describe("summarizeChecks", () => {
   it("is pending while a check runs and none when nothing reported", () => {
     expect(summarizeChecks([check("check", "pending")], required).overall).toBe("pending");
     expect(summarizeChecks([], required).overall).toBe("none");
+  });
+
+  it("uses completion time rather than rollup order for duplicate check runs", () => {
+    const checks = [
+      { conclusion: "SUCCESS", completedAt: "2026-11-15T04:52:32Z" },
+      { conclusion: "CANCELLED", completedAt: "2026-11-15T04:52:29Z" },
+    ].map((result) =>
+      parseCheck({ __typename: "CheckRun", name: "check", status: "COMPLETED", ...result }, "c"),
+    );
+    expect(summarizeChecks(checks, ["check"]).overall).toBe("pass");
+  });
+
+  it("keeps a newer running check pending using its start time", () => {
+    const checks = [
+      { status: "COMPLETED", conclusion: "FAILURE", completedAt: "2026-11-15T04:52:32Z" },
+      { status: "IN_PROGRESS", startedAt: "2026-11-15T04:53:00Z", completedAt: null },
+    ].map((result) => parseCheck({ __typename: "CheckRun", name: "check", ...result }, "c"));
+    expect(summarizeChecks(checks, ["check"])).toMatchObject({
+      overall: "pending",
+      pending: ["check"],
+    });
+  });
+
+  it("uses creation time for duplicate status contexts", () => {
+    const checks = [
+      { state: "SUCCESS", createdAt: "2026-11-15T04:52:32Z" },
+      { state: "FAILURE", createdAt: "2026-11-15T04:52:29Z" },
+    ].map((result) =>
+      parseCheck({ __typename: "StatusContext", context: "check", ...result }, "c"),
+    );
+    expect(summarizeChecks(checks, ["check"]).overall).toBe("pass");
+  });
+
+  it("uses the last entry when duplicate timestamps are absent", () => {
+    expect(
+      summarizeChecks([check("check", "fail"), check("check", "pass")], ["check"]).overall,
+    ).toBe("pass");
   });
 });
 
@@ -329,8 +367,8 @@ describe("parseSnapshotPage", () => {
       { author: COORDINATOR_LOGIN, body: "**WAITING-PO:** x" },
     ]);
     expect(p.pulls?.[0]?.checks).toEqual([
-      { name: "check", state: "pass" },
-      { name: "ci/x", state: "pending" },
+      { name: "check", state: "pass", completedAt: null, startedAt: null },
+      { name: "ci/x", state: "pending", startedAt: null },
     ]);
     expect(p.pulls?.[0]?.comments).toEqual([
       { author: COORDINATOR_LOGIN, body: "review" },
