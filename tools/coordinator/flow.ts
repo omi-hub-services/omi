@@ -127,9 +127,10 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
                                               worker profile by quota (--probe: 1 Haiku call/profile)
   prompt <issue> --step <id> [--worktree <dir>] [--branch <b>] [--notes <f> | --findings <f>] [--out <f>]
                                               render the workflow step packet; --dry-run previews without writing
-  dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] --prompt <file>
+  dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] [--scope-approved <ref>] --prompt <file>
                                               WSL: unchanged prompt to ~/omi-runs, then the worker
-                                              in the foreground (model/effort from the effort policy)
+                                              in the foreground (model/effort from the effort policy;
+                                              --scope-approved records analyze as skipped for the step reports)
   worker-report <issue> [--step <step-round>] [--post]
                                               final report, turns, permission denials, session/thread id
                                               (--step verify-1: that step's newest log among parallel workers;
@@ -987,6 +988,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         profile: required(values.profile, "--profile"),
         resume: values.resume ?? null,
         prompt: readFileSync(required(values.prompt, "--prompt"), "utf8"),
+        scopeApproved: values["scope-approved"] ?? null,
         dryRun: dry,
       });
     }

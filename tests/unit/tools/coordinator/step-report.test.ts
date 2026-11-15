@@ -368,7 +368,7 @@ describe("next", () => {
     expect(out()).toContain("--profile prof-a --kind codex --resume sess-1");
   });
 
-  it("failed quality step: never resumes it; the implementer reworks with findings, then a fresh run", async () => {
+  it("failed quality step: never resumes it; only the implementer rework is printed, not a chained re-dispatch", async () => {
     const ms = [
       marker({ step: "implement", session: "impl-sess", next: "verify" }),
       marker({ step: "verify", session: "qa-sess", status: "failed", next: "verify" }),
@@ -378,8 +378,8 @@ describe("next", () => {
     expect(text).not.toContain("--resume qa-sess");
     expect(text).toContain("--step implement --round 2 --findings");
     expect(text).toContain("--resume impl-sess");
-    expect(text).toContain("prompt 323 --step verify --round 2 --notes");
-    expect(text).toMatch(/dispatch 323 --profile <p> --kind <claude\|codex> --prompt <prompt.md>/);
+    expect(text).not.toContain("--step verify");
+    expect(text).not.toMatch(/dispatch 323 --profile <p>/);
   });
 
   it("failed quality step without a recorded implementer: fresh packet, no --resume", async () => {

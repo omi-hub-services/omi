@@ -76,18 +76,6 @@ const would = (label: string, command: Command): void => {
   console.log(`${label}: would run: ${formatCommand(command)}`);
 };
 
-/**
- * `analyze` is recorded as skipped only when the packet's own evidence block (the one after its
- * last `Workflow packet:` line, rendered by `flow.ts prompt`) holds the scope-approved record;
- * the same words in Issue text come earlier and are ignored.
- */
-function scopeSkipped(packet: string): string[] {
-  const at = packet.lastIndexOf("\nWorkflow packet: ");
-  return at >= 0 && /^Workflow packet:[^\n]*\n\nscope-approved: /.test(packet.slice(at + 1))
-    ? ["analyze"]
-    : [];
-}
-
 /** A foreground worker may run for hours; the runner's 2-minute default would kill it. */
 const WORKER_TIMEOUT_MS = 8 * 3_600_000;
 
@@ -101,6 +89,8 @@ export interface DispatchInput {
   readonly resume: string | null;
   /** Text of the prompt file; with `resume` it is the follow-up message. */
   readonly prompt: string;
+  /** `--scope-approved <ref>` from the Coordinator: analyze is recorded as skipped. */
+  readonly scopeApproved?: string | null;
   readonly dryRun: boolean;
 }
 
@@ -211,7 +201,7 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
           ...reported,
           head,
           packet: packetId,
-          skipped: scopeSkipped(packet),
+          skipped: input.scopeApproved == null ? [] : ["analyze"],
         };
   const writeMeta: Command | null =
     meta === null
@@ -375,7 +365,7 @@ async function readDispatchMeta(
       Number.isSafeInteger(meta.round) &&
       meta.round >= 1 &&
       (head === null || /^[0-9a-f]{40}$/.test(head)) &&
-      meta.skipped.every((s) => typeof s === "string" && /^[a-z][a-z0-9-]*$/.test(s));
+      (meta.skipped.length === 0 || (meta.skipped.length === 1 && meta.skipped[0] === "analyze"));
     return ok ? { ...meta, skipped: meta.skipped as string[] } : null;
   } catch {
     return null;
@@ -409,7 +399,13 @@ async function postStepReport(
   }
   const parsed = parseStepMarkers(input.comments, COORDINATOR_LOGIN);
   const prior = parsed.map((p) => p.marker);
-  const skipped = [...new Set([...parsed.flatMap((p) => p.skipped), ...(meta.skipped ?? [])])];
+  // only an `analyze` step without needs can be skipped by a recorded scope decision
+  const skippable = input.workflow.steps.some((s) => s.id === "analyze" && s.needs.length === 0);
+  const skipped = skippable
+    ? [...new Set([...parsed.flatMap((p) => p.skipped), ...(meta.skipped ?? [])])].filter(
+        (id) => id === "analyze",
+      )
+    : [];
   if (
     prior.some((p) => p.step === meta.step && p.round === meta.round && p.session === input.session)
   ) {

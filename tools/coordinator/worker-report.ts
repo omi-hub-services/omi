@@ -133,7 +133,7 @@ export interface DispatchMeta {
   readonly round: number;
   readonly head: string | null;
   readonly packet: string;
-  /** Steps the packet's own scope-approved evidence skipped (analyze); empty when none. */
+  /** `["analyze"]` when the Coordinator passed `dispatch --scope-approved`; never read from text. */
   readonly skipped?: readonly string[];
 }
 
@@ -331,7 +331,7 @@ const INDEPENDENT_ROLES = new Set(["analyst", "qa", "reviewer"]);
 /**
  * `pick-profile` / `prompt` / `dispatch` commands for the newest marker (`flow.ts next`). A failed
  * analyze/verify/review step is never resumed (dispatch refuses it): the implementer's work step
- * reworks with the findings, then the quality step runs again as a fresh worker.
+ * reworks with the findings; the next report recomputes which quality steps come back.
  */
 export function formatNext(
   entry: ParsedMarker,
@@ -342,9 +342,11 @@ export function formatNext(
 ): string[] {
   const { marker, tool, profile } = entry;
   const n = String(marker.issue);
+  // a recorded scope-approved skip: prompt keeps the approval ref so analyze stays skipped
+  const scope = all.some((e) => e.skipped.length > 0) ? " --scope-approved <ref>" : "";
   const fresh = (step: string, round: number) => [
     `${FLOW} pick-profile ${n} --step ${step} --round ${String(round)} --probe`,
-    `${FLOW} prompt ${n} --step ${step} --round ${String(round)} --notes <notes.md> --out <prompt.md>`,
+    `${FLOW} prompt ${n} --step ${step} --round ${String(round)}${scope} --notes <notes.md> --out <prompt.md>`,
     `${FLOW} dispatch ${n} --profile <p> --kind <claude|codex> --prompt <prompt.md>`,
   ];
   if (marker.status === "blocked") {
@@ -366,18 +368,19 @@ export function formatNext(
     const dev = [...all]
       .reverse()
       .find((e) => e.marker.step.split(",").some((id) => devIds.includes(id)));
+    if (dev === undefined) {
+      return [
+        `${marker.step} round ${String(marker.round)} failed. It is an independent step and is never resumed; no implementer report is recorded on the Issue, so a fresh packet runs it again (start the work step with a full packet if the findings need code changes).`,
+        ...fresh(marker.step, round),
+      ];
+    }
+    // The rework invalidates the quality results that followed it; the report after the rework
+    // makes the script compute which steps come back (never chained here).
     return [
-      `${marker.step} round ${String(marker.round)} failed. It is an independent step and is never resumed: the implementer's work step reworks with these findings, then ${marker.step} runs again with a fresh worker (round ${String(round)}).`,
-      ...(dev === undefined
-        ? [
-            "no implementer report is recorded on the Issue; start the work step with a full packet if the findings need code changes.",
-          ]
-        : [
-            `${FLOW} prompt ${n} --step ${dev.marker.step} --round ${String(dev.marker.round + 1)} --findings <findings.md> --out <resume.md>`,
-            `${FLOW} dispatch ${n} --profile ${dev.profile ?? "<profile of the report>"} --kind ${dev.tool ?? "<claude|codex of the report>"} --resume ${dev.marker.session} --prompt <resume.md>`,
-          ]),
-      "then, after the rework is committed and checked:",
-      ...fresh(marker.step, round),
+      `${marker.step} round ${String(marker.round)} failed. It is an independent step and is never resumed: the implementer's work step reworks with these findings first.`,
+      `${FLOW} prompt ${n} --step ${dev.marker.step} --round ${String(dev.marker.round + 1)} --findings <findings.md> --out <resume.md>`,
+      `${FLOW} dispatch ${n} --profile ${dev.profile ?? "<profile of the report>"} --kind ${dev.tool ?? "<claude|codex of the report>"} --resume ${dev.marker.session} --prompt <resume.md>`,
+      `after the rework is committed and checked: ${FLOW} worker-report ${n} --post, then ${FLOW} next ${n}`,
     ];
   }
   if (marker.next === "open-pr") {
@@ -386,9 +389,16 @@ export function formatNext(
       `${FLOW} check <branch> --head <sha>, then push, then open-pr ${n} <branch> --title "OMI-NNN: …" --body-file <f> (omi-next step 4)`,
     ];
   }
+  // the state is on the Issue: a step that ran before comes back as its highest round + 1
+  const nextRound = (step: string) =>
+    1 +
+    Math.max(
+      0,
+      ...all.filter((e) => e.marker.step.split(",").includes(step)).map((e) => e.marker.round),
+    );
   return [
     `${marker.step} round ${String(marker.round)} succeeded; next: ${marker.next}`,
-    ...marker.next.split(",").flatMap((step) => fresh(step, 1)),
+    ...marker.next.split(",").flatMap((step) => fresh(step, nextRound(step))),
   ];
 }
 
