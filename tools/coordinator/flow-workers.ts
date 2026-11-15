@@ -422,18 +422,30 @@ async function postStepReport(
         (id) => id === "analyze",
       )
     : [];
+  // One dispatch (packet) is posted once. A native resume keeps step, round and session of the
+  // earlier run (OMI-173), so those cannot tell it apart; the packet id can.
+  const packetLine = `**Packet:** ${meta.packet}`;
   if (
-    prior.some((p) => p.step === meta.step && p.round === meta.round && p.session === input.session)
+    input.comments.some(
+      (c) => c.author === COORDINATOR_LOGIN && c.body.split("\n").includes(packetLine),
+    )
   ) {
     console.log(`${label}: done: ${meta.step} round ${String(meta.round)} already reported`);
     return 0;
   }
+  // a new run of a step/round/session already on the Issue is a rework: it gets the next round
+  const sameRun = prior.some(
+    (p) => p.step === meta.step && p.round === meta.round && p.session === input.session,
+  );
+  const round = sameRun
+    ? 1 + Math.max(...prior.filter((p) => p.step === meta.step).map((p) => p.round))
+    : meta.round;
   let marker: StepMarker;
   try {
     marker = {
       issue: input.number,
       step: meta.step,
-      round: meta.round,
+      round,
       session: input.session,
       status: input.result.status,
       next: computeNext(
@@ -462,7 +474,7 @@ async function postStepReport(
   }
   const body = renderStepReport({
     planKey: input.planKey,
-    meta,
+    meta: { ...meta, round },
     session: input.session,
     result: input.result,
     marker,
@@ -482,7 +494,7 @@ async function postStepReport(
   const out = (await runChecked(ctx.run, post)).trim();
   if (out) console.log(out);
   console.log(
-    `${label}: ok (${meta.step} round ${String(meta.round)} ${marker.status}, next ${marker.next})`,
+    `${label}: ok (${meta.step} round ${String(round)} ${marker.status}, next ${marker.next})`,
   );
   return 0;
 }
