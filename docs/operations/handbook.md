@@ -961,7 +961,9 @@ and first-install sequence. `node tools/coordinator/pin.ts status` is read-only;
 `refresh --to <full-green-merge-sha> --source develop [--dry-run]` checks GitHub-owned CI before
 preparing a standalone sibling checkout, installing with `npm ci --ignore-scripts` and smoking
 the literal plain-Node flow command. `rollback [--dry-run]` uses the previous SHA/source with
-the same gates. No commit or GitHub mutation is performed.
+the same gates. No commit or GitHub mutation is performed. The pin record is local machine state
+in `.omi/local/coordinator-pin.json` (git-ignored); refresh never dirties the checkout. With no
+record, `status` says to run `refresh --to <sha> --source <source>` (first install).
 
 Set `OMI_COORDINATOR_PIN_DIR` to an absolute external path to override sibling
 `omi-coordinator-pin`; its parent directory must already exist. On Windows the bundled npm CLI
