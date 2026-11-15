@@ -25,17 +25,33 @@ describe("parseAcReviewLines", () => {
     ]);
   });
 
-  it.each(["AC-1: met", "AC-1: met —", "AC-1: done — x", "AC-1: metric — x", "AC-1 : maybe"])(
-    "keeps a malformed verdict line as malformed: %s",
-    (line) => {
-      expect(parseAcReviewLines(line)).toEqual([{ number: 1, verdict: undefined }]);
-    },
-  );
+  it("parses deferred only with an explicit allowance", () => {
+    expect(parseAcReviewLines("AC-1: deferred — tag after merge", true)).toEqual([
+      { number: 1, verdict: "deferred" },
+    ]);
+  });
+
+  it.each([
+    "AC-1: deferred — tag after merge",
+    "AC-1: met",
+    "AC-1: met —",
+    "AC-1: done — x",
+    "AC-1: metric — x",
+    "AC-1 : maybe",
+  ])("keeps a malformed verdict line as malformed: %s", (line) => {
+    expect(parseAcReviewLines(line)).toEqual([{ number: 1, verdict: undefined }]);
+  });
 });
 
 describe("acceptanceReviewRefusals", () => {
   const refusals = (text: string, count: number) =>
     acceptanceReviewRefusals(count, parseAcReviewLines(text));
+
+  it("keeps runtime gates strict even for explicitly parsed deferred lines", () => {
+    expect(acceptanceReviewRefusals(1, parseAcReviewLines("AC-1: deferred — tag", true))).toEqual([
+      "AC_NOT_MET",
+    ]);
+  });
 
   it("passes with exactly one met line per criterion", () => {
     expect(refusals("AC-2: met — b\nAC-1: met — a", 2)).toEqual([]);

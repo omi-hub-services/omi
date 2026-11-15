@@ -17,6 +17,38 @@ describe("checkReview", () => {
     expect(checkReview(good, ctx)).toEqual({ ok: true, verdict: "PASS", head: "9d0fba0" });
   });
 
+  it("accepts a release-workflow PASS with PO and post-merge AC deferred to Coordinator steps", () => {
+    const releaseContext = { acCount: 3, prHead: HEAD, workflow: "release" };
+    const body = `${verdict()}
+AC-1: met — release diff independently reviewed on the PR head
+AC-2: deferred — PO native approval before merge
+AC-3: deferred — tag and Release assets after merge`;
+
+    expect(checkReview(body, releaseContext)).toEqual({
+      ok: true,
+      verdict: "PASS",
+      head: "9d0fba0",
+    });
+  });
+
+  it.each(["feature", "bugfix", "docs", "deploy", undefined])(
+    "refuses deferred AC for workflow %s",
+    (workflow) => {
+      const body = `${verdict()}\nAC-1: met — tests\nAC-2: deferred — tag after merge`;
+      expect(checkReview(body, { ...ctx, workflow }).ok).toBe(false);
+    },
+  );
+
+  it("still refuses a release PASS with an unmet criterion", () => {
+    const body = `${verdict()}\nAC-1: not met — failing checks\nAC-2: deferred — tag after merge`;
+    expect(why(checkReview(body, { ...ctx, workflow: "release" }))).toMatch(/PASS.*AC-1/);
+  });
+
+  it("requires a Coordinator step after deferred", () => {
+    const body = `${verdict()}\nAC-1: met — tests\nAC-2: deferred —`;
+    expect(checkReview(body, { ...ctx, workflow: "release" }).ok).toBe(false);
+  });
+
   it("accepts a full SHA that equals the head", () => {
     expect(checkReview(good.replace("9d0fba0", HEAD), ctx).ok).toBe(true);
   });

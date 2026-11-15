@@ -15,7 +15,11 @@ const names = (ns: readonly number[]) => ns.map((n) => `AC-${String(n)}`).join("
 
 export function checkReview(
   body: string,
-  ctx: { readonly acCount: number; readonly prHead: string },
+  ctx: {
+    readonly acCount: number;
+    readonly prHead: string;
+    readonly workflow?: string | null | undefined;
+  },
 ): ReviewCheck {
   const reasons: string[] = [];
   const header = reviewHeader(body, true);
@@ -27,12 +31,14 @@ export function checkReview(
   }
 
   if (ctx.acCount === 0) reasons.push("the Issue has no top-level acceptance criteria to review");
-  const seen = new Map<number, "met" | "not met">();
+  const seen = new Map<number, "met" | "not met" | "deferred">();
   const repeated = new Set<number>();
-  for (const line of parseAcReviewLines(body)) {
+  for (const line of parseAcReviewLines(body, ctx.workflow === "release")) {
     const n = line.number;
     if (line.verdict === undefined) {
-      reasons.push(`AC-${String(n)} line needs "— <evidence>" after met/not met`);
+      reasons.push(
+        `AC-${String(n)} line needs "— <evidence>" after met/not met${ctx.workflow === "release" ? "/deferred" : ""}`,
+      );
       continue;
     }
     if (seen.has(n)) repeated.add(n);

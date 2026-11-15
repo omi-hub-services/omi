@@ -863,3 +863,27 @@ to Ready/In Progress and start-branch/dispatch, and appear in status Attention f
 existing open non-Epic Issues. Correct the Issue fields/body; do not bypass the gate.
 
 > Status note (2026-11-15, OMI-153): the project install directory is now `.omi/`; historical decision text above is unchanged.
+
+
+## Release review deferral (OMI-162)
+
+Repository review presentation has one scoped exception to the all-met PASS rule: when the
+linked Issue's Project Workflow is `release`, `AC-n: deferred — <Coordinator step>` names a
+criterion owned by native PO approval or a post-merge step (tag/Release assets). Every other
+criterion must be met. The shared `domain/delivery/acceptance-review` parser accepts deferral
+only with an explicit allowance; product runtime callers remain strict. Non-release Issues
+cannot defer criteria. This is not an approval or an exception to any release approval gate.
+
+Repository `merge` accepts `develop` → `main` only for a linked release Issue, with GitHub's
+native review decision APPROVED, a current-head native User approval from the configured repository
+PO (`ttin-omihub`, github-project.md) checked through the shared native-approval policy, and existing
+main protections (including stale approval dismissal),
+required checks read from main, current-head Coordinator PASS, carry-chain validation and clean
+merge state. Other workflows still cannot merge into main.
+
+After approved merge and publication, the Coordinator can post an updated exact-head PASS through
+`review-comment` on the merged release PR. This is the only exception to its OPEN-state guard;
+closed-unmerged PRs and merged non-release PRs are refused. `close` still needs every AC met with
+non-empty evidence before ticking/closing; deferred criteria remain unmet. The repository bridge
+release section and release reviewer packet explain this handoff. The product runtime release
+use cases and the runtime bridge's all-met presentation contract are unchanged.

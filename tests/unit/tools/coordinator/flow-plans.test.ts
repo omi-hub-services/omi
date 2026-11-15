@@ -231,6 +231,89 @@ describe("planMerge", () => {
     ]);
   });
 
+  const release: PullForMerge = {
+    ...green,
+    headRefName: "develop",
+    baseRefName: "main",
+    reviewDecision: "APPROVED",
+    nativeApproval: {
+      requiredCount: 1,
+      pullAuthor: "minibox-claude-code",
+      runtimeActors: ["minibox-claude-code"],
+      reviews: [{ actor: "ttin-omihub", actorType: "User", state: "APPROVED", commitSha: HEAD }],
+    },
+    comments: [pass(HEAD, "AC-1: met — reviewed\nAC-2: deferred — tag after merge")],
+  };
+
+  it("merges a release into main with a deferred-AC PASS and native approval", () => {
+    expect(argvs(planMerge(release, HEAD, required, undefined, "release"))).toEqual([
+      `gh pr merge 62 -R omi-hub-services/omi --merge --match-head-commit ${HEAD}`,
+    ]);
+  });
+
+  it.each(["feature", "bugfix", "docs", "deploy", undefined])(
+    "refuses main for workflow %s even with approval and PASS",
+    (workflow) => {
+      expect(planMerge(release, HEAD, required, undefined, workflow).kind).toBe("refuse");
+    },
+  );
+
+  it.each([null, "REVIEW_REQUIRED", "CHANGES_REQUESTED"])(
+    "refuses release merge without native approval: %s",
+    (reviewDecision) => {
+      const plan = planMerge({ ...release, reviewDecision }, HEAD, required, undefined, "release");
+      expect(plan).toEqual({
+        kind: "refuse",
+        reason: expect.stringMatching(/approval/) as unknown,
+      });
+    },
+  );
+
+  it.each([
+    [],
+    [{ actor: "someone-else", actorType: "User", state: "APPROVED", commitSha: HEAD }],
+    [{ actor: "ttin-omihub", actorType: "User", state: "APPROVED", commitSha: "1".repeat(40) }],
+    [{ actor: "ttin-omihub", actorType: "Bot", state: "APPROVED", commitSha: HEAD }],
+    [
+      { actor: "ttin-omihub", actorType: "User", state: "APPROVED", commitSha: HEAD },
+      { actor: "ttin-omihub", actorType: "User", state: "DISMISSED", commitSha: HEAD },
+    ],
+  ] as const)(
+    "requires current native PO approval despite aggregate APPROVED: %j",
+    (...reviews) => {
+      const plan = planMerge(
+        {
+          ...release,
+          nativeApproval: {
+            ...release.nativeApproval,
+            requiredCount: 1,
+            pullAuthor: "minibox-claude-code",
+            runtimeActors: ["minibox-claude-code"],
+            reviews,
+          },
+        },
+        HEAD,
+        required,
+        undefined,
+        "release",
+      );
+      expect(plan.kind).toBe("refuse");
+    },
+  );
+
+  it.each<Partial<PullForMerge>>([
+    { headRefName: BRANCH },
+    { headRefOid: "2".repeat(40) },
+    { checks: [] },
+    { comments: [pass("1".repeat(40))] },
+    { mergeStateStatus: "BLOCKED" },
+    { isDraft: true },
+  ])("keeps release merge gates for %j", (change) => {
+    expect(planMerge({ ...release, ...change }, HEAD, required, undefined, "release").kind).toBe(
+      "refuse",
+    );
+  });
+
   it("is done when already merged at the reviewed head, refused at another head", () => {
     const merged = { ...green, state: "MERGED", mergeCommit: "53b5485aaaa" };
     expect(planMerge(merged, "b0ab3b3", required).kind).toBe("done");
@@ -361,6 +444,11 @@ describe("planClose", () => {
     ["missing AC", { comments: [pass(HEAD)] }, /no line for AC-1/],
     ["wrong head", { comments: [pass("1111111", verdicts)] }, /needs an agent review PASS/],
     ["foreign PASS", { comments: [pass(HEAD, verdicts, "someone-else")] }, /ignored VERDICT/],
+    [
+      "deferred AC",
+      { comments: [pass(HEAD, "AC-1: met — reviewed\nAC-2: deferred — tag after merge")] },
+      /not met/,
+    ],
     ["unmet AC", { comments: [pass(HEAD, "AC-1: not met — x\nAC-2: met — y")] }, /not met/],
   ])("refuses release closure with %s", (_label, change, reason) => {
     const issue = { ...fresh, workflow: "release" };

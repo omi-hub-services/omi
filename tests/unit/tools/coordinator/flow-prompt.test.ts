@@ -251,6 +251,9 @@ it.each([{ options: [] }, { options: ["--dry-run"] }])(
     expect(await main(["prompt", "311", "--step", "review", ...options], f.ctx)).toBe(0);
     const text = output.join("\n");
     expect(text).toContain("Workflow release · step review · role reviewer");
+    expect(text).toContain("AC-n: deferred — <Coordinator step>");
+    expect(text).toContain("every non-deferred AC met");
+    expect(text).toContain("close still requires every AC met");
     expect(text).toContain(
       readFileSync("templates/project/.omi/skills/independent-review/SKILL.md", "utf8"),
     );
