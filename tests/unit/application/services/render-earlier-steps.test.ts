@@ -58,6 +58,33 @@ describe("earlierResultsFromRun", () => {
     ]);
     expect(results[1]?.findings).toEqual(["- [major] F1: m (a.ts:1)"]);
   });
+
+  it("files a result recorded by the Architect role under `architect`, whatever its step key", () => {
+    const result = {
+      schemaVersion: 1 as const,
+      runId: "r",
+      stepId: "diagnose",
+      attemptId: "a",
+      status: "succeeded" as const,
+      summary: "Decision: delete the cache",
+      artifacts: [],
+      checks: [],
+      skillsApplied: [],
+      findings: [],
+    };
+    const [entry] = earlierResultsFromRun([
+      { stepId: "diagnose", role: "architect", status: "succeeded", result },
+    ]);
+    expect(entry).toMatchObject({ stepId: "architect", round: 1 });
+    expect(
+      renderEarlierSteps(
+        earlierResultsFromRun([
+          { stepId: "diagnose", role: "developer", status: "succeeded", result },
+        ]),
+        ["architect"],
+      ),
+    ).toBe("");
+  });
 });
 
 describe("renderEarlierSteps", () => {

@@ -27,7 +27,9 @@ export function earlierResultsFromRun(
   recorded: readonly RecordedStepResult[],
 ): EarlierStepResult[] {
   const rounds = new Map<string, number>();
-  return recorded.map(({ stepId, status, result }) => {
+  return recorded.map(({ stepId: key, role, status, result }) => {
+    // The newest Architect intervention is found by its role, not by a literal step key.
+    const stepId = role === "architect" ? "architect" : key;
     const round = (rounds.get(stepId) ?? 0) + 1;
     rounds.set(stepId, round);
     return {

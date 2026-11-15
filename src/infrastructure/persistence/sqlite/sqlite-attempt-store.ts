@@ -91,7 +91,10 @@ export function createSqliteAttemptStore(
     stepResults(runId) {
       const rows = db
         .prepare(
-          `SELECT e.kind AS kind, s.step_key AS step_key, e.payload AS payload
+          `SELECT e.kind AS kind, s.step_key AS step_key, e.payload AS payload,
+                  (SELECT json_extract(a.dispatch_record, '$.role.id') FROM agent_attempts a
+                    WHERE a.step_run_id = s.id AND a.dispatch_record IS NOT NULL
+                    ORDER BY a.attempt_number DESC LIMIT 1) AS role
              FROM events e JOIN step_runs s ON s.id = e.subject
             WHERE s.run_id=? AND e.kind IN ('step.failed', 'step.succeeded')
             ORDER BY e.sequence`,
@@ -103,6 +106,7 @@ export function createSqliteAttemptStore(
             kind: z.enum(["step.failed", "step.succeeded"]),
             step_key: z.string(),
             payload: z.string(),
+            role: z.string().nullable(),
           })
           .parse(row);
         const payload = z.object({ result: stepResultSchema }).safeParse(JSON.parse(event.payload));
@@ -110,6 +114,7 @@ export function createSqliteAttemptStore(
           ? [
               {
                 stepId: event.step_key,
+                ...(event.role === null ? {} : { role: event.role }),
                 status: event.kind === "step.failed" ? ("failed" as const) : ("succeeded" as const),
                 result: payload.data.result,
               },

@@ -65,6 +65,32 @@ describe("dispatchStep", () => {
     expect(prompt).not.toContain("old analysis");
     expect(prompt).not.toContain("not wanted");
   });
+  it("hands the Architect's recorded decision to the rework step although it is not in `needs` (OMI-168)", async () => {
+    const r = rig();
+    Object.assign(r.deps.attempts, {
+      stepResults: () => [
+        {
+          stepId: "diagnose",
+          role: "architect",
+          status: "succeeded",
+          result: {
+            schemaVersion: 1,
+            runId: "run-1",
+            stepId: "diagnose",
+            attemptId: "a",
+            status: "succeeded",
+            summary: "Decision: delete the cache layer",
+            artifacts: [],
+            checks: [],
+            skillsApplied: [],
+            findings: [],
+          },
+        },
+      ],
+    });
+    dispatched(await dispatchStep(r.deps, dispatchInput({ earlierStepIds: ["architect"] })));
+    expect(r.executor.started[0]?.prompt ?? "").toContain("Decision: delete the cache layer");
+  });
   it("adds no earlier-steps section when the step needs nothing", async () => {
     const r = rig();
     dispatched(await dispatchStep(r.deps, dispatchInput()));

@@ -230,6 +230,21 @@ it("gives the next attempt the findings remembered for its step run", async () =
   ]);
 });
 
+it("asks for the Architect result and the needs ancestors, whatever the step needs (OMI-168)", async () => {
+  const merged = workflowSchema.parse({
+    ...workflow,
+    steps: [
+      workflow.steps[0],
+      { ...workflow.steps[0], id: "build", needs: ["implement"] },
+      { ...workflow.steps[0], id: "review", role: "reviewer", needs: ["build"] },
+    ],
+  });
+  const r = setup([profile], () => Promise.resolve(task), [profile], { workflow: merged });
+  expect(await r.planner.plan({ ...request, stepId: "build" })).toMatchObject({
+    earlierStepIds: ["implement", "architect"],
+  });
+});
+
 describe("required checks of a workflow step", () => {
   it.each(["regression-test", "existing-tests-unchanged", "existing-tests-passing"])(
     "moves the %s after-review gate into the runtime request",

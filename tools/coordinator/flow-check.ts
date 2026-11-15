@@ -11,6 +11,8 @@ export interface CheckDeps {
   /** Executes a plan, appending the command output to `out`; true when it succeeded. */
   readonly exec: (plan: Plan, out: string[]) => Promise<boolean>;
   readonly dryRun: boolean;
+  /** The checkout after the run: a pass is only stored for a clean tree still at the key SHA. */
+  readonly after: () => Promise<{ readonly head: string; readonly clean: boolean }>;
 }
 
 export async function checkWithReuse(deps: CheckDeps, plan: Plan, head: string): Promise<boolean> {
@@ -23,6 +25,11 @@ export async function checkWithReuse(deps: CheckDeps, plan: Plan, head: string):
   const ok = await deps.exec(plan, out);
   if (!deps.dryRun) {
     try {
+      // A check that rewrote a tracked file (a formatter) or moved HEAD never seeds a pass.
+      if (ok) {
+        const after = await deps.after();
+        if (!after.clean || after.head !== head) return ok;
+      }
       await storeCheck(deps.run, deps.target, {
         checkId: CHECK_ID,
         head,

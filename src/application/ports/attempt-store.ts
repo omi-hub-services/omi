@@ -59,6 +59,8 @@ export interface AttemptRecord {
 /** A step result the runtime recorded when a step succeeded or failed with a verified result. */
 export interface RecordedStepResult {
   readonly stepId: string;
+  /** Role of the attempt that produced it; the Architect runs under a step key of its own. */
+  readonly role?: string;
   readonly status: "succeeded" | "failed";
   readonly result: StepResult;
 }

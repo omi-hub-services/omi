@@ -4,6 +4,7 @@ import type {
   ArtifactWrite,
 } from "../../../../src/application/contracts/artifact.ts";
 import type { CheckRunRecord } from "../../../../src/application/contracts/check-run.ts";
+import type { CheckResultStore } from "../../../../src/application/ports/check-result-store.ts";
 import type {
   CheckRunner,
   CheckRunRequest,
@@ -14,7 +15,30 @@ const HEAD = "a".repeat(40);
 const OTHER = "b".repeat(40);
 const SHA256 = "c".repeat(64);
 
-function rig(options: { statuses?: CheckRunRecord["status"][]; command?: string[] } = {}) {
+function memoryResults(): CheckResultStore {
+  const rows: CheckRunRecord[] = [];
+  return {
+    find: (checkId, revision, command) =>
+      rows
+        .filter(
+          (r) =>
+            r.checkId === checkId &&
+            r.revision === revision &&
+            JSON.stringify(r.command) === JSON.stringify(command),
+        )
+        .at(-1),
+    save: (record) => void rows.push(record),
+  };
+}
+
+function rig(
+  options: {
+    statuses?: CheckRunRecord["status"][];
+    command?: string[];
+    /** Runs while the check "executes", e.g. a formatter rewriting a tracked file. */
+    during?: (state: { head: string; dirty: boolean }) => void;
+  } = {},
+) {
   const files = new Map<string, Uint8Array>();
   const writes: ArtifactWrite[] = [];
   const artifacts = {
@@ -33,11 +57,13 @@ function rig(options: { statuses?: CheckRunRecord["status"][]; command?: string[
   const statuses = [...(options.statuses ?? [])];
   let runs = 0;
   let command = options.command ?? ["npm", "run", "check"];
+  const results = memoryResults();
   const inner: CheckRunner = {
     has: () => true,
     command: () => command,
     run(request: CheckRunRequest): Promise<CheckRunRecord> {
       runs += 1;
+      options.during?.(state);
       const status = statuses.shift() ?? "passed";
       const evidence = artifacts.write({
         id: `ev-${String(runs)}`,
@@ -58,35 +84,40 @@ function rig(options: { statuses?: CheckRunRecord["status"][]; command?: string[
       });
     },
   };
-  const reusing = reuseCheckRuns(inner, {
-    artifacts,
-    workspaces: {
-      inspect: () => ({
-        ok: true,
-        value: {
-          path: "/w",
-          headSha: state.head,
-          branch: "task/x",
-          dirty: state.dirty,
-          hasIgnoredFiles: false,
-        },
-      }),
-    },
-    now: () => Date.parse("2026-11-15T00:01:00.000Z"),
-    nextId: (() => {
-      let n = 0;
-      return () => `copy-${String((n += 1))}`;
-    })(),
-  });
-  const run = (attempt: string) =>
-    reusing.run({
-      attemptId: attempt,
-      checkId: "project-check",
-      workspacePath: "/w",
-      artifactRoot: `attempts/${attempt}`,
+  let ids = 0;
+  const make = () =>
+    reuseCheckRuns(inner, {
+      artifacts,
+      results,
+      workspaces: {
+        inspect: () => ({
+          ok: true,
+          value: {
+            path: "/w",
+            headSha: state.head,
+            branch: "task/x",
+            dirty: state.dirty,
+            hasIgnoredFiles: false,
+          },
+        }),
+      },
+      now: () => Date.parse("2026-11-15T00:01:00.000Z"),
+      nextId: () => `copy-${String((ids += 1))}`,
     });
+  const request = (attempt: string): CheckRunRequest => ({
+    attemptId: attempt,
+    checkId: "project-check",
+    workspacePath: "/w",
+    artifactRoot: `attempts/${attempt}`,
+  });
+  const reusing = make();
   return {
-    run,
+    run: (attempt: string) => reusing.run(request(attempt)),
+    /** A runner built after a restart: nothing in memory but the shared result store. */
+    restarted: () => {
+      const again = make();
+      return (attempt: string) => again.run(request(attempt));
+    },
     state,
     runs: () => runs,
     setCommand: (c: string[]) => (command = c),
@@ -107,6 +138,14 @@ describe("reuseCheckRuns", () => {
       new TextDecoder().decode(r.files.get(first.evidence.path)),
     );
     expect(r.writes.at(-1)).toMatchObject({ producerAttemptId: "a2" });
+  });
+
+  it("reuses the persisted result after a restart (a new runner over the same store)", async () => {
+    const r = rig();
+    await r.run("a1");
+    const afterRestart = r.restarted();
+    expect((await afterRestart("a2")).status).toBe("passed");
+    expect(r.runs()).toBe(1);
   });
 
   it("runs again for another head, another command or a dirty worktree", async () => {
@@ -132,8 +171,31 @@ describe("reuseCheckRuns", () => {
     expect(r.runs()).toBe(3);
   });
 
+  it("does not store a pass when the check rewrote a tracked file", async () => {
+    const r = rig({
+      during: (state) => {
+        state.dirty = true;
+      },
+    });
+    expect((await r.run("a1")).status).toBe("passed");
+    r.state.dirty = false;
+    await r.run("a2");
+    expect(r.runs()).toBe(2);
+  });
+
+  it("does not store a pass when HEAD moved while the check ran", async () => {
+    const r = rig({
+      during: (state) => {
+        state.head = OTHER;
+      },
+    });
+    await r.run("a1");
+    r.state.head = HEAD;
+    await r.run("a2");
+    expect(r.runs()).toBe(2);
+  });
+
   it("does not reuse anything when the runner exposes no command", async () => {
-    const files = new Map<string, Uint8Array>();
     let runs = 0;
     const inner: CheckRunner = {
       has: () => true,
@@ -153,6 +215,7 @@ describe("reuseCheckRuns", () => {
     };
     const reusing = reuseCheckRuns(inner, {
       artifacts: { write: () => ({ path: "p", sha256: SHA256 }), read: () => new Uint8Array() },
+      results: memoryResults(),
       workspaces: {
         inspect: () => ({ ok: false, error: { code: "WORKSPACE_NOT_FOUND" } }) as never,
       },
@@ -163,6 +226,5 @@ describe("reuseCheckRuns", () => {
     await reusing.run(request);
     await reusing.run(request);
     expect(runs).toBe(2);
-    expect(files.size).toBe(0);
   });
 });

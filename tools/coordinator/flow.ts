@@ -551,12 +551,20 @@ async function execute(
 }
 
 /** A planned `npm run check`, reusing the stored passed result of the same head (OMI-168). */
-const runCheck = (ctx: Context, label: string, plan: Plan, head: string, dryRun: boolean) =>
+const runCheck = (
+  ctx: Context,
+  label: string,
+  branch: string,
+  plan: Plan,
+  head: string,
+  dryRun: boolean,
+) =>
   checkWithReuse(
     {
       run: ctx.run,
       target: ctx.target,
       dryRun,
+      after: async () => probeWsl(ctx, branch),
       exec: (p, out) => execute(ctx, label, p, dryRun, out),
     },
     plan,
@@ -867,6 +875,7 @@ export async function syncCommand(
       !(await runCheck(
         ctx,
         `${label} (check)`,
+        branch,
         planCheck(branch, newHead, checkState),
         checkState.head,
         false,
@@ -1087,6 +1096,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       return (await runCheck(
         ctx,
         label,
+        branch,
         planCheck(branch, required(values.head, "--head"), state),
         state.head,
         dry,

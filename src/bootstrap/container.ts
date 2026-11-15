@@ -44,6 +44,7 @@ import { retainWorkerLogs } from "../application/use-cases/runs/retain-worker-lo
 import { createCliGitWorkspace } from "../infrastructure/git/cli-git-workspace.js";
 import { createProcessCheckRunner } from "../infrastructure/processes/process-check-runner.js";
 import { reuseCheckRuns } from "../application/services/reuse-check-runs.js";
+import { createSqliteCheckResultStore } from "../infrastructure/persistence/sqlite/sqlite-check-result-store.js";
 import { createRegressionExecutor } from "../infrastructure/processes/regression-executor.js";
 import { createGithubRestClient } from "../infrastructure/github/github-rest-client.js";
 import { createGhApiTransport } from "../infrastructure/github/gh-api-transport.js";
@@ -1194,7 +1195,17 @@ export async function createProjectRunCommandUseCases(
               now,
               nextId,
             }),
-            { artifacts, workspaces, now, nextId },
+            {
+              artifacts,
+              workspaces,
+              now,
+              nextId,
+              results: createSqliteCheckResultStore(database, {
+                fence: session.lease,
+                now,
+                nextId,
+              }),
+            },
           ),
         }),
     // The regression-test command is the test runner; the script appends the file and `-t <name>`.

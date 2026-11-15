@@ -27,10 +27,18 @@ function rig(outcomes: boolean[]) {
     out.push("check output line");
     return Promise.resolve(outcomes.shift() ?? true);
   };
-  const check = (plan: Plan, head: string, dryRun = false) =>
-    checkWithReuse({ run: runner, target, exec, dryRun }, plan, head);
+  /** The checkout after the check ran; a formatter-style check flips `clean` or moves `head`. */
+  const after = { head: HEAD, clean: true };
+  const check = (plan: Plan, head: string, dryRun = false) => {
+    after.head = head;
+    return checkWithReuse(
+      { run: runner, target, exec, dryRun, after: () => Promise.resolve({ ...after }) },
+      plan,
+      head,
+    );
+  };
   const ran = () => executed.filter((p) => p.kind === "run").length;
-  return { check, executed, ran, files };
+  return { check, executed, ran, files, after };
 }
 
 describe("checkWithReuse", () => {
@@ -55,6 +63,17 @@ describe("checkWithReuse", () => {
     expect(await r.check(run, HEAD)).toBe(true);
     expect(r.ran()).toBe(2);
     expect(await r.check(run, HEAD)).toBe(true);
+    expect(r.ran()).toBe(2);
+  });
+
+  it("does not store a pass when the check left the tree dirty or moved HEAD", async () => {
+    const r = rig([true, true, true]);
+    // the check rewrote a tracked file: the passed content is not what HEAD holds
+    const dirty = r.check(run, HEAD);
+    r.after.clean = false;
+    expect(await dirty).toBe(true);
+    expect(r.files.size).toBe(0);
+    await r.check(run, HEAD);
     expect(r.ran()).toBe(2);
   });
 
