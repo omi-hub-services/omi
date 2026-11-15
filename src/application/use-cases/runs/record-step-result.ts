@@ -2,8 +2,10 @@ import { z } from "zod";
 import { validRegressionEvidence } from "../../services/validate-review-evidence.js";
 import {
   acceptanceReviewRefusals,
+  hasSecuritySection,
   parseAcReviewLines,
 } from "../../../domain/delivery/acceptance-review.js";
+import { SECURITY_REVIEW_SKILL } from "../../../domain/workflows/workflow-policy.js";
 import { contextPacketSchema } from "../../contracts/context.js";
 import { selectReviewBody } from "../../services/build-run-merge-evidence.js";
 import { transitionAgentAttempt } from "../../../domain/runs/agent-attempt.js";
@@ -96,6 +98,8 @@ export type StepFailureReason =
   /** The result reports a skill the attempt was not given. */
   | "SKILL_NOT_ASSIGNED"
   | "REVIEW_AC_LINES_INVALID"
+  /** A security-relevant review (it was given security-review) has no `Security:` section. */
+  | "REVIEW_SECURITY_SECTION_MISSING"
   | "REGRESSION_EVIDENCE_INVALID";
 
 export type RecordStepResult =
@@ -346,6 +350,13 @@ function verify(
       ).filter((reason) => reason !== "AC_NOT_MET");
       if (refusals.length > 0) {
         return { failure: "REVIEW_AC_LINES_INVALID", detail: refusals.join(","), report };
+      }
+      // The security-review skill in the manifest is the dispatch's record of the security risk.
+      if (
+        attempt.skills.some((skill) => skill.id === SECURITY_REVIEW_SKILL) &&
+        !hasSecuritySection(body)
+      ) {
+        return { failure: "REVIEW_SECURITY_SECTION_MISSING", report };
       }
     }
   } catch (error) {

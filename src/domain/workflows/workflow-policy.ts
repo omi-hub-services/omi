@@ -26,6 +26,13 @@ export interface QualityPolicyInput {
     | undefined;
 }
 
+/** The one place that decides which changed paths carry which review risk. */
+const RISK_PATHS = {
+  security: /security|auth|credential|secret|exec|spawn|shell|token|permission|approval/i,
+  gates: /approval|gate|delivery|workflow|rules|coordinator/i,
+  data: /migration|persist|database|sqlite|data\//i,
+} as const;
+
 /** Broad source scopes are unknown risk; explicit files can qualify for the cheaper plan. */
 export function workflowRisks(
   paths: readonly string[],
@@ -35,11 +42,21 @@ export function workflowRisks(
     paths.length === 0 ||
     paths.some((p) => /^(?:src(?:\/(?:domain|application|infrastructure))?|\.)\/?$/.test(p));
   return {
-    security:
-      broad || area === "security" || paths.some((p) => /security|auth|credential|secret/i.test(p)),
-    gates: broad || paths.some((p) => /approval|gate|delivery|workflow|rules|coordinator/i.test(p)),
-    data: broad || paths.some((p) => /migration|persist|database|sqlite|data\//i.test(p)),
+    security: broad || area === "security" || paths.some((p) => RISK_PATHS.security.test(p)),
+    gates: broad || paths.some((p) => RISK_PATHS.gates.test(p)),
+    data: broad || paths.some((p) => RISK_PATHS.data.test(p)),
   };
+}
+
+/** Curated skill that turns the review's one security line into a real security review. */
+export const SECURITY_REVIEW_SKILL = "security-review";
+
+/** Skills the review step gains from its risks; a risk adds focus, never a worker. */
+export function reviewRiskSkills(
+  stepId: string,
+  risks: QualityPolicyInput["risks"] | undefined,
+): readonly string[] {
+  return stepId === "review" && risks?.security === true ? [SECURITY_REVIEW_SKILL] : [];
 }
 
 export function workflowReviewFocus(risks: QualityPolicyInput["risks"]): readonly string[] {
@@ -67,6 +84,7 @@ export function resolveQualityPolicy(input: QualityPolicyInput) {
           : (input.developerEffort ?? input.complexity);
   return {
     reviewFocus: workflowReviewFocus(input.risks),
+    reviewSkills: reviewRiskSkills(input.step, input.risks),
     skipAnalyze,
     scopeEvidence: skipAnalyze ? input.scope?.issueRef : undefined,
     effort,
@@ -231,8 +249,11 @@ export function dispatchSkills(
   stepId: string,
   stepSkills: readonly string[],
   round: number,
+  risks?: QualityPolicyInput["risks"],
 ): readonly string[] {
-  return isReworkDispatch(stepId, round) ? resumeSkills(stepSkills) : stepSkills;
+  const base = isReworkDispatch(stepId, round) ? resumeSkills(stepSkills) : stepSkills;
+  const extra = reviewRiskSkills(stepId, risks).filter((skill) => !base.includes(skill));
+  return extra.length === 0 ? base : [...base, ...extra];
 }
 
 export type GateStatus = "open" | "passed" | "failed";

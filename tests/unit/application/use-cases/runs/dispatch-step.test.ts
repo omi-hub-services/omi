@@ -627,6 +627,60 @@ it("supplies the previous verdict and Git delta to a repeated quality worker", a
   expect(r.executor.started[0]?.prompt).toContain("diff: added missing error case");
 });
 
+describe("security review focus", () => {
+  const review = (paths: string[], extra: Record<string, unknown> = {}) =>
+    dispatchInput({
+      quality: { policy: "task-default", step: "review", steps: ["review"], round: 1 },
+      ...extra,
+      context: { ...(dispatchInput()["context"] as object), allowedScope: { paths } },
+    });
+
+  it("gives a security-relevant review the security-review skill and the Security: requirement", async () => {
+    const r = rig();
+    const result = await dispatchStep(
+      r.deps,
+      review(["src/infrastructure/process/exec-runner.ts"]),
+    );
+    expect(result.ok).toBe(true);
+    const prompt = r.executor.started[0]?.prompt ?? "";
+    expect(prompt).toContain("=== Skill security-review (version 1) ===");
+    expect(prompt).toContain("starts with the line `Security:`");
+    expect(r.attempts.get(result.ok ? result.attempt.id : "")?.skills.map((s) => s.id)).toContain(
+      "security-review",
+    );
+  });
+
+  it("takes the security risk from the task Area as well", async () => {
+    const r = rig();
+    const result = await dispatchStep(
+      r.deps,
+      review(["src/interfaces/cli/commands/task.ts"], {
+        task: { area: "security" },
+      }),
+    );
+    expect(result.ok).toBe(true);
+    expect(r.executor.started[0]?.prompt).toContain("=== Skill security-review");
+  });
+
+  it("leaves a review without the security risk, and any other step, as before", async () => {
+    const r = rig();
+    const plain = await dispatchStep(r.deps, review(["src/interfaces/cli/commands/task.ts"]));
+    expect(plain.ok).toBe(true);
+    const prompt = r.executor.started[0]?.prompt ?? "";
+    expect(prompt).not.toContain("security-review");
+    expect(prompt).not.toContain("starts with the line `Security:`");
+    const other = rig();
+    const verify = await dispatchStep(
+      other.deps,
+      review(["src/infrastructure/process/exec-runner.ts"], {
+        quality: { policy: "task-default", step: "verify", steps: ["verify"], round: 1 },
+      }),
+    );
+    expect(verify.ok).toBe(true);
+    expect(other.executor.started[0]?.prompt).not.toContain("=== Skill security-review");
+  });
+});
+
 it("keeps a pinned combined packet dispatchable when changed files touch a gate", async () => {
   const r = rig();
   const workspaces = Object.assign(r.workspaces, {
@@ -850,7 +904,9 @@ it("forwards preceding QA hashed check evidence to a separate runtime reviewer w
         stepId: "review",
         attemptId: review.attempt.id,
         status: "succeeded",
-        summary: "Independent review\nAC-1: met — QA evidence verified",
+        // The default scope is broad, which counts as a security risk.
+        summary:
+          "Independent review\nAC-1: met — QA evidence verified\nSecurity:\n- Trust boundaries: no findings — fixture review",
         artifacts: proof.artifacts,
         revision: { headSha: HEAD, baseSha: BASE },
         checks: [],

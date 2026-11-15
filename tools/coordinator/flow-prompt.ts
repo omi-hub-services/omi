@@ -37,7 +37,7 @@ import {
 } from "./flow-architect.ts";
 import { runChecked, wslCommand } from "./process-runner.ts";
 import { loadTemplate } from "./watch-workflow.ts";
-import { NATIVE_RESUME_HEADER } from "./worker-launch.ts";
+import { NATIVE_RESUME_HEADER, SECURITY_REVIEW_MARKER } from "./worker-launch.ts";
 import { parseStepResults } from "./worker-report.ts";
 
 const ISSUE_PACKET_QUERY = `
@@ -363,7 +363,7 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       await Promise.all(
         packetSteps.map(
           async (s) =>
-            `## Step ${s.id} · role ${s.role}\n\n${await sections("skills", dispatchSkills(qualityStepId(s), s.skills, resume ? Math.max(round, 2) : round))}`,
+            `## Step ${s.id} · role ${s.role}\n\n${await sections("skills", dispatchSkills(qualityStepId(s), s.skills, resume ? Math.max(round, 2) : round, reviewRisks))}`,
         ),
       )
     ).join("\n\n");
@@ -374,8 +374,11 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
         ),
       )
     ).join("\n\n");
+    // The resolved requirement (paths, Area or --risk) rides in the script-rendered packet header.
+    const securityMarker =
+      quality.step === "review" && reviewRisks.security ? `${SECURITY_REVIEW_MARKER}\n` : "";
     const text = renderWorkerPrompt(await read("templates/prompts/worker-prompt.md"), {
-      identity: `${resume ? `${NATIVE_RESUME_HEADER}\n\n` : ""}<!-- omi-quality ${JSON.stringify(quality)} -->\n# Workflow ${releaseReview ? issue.workflow : template.workflow.id} · step ${packetSteps.map((s) => s.id).join(" + ")} · role ${step.role}`,
+      identity: `${resume ? `${NATIVE_RESUME_HEADER}\n\n` : ""}<!-- omi-quality ${JSON.stringify(quality)} -->\n${securityMarker}# Workflow ${releaseReview ? issue.workflow : template.workflow.id} · step ${packetSteps.map((s) => s.id).join(" + ")} · role ${step.role}`,
       workspace: `## Workspace\nWork only in ${target.repoDir}\nBranch: ${branch}`,
       read_first: resume
         ? ""

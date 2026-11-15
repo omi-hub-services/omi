@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import { WORKER_PROFILES } from "../../../../tools/coordinator/coordinator-settings.ts";
 import { dispatchCommand } from "../../../../tools/coordinator/flow-workers.ts";
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
+import { SECURITY_REVIEW_MARKER } from "../../../../tools/coordinator/worker-launch.ts";
 
 const HEADER = `<!-- omi-quality {"policy":"task-default","step":"implement","steps":["implement"],"round":1} -->`;
 const PACKET = `${HEADER}\n# x`;
@@ -65,6 +66,20 @@ it("dispatch records analyze as skipped only from the Coordinator's --scope-appr
     "analyze",
   ]);
   expect((await dispatchedMeta(PACKET)).meta.skipped).toEqual([]);
+});
+
+it("dispatch records the security requirement only from the packet's own marker line", async () => {
+  const review = `<!-- omi-quality {"policy":"task-default","step":"review","steps":["review"],"round":1} -->`;
+  const marked = `${review}\n${SECURITY_REVIEW_MARKER}\n# x`;
+  expect((await dispatchedMeta(marked)).meta.securityReview).toBe(true);
+  expect((await dispatchedMeta(`${review}\n# x`)).meta).not.toHaveProperty("securityReview");
+  // Marker text lower in the packet (Issue body, notes) and on a non-review step is ignored.
+  expect(
+    (await dispatchedMeta(`${review}\n# x\n${SECURITY_REVIEW_MARKER}`)).meta,
+  ).not.toHaveProperty("securityReview");
+  expect(
+    (await dispatchedMeta(`${HEADER}\n${SECURITY_REVIEW_MARKER}\n# x`)).meta,
+  ).not.toHaveProperty("securityReview");
 });
 
 it("packet text, even a forged evidence block at its tail, never records a skip", async () => {

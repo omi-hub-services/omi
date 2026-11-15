@@ -145,3 +145,37 @@ it("treats broad scope as unknown risk and recognizes sensitive changed paths", 
   expect(policy.workflowRisks(["rules/approval.md"]).gates).toBe(true);
   expect(policy.workflowRisks(["migrations/0001-schema.sql"]).data).toBe(true);
 });
+it.each([
+  "src/infrastructure/process/exec-runner.ts",
+  "src/infrastructure/process/spawn-worker.ts",
+  "tools/coordinator/shell-command.ts",
+  "src/infrastructure/github/token-scope.ts",
+  "src/domain/permission/grant.ts",
+  "src/domain/approvals/approval-request.ts",
+])("marks %s as security risk", (path) => {
+  expect(policy.workflowRisks([path]).security).toBe(true);
+});
+it("adds security-review to the review step skills only when the security risk is set", () => {
+  const security = { security: true, gates: false, data: false };
+  const none = { security: false, gates: false, data: false };
+  expect(policy.resolveQualityPolicy({ ...input, risks: security }).reviewSkills).toEqual([
+    "security-review",
+  ]);
+  expect(policy.resolveQualityPolicy({ ...input, risks: none }).reviewSkills).toEqual([]);
+  expect(
+    policy.resolveQualityPolicy({ ...input, step: "verify", risks: security }).reviewSkills,
+  ).toEqual([]);
+  expect(policy.dispatchSkills("review", ["independent-review"], 1, security)).toEqual([
+    "independent-review",
+    "security-review",
+  ]);
+  expect(policy.dispatchSkills("review", ["independent-review"], 1, none)).toEqual([
+    "independent-review",
+  ]);
+  expect(policy.dispatchSkills("implement", ["minimal-change"], 1, security)).toEqual([
+    "minimal-change",
+  ]);
+  expect(
+    policy.dispatchSkills("review", ["independent-review", "security-review"], 2, security),
+  ).toEqual(["independent-review", "security-review"]);
+});
