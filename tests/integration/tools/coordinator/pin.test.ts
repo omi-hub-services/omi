@@ -8,6 +8,7 @@ import {
   readdir,
   symlink,
 } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +37,7 @@ async function rig(
     smokeFailure?: boolean;
     foreign?: boolean;
     sourceMismatch?: boolean;
+    record?: "local" | "legacy" | "none";
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "omi-pin-"));
@@ -43,11 +45,13 @@ async function rig(
   const repoRoot = join(root, "repo"),
     checkout = join(root, "omi-coordinator-pin");
   await mkdir(join(repoRoot, "tools/coordinator"), { recursive: true });
-  const file = join(repoRoot, "tools/coordinator/coordinator-pin.json");
-  await writeFile(
-    file,
-    JSON.stringify({ schemaVersion: 1, sha: A, source: "develop", previous: null }),
-  );
+  const file = join(repoRoot, ".omi/local/coordinator-pin.json");
+  const legacy = join(repoRoot, "tools/coordinator/coordinator-pin.json");
+  const seed = JSON.stringify({ schemaVersion: 1, sha: A, source: "develop", previous: null });
+  if ((options.record ?? "local") === "local") {
+    await mkdir(join(repoRoot, ".omi/local"), { recursive: true });
+    await writeFile(file, seed);
+  } else if (options.record === "legacy") await writeFile(legacy, seed);
   const commands: Command[] = [];
   const heads = new Map<string, string>();
   const run: Runner = async (c) => {
@@ -116,7 +120,7 @@ async function rig(
     return result("");
   };
   const module = await import("../../../../tools/coordinator/pin.ts");
-  return { root, repoRoot, checkout, file, commands, run, manage: module.managePin, heads };
+  return { root, repoRoot, checkout, file, legacy, commands, run, manage: module.managePin, heads };
 }
 
 it("previews a verified external pin without creating a checkout, lock or record change", async () => {
@@ -281,4 +285,120 @@ it("refuses overlapping checkouts and symlink aliases", async () => {
       r.run,
     ),
   ).rejects.toThrow("OVERLAPS");
+});
+
+const git = (cwd: string, ...args: string[]) =>
+  execFileSync("git", args, { cwd, encoding: "utf8" });
+it.each(["refresh", "rollback"] as const)(
+  "%s leaves the tracked host checkout clean, writing only the local record",
+  async (action) => {
+    const r = await rig({ record: "legacy" });
+    await writeFile(join(r.repoRoot, ".gitignore"), ".omi/local/\n.tmp/\n");
+    git(r.repoRoot, "init", "-q");
+    git(r.repoRoot, "add", "-A");
+    git(r.repoRoot, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fixture");
+    await mkdir(r.checkout);
+    r.heads.set(r.checkout, A);
+    await r.manage({ action: "refresh", repoRoot: r.repoRoot, checkout: r.checkout, to: B }, r.run);
+    if (action === "rollback") {
+      r.heads.set(r.checkout, B);
+      await r.manage({ action, repoRoot: r.repoRoot, checkout: r.checkout }, r.run);
+    }
+    expect(git(r.repoRoot, "status", "--porcelain")).toBe("");
+    expect(JSON.parse(await readFile(r.file, "utf8"))).toMatchObject({
+      sha: action === "refresh" ? B : A,
+    });
+  },
+);
+it("migrates a legacy tracked record once without writing the legacy file", async () => {
+  const r = await rig({ record: "legacy" });
+  const before = await readFile(r.legacy, "utf8");
+  const status = await r.manage(
+    { action: "status", repoRoot: r.repoRoot, checkout: r.checkout },
+    r.run,
+  );
+  expect(status).toMatchObject({ record: { sha: A, source: "develop" }, initialized: false });
+  expect(await readFile(r.file, "utf8")).toBe(before);
+  await writeFile(r.legacy, "changed");
+  expect(
+    await r.manage({ action: "status", repoRoot: r.repoRoot, checkout: r.checkout }, r.run),
+  ).toMatchObject({ record: { sha: A } });
+  expect(await readFile(r.legacy, "utf8")).toBe("changed");
+});
+it("refuses a malformed legacy record without creating a local record", async () => {
+  const r = await rig({ record: "legacy" });
+  await writeFile(r.legacy, "{}");
+  await expect(
+    r.manage({ action: "status", repoRoot: r.repoRoot, checkout: r.checkout }, r.run),
+  ).rejects.toThrow();
+  expect(existsSync(r.file)).toBe(false);
+});
+it("reports not initialized with a first-install hint when no record exists", async () => {
+  const r = await rig({ record: "none" });
+  const status = await r.manage(
+    { action: "status", repoRoot: r.repoRoot, checkout: r.checkout },
+    r.run,
+  );
+  expect(status).toMatchObject({ initialized: false, record: null });
+  expect(JSON.stringify(status)).toContain("pin.ts refresh --to <sha> --source <source>");
+  expect(r.commands).toEqual([]);
+});
+it("first install with --to and --source creates the local record with previous null", async () => {
+  const r = await rig({ record: "none" });
+  await r.manage(
+    { action: "refresh", repoRoot: r.repoRoot, checkout: r.checkout, to: B, source: "develop" },
+    r.run,
+  );
+  expect(JSON.parse(await readFile(r.file, "utf8"))).toEqual({
+    schemaVersion: 1,
+    sha: B,
+    source: "develop",
+    previous: null,
+  });
+});
+it("refuses refresh without a record unless --to and --source are given, and refuses rollback", async () => {
+  const r = await rig({ record: "none" });
+  await expect(
+    r.manage({ action: "refresh", repoRoot: r.repoRoot, checkout: r.checkout, to: B }, r.run),
+  ).rejects.toThrow("PIN_NOT_INITIALIZED");
+  await expect(
+    r.manage({ action: "rollback", repoRoot: r.repoRoot, checkout: r.checkout }, r.run),
+  ).rejects.toThrow("PIN_NOT_INITIALIZED");
+  expect(existsSync(r.file)).toBe(false);
+});
+it("refuses a symlinked local record or .omi directory", async () => {
+  const r = await rig();
+  await rm(r.file);
+  await writeFile(join(r.root, "elsewhere.json"), "{}");
+  await symlink(join(r.root, "elsewhere.json"), r.file);
+  await expect(
+    r.manage({ action: "status", repoRoot: r.repoRoot, checkout: r.checkout }, r.run),
+  ).rejects.toThrow("PIN_RECORD_SYMLINK");
+  const s = await rig({ record: "none" });
+  await mkdir(join(s.root, "elsewhere"));
+  await symlink(join(s.root, "elsewhere"), join(s.repoRoot, ".omi"));
+  await expect(
+    s.manage(
+      { action: "refresh", repoRoot: s.repoRoot, checkout: s.checkout, to: B, source: "develop" },
+      s.run,
+    ),
+  ).rejects.toThrow("PIN_RECORD_SYMLINK");
+  expect(await readdir(join(s.root, "elsewhere"))).toEqual([]);
+});
+it("refuses activation when the local record changes during refresh", async () => {
+  const r = await rig();
+  const run: Runner = async (c) => {
+    if (c.args.includes("--help")) await writeFile(r.file, JSON.stringify({ changed: true }));
+    return r.run(c);
+  };
+  await expect(
+    r.manage({ action: "refresh", repoRoot: r.repoRoot, checkout: r.checkout, to: B }, run),
+  ).rejects.toThrow("PIN_RECORD_CHANGED");
+});
+it("refuses overlapping pin mutations through the lock", async () => {
+  const r = await rig();
+  await mkdir(`${r.checkout}.lock`);
+  await expect(
+    r.manage({ action: "refresh", repoRoot: r.repoRoot, checkout: r.checkout, to: B }, r.run),
+  ).rejects.toThrow();
 });

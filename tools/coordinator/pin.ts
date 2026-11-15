@@ -130,6 +130,37 @@ const exists = async (path: string) =>
     },
   );
 
+/** Per-machine record (git-ignored); the legacy tracked file is only read, once, to migrate. */
+export const PIN_RECORD_RELATIVE = ".omi/local/coordinator-pin.json";
+const LEGACY_RECORD_RELATIVE = "tools/coordinator/coordinator-pin.json";
+const FIRST_INSTALL_HINT =
+  "no pin record: run `node tools/coordinator/pin.ts refresh --to <sha> --source <source>` (first install)";
+
+async function assertNotSymlink(path: string): Promise<void> {
+  if (await exists(path)) {
+    if ((await lstat(path)).isSymbolicLink()) throw new Error("PIN_RECORD_SYMLINK");
+  }
+}
+
+/** Reads the local record text, migrating a legacy tracked copy first; null when none exists. */
+async function readRecordText(repoRoot: string, recordFile: string): Promise<string | null> {
+  await assertNotSymlink(join(repoRoot, ".omi"));
+  await assertNotSymlink(dirname(recordFile));
+  await assertNotSymlink(recordFile);
+  if (await exists(recordFile)) return readFile(recordFile, "utf8");
+  const legacyFile = join(repoRoot, LEGACY_RECORD_RELATIVE);
+  if (!(await exists(legacyFile))) return null;
+  await assertNotSymlink(legacyFile);
+  const legacy = await readFile(legacyFile, "utf8");
+  parsePinRecord(JSON.parse(legacy) as unknown);
+  const text = legacy;
+  await mkdir(dirname(recordFile), { recursive: true });
+  await assertNotSymlink(join(repoRoot, ".omi"));
+  await assertNotSymlink(dirname(recordFile));
+  await writeFile(recordFile, text, { flag: "wx" });
+  return text;
+}
+
 export async function managePin(input: PinInput, run: Runner = createProcessRunner()) {
   const repoRoot = await realpath(resolve(input.repoRoot));
   const checkout = pinCheckoutPath(repoRoot, input.checkout);
@@ -144,10 +175,10 @@ export async function managePin(input: PinInput, run: Runner = createProcessRunn
     )
       throw new Error("PIN_CHECKOUT_SYMLINK");
   }
-  const recordFile = join(repoRoot, "tools/coordinator/coordinator-pin.json");
-  if ((await lstat(recordFile)).isSymbolicLink()) throw new Error("PIN_RECORD_SYMLINK");
-  const original = await readFile(recordFile, "utf8");
-  const record = parsePinRecord(JSON.parse(original) as unknown);
+  const recordFile = join(repoRoot, PIN_RECORD_RELATIVE);
+  const original = await readRecordText(repoRoot, recordFile);
+  const record = original === null ? null : parsePinRecord(JSON.parse(original) as unknown);
+  const recordText = async () => ((await exists(recordFile)) ? readFile(recordFile, "utf8") : null);
   const git = (cwd: string, args: string[]) =>
     runChecked(run, { file: "git", args: [...gitFlags, ...args], cwd });
   const installed = await exists(checkout);
@@ -160,16 +191,19 @@ export async function managePin(input: PinInput, run: Runner = createProcessRunn
       record,
       checkout,
       installedSha,
-      initialized: installedSha === record.sha && !dirty,
+      initialized: record !== null && installedSha === record.sha && !dirty,
       dirty,
+      ...(record === null ? { reason: FIRST_INSTALL_HINT } : {}),
     };
-  if (installed && (installedSha !== record.sha || dirty))
-    throw new Error("PIN_CHECKOUT_DIRTY_OR_MISMATCHED");
   const rollback = input.action === "rollback";
-  if (rollback && record.previous === null) throw new Error("PIN_NO_PREVIOUS_REVISION");
-  const sha = pinShaSchema.parse(rollback ? record.previous?.sha : (input.to ?? record.sha));
+  if (record === null && (rollback || input.to === undefined || input.source === undefined))
+    throw new Error(`PIN_NOT_INITIALIZED: ${FIRST_INSTALL_HINT}`);
+  if (installed && (installedSha !== record?.sha || dirty))
+    throw new Error("PIN_CHECKOUT_DIRTY_OR_MISMATCHED");
+  if (rollback && record?.previous === null) throw new Error("PIN_NO_PREVIOUS_REVISION");
+  const sha = pinShaSchema.parse(rollback ? record?.previous?.sha : (input.to ?? record?.sha));
   const source = pinSourceSchema.parse(
-    rollback ? record.previous?.source : (input.source ?? record.source),
+    rollback ? record?.previous?.source : (input.source ?? record?.source),
   );
   const repository = repositorySchema.parse(
     z.object({ nameWithOwner: z.string() }).parse(
@@ -183,7 +217,10 @@ export async function managePin(input: PinInput, run: Runner = createProcessRunn
     ).nameWithOwner,
   );
   await verifyPin(run, repository, repoRoot, sha, source);
-  const next = refreshedRecord(record, sha, source);
+  const next =
+    record === null
+      ? parsePinRecord({ schemaVersion: 1, sha, source, previous: null })
+      : refreshedRecord(record, sha, source);
   if (!installed) next.previous = null;
   if (input.dryRun)
     return {
@@ -201,7 +238,7 @@ export async function managePin(input: PinInput, run: Runner = createProcessRunn
   await mkdir(lock);
   let stage: string | undefined;
   try {
-    if ((await readFile(recordFile, "utf8")) !== original) throw new Error("PIN_RECORD_CHANGED");
+    if ((await recordText()) !== original) throw new Error("PIN_RECORD_CHANGED");
     if (
       installed &&
       ((await git(checkout, ["rev-parse", "HEAD"])).trim() !== installedSha ||
@@ -236,13 +273,18 @@ export async function managePin(input: PinInput, run: Runner = createProcessRunn
     });
     // The latest check may have changed while dependencies were installed.
     await verifyPin(run, repository, repoRoot, sha, source);
-    if ((await readFile(recordFile, "utf8")) !== original) throw new Error("PIN_RECORD_CHANGED");
+    if ((await recordText()) !== original) throw new Error("PIN_RECORD_CHANGED");
+    await assertNotSymlink(join(repoRoot, ".omi"));
+    await mkdir(dirname(recordFile), { recursive: true });
+    await assertNotSymlink(dirname(recordFile));
     const tempRoot = join(repoRoot, ".tmp");
     await mkdir(tempRoot, { recursive: true });
     if ((await lstat(tempRoot)).isSymbolicLink()) throw new Error("PIN_TEMP_SYMLINK");
     const tempRecord = join(tempRoot, `coordinator-pin-${randomUUID()}.json`);
     await writeFile(tempRecord, `${JSON.stringify(next, null, 2)}\n`, { flag: "wx" });
-    const backup = installed ? `${checkout}.previous-${record.sha}-${randomUUID()}` : undefined;
+    const backup = installed
+      ? `${checkout}.previous-${record?.sha ?? "none"}-${randomUUID()}`
+      : undefined;
     if (backup !== undefined) await rename(checkout, backup);
     try {
       await rename(stage, checkout);
