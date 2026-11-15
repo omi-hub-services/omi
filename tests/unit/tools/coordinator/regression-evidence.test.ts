@@ -81,8 +81,8 @@ it("refuses a run without an exit status and writes no evidence", async () => {
 it("runs git and both test runs in the WSL checkout and writes the evidence to the Coordinator path", async () => {
   const out = join(dir, "wsl-evidence.json");
   const target = { viaWslExe: true, distro: "Ubuntu-24.04", repoDir: "/home/u/omi" };
-  const calls: { file: string; args: readonly string[] }[] = [];
-  const runner = vi.fn((command: { file: string; args: readonly string[] }) => {
+  const calls: { file: string; args: readonly string[]; input?: string }[] = [];
+  const runner = vi.fn((command: { file: string; args: readonly string[]; input?: string }) => {
     calls.push(command);
     const payload = command.args.at(-1) ?? "";
     const stdout = payload.startsWith("git merge-base")
@@ -110,32 +110,31 @@ it("runs git and both test runs in the WSL checkout and writes the evidence to t
   const payloads = calls.map((c) => c.args.at(-1) ?? "");
   expect(payloads[0]).toBe("git merge-base HEAD origin/develop");
   expect(payloads.some((p) => p.includes("worktree add --detach"))).toBe(true);
-  expect(decodedArgs(payloads)).toContainEqual([
-    "npm",
-    "run",
-    "test:unit",
-    "--",
-    "tests/unit/a.test.ts",
-    "-t",
-    "fixes it",
-  ]);
+  const argvs = calls.filter((c) => c.input !== undefined).map((c) => c.input?.split("\0"));
+  expect(argvs).toHaveLength(2);
+  for (const argv of argvs) {
+    expect(argv).toEqual([
+      "tests/unit/a.test.ts",
+      "npm",
+      "run",
+      "test:unit",
+      "--",
+      "tests/unit/a.test.ts",
+      "-t",
+      "fixes it",
+    ]);
+  }
+  expect(payloads.some((p) => /base64|xargs/.test(p))).toBe(false);
 });
-
-const decodedArgs = (payloads: string[]) =>
-  payloads.flatMap((p) =>
-    [...p.matchAll(/echo (\S+) \| base64 -d/g)].map((m) =>
-      Buffer.from(m[1] ?? "", "base64")
-        .toString()
-        .split("\0"),
-    ),
-  );
 
 const wslRun = (testName: string, runnerCode: (payload: string) => number) => {
   const target = { viaWslExe: true, distro: "d", repoDir: "/home/u/omi" };
   const payloads: string[] = [];
-  const runner = (command: { args: readonly string[] }) => {
+  const inputs: string[] = [];
+  const runner = (command: { args: readonly string[]; input?: string }) => {
     const payload = command.args.at(-1) ?? "";
     payloads.push(payload);
+    if (command.input !== undefined) inputs.push(command.input);
     const stdout = payload.startsWith("git rev-parse HEAD") ? `${head}\n` : `${base}\n`;
     return Promise.resolve({ code: runnerCode(payload), stdout, stderr: "" });
   };
@@ -147,15 +146,25 @@ const wslRun = (testName: string, runnerCode: (payload: string) => number) => {
     target,
     base,
   });
-  return { payloads, status };
+  return { payloads, inputs, status };
 };
 
 it.each([`handles user's input`, `says "hi"`, String.raw`matches \d+ and a\\b`])(
-  "carries the test name %s to WSL without a quote or backslash in the payload",
+  "carries the test name %s to WSL on stdin, not in the payload",
   async (name) => {
     const r = wslRun(name, (p) => (p.includes("worktree add") ? 1 : 0));
     expect(await r.status).toBe(0);
-    expect(decodedArgs(r.payloads).some((a) => a.at(-1) === name)).toBe(true);
+    expect(r.inputs).toHaveLength(2);
+    expect(r.inputs.every((i) => i.split("\0").at(-1) === name)).toBe(true);
+  },
+);
+
+it.each([137, 126])(
+  "treats a base run that exits %i as no result and writes no evidence",
+  async (code) => {
+    const r = wslRun("fixes it", (p) => (p.includes("worktree add") ? code : 0));
+    expect(await r.status).toBe(1);
+    expect(existsSync(join(dir, "e.json"))).toBe(false);
   },
 );
 

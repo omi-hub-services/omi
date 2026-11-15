@@ -44,15 +44,17 @@ function wslRegressionExecutor(
   testFile: string,
   timeoutMs: number,
 ): Executor {
-  const exitOf = (code: number) => (code === SETUP_FAILED || code >= 127 ? null : code);
-  // Arguments travel base64-encoded and NUL-separated, so the payload holds no quote or backslash
-  // whatever the test name contains; xargs -0 hands them to the command unchanged (exit 123 = failed).
-  const encode = (args: readonly string[]) => Buffer.from(args.join("\0")).toString("base64");
+  // 126/127: bash cannot execute / find the command; 128+: a signal, a timeout or SETUP_FAILED.
+  const exitOf = (code: number) => (code >= 126 ? null : code);
+  // The file and argv travel on stdin, NUL-separated, so the payload holds no quote or backslash
+  // whatever the test name contains; the test runs as bash's direct child, keeping its exit status.
+  const ARGV = "mapfile -d '' -t A; set -f; IFS=;";
   return async (where, argv) => {
-    const test = `echo ${encode(argv)} | base64 -d | xargs -0 env`;
+    const input = [testFile, ...argv].join("\0");
     if (where === "head") {
       const revision = (await runChecked(run, wslCommand("git rev-parse HEAD", target))).trim();
-      const result = await run(wslCommand(`${WSL_NODE_ENV} ${test}`, target, timeoutMs));
+      const payload = `${WSL_NODE_ENV} ${ARGV} \${A[@]:1}`;
+      const result = await run({ ...wslCommand(payload, target, timeoutMs), input });
       return { revision, exitCode: exitOf(result.code) };
     }
     const revision = (
@@ -65,12 +67,13 @@ function wslRegressionExecutor(
     const parent = `/tmp/omi-regression-${randomUUID()}`;
     const tree = `${parent}/base`;
     const payload =
+      `${WSL_NODE_ENV} ${ARGV} ` +
       `{ git worktree add --detach ${tree} ${shellQuote(revision)} && ` +
-      `echo ${encode([testFile])} | base64 -d | xargs -0 -I{} cp --parents {} ${tree} && ` +
+      `cp --parents -- \${A[0]} ${tree} && ` +
       `{ [ ! -d node_modules ] || ln -s ${shellQuote(target.repoDir)}/node_modules ${tree}/node_modules; }; } ` +
-      `&& { cd ${tree} && ${WSL_NODE_ENV} ${test}; rc=$?; } || rc=${String(SETUP_FAILED)}; exit $rc`;
+      `&& { cd ${tree} && \${A[@]:1}; rc=$?; } || rc=${String(SETUP_FAILED)}; exit $rc`;
     try {
-      const result = await run(wslCommand(payload, target, timeoutMs));
+      const result = await run({ ...wslCommand(payload, target, timeoutMs), input });
       return { revision, exitCode: exitOf(result.code) };
     } finally {
       await run(
