@@ -163,8 +163,22 @@ node "$coordinatorPin/tools/coordinator/flow.ts" prompt N --step <actual-step-id
 node "$coordinatorPin/tools/coordinator/flow.ts" prompt N --step <actual-step-id> --notes <notes.md> --out <prompt.md>
 node "$coordinatorPin/tools/coordinator/flow.ts" pick-profile N [--kind codex|claude+codex-live] --probe
 node "$coordinatorPin/tools/coordinator/flow.ts" dispatch N --profile <p> --kind claude|codex --prompt <prompt.md>
-node "$coordinatorPin/tools/coordinator/flow.ts" worker-report N
+node "$coordinatorPin/tools/coordinator/flow.ts" worker-report N --post
+node "$coordinatorPin/tools/coordinator/flow.ts" next N
 ```
+
+**Report → next → dispatch loop (OMI-159).** After every worker run `worker-report N --post`
+(add `--step <step-round>` among parallel workers): it posts one signed Issue comment (header
+`Worker report — OMI-NNN · step <id> · round <n>`, the Worker line, status and head, summary,
+findings, Next, and a hidden `omi-squad:step-report` marker). The signature comes from the
+metadata `dispatch` recorded, never from the worker's own claims; the body passes the credential
+guard and is capped, and re-posting the same step/round/session posts nothing. The script computes
+the next step from the workflow `needs`, the markers already on the Issue and the status:
+succeeded → the next step(s), or `open-pr` when none remain; failed → resume the same step with
+the findings; blocked → Waiting PO (post `**WAITING-PO:** <reason>`). The worker's `nextAction` is
+only a suggestion. Then run `flow.ts next N` (read-only: reads the newest marker and prints the
+step and the exact `pick-profile` / `prompt` / `dispatch` commands) and run what it prints.
+Script steps (check, PR, merge, close) keep their own comments.
 
 Optional prompt --worktree/--branch overrides identify the worker checkout/branch; defaults are
 OMI_WSL_REPO_DIR and that checkout's current branch. Configure dispatch to that same checkout
