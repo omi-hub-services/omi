@@ -5,6 +5,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import "../register-ts-imports.ts";
 const { renderWorkerPrompt, renderQualityInstructions } =
   await import("../../src/application/services/render-worker-prompt.ts");
+const { earlierStepIds, renderEarlierSteps } =
+  await import("../../src/application/services/render-earlier-steps.ts");
 const { planWorkflowQuality, taskQualityFacts, qualityStepId } =
   await import("../../src/application/services/plan-workflow-quality.ts");
 const { implementationPaths } =
@@ -13,7 +15,8 @@ const { taskComplexitySchema } = await import("../../src/application/contracts/t
 const { resolveWorkflowRoute, dispatchSkills } =
   await import("../../src/domain/workflows/workflow-policy.ts");
 import { extractAcceptanceCriteria } from "./acceptance-criteria.ts";
-import { OWNER, PROJECT_NUMBER, REPO } from "./coordinator-settings.ts";
+import { CHECK_ARGV, CHECK_ID, readStoredCheck } from "./check-reuse.ts";
+import { COORDINATOR_LOGIN, OWNER, PROJECT_NUMBER, REPO } from "./coordinator-settings.ts";
 import type { WorkerCtx } from "./flow-workers.ts";
 import { graphql } from "./github-reads.ts";
 import {
@@ -35,6 +38,7 @@ import {
 import { runChecked, wslCommand } from "./process-runner.ts";
 import { loadTemplate } from "./watch-workflow.ts";
 import { NATIVE_RESUME_HEADER, SECURITY_REVIEW_MARKER } from "./worker-launch.ts";
+import { parseStepResults } from "./worker-report.ts";
 
 const ISSUE_PACKET_QUERY = `
 query($owner: String!, $repo: String!, $number: Int!, $after: String, $itemsAfter: String) {
@@ -281,6 +285,19 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       evidence.push(
         `## Script-run check evidence on ${input.head ?? ""}\n${await readFile(input.checkLog, "utf8")}`,
       );
+    } else if (quality.step === "review" && /^[a-f0-9]{40}$/.test(input.head ?? "")) {
+      // The check already ran on this exact head (OMI-168): its stored result stands in for --check-log.
+      const head = input.head ?? "";
+      const stored = await readStoredCheck(ctx.run, target, head);
+      if (stored !== null) {
+        if (stored.status !== "passed")
+          throw new Error(
+            `stored check result for ${head} is ${stored.status}; fix it and run flow.ts check again, or supply --check-log`,
+          );
+        evidence.push(
+          `## Script-run check evidence on ${head} (reused stored result of ${CHECK_ID}: ${CHECK_ARGV.join(" ")} passed)\n${stored.log}`,
+        );
+      }
     }
     if (input.previousVerdict !== undefined)
       evidence.push(`## Previous verdict\n${await readFile(input.previousVerdict, "utf8")}`);
@@ -305,6 +322,17 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
         `## Architect decision (verbatim)\n${await readFile(input.architectDecision, "utf8")}`,
       );
     const resume = input.findings !== undefined;
+    // Coordinator-authored step reports only; an explicit --architect-decision replaces the marker's.
+    const earlierSteps =
+      architect || resume
+        ? ""
+        : renderEarlierSteps(
+            parseStepResults(issue.comments, COORDINATOR_LOGIN),
+            earlierStepIds(template.workflow.steps, step.id, {
+              round,
+              architect: input.architectDecision === undefined,
+            }),
+          );
     const sections = async (kind: "skills" | "rules", ids: readonly string[]) => {
       const sections: string[] = [];
       for (const id of ids) {
@@ -356,6 +384,7 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
         ? ""
         : (await read("templates/prompts/repository-read-first.md")).trimEnd(),
       task_context: resume ? "" : taskContext(),
+      earlier_steps: earlierSteps,
       notes:
         `${evidence.join("\n\n")}\n\n` +
         (resume

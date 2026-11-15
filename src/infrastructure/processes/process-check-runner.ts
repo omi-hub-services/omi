@@ -39,6 +39,8 @@ export function createProcessCheckRunner(options: ProcessCheckRunnerOptions): Ch
 
   return {
     has: (checkId) => Object.hasOwn(options.checks, checkId),
+    command: (checkId) =>
+      Object.hasOwn(options.checks, checkId) ? options.checks[checkId]?.command : undefined,
 
     async run(request: CheckRunRequest): Promise<CheckRunRecord> {
       const check = Object.hasOwn(options.checks, request.checkId)

@@ -16,6 +16,7 @@ import { selectExecutor } from "../use-cases/profiles/select-executor.js";
 import { DispatchPlanningError } from "./dispatch-planning-error.js";
 import { createQuotaVerdictReader } from "./read-quota-verdicts.js";
 import { qualityStepId, packetModels } from "./plan-workflow-quality.js";
+import { earlierStepIds } from "./render-earlier-steps.js";
 
 export const dispatchTaskSchema = z.strictObject({
   context: contextPacketSchema.pick({
@@ -140,6 +141,10 @@ export function createDispatchPlanner(deps: {
       throw new Error("CHECK_UNCONFIGURED: checks.regression-test");
     }
     return {
+      earlierStepIds: earlierStepIds(workflow?.steps ?? [], step.id, {
+        round,
+        architect: true,
+      }),
       checkEvidenceSteps:
         qualityStepId(step) === "review"
           ? step.needs.filter((id) =>

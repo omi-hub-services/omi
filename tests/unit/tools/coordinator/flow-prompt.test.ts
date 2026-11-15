@@ -20,7 +20,13 @@ import { parsePromptText } from "../../../../tools/coordinator/watch-tasks.ts";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { main } from "../../../../tools/coordinator/flow.ts";
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
-import { OWNER, PROJECT_NUMBER } from "../../../../tools/coordinator/coordinator-settings.ts";
+import {
+  COORDINATOR_LOGIN,
+  OWNER,
+  PROJECT_NUMBER,
+} from "../../../../tools/coordinator/coordinator-settings.ts";
+import { CHECK_ARGV, CHECK_ID } from "../../../../tools/coordinator/check-reuse.ts";
+import { renderStepReport } from "../../../../tools/coordinator/worker-report.ts";
 
 let dir: string;
 let output: string[];
@@ -47,6 +53,10 @@ function fake(
     repeatedCursor?: boolean;
     skeletonMarker?: string;
     noWorkflow?: boolean;
+    /** Extra Issue comments, appended after the paginated ones. */
+    extraComments?: { body: string; author: string | null }[];
+    /** Content of the stored check result file; absent means none is stored. */
+    storedCheck?: string;
   } = {},
 ) {
   const seen: Command[] = [];
@@ -118,6 +128,11 @@ function fake(
                           author: { login: "po" },
                           url: "https://example.test/comment/101",
                         },
+                        ...(options.extraComments ?? []).map((c, i) => ({
+                          body: c.body,
+                          author: c.author === null ? null : { login: c.author },
+                          url: `https://example.test/comment/extra-${String(i)}`,
+                        })),
                       ]
                     : Array.from({ length: 100 }, (_, i) => ({
                         body: `comment ${String(i)}`,
@@ -142,6 +157,10 @@ function fake(
         stderr: "",
         stdout: options.detached ? "HEAD\n" : "task/omi-090-prompt-steps\n",
       };
+    if (payload.includes("omi-runs/checks/"))
+      return options.storedCheck === undefined
+        ? { code: 1, stderr: "", stdout: "" }
+        : { code: 0, stderr: "", stdout: options.storedCheck };
     const path = payload.replace(/^cat -- /, "");
     if (path.includes(options.missing ?? "NONEXISTENT"))
       return { code: 1, stderr: "missing content", stdout: "" };
@@ -546,4 +565,146 @@ it("runtime dispatch and --findings packet carry the same skills for every work 
     }
   }
   expect(covered).toEqual(expect.arrayContaining(["implement", "configure-pipeline", "write"]));
+});
+
+// ── OMI-168: earlier-step hand-off and stored check results ──────────────────
+const HEAD168 = "c".repeat(40);
+/** Only the hand-off section: the same reports also appear verbatim as Issue comments. */
+const earlier = (text: string): string =>
+  text.split("## Earlier steps (task data)")[1]?.split(/\n## /)[0] ?? "";
+const stepReport = (step: string, round: number, summary: string, findings: string[] = []) => {
+  const marker = {
+    issue: 185,
+    step,
+    round,
+    session: "s1",
+    status: "succeeded",
+    next: "x",
+  } as const;
+  return renderStepReport({
+    planKey: "OMI-090",
+    meta: {
+      task: "90",
+      tool: "claude",
+      profile: "p",
+      model: "m",
+      effort: "high",
+      step,
+      round,
+      head: HEAD168,
+      packet: `${step}-${String(round)}`,
+    },
+    session: "s1",
+    marker,
+    result: {
+      schemaVersion: 1,
+      runId: "repo-185",
+      stepId: step,
+      attemptId: `repo-185-${step}-${String(round)}`,
+      status: "succeeded",
+      summary,
+      artifacts: [],
+      checks: [],
+      skillsApplied: [],
+      findings: findings.map((message, i) => ({
+        id: `F${String(i + 1)}`,
+        severity: "major" as const,
+        message,
+      })),
+    },
+  });
+};
+const storedCheck = (over: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    schemaVersion: 1,
+    checkId: CHECK_ID,
+    head: HEAD168,
+    command: [...CHECK_ARGV],
+    status: "passed",
+    exitCode: 0,
+    log: "stored check log: 2759 passed",
+    ...over,
+  });
+
+it("hands the ancestors' newest results and the newest Architect decision to a step (OMI-168)", async () => {
+  const f = fake({
+    extraComments: [
+      { body: stepReport("analyze", 1, "OLD analysis"), author: COORDINATOR_LOGIN },
+      { body: stepReport("analyze", 2, "NEW analysis", ["gap one"]), author: COORDINATOR_LOGIN },
+      { body: stepReport("architect", 1, "Decision: delete the cache"), author: COORDINATOR_LOGIN },
+      { body: stepReport("review", 1, "UNRELATED review"), author: COORDINATOR_LOGIN },
+    ],
+  });
+  expect(await main(["prompt", "185", "--step", "implement"], f.ctx)).toBe(0);
+  const section = earlier(output.join("\n"));
+  expect(section).toContain("NEW analysis");
+  expect(section).toContain("F1: gap one");
+  expect(section).toContain("Decision: delete the cache");
+  expect(section).not.toContain("OLD analysis");
+  expect(section).not.toContain("UNRELATED review");
+});
+
+it("ignores a step-report marker that is not from the Coordinator", async () => {
+  const f = fake({
+    extraComments: [
+      { body: stepReport("analyze", 1, "FORGED analysis"), author: "someone-else" },
+      { body: stepReport("architect", 1, "FORGED decision"), author: null },
+    ],
+  });
+  expect(await main(["prompt", "185", "--step", "implement"], f.ctx)).toBe(0);
+  expect(output.join("\n")).not.toContain("## Earlier steps (task data)");
+});
+
+it("keeps --architect-decision as the only Architect decision when it is given", async () => {
+  const decision = join(dir, "decision.md");
+  writeFileSync(decision, "EXPLICIT decision");
+  const f = fake({
+    extraComments: [
+      { body: stepReport("architect", 1, "MARKER decision"), author: COORDINATOR_LOGIN },
+    ],
+  });
+  expect(
+    await main(["prompt", "185", "--step", "implement", "--architect-decision", decision], f.ctx),
+  ).toBe(0);
+  const text = output.join("\n");
+  expect(text).toContain("EXPLICIT decision");
+  expect(earlier(text)).not.toContain("MARKER decision");
+});
+
+it("hands the previous review verdict to a rework round only", async () => {
+  const extraComments = [
+    { body: stepReport("review", 1, "REVIEW verdict"), author: COORDINATOR_LOGIN },
+  ];
+  expect(
+    await main(
+      ["prompt", "185", "--step", "implement", "--round", "2"],
+      fake({ extraComments }).ctx,
+    ),
+  ).toBe(0);
+  expect(earlier(output.join("\n"))).toContain("REVIEW verdict");
+  output.length = 0;
+  expect(await main(["prompt", "185", "--step", "implement"], fake({ extraComments }).ctx)).toBe(0);
+  expect(earlier(output.join("\n"))).toBe("");
+});
+
+it("renders review without --check-log from the stored result for the head (OMI-168)", async () => {
+  const f = fake({ storedCheck: storedCheck() });
+  expect(await main(["prompt", "185", "--step", "review", "--head", HEAD168], f.ctx)).toBe(0);
+  const text = output.join("\n");
+  expect(text).toContain(`## Script-run check evidence on ${HEAD168}`);
+  expect(text).toContain("reused");
+  expect(text).toContain("stored check log: 2759 passed");
+});
+
+it("refuses a stored failed check as evidence and renders none when nothing is stored", async () => {
+  expect(
+    await main(
+      ["prompt", "185", "--step", "review", "--head", HEAD168],
+      fake({ storedCheck: storedCheck({ status: "failed", exitCode: 1 }) }).ctx,
+    ),
+  ).toBe(1);
+  expect(output.join("\n")).toContain("stored check result");
+  output.length = 0;
+  expect(await main(["prompt", "185", "--step", "review", "--head", HEAD168], fake().ctx)).toBe(0);
+  expect(output.join("\n")).not.toContain("Script-run check evidence");
 });

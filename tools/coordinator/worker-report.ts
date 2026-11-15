@@ -7,6 +7,7 @@ const { stepResultSchema } = await import("../../src/application/contracts/resul
 const { extractStepResult } =
   await import("../../src/application/contracts/step-result-extract.ts");
 import type { StepResult } from "../../src/application/contracts/result.ts";
+import type { EarlierStepResult } from "../../src/application/services/render-earlier-steps.ts";
 import { RUNS_DIR_FROM_HOME } from "./coordinator-settings.ts";
 
 export interface WorkerReport {
@@ -198,6 +199,36 @@ export function parseStepMarkers(
       },
     ];
   });
+}
+
+/**
+ * Summary and findings lines of each Coordinator-authored step report, oldest first, one entry per
+ * step id of a combined report. A comment whose fixed layout is not intact is skipped.
+ */
+export function parseStepResults(
+  comments: readonly { readonly author: string | null; readonly body: string }[],
+  coordinator: string,
+): EarlierStepResult[] {
+  return comments.flatMap((c) =>
+    parseStepMarkers([c], coordinator).flatMap(({ marker }) => {
+      const s = c.body.indexOf("\n**Summary:** ");
+      const f = c.body.lastIndexOf("\n**Findings:**");
+      const n = c.body.lastIndexOf("\n**Next:**");
+      if (s < 0 || f < s || n < f) return [];
+      const summary = c.body.slice(s + "\n**Summary:** ".length, f).trim();
+      const findings = c.body
+        .slice(f + "\n**Findings:**".length, n)
+        .split("\n")
+        .filter((line) => line.startsWith("- "));
+      return marker.step.split(",").map((stepId) => ({
+        stepId,
+        round: marker.round,
+        status: marker.status,
+        summary,
+        findings,
+      }));
+    }),
+  );
 }
 
 /**
