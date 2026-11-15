@@ -14,12 +14,14 @@ export function mergeProjectTemplates(
     ...Object.keys(incoming),
     ...Object.keys(local),
   ])) {
-    const before = base[path];
-    const next = incoming[path];
+    const before = base[path]?.replaceAll("\r\n", "\n");
+    const next = incoming[path]?.replaceAll("\r\n", "\n");
     const current = local[path];
+    const normalizedCurrent = current?.replaceAll("\r\n", "\n");
     let value = current;
-    if (current === before) value = next;
-    else if (next !== before && current !== next) conflicts.push(path);
+    // Keep unchanged checkout bytes; materialize actual template changes with LF.
+    if (normalizedCurrent === before && normalizedCurrent !== next) value = next;
+    else if (next !== before && normalizedCurrent !== next) conflicts.push(path);
     if (value !== undefined) merged[path] = value;
     if (value !== current) changes.push(path);
   }
