@@ -31,3 +31,10 @@ it("keeps every documented Project Workflow option resolvable", async () => {
   const templates = readdirSync("templates/project/workflows").map((f) => f.replace(/\.yaml$/, ""));
   expect(workflowOptionIssues(options, templates)).toEqual([]);
 });
+
+it.each([
+  "templates/prompts/repository-worker-report.md",
+  "templates/prompts/runtime-worker-report.md",
+])("%s names the 4000-character summary limit of step-result-v1", (file) => {
+  expect(readFileSync(file, "utf8")).toMatch(/4000/);
+});
