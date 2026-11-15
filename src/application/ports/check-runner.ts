@@ -13,6 +13,8 @@ export interface CheckRunRequest {
 export interface CheckRunner {
   /** True when the runtime has a command for this check id and must run it. */
   has(checkId: string): boolean;
+  /** The configured command of a check id; part of the key under which a passed result is reused. */
+  command?(checkId: string): readonly string[] | undefined;
   /**
    * Runs the configured command in the worktree and stores command, exit status, times,
    * revision and a bounded, redacted log as an artifact. A failing or timed-out command is a

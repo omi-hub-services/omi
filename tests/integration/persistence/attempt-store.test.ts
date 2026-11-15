@@ -59,6 +59,37 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+describe("SQLite recorded step results", () => {
+  it("lists the run's recorded results in order with the role of the attempt that made them", () => {
+    reserve(record.id, 1);
+    store().create(record);
+    const result = {
+      schemaVersion: 1,
+      runId: "run-1",
+      stepId: "implement",
+      attemptId: record.id,
+      status: "succeeded",
+      summary: "Did it",
+      artifacts: [],
+      checks: [],
+      skillsApplied: [],
+      findings: [],
+    };
+    const event = (id: string, kind: string, payload: unknown) =>
+      db
+        .prepare(
+          "INSERT INTO events (event_id, kind, subject, run_id, correlation_id, payload, occurred_at) VALUES (?, ?, 'step-1', 'run-1', 'c', ?, ?)",
+        )
+        .run(id, kind, JSON.stringify(payload), at);
+    event("e1", "step.failed", { attemptId: record.id, reason: "start failed" }); // no result: skipped
+    event("e2", "step.succeeded", { outcome: "succeeded", result });
+    expect(store().stepResults?.("run-1")).toEqual([
+      { stepId: "implement", role: record.role.id, status: "succeeded", result },
+    ]);
+    expect(store().stepResults?.("other-run")).toEqual([]);
+  });
+});
+
 describe("SQLite attempt dispatch records", () => {
   it("reuses the reserved number after cancelled reservations instead of colliding with them", async () => {
     reserve("cancelled-1", 1);
