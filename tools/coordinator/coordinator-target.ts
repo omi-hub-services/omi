@@ -43,5 +43,5 @@ export async function coordinatorTarget(projectDir = process.cwd()): Promise<Coo
   const settings = await loadOmiSetting(projectDir);
   return settings?.docker === undefined
     ? wslTarget()
-    : dockerTarget(dockerProject(settings, projectDir, "0.1.1"));
+    : dockerTarget(dockerProject(settings, projectDir));
 }

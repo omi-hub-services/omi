@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createDockerLifecycle,
+  dockerProject,
   type DockerCommand,
 } from "../../../src/infrastructure/processes/docker-runtime.js";
 import type { OmiSetting } from "../../../src/application/contracts/omisetting.js";
@@ -171,4 +172,34 @@ describe("Docker runtime boundary", () => {
       "true",
     ]);
   });
+});
+
+it("uses the selected watch port for each project's loopback publication", async () => {
+  const calls: DockerCommand[] = [];
+  for (const [repo, watchPort] of [
+    ["first", 4381],
+    ["second", 5381],
+  ] as const) {
+    const lifecycle = createDockerLifecycle({
+      version: "9.8.7",
+      settings: () => Promise.resolve({ ...settings, docker: { watchPort } }),
+      run: (command) => {
+        calls.push(command);
+        return Promise.resolve({
+          code: command.args[0] === "container" ? 1 : 0,
+          stdout: command.file === "git" ? `https://github.com/acme/${repo}.git` : "",
+        });
+      },
+    });
+    await lifecycle("up", { projectDir: `/tmp/${repo}` });
+  }
+  expect(
+    calls
+      .filter((call) => call.args[0] === "run")
+      .map((call) => {
+        const index = call.args.indexOf("-p");
+        return call.args[index + 1];
+      }),
+  ).toEqual(["127.0.0.1:4381:4381", "127.0.0.1:5381:5381"]);
+  expect(dockerProject(settings, "/tmp/first", "9.8.7").watchPort).toBe(4381);
 });

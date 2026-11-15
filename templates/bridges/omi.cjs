@@ -30,6 +30,7 @@ function validateNode(value, schema, path, depth = 0) {
     "format",
     "minLength",
     "minItems",
+    "minimum",
     "maximum",
     "exclusiveMinimum",
   ];
@@ -62,10 +63,12 @@ function validateNode(value, schema, path, depth = 0) {
       !new RegExp(schema.pattern, path === "docker.memory" ? "i" : "").test(value)
     )
       invalid(path);
-  } else if (schema.type === "number") {
+  } else if (schema.type === "number" || schema.type === "integer") {
     if (
       typeof value !== "number" ||
       !Number.isFinite(value) ||
+      (schema.type === "integer" && !Number.isInteger(value)) ||
+      (schema.minimum !== undefined && value < schema.minimum) ||
       (schema.maximum !== undefined && value > schema.maximum) ||
       (schema.exclusiveMinimum !== undefined && value <= schema.exclusiveMinimum)
     )

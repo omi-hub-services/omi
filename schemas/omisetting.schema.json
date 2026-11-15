@@ -156,6 +156,12 @@
           "type": "string",
           "pattern": "^\\d+[bkmg]$"
         },
+        "watchPort": {
+          "description": "Watch port published on host loopback; default 4381. Use distinct ports for simultaneous projects.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
         "memoryWarningPercent": {
           "description": "Doctor memory warning threshold, percent; default 80.",
           "type": "number",

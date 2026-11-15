@@ -107,6 +107,10 @@ it("rejects invalid settings by field path without echoing values", () => {
 
 it.each([
   { ...fixtureSettings, docker: { memory: "8G" } },
+  ...[1, 5381, 65535, 0, 65536, 1.5, "5381"].map((watchPort) => ({
+    ...fixtureSettings,
+    docker: { watchPort },
+  })),
   { ...fixtureSettings, version: 2 },
   { ...fixtureSettings, extra: true },
   { ...fixtureSettings, profiles: [fixtureSettings.profiles[0], fixtureSettings.profiles[0]] },

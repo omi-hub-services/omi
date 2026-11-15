@@ -165,7 +165,7 @@ import { probeRegisteredProfile } from "../application/use-cases/profiles/probe-
 import { createSqliteExecutorSelectionStore } from "../infrastructure/profiles/sqlite-executor-selection-store.js";
 import { createSqliteStateUnitOfWork } from "../infrastructure/persistence/sqlite/sqlite-state-unit-of-work.js";
 import type { StateDatabase } from "../infrastructure/persistence/sqlite/sqlite-connection.js";
-import { readFileSync } from "node:fs";
+import { readPackageVersion } from "../infrastructure/config/package-content.js";
 import { readBoundedText } from "../infrastructure/processes/read-bounded-text.js";
 import {
   commitWorker,
@@ -211,7 +211,10 @@ import { openReadOnlyStateDatabase } from "../infrastructure/persistence/sqlite/
 import { createSqliteRunOverviewReader } from "../infrastructure/persistence/sqlite/sqlite-run-overview-reader.js";
 import { createSqlitePullReviewReader } from "../infrastructure/persistence/sqlite/sqlite-pull-review-reader.js";
 import { createGithubOpenPulls } from "../infrastructure/github/github-open-pulls.js";
-import { createWatchServer } from "../infrastructure/observability/watch-server.js";
+import {
+  createWatchServer,
+  configuredWatchPort,
+} from "../infrastructure/observability/watch-server.js";
 import type { OverviewCommands } from "../interfaces/cli/commands/status-command.js";
 
 /** Views use an existing read-only DB, including while the session runtime is stopped. */
@@ -263,6 +266,7 @@ export function createOverviewCommands(
       }
     },
     async watch(input) {
+      const port = await configuredWatchPort(input.projectDir, input.port);
       const deps = await open(input.projectDir);
       let workflows: WorkflowCatalog;
       try {
@@ -283,7 +287,7 @@ export function createOverviewCommands(
         finish = resolve;
       });
       const server = createWatchServer({
-        port: input.port,
+        port,
         intervalMs: input.intervalMs,
         readSnapshot: createWatchSnapshotReader({
           runs: deps.runs,
@@ -402,21 +406,7 @@ export function defaultSocketPath(projectDir: string): string {
   return join(projectDir, ".omi", "local", "ipc", "runtime.sock");
 }
 
-/** The package version, read once at start-up (the same file for `src/` and for `dist/`). */
-export function readPackageVersion(): string {
-  const parsed: unknown = JSON.parse(
-    readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
-  );
-  if (
-    typeof parsed === "object" &&
-    parsed !== null &&
-    "version" in parsed &&
-    typeof parsed.version === "string"
-  ) {
-    return parsed.version;
-  }
-  throw new Error("package.json has no string version");
-}
+export { readPackageVersion };
 
 export interface CliWiringOptions {
   readonly socketPath: string;
@@ -544,7 +534,7 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
       doctor: (input) => inspectInstallation(createInstallationDoctor(), input),
     },
     profileLogin: createProfileLogin(),
-    docker: createDockerLifecycle({ version: readPackageVersion() }),
+    docker: createDockerLifecycle({}),
     launchSession: async (input) => {
       const settings = await loadOmiSetting(process.cwd());
       return launchWindowsSession(
@@ -552,7 +542,7 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
         settings?.docker === undefined
           ? {}
           : {
-              docker: dockerProject(settings, process.cwd(), readPackageVersion()),
+              docker: dockerProject(settings, process.cwd()),
               runtimeEnv: dockerRuntimeEnvironment(settings),
             },
       );

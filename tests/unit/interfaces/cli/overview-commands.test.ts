@@ -43,7 +43,7 @@ function setup() {
       },
       watch: (input: {
         projectDir: string;
-        port: number;
+        port?: number;
         intervalMs: number;
         onListening: (url: string) => void;
       }) => {
@@ -86,7 +86,7 @@ describe("framework overview commands", () => {
   it("starts watch with validated defaults and prints its local URL", async () => {
     const s = setup();
     expect(await s.run(["watch", "--project", "/p"])).toBe(0);
-    expect(s.watches).toEqual([{ projectDir: "/p", port: 4381, intervalMs: 5000 }]);
+    expect(s.watches).toEqual([{ projectDir: "/p", port: undefined, intervalMs: 5000 }]);
     expect(s.output().out).toContain("http://127.0.0.1:4381");
   });
   it.each([

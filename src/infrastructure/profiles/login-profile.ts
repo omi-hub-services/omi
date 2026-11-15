@@ -19,8 +19,7 @@ export function createProfileLogin(
     const settings = await loadOmiSetting(projectDir);
     const profile = settings?.profiles.find((entry) => entry.id === profileId);
     if (profile?.tool !== "codex") throw new Error("PROFILE_LOGIN_REQUIRES_CODEX_LOGIN_PROFILE");
-    const target =
-      settings?.docker === undefined ? undefined : dockerProject(settings, projectDir, "0.1.1");
+    const target = settings?.docker === undefined ? undefined : dockerProject(settings, projectDir);
     const store =
       target === undefined ? codexProfileHome(profile.id, options.home) : `/profiles/${profile.id}`;
     if (target === undefined) await mkdir(store, { recursive: true, mode: 0o700 });

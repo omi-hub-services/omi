@@ -16,6 +16,7 @@ and prunes and removes that builder after successful or failed builds, including
 container and state volume. Older worker tags and dangling labelled worker
 images are removed without forcing removal of images still used by a container. An in-use
 old image causes a fixed failure rather than forcibly breaking another project.
+The moby/buildkit base image stays pulled for the dedicated builder; this is bounded, not per-build growth.
 
 The named work volume holds the checkout, worktrees, logs and scratch under `/work`.
 Login profiles use separate volumes at `/profiles/<id>`. `docker down` removes the container
@@ -35,9 +36,12 @@ Git and GitHub service processes do not inherit profile relay slots. Neither pro
 contain those values. Native Windows Coordinator startup receives its usual host environment.
 
 The image marks its Docker runtime explicitly. The installed watch server uses the container
-interface only under that marker. Container startup publishes default watch port 4381 on
-host loopback only, so the printed localhost URL is reachable from Windows. Host/Origin and
-read-only HTTP checks remain active. Other watch ports need a matching Docker port mapping.
+interface only under that marker. Set `docker.watchPort` to an integer from 1 to 65535
+(default 4381); startup publishes that same port on host loopback only, and `watch` uses it
+by default. For simultaneous projects, choose different ports, e.g. 4381 and 5381. An explicit
+`watch --port` inside Docker must match the configured published port; recreate the container
+with `docker down` then `docker up` after changing it. The printed localhost URL is reachable
+from Windows. Host/Origin and read-only HTTP checks remain active.
 
 Task cleanup retains the merged/clean-worktree gates, stops recorded groups only when kernel
 identity matches, checks the worktree again, removes the worktree with ignored dependencies,

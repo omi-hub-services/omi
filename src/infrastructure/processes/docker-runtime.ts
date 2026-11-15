@@ -3,6 +3,7 @@ import { basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { OmiSetting } from "../../application/contracts/omisetting.js";
 import type { DockerLifecycle } from "../../application/ports/docker-runtime.js";
+import { readPackageVersion } from "../config/package-content.js";
 import { loadOmiSetting } from "../config/load-omisetting.js";
 
 export interface DockerTarget {
@@ -78,7 +79,11 @@ export const runDockerCommand: DockerRunner = (command) =>
     child.stdin.end(command.input ?? "");
   });
 
-export function dockerProject(settings: OmiSetting, projectDir: string, version: string) {
+export function dockerProject(
+  settings: OmiSetting,
+  projectDir: string,
+  version = readPackageVersion(),
+) {
   const repo = basename(resolve(projectDir));
   if (!namePattern.test(repo)) throw new Error("Invalid project directory name");
   const container = settings.docker?.container ?? `omi-${repo}`;
@@ -90,6 +95,7 @@ export function dockerProject(settings: OmiSetting, projectDir: string, version:
     repoDir: `/work/${repo}`,
     workVolume: `omi-${repo}-work`,
     memory: settings.docker?.memory ?? "8g",
+    watchPort: settings.docker?.watchPort ?? 4381,
     loginProfiles: settings.profiles
       .filter((profile) => profile.auth.type === "login")
       .map((p) => p.id),
@@ -97,7 +103,7 @@ export function dockerProject(settings: OmiSetting, projectDir: string, version:
 }
 
 export function createDockerLifecycle(options: {
-  version: string;
+  version?: string;
   run?: DockerRunner;
   templateDir?: string;
   settings?: typeof loadOmiSetting;
@@ -197,7 +203,7 @@ export function createDockerLifecycle(options: {
         "--memory",
         project.memory,
         "-p",
-        "127.0.0.1:4381:4381",
+        `127.0.0.1:${String(project.watchPort)}:${String(project.watchPort)}`,
         "--mount",
         `type=volume,src=${project.workVolume},dst=/work`,
         ...project.loginProfiles.flatMap((id) => [

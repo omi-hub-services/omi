@@ -101,6 +101,15 @@ export const omisettingSchema = z.strictObject({
         .regex(/^\d+[bkmg]$/i)
         .optional()
         .describe("Docker memory limit, e.g. 8g; defaults to 8g."),
+      watchPort: z
+        .number()
+        .int()
+        .min(1)
+        .max(65535)
+        .optional()
+        .describe(
+          "Watch port published on host loopback; default 4381. Use distinct ports for simultaneous projects.",
+        ),
       memoryWarningPercent: z
         .number()
         .positive()

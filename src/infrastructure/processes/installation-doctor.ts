@@ -148,9 +148,7 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
         error instanceof Error ? error.message : "omisetting.local.json: invalid settings";
     }
     const dockerBinding =
-      settings?.docker === undefined
-        ? undefined
-        : dockerProject(settings, input.projectDir, "0.1.1");
+      settings?.docker === undefined ? undefined : dockerProject(settings, input.projectDir);
     const command: WslProbe["command"] = async (executable, args, cwd, env) => {
       if (dockerBinding === undefined) return probe.command(executable, args, cwd, env);
       const forwarded = Object.fromEntries(
