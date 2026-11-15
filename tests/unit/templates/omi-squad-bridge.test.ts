@@ -125,6 +125,35 @@ describe("bridge argv is typed and carries no shell text", () => {
 });
 
 describe("quoting survives the Windows command line for every parameter the bridge sends", () => {
+  it("leaves plain WSL tokens unquoted", () => {
+    const args = ["-d", "Ubuntu-24.04", "--cd", "/home/dev/project", "--json", "plain\\"];
+    expect(quoteWindowsCommandLine(args)).toBe(
+      "-d Ubuntu-24.04 --cd /home/dev/project --json plain\\",
+    );
+  });
+
+  it("keeps the status command line's WSL options and paths unquoted", () => {
+    const statusConfig: BridgeConfig = {
+      distribution: "Ubuntu-24.04",
+      repository: "/home/dev/project",
+      shim: "/home/dev/project/.omi-squad/bin/omi",
+    };
+    const args = buildWslArgs(statusConfig, buildCliArgv({ command: "status" }).args);
+    expect(quoteWindowsCommandLine(args)).toBe(
+      "-d Ubuntu-24.04 --cd /home/dev/project --exec /home/dev/project/.omi-squad/bin/omi --json status",
+    );
+  });
+
+  it.each(["", "with space", "tab\there", 'a"b', '{"command":"status"}', "with space\\"])(
+    "quotes and round-trips the argument %j",
+    (arg) => {
+      const quoted = quoteWindowsCommandLine([arg]);
+      expect(quoted.startsWith('"')).toBe(true);
+      expect(quoted.endsWith('"')).toBe(true);
+      expect(parseWindowsCommandLine(quoted)).toEqual([arg]);
+    },
+  );
+
   it.each(NASTY)("round-trips the value %j in every string position", (value) => {
     // The distribution is validated to a safe pattern, so the free-form positions are the paths
     // and the check names; they are all attached with --flag=value.
