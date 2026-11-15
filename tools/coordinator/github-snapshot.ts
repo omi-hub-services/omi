@@ -50,8 +50,8 @@ export const PULL_FIELDS = `
   comments(last: 50) { nodes { author { login } body } }
   commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes {
     __typename
-    ... on CheckRun { name status conclusion }
-    ... on StatusContext { context state }
+    ... on CheckRun { name status conclusion completedAt startedAt }
+    ... on StatusContext { context state createdAt }
   } } } } } }`;
 
 /** Items page plus open PRs; later pages pass `withPulls: false`. */
@@ -97,6 +97,8 @@ export interface ProjectItem {
 export interface CheckContext {
   readonly name: string;
   readonly state: CheckState;
+  readonly completedAt?: string | null;
+  readonly startedAt?: string | null;
 }
 
 export interface OpenPull {
@@ -166,11 +168,14 @@ export function parseCheck(raw: unknown, path: string): CheckContext {
     return {
       name: asString(c.name, `${path}.name`),
       state: checkRunState(asString(c.status, `${path}.status`), optString(c.conclusion, "c")),
+      completedAt: optString(c.completedAt, `${path}.completedAt`),
+      startedAt: optString(c.startedAt, `${path}.startedAt`),
     };
   }
   return {
     name: asString(c.context, `${path}.context`),
     state: statusContextState(asString(c.state, `${path}.state`)),
+    startedAt: optString(c.createdAt, `${path}.createdAt`),
   };
 }
 
@@ -247,10 +252,25 @@ export function summarizeChecks(
   checks: readonly CheckContext[],
   required: readonly string[],
 ): ChecksSummary {
-  const failing = checks.filter((c) => c.state === "fail").map((c) => c.name);
-  const pending = checks.filter((c) => c.state === "pending").map((c) => c.name);
-  const passed = new Set(checks.filter((c) => c.state === "pass").map((c) => c.name));
-  const reported = new Set(checks.map((c) => c.name));
+  const latest = new Map<string, CheckContext>();
+  for (const check of checks) {
+    const previous = latest.get(check.name);
+    const time = Date.parse(check.completedAt ?? check.startedAt ?? "");
+    const previousTime = Date.parse(previous?.completedAt ?? previous?.startedAt ?? "");
+    // Missing or tied timestamps fall back to the last entry in rollup order.
+    if (
+      !previous ||
+      !Number.isFinite(time) ||
+      !Number.isFinite(previousTime) ||
+      time >= previousTime
+    )
+      latest.set(check.name, check);
+  }
+  const current = [...latest.values()];
+  const failing = current.filter((c) => c.state === "fail").map((c) => c.name);
+  const pending = current.filter((c) => c.state === "pending").map((c) => c.name);
+  const passed = new Set(current.filter((c) => c.state === "pass").map((c) => c.name));
+  const reported = new Set(latest.keys());
   const missingRequired = required.filter((r) => !reported.has(r));
   let overall: ChecksSummary["overall"];
   if (failing.length > 0) overall = "fail";

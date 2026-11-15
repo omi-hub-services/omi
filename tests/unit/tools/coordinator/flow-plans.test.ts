@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseCheck } from "../../../../tools/coordinator/github-snapshot.ts";
 import {
   CLOSE_EVIDENCE_MARKER,
   COORDINATOR_LOGIN,
@@ -224,6 +225,43 @@ describe("planMerge", () => {
     ],
   };
   const required = ["check", "issue-link"];
+
+  // PR #328: duplicate pull_request runs 43678635991 / 43678637313 on one head.
+  const duplicateChecks = (newestConclusion: string, olderConclusion = "CANCELLED") =>
+    required.flatMap((name) =>
+      [
+        { conclusion: olderConclusion, completedAt: "2026-11-15T04:52:29Z" },
+        { conclusion: newestConclusion, completedAt: "2026-11-15T04:52:32Z" },
+      ].map((result) =>
+        parseCheck(
+          {
+            __typename: "CheckRun",
+            name,
+            status: "COMPLETED",
+            startedAt: "2026-11-15T04:52:00Z",
+            ...result,
+          },
+          "statusCheckRollup",
+        ),
+      ),
+    );
+
+  it("merges when newer successful required checks supersede cancelled duplicates on the head", () => {
+    const plan = planMerge({ ...green, checks: duplicateChecks("SUCCESS") }, HEAD, required);
+    expect(plan).toMatchObject({ kind: "run" });
+  });
+
+  it.each(["CANCELLED", "FAILURE"])(
+    "refuses when the newest required checks conclude %s",
+    (conclusion) => {
+      expect(
+        planMerge({ ...green, checks: duplicateChecks(conclusion, "SUCCESS") }, HEAD, required),
+      ).toEqual({
+        kind: "refuse",
+        reason: "PR #62 checks are not green (failing: check, issue-link)",
+      });
+    },
+  );
 
   it("merges with a merge commit pinned to the full reviewed head", () => {
     expect(argvs(planMerge(green, "b0ab3b3", required))).toEqual([
