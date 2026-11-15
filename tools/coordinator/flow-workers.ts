@@ -595,6 +595,22 @@ async function recordedSecurityReview(
   });
 }
 
+/**
+ * Merge base of the exact PR head and base tip read from GitHub (not a possibly stale local
+ * `origin/<base>`): where the regression evidence was recorded. Undefined when it cannot be
+ * established, so a bugfix PASS is refused instead of falling back to the moving tip.
+ */
+async function forkPointOf(
+  ctx: Pick<WorkerCtx, "run" | "target">,
+  input: ReviewCommentInput,
+): Promise<string | undefined> {
+  if (!input.baseSha) return undefined;
+  const git = wslGit(ctx.target);
+  await ctx.run(git(["fetch", "--quiet", "origin", input.prHead, input.baseSha]));
+  const base = await ctx.run(git(["merge-base", input.prHead, input.baseSha]));
+  return base.code === 0 ? base.stdout.trim() || undefined : undefined;
+}
+
 /** Validates the VERDICT/AC format against the PR and its Issue, then posts as the Coordinator. */
 export async function reviewCommentCommand(
   ctx: Pick<WorkerCtx, "run" | "target">,
@@ -614,11 +630,12 @@ export async function reviewCommentCommand(
       return refuse(label, error instanceof Error ? error.message : String(error));
     }
   }
+  const forkPoint = input.workflow === "bugfix" ? await forkPointOf(ctx, input) : undefined;
   const checked = checkReview(input.body, {
     acCount: countAcceptanceCriteria(input.issueBody),
     prHead: input.prHead,
     workflow: input.workflow,
-    baseSha: input.baseSha,
+    forkPoint,
     regressionEvidence: input.regressionEvidence,
     securityRisk,
   });
