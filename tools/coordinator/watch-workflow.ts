@@ -82,7 +82,7 @@ export function mapTemplatePos(w: Workflow, step: Step): TemplatePos {
     case "Rework":
       return { kind: "node", id: workStepId(w) };
     case "Verify/PR":
-      return byRole("qa");
+      return byRole(w.steps.some((s) => s.role === "qa") ? "qa" : "reviewer");
     case "Review":
     case "Architect":
       return byRole("reviewer");

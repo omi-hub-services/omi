@@ -48,8 +48,8 @@ describe("collector to snapshot: each running worker shows its own packet", () =
         await put(name, `# Native resume only\n## Skill: receiving-code-review\n`, 4000 - i * 10);
       }
       const newestResume = "omi-004-resume-implement-1-r17.md";
-      const verify = "omi-004-prompt-verify-1-bbb222.md";
-      await put(verify, packet("verify", "qa", "qa-verification"), 3000);
+      const review = "omi-004-prompt-review-1-bbb222.md";
+      await put(review, packet("review", "reviewer", "independent-review"), 3000);
       // a later full packet of ANOTHER round must never be merged into the resume
       await put(
         "omi-004-prompt-implement-2-ccc333.md",
@@ -78,7 +78,7 @@ describe("collector to snapshot: each running worker shows its own packet", () =
       await put(oldFull, packet("implement", "developer", "older-full"), 6000);
       const oldWorker = await spawnWorker(oldFull, "omi-004-test-20261113-070000.jsonl");
       const resumed = await spawnWorker(newestResume, "omi-004-test-20261113-100000.jsonl");
-      const older = await spawnWorker(verify, "omi-004-test-20261113-090000.jsonl");
+      const older = await spawnWorker(review, "omi-004-test-20261113-090000.jsonl");
       const unknown = await spawnWorker(null, "omi-004-test-20261113-080000.jsonl");
 
       process.env.HOME = root;
@@ -106,7 +106,7 @@ describe("collector to snapshot: each running worker shows its own packet", () =
       expect(workers.available && workers.processes.map((p) => p.packet)).toEqual([
         oldFull, // collected first
         newestResume,
-        verify,
+        review,
         null,
       ]);
 
@@ -159,7 +159,7 @@ describe("collector to snapshot: each running worker shows its own packet", () =
       // though a worker on an older full packet of that step and round was collected first
       expect(byPid(resumed)?.loaded?.skills).toEqual(["minimal-change", "receiving-code-review"]);
       expect(byPid(oldWorker)?.loaded?.skills).toEqual(["older-full"]);
-      expect(byStep("verify")?.loaded?.skills).toEqual(["qa-verification"]);
+      expect(byStep("review")?.loaded?.skills).toEqual(["independent-review"]);
       // a worker whose packet is unknown shows nothing, never another worker's skills or rules
       const none = snapshot.tasks.find((c) => c.who?.step === null);
       expect(none?.loaded).toBeNull();

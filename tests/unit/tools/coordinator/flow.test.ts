@@ -439,7 +439,7 @@ describe("release review command wiring", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  function context(workflow: string, state: string) {
+  function context(workflow: string, state: string, checkConclusion: string | null = "SUCCESS") {
     const { ctx, seen } = fakeContext();
     const run: Runner = (command) => {
       seen.push(command);
@@ -480,7 +480,7 @@ describe("release review command wiring", () => {
                           __typename: "CheckRun",
                           name: "check",
                           status: "COMPLETED",
-                          conclusion: "SUCCESS",
+                          conclusion: checkConclusion,
                         },
                       ],
                     },
@@ -514,6 +514,22 @@ describe("release review command wiring", () => {
     };
     return { ctx: { ...ctx, run }, seen };
   }
+
+  it.each(["FAILURE", "CANCELLED", "NEUTRAL", null])(
+    "refuses a passing review without a green head check (%s)",
+    async (conclusion) => {
+      const dir = mkdtempSync(join(tmpdir(), "omi-review-check-"));
+      try {
+        const file = join(dir, "review.md");
+        writeFileSync(file, review(false));
+        const { ctx, seen } = context("feature", "OPEN", conclusion);
+        expect(await main(["review-comment", "314", "--file", file], ctx)).toBe(1);
+        expect(seen.some((c) => c.args[0] === "pr" && c.args[1] === "comment")).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it.each([
     ["release", "OPEN", true, 0],

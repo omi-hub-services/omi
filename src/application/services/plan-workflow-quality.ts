@@ -16,40 +16,22 @@ export function planWorkflowQuality(
   facts: QualityPolicyInput,
 ): WorkflowQualityPlan {
   const decision = resolveQualityPolicy({ ...facts, qualityPolicy: workflow.quality_policy });
-  const verify = workflow.steps.find((s) => s.id === "verify");
-  const review = workflow.steps.find((s) => s.role === "reviewer");
-  const combine =
-    decision.combineVerifyReview &&
-    verify !== undefined &&
-    review !== undefined &&
-    review.needs.length === 1 &&
-    review.needs[0] === verify.id &&
-    !workflow.gates.some(
-      (g) => g.before === verify.id || g.after === verify.id || g.before === review.id,
-    ) &&
-    !workflow.steps.some((s) => s.id !== review.id && s.needs.includes(verify.id));
   const skipAnalyze =
     decision.skipAnalyze &&
     !workflow.gates.some((g) => g.before === "analyze" || g.after === "analyze");
   const analysisNeeds = workflow.steps.find((s) => s.id === "analyze")?.needs ?? [];
   const packets: Record<string, Workflow["steps"]> = {};
   const steps = workflow.steps
-    .filter((s) => !(skipAnalyze && s.id === "analyze") && !(combine && s.id === "verify"))
+    .filter((s) => !(skipAnalyze && s.id === "analyze"))
     .map((s) => {
-      const originals = combine && s.id === review.id ? [verify, s] : [s];
-      packets[s.id] = originals;
+      packets[s.id] = [s];
       return {
         ...s,
         needs: [
           ...new Set(
-            (combine && s.id === review.id ? verify.needs : s.needs).flatMap((n) =>
-              skipAnalyze && n === "analyze" ? analysisNeeds : [n],
-            ),
+            s.needs.flatMap((n) => (skipAnalyze && n === "analyze" ? analysisNeeds : [n])),
           ),
         ],
-        skills: [...new Set(originals.flatMap((o) => o.skills))],
-        rules: [...new Set(originals.flatMap((o) => o.rules))],
-        required_checks: [...new Set(originals.flatMap((o) => o.required_checks))],
       };
     });
   return {

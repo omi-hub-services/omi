@@ -1,7 +1,6 @@
-import { dispatchSkills } from "../../../domain/workflows/workflow-policy.js";
 import {
+  dispatchSkills,
   resolveWorkflowEffort,
-  resolveQualityPolicy,
   workflowRisks,
 } from "../../../domain/workflows/workflow-policy.js";
 import { stepQualitySchema, workflowSchema } from "../../contracts/workflow.js";
@@ -220,7 +219,13 @@ function buildPrompt(
     notes: [
       ...(packet.quality === undefined
         ? []
-        : [renderQualityInstructions(packet.quality, packet.reviewDelta !== undefined)]),
+        : [
+            renderQualityInstructions(
+              packet.quality,
+              packet.reviewDelta !== undefined,
+              workflowRisks(packet.allowedScope.paths),
+            ),
+          ]),
       ...checkLogs,
     ].join("\n"),
     task_context: [
@@ -303,18 +308,6 @@ export async function dispatchStep(
     effortRank(modelFloor) > effortRank(contextFloor) ? modelFloor : contextFloor,
     command.quality,
   );
-  if (
-    command.quality !== undefined &&
-    command.quality.steps.length > 1 &&
-    !resolveQualityPolicy({
-      qualityPolicy: command.quality.policy,
-      complexity: decision.complexity,
-      step: command.quality.step,
-      round: command.quality.round,
-      risks: { security: false, gates: false, data: false },
-    }).combineVerifyReview
-  )
-    return { ok: false, reason: "CONTEXT_REJECTED", detail: "RISK_REQUIRES_SEPARATE_WORKERS" };
   const verified = command.models.verified_models[command.context.capabilityProfile.id] ?? [];
   const modelSupported = Object.entries(command.models.models).some(
     ([alias, model]) =>
@@ -416,25 +409,9 @@ export async function dispatchStep(
       deps.workspaces.changedPaths !== undefined
     ) {
       const changed = deps.workspaces.changedPaths(created.value.path);
-      if (
-        !changed.ok ||
-        !resolveQualityPolicy({
-          qualityPolicy: command.quality.policy,
-          complexity: decision.complexity,
-          step: command.quality.step,
-          round: command.quality.round,
-          risks: workflowRisks(changed.value),
-        }).combineVerifyReview
-      ) {
+      if (!changed.ok) {
         release();
-        return {
-          ok: false,
-          reason: "CONTEXT_REJECTED",
-          detail:
-            !changed.ok && changed.error.code === "INTEGRATION_REF_DIVERGED"
-              ? "INTEGRATION_REF_DIVERGED"
-              : "RISK_REQUIRES_SEPARATE_WORKERS",
-        };
+        return { ok: false, reason: "CONTEXT_REJECTED", detail: changed.error.code };
       }
     }
     // The worktree exists and no writer runs yet, so this is the stable point to snapshot before

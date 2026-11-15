@@ -53,6 +53,7 @@ import {
   agentReviewOn,
   latestAgentReview,
   parsePull,
+  summarizeChecks,
   PULL_FIELDS,
   type Blocker,
 } from "./github-snapshot.ts";
@@ -839,6 +840,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
     options: {
       "dry-run": { type: "boolean", default: false },
       file: { type: "string" },
+      "regression-evidence": { type: "string" },
       head: { type: "string" },
       reviewed: { type: "string" },
       title: { type: "string" },
@@ -1080,6 +1082,19 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         pr: pr.number,
         prState: pr.state,
         prHead: pr.headRefOid,
+        baseSha: pr.baseRefOid,
+        regressionEvidence:
+          values["regression-evidence"] === undefined
+            ? undefined
+            : (JSON.parse(readFileSync(values["regression-evidence"], "utf8")) as unknown),
+        checkStatus: summarizeChecks(
+          pr.checks.map((check) =>
+            check.conclusion === "NEUTRAL" || check.conclusion === "SKIPPED"
+              ? { ...check, state: "fail" as const }
+              : check,
+          ),
+          await readRequiredChecks(ctx.run, pr.baseRefName),
+        ).overall,
         issueBody: issue.body,
         workflow: issue.readiness.workflow,
         body: readFileSync(required(values.file, "--file"), "utf8"),

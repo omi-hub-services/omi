@@ -7,6 +7,9 @@ const { parseAcReviewLines, reviewHeader } =
   await import("../../src/domain/delivery/acceptance-review.ts");
 const { linkedIssueNumber } = await import("../../src/domain/delivery/pull-issue-link.ts");
 
+const { validRegressionEvidence } =
+  await import("../../src/application/services/validate-review-evidence.ts");
+
 export type ReviewCheck =
   | { readonly ok: true; readonly verdict: "PASS" | "FAIL"; readonly head: string }
   | { readonly ok: false; readonly reasons: readonly string[] };
@@ -19,6 +22,8 @@ export function checkReview(
     readonly acCount: number;
     readonly prHead: string;
     readonly workflow?: string | null | undefined;
+    readonly baseSha?: string | null | undefined;
+    readonly regressionEvidence?: unknown;
   },
 ): ReviewCheck {
   const reasons: string[] = [];
@@ -57,6 +62,16 @@ export function checkReview(
   const notMet = [...seen].filter(([, v]) => v === "not met").map(([n]) => n);
   if (m?.[1] === "PASS" && notMet.length > 0) {
     reasons.push(`PASS needs every criterion met, but ${names(notMet)} is not met`);
+  }
+
+  if (
+    m?.[1] === "PASS" &&
+    ctx.workflow === "bugfix" &&
+    !validRegressionEvidence(ctx.regressionEvidence, ctx.baseSha ?? "", ctx.prHead)
+  ) {
+    reasons.push(
+      "bugfix needs script regression evidence red on the exact base and green on the exact head",
+    );
   }
 
   if (reasons.length > 0 || !m?.[1] || !m[2]) return { ok: false, reasons };

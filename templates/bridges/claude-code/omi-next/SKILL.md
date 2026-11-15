@@ -32,7 +32,13 @@ the PO; never bypass it with raw Git or GitHub commands. Workers must not load t
    `.omi/bin/omi commit-worker --attempt <id> --message-file <Linux-file>`.
    Commit only the pinned task scope; a commit alone does not validate the worker's old report.
    Follow the workflow's retry/recovery gate and get fresh check and review evidence at the new head.
-5. Dispatch the independent reviewer step on a fixed revision. Judge its findings; never
+5. For feature, refactor, bugfix and onboarding-empty-repo dispatch one fresh independent
+   review worker per quality round; its packet includes verification-before-completion and
+   evidence-and-tests. Script gates enforce green checks on the exact SHA, complete AC-n
+   lines and bugfix red/base–green/head regression evidence. Risk flags add review focus.
+   Keep separate QA for ui-ux visual verification, onboarding-takeover baseline-verify and
+   ci-cd pipeline output. Round 1 review uses medium effort; later delta reviews use low.
+   Dispatch the independent reviewer step on a fixed revision. Judge its findings; never
    approve your own change. Publish its report with
    `.omi/bin/omi review-comment --pr <N> --file <Linux-file>`.
    The file must contain exactly one header:

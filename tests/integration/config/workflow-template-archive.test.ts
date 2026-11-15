@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadWorkflowCatalog } from "../../../src/infrastructure/config/load-workflow-catalog.ts";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
-const original = readFileSync(resolve("templates/project/workflows/feature.yaml"), "utf8");
-const updated = `${original}\n# changed by an update\n`;
+const original = readFileSync(resolve("tests/fixtures/workflows/feature-with-qa.yaml"), "utf8");
+const updated = readFileSync(resolve("templates/project/workflows/feature.yaml"), "utf8");
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -36,6 +36,10 @@ describe("pinned workflow template archive", () => {
     expect(catalog.byHash(sha(original))?.hash).toBe(sha(original));
     expect(catalog.byHash(sha(updated))?.hash).toBe(sha(updated));
     expect(catalog.byId("feature")?.hash).toBe(sha(updated));
+    expect(catalog.byHash(sha(original))?.workflow.steps.map((step) => step.id)).toContain(
+      "verify",
+    );
+    expect(catalog.byId("feature")?.workflow.steps.map((step) => step.id)).not.toContain("verify");
   });
 
   it("loads the template of a run planned before the archive existed from an install backup", async () => {

@@ -144,9 +144,7 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
         round: quality.round,
         risks: { security: false, gates: false, data: false },
       });
-      if (quality.steps.length > 1 && !decision.combineVerifyReview) {
-        return refuse(label, "current policy/complexity requires separate verify/review packets");
-      }
+
       level = decision.effort === "low" || decision.effort === "medium" ? decision.effort : "high";
     } catch {
       return refuse(label, "invalid quality packet metadata");
@@ -543,6 +541,9 @@ export interface ReviewCommentInput {
   readonly pr: number;
   readonly prState: string;
   readonly prHead: string;
+  readonly checkStatus: "pass" | "fail" | "pending" | "none";
+  readonly baseSha?: string | null | undefined;
+  readonly regressionEvidence?: unknown;
   readonly issueBody: string;
   readonly workflow?: string | null;
   readonly body: string;
@@ -564,8 +565,12 @@ export async function reviewCommentCommand(
     acCount: countAcceptanceCriteria(input.issueBody),
     prHead: input.prHead,
     workflow: input.workflow,
+    baseSha: input.baseSha,
+    regressionEvidence: input.regressionEvidence,
   });
   if (!checked.ok) return refuse(label, checked.reasons.join("; "));
+  if (checked.verdict === "PASS" && input.checkStatus !== "pass")
+    return refuse(label, "required checks must be green on the exact reviewed PR head");
   const login = await coordinatorLoginRefusal(ctx);
   if (login !== null) return refuse(label, login);
   const post: Command = {

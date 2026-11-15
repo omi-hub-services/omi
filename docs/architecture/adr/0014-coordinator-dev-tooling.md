@@ -763,6 +763,11 @@ wrapper/binary pair to its root process; matching stdout JSONL paths also collap
 
 ## Workflow cost policy (OMI-093)
 
+Superseded for new quality plans by [ADR-0042: Workflow consolidation](0042-workflow-consolidation.md):
+one independent review worker per coding round, mechanical script gates and risk focus.
+The following records the historical grouping policy for archived runs.
+
+
 The authoritative decision is `resolveQualityPolicy` in `src/domain/workflows/workflow-policy.ts`.
 `task-default` and `lean` combine ordinary low/medium verify/review; `strict`, unknown policy ids,
 high complexity and security/gate/data risks keep them separate. `lean` does not weaken any gate.

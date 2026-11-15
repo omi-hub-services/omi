@@ -42,7 +42,13 @@ export function workflowRisks(
   };
 }
 
-/** Cost choices cannot turn off delivery requirements. Unknown policies fail closed. */
+export function workflowReviewFocus(risks: QualityPolicyInput["risks"]): readonly string[] {
+  return Object.entries(risks)
+    .filter(([, active]) => active)
+    .map(([risk]) => risk);
+}
+
+/** Risks focus independent review; they never add another worker or turn off a gate. */
 export function resolveQualityPolicy(input: QualityPolicyInput) {
   const qualityStep = input.step === "verify" || input.step === "review";
   const skipAnalyze = Boolean(
@@ -58,10 +64,7 @@ export function resolveQualityPolicy(input: QualityPolicyInput) {
         ? "low"
         : (input.developerEffort ?? input.complexity);
   return {
-    combineVerifyReview:
-      ["task-default", "lean"].includes(input.qualityPolicy) &&
-      input.complexity !== "high" &&
-      !Object.values(input.risks).some(Boolean),
+    reviewFocus: workflowReviewFocus(input.risks),
     skipAnalyze,
     scopeEvidence: skipAnalyze ? input.scope?.issueRef : undefined,
     effort,

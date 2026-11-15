@@ -58,26 +58,24 @@ function series(w: Wf, skipped: readonly string[] = []) {
 }
 
 describe("recovery after a failed quality step", () => {
-  it("feature: rework first, verify returns as round 2 only after the rework, then review, open-pr", async () => {
+  it("feature: rework first, review returns as round 2 only after the rework, then review, open-pr", async () => {
     const w = await workflow("feature");
     const s = series(w, ["analyze"]);
-    expect(s.post("implement", 1, "succeeded")).toBe("verify");
-    s.post("verify", 1, "failed");
+    expect(s.post("implement", 1, "succeeded")).toBe("review");
+    s.post("review", 1, "failed");
 
     const failed = s.printed();
     expect(failed).toContain("--step implement --round 2 --findings");
     expect(failed).toContain("--resume implement-1");
     expect(failed).not.toContain("pick-profile");
-    expect(failed).not.toContain("--step verify");
+    expect(failed).not.toContain("--step review");
     expect(failed).toContain("worker-report 323 --post");
 
-    expect(s.post("implement", 2, "succeeded")).toBe("verify");
+    expect(s.post("implement", 2, "succeeded")).toBe("review");
     const again = s.printed();
-    expect(again).toContain("--step verify --round 2");
+    expect(again).toContain("--step review --round 2");
 
-    expect(s.post("verify", 2, "succeeded")).toBe("review");
-    expect(s.printed()).toContain("--step review --round 1");
-    expect(s.post("review", 1, "succeeded")).toBe("open-pr");
+    expect(s.post("review", 2, "succeeded")).toBe("open-pr");
   });
 
   it("docs: write ok, verify ok, accept failed -> write rework -> verify round 2 -> accept round 2", async () => {
@@ -107,13 +105,13 @@ describe("recovery after a failed quality step", () => {
 });
 
 describe("skip sequence", () => {
-  it("with a scope-approved skip, implement ok leads to verify, never analyze", async () => {
+  it("with a scope-approved skip, implement ok leads to review, never analyze", async () => {
     const w = await workflow("feature");
     const s = series(w, ["analyze"]);
-    expect(s.post("implement", 1, "succeeded")).toBe("verify");
+    expect(s.post("implement", 1, "succeeded")).toBe("review");
     const text = s.printed();
     expect(text).not.toContain("--step analyze");
-    expect(text).toContain("--step verify --round 1");
+    expect(text).toContain("--step review --round 1");
     expect(text).toContain("--scope-approved <ref>");
   });
 

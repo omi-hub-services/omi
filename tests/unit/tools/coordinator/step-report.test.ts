@@ -161,12 +161,8 @@ describe("computeNext", () => {
     const w = await workflow("feature");
     expect(computeNext(w, [], { step: "analyze", status: "succeeded" })).toBe("implement");
     const impl = [marker({ step: "analyze", next: "implement" })];
-    expect(computeNext(w, impl, { step: "implement", status: "succeeded" })).toBe("verify");
-    const all = [
-      marker({ step: "analyze" }),
-      marker({ step: "implement" }),
-      marker({ step: "verify" }),
-    ];
+    expect(computeNext(w, impl, { step: "implement", status: "succeeded" })).toBe("review");
+    const all = [marker({ step: "analyze" }), marker({ step: "implement" })];
     expect(computeNext(w, all, { step: "review", status: "succeeded" })).toBe("open-pr");
   });
 
@@ -178,10 +174,10 @@ describe("computeNext", () => {
     ).toBe("accept");
   });
 
-  it("a combined verify,review packet satisfies both steps", async () => {
+  it("a merged review packet satisfies the quality step", async () => {
     const w = await workflow("feature");
     const prior = [marker({ step: "implement" })];
-    expect(computeNext(w, prior, { step: "verify,review", status: "succeeded" }, ["analyze"])).toBe(
+    expect(computeNext(w, prior, { step: "review", status: "succeeded" }, ["analyze"])).toBe(
       "open-pr",
     );
   });
@@ -189,7 +185,7 @@ describe("computeNext", () => {
   it("a step is skipped only through recorded scope evidence, never by inference", async () => {
     const w = await workflow("feature");
     expect(computeNext(w, [], { step: "implement", status: "succeeded" }, ["analyze"])).toBe(
-      "verify",
+      "review",
     );
     expect(computeNext(w, [], { step: "implement", status: "succeeded" })).toBe("analyze");
   });
@@ -303,7 +299,7 @@ describe("worker-report --post", () => {
     );
     expect(p?.input).toContain("Worker report — OMI-159 · step implement · round 1");
     expect(p?.input).toContain("session sess-1");
-    expect(p?.input).toContain("status=succeeded next=verify -->");
+    expect(p?.input).toContain("status=succeeded next=review -->");
   });
 
   it("posts nothing when the same step/round/session is already on the Issue", async () => {
@@ -355,9 +351,9 @@ describe("next", () => {
   };
 
   it("prints the next step and the exact pick-profile / prompt / dispatch commands", async () => {
-    expect(await run([marker()])).toBe(0);
-    expect(out()).toContain("pick-profile 323 --step verify --round 1");
-    expect(out()).toContain("prompt 323 --step verify --round 1");
+    expect(await run([marker({ next: "review" })])).toBe(0);
+    expect(out()).toContain("pick-profile 323 --step review --round 1");
+    expect(out()).toContain("prompt 323 --step review --round 1");
     expect(out()).toContain("dispatch 323 --profile");
   });
 
@@ -371,14 +367,14 @@ describe("next", () => {
   it("failed quality step: never resumes it; only the implementer rework is printed, not a chained re-dispatch", async () => {
     const ms = [
       marker({ step: "implement", session: "impl-sess", next: "verify" }),
-      marker({ step: "verify", session: "qa-sess", status: "failed", next: "verify" }),
+      marker({ step: "review", session: "review-sess", status: "failed", next: "review" }),
     ];
     expect(await run(ms)).toBe(0);
     const text = out();
-    expect(text).not.toContain("--resume qa-sess");
+    expect(text).not.toContain("--resume review-sess");
     expect(text).toContain("--step implement --round 2 --findings");
     expect(text).toContain("--resume impl-sess");
-    expect(text).not.toContain("--step verify");
+    expect(text).not.toContain("--step review");
     expect(text).not.toMatch(/dispatch 323 --profile <p>/);
   });
 

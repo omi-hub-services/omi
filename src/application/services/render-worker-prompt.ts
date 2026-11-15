@@ -1,3 +1,7 @@
+import {
+  workflowReviewFocus,
+  type QualityPolicyInput,
+} from "../../domain/workflows/workflow-policy.js";
 import { workerPromptAssets } from "./worker-prompt-assets.js";
 import type { z } from "zod";
 import type { stepQualitySchema } from "../contracts/workflow.js";
@@ -6,6 +10,7 @@ import type { stepQualitySchema } from "../contracts/workflow.js";
 export function renderQualityInstructions(
   quality: z.infer<typeof stepQualitySchema>,
   deltaReview: boolean = quality.round > 1,
+  risks?: QualityPolicyInput["risks"],
 ): string {
   const qualityWorker = quality.step === "verify" || quality.step === "review";
   return [
@@ -13,6 +18,11 @@ export function renderQualityInstructions(
     ...(qualityWorker
       ? [
           workerPromptAssets.qualityWorker,
+          ...(quality.step === "review" &&
+          risks !== undefined &&
+          workflowReviewFocus(risks).length > 0
+            ? [`Review focus: ${workflowReviewFocus(risks).join(", ")}`]
+            : []),
           ...(deltaReview ? [workerPromptAssets.qualityDelta] : []),
         ]
       : []),

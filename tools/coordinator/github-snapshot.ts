@@ -46,7 +46,7 @@ const ITEM_FIELDS = `
 
 /** What `parsePull` reads; shared by the snapshot and the flow script's merge read. */
 export const PULL_FIELDS = `
-  number title isDraft headRefName headRefOid baseRefName body reviewDecision mergeStateStatus
+  number title isDraft headRefName headRefOid baseRefOid baseRefName body reviewDecision mergeStateStatus
   comments(last: 50) { nodes { author { login } body } }
   commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes {
     __typename
@@ -95,6 +95,7 @@ export interface ProjectItem {
 }
 
 export interface CheckContext {
+  readonly conclusion?: string | null;
   readonly name: string;
   readonly state: CheckState;
   readonly completedAt?: string | null;
@@ -107,6 +108,7 @@ export interface OpenPull {
   readonly isDraft: boolean;
   readonly headRefName: string;
   readonly headRefOid: string;
+  readonly baseRefOid?: string | null;
   readonly baseRefName: string;
   readonly body: string;
   readonly reviewDecision: string | null;
@@ -167,6 +169,7 @@ export function parseCheck(raw: unknown, path: string): CheckContext {
   if (c.__typename === "CheckRun") {
     return {
       name: asString(c.name, `${path}.name`),
+      conclusion: optString(c.conclusion, `${path}.conclusion`),
       state: checkRunState(asString(c.status, `${path}.status`), optString(c.conclusion, "c")),
       completedAt: optString(c.completedAt, `${path}.completedAt`),
       startedAt: optString(c.startedAt, `${path}.startedAt`),
@@ -191,6 +194,7 @@ export function parsePull(raw: unknown, path: string): OpenPull {
     isDraft: asBoolean(p.isDraft, `${path}.isDraft`),
     headRefName: asString(p.headRefName, `${path}.headRefName`),
     headRefOid: asString(p.headRefOid, `${path}.headRefOid`),
+    baseRefOid: optString(p.baseRefOid, `${path}.baseRefOid`),
     baseRefName: asString(p.baseRefName, `${path}.baseRefName`),
     body: asString(p.body, `${path}.body`),
     reviewDecision: optString(p.reviewDecision, `${path}.reviewDecision`),
