@@ -97,14 +97,16 @@ import { formatPick, pickProfile, readQuota, WORKER_KINDS, type WorkerKind } fro
 import {
   commitWorkerCommand,
   dispatchCommand,
+  nextCommand,
   reviewCommentCommand,
   workerReportCommand,
 } from "./flow-workers.ts";
 import { linkedIssue } from "./review-verdict.ts";
 import { promptCommand } from "./flow-prompt.ts";
+import { loadTemplate } from "./watch-workflow.ts";
 import "../register-ts-imports.ts";
 const { nativeReviewsSchema } = await import("../../src/application/contracts/merge-delivery.ts");
-const { resolveQualityPolicy, workflowOptionIssues } =
+const { resolveQualityPolicy, resolveWorkflowRoute, workflowOptionIssues } =
   await import("../../src/domain/workflows/workflow-policy.ts");
 
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
@@ -127,11 +129,15 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
                                               worker profile by quota (--probe: 1 Haiku call/profile)
   prompt <issue> --step <id> [--worktree <dir>] [--branch <b>] [--notes <f> | --findings <f>] [--out <f>]
                                               render the workflow step packet; --dry-run previews without writing
-  dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] --prompt <file>
+  dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] [--scope-approved <ref>] --prompt <file>
                                               WSL: unchanged prompt to ~/omi-runs, then the worker
-                                              in the foreground (model/effort from the effort policy)
-  worker-report <issue> [--step <step-round>] final report, turns, permission denials, session/thread id
-                                              (--step verify-1: that step's newest log among parallel workers)
+                                              in the foreground (model/effort from the effort policy;
+                                              --scope-approved records analyze as skipped for the step reports)
+  worker-report <issue> [--step <step-round>] [--post]
+                                              final report, turns, permission denials, session/thread id
+                                              (--step verify-1: that step's newest log among parallel workers;
+                                              --post: signed step report comment on the Issue, from dispatch metadata)
+  next <issue>                                read-only: next step and exact commands from the newest step report
   commit-worker <branch> --message-file <f>   WSL: stage source, tooling and managed root files, commit, print SHA
   review-comment <pr> --file <f>              check VERDICT/REVIEWED_HEAD/AC-n lines, post as the Coordinator`;
 
@@ -152,7 +158,7 @@ query($owner: String!, $repo: String!, $number: Int!, $project: Int!) {
     # ponytail: 100 is GitHub's page ceiling; more blockers stay blockersTruncated and refuse.
     blockedBy(first: 100) { totalCount nodes { number state } }
     labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
-    comments(last: 100) { nodes { body } }
+    comments(last: 100) { nodes { author { login } body } }
     timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 30) { nodes {
       ... on CrossReferencedEvent { source { ... on PullRequest {
         number merged mergedAt baseRefName headRefOid body repository { nameWithOwner }
@@ -180,6 +186,7 @@ interface IssueContext {
   readonly blockers: readonly Blocker[];
   readonly blockersTruncated: boolean;
   readonly comments: readonly string[];
+  readonly authored: readonly AuthoredComment[];
   readonly pulls: readonly ReferencingPull[];
 }
 
@@ -287,6 +294,7 @@ async function readIssue(ctx: Context, number: number): Promise<IssueContext> {
       ? asNumber(blockedBy.totalCount, "blockedBy.totalCount") > blockers.length
       : false,
     comments: commentBodies(issue, "issue"),
+    authored: authoredComments(issue, "issue"),
     pulls: referencingPulls(issue),
   };
 }
@@ -817,6 +825,13 @@ export async function syncCommand(
   return (await execute(ctx, `${label} (comment)`, post, false)) ? 0 : 1;
 }
 
+/** The step template of a worker-dispatched Workflow; null for delivery routes or no template. */
+async function stepWorkflow(name: string | null) {
+  const route = resolveWorkflowRoute(name ?? "");
+  const template = await loadTemplate(route.id);
+  return route.kind === "delivery" || !template.ok ? null : template.workflow;
+}
+
 export async function main(argv: readonly string[], context?: Context): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...argv],
@@ -847,6 +862,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       resume: { type: "string" },
       kind: { type: "string", default: "claude" },
       probe: { type: "boolean", default: false },
+      post: { type: "boolean", default: false },
       model: { type: "string" },
       json: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
@@ -1013,16 +1029,38 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         profile: required(values.profile, "--profile"),
         resume: values.resume ?? null,
         prompt: readFileSync(required(values.prompt, "--prompt"), "utf8"),
+        scopeApproved: values["scope-approved"] ?? null,
         dryRun: dry,
       });
     }
     case "worker-report": {
-      const issue = await readIssue(ctx, issueNumber(a));
+      const n = issueNumber(a);
+      const issue = await readIssue(ctx, n);
+      let post;
+      if (values.post) {
+        const workflow = await stepWorkflow(issue.readiness.workflow);
+        if (workflow === null) {
+          console.error(`${label}: refused: no workflow template to compute the next step`);
+          return 1;
+        }
+        post = { number: n, comments: issue.authored, workflow };
+      }
       return workerReportCommand(ctx, {
         planKey: issue.planKey,
         dryRun: dry,
         step: values.step ?? null,
+        ...(post === undefined ? {} : { post }),
       });
+    }
+    case "next": {
+      const n = issueNumber(a);
+      const issue = await readIssue(ctx, n);
+      const workflow = await stepWorkflow(issue.readiness.workflow);
+      if (workflow === null) {
+        console.error(`${label}: refused: no workflow template to read the step roles`);
+        return 1;
+      }
+      return nextCommand({ number: n, comments: issue.authored, workflow });
     }
     case "commit-worker":
       return commitWorkerCommand(ctx, {

@@ -153,7 +153,7 @@ fast-forwards develop in the main checkout and deletes the merged branch (OMI-06
 Use the Issue's Workflow template's actual step IDs, not aliases. For feature this is
 analyze (analyst), implement (developer), verify (QA), review (reviewer); docs uses write/accept,
 bugfix also uses reproduce. Run all applicable steps and preserve their dependencies and gates.
-When the approved Issue already has measurable AC and an implementation map, supply the recorded scope decision with `prompt --scope-approved <decision-ref>`; the packet records the Issue as scope evidence. Otherwise start analyze as a fresh worker and pass its report forward as task data in notes. Business-rule or cost changes go to the PO.
+When the approved Issue already has measurable AC and an implementation map, supply the recorded scope decision with `prompt --scope-approved <decision-ref>`; the packet records the Issue as scope evidence. Pass the same `--scope-approved <decision-ref>` to the first `dispatch` too: it records `analyze` as skipped in the dispatch metadata (never read from packet text), the signed step report carries that skip to later steps, and `next` repeats the flag in the prompt commands it prints. Otherwise start analyze as a fresh worker and pass its report forward as task data in notes. Business-rule or cost changes go to the PO.
 
 The LLM writes only task-specific notes or review findings. Generate every fresh worker's full
 packet with the script, using the same configured worker checkout for prompt and dispatch:
@@ -163,8 +163,22 @@ node "$coordinatorPin/tools/coordinator/flow.ts" prompt N --step <actual-step-id
 node "$coordinatorPin/tools/coordinator/flow.ts" prompt N --step <actual-step-id> --notes <notes.md> --out <prompt.md>
 node "$coordinatorPin/tools/coordinator/flow.ts" pick-profile N [--kind codex|claude+codex-live] --probe
 node "$coordinatorPin/tools/coordinator/flow.ts" dispatch N --profile <p> --kind claude|codex --prompt <prompt.md>
-node "$coordinatorPin/tools/coordinator/flow.ts" worker-report N
+node "$coordinatorPin/tools/coordinator/flow.ts" worker-report N --post
+node "$coordinatorPin/tools/coordinator/flow.ts" next N
 ```
+
+**Report → next → dispatch loop (OMI-159).** After every worker run `worker-report N --post`
+(add `--step <step-round>` among parallel workers): it posts one signed Issue comment (header
+`Worker report — OMI-NNN · step <id> · round <n>`, the Worker line, status and head, summary,
+findings, Next, and a hidden `omi-squad:step-report` marker). The signature comes from the
+metadata `dispatch` recorded, never from the worker's own claims; the body passes the credential
+guard and is capped, and re-posting the same step/round/session posts nothing. The script computes
+the next step from the workflow `needs`, the markers already on the Issue and the status:
+succeeded → the next step(s), or `open-pr` when none remain; failed → resume the same step with
+the findings; blocked → Waiting PO (post `**WAITING-PO:** <reason>`). The worker's `nextAction` is
+only a suggestion. Then run `flow.ts next N` (read-only: reads the newest marker and prints the
+step and the exact `pick-profile` / `prompt` / `dispatch` commands) and run what it prints.
+Script steps (check, PR, merge, close) keep their own comments.
 
 Optional prompt --worktree/--branch overrides identify the worker checkout/branch; defaults are
 OMI_WSL_REPO_DIR and that checkout's current branch. Configure dispatch to that same checkout

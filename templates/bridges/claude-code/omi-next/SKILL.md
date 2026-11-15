@@ -23,7 +23,11 @@ the PO; never bypass it with raw Git or GitHub commands. Workers must not load t
    selects profile/model/effort; do not re-derive it or change native configuration.
 4. `.omi/bin/omi wait --run <id> --timeout 300`, then
    `.omi/bin/omi worker-report --attempt <attempt-id>`. Read verification failures as
-   well as the worker's claim. Use `status --run` to follow ready steps and bounded rework.
+   well as the worker's claim. After every worker run the loop worker-report, then
+   `status --run <id>`, then dispatch the step it reports ready: the runtime records the step
+   result in run state and derives the next step from the workflow `needs` (succeeded → next
+   step, failed → bounded rework of the same step, blocked → PO decision), so the worker's
+   `nextAction` is only a suggestion. Use `status --run` to follow ready steps and bounded rework.
    For a stopped worker that could not commit, use
    `.omi/bin/omi commit-worker --attempt <id> --message-file <Linux-file>`.
    Commit only the pinned task scope; a commit alone does not validate the worker's old report.
