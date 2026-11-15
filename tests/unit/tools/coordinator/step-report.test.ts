@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { COORDINATOR_LOGIN } from "../../../../tools/coordinator/coordinator-settings.ts";
 import { nextCommand, workerReportCommand } from "../../../../tools/coordinator/flow-workers.ts";
+import { architectGate } from "../../../../tools/coordinator/flow-architect.ts";
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
 import { loadTemplate } from "../../../../tools/coordinator/watch-workflow.ts";
 import {
@@ -255,7 +256,12 @@ const claudeLog = (summary: string) =>
   ].join("\n");
 
 function rig(
-  over: { summary?: string; comments?: { author: string | null; body: string }[] } = {},
+  over: {
+    summary?: string;
+    comments?: { author: string | null; body: string }[];
+    meta?: Partial<DispatchMeta>;
+    log?: string;
+  } = {},
 ) {
   const seen: Command[] = [];
   const run: Runner = (c) => {
@@ -263,8 +269,9 @@ function rig(
     const last = c.args.at(-1) ?? "";
     let stdout = "";
     if (c.file === "gh" && c.args[0] === "api") stdout = `${COORDINATOR_LOGIN}\n`;
-    else if (last.startsWith("ls -t")) stdout = `/home/u/omi-runs/${LOG_NAME}\n`;
-    else if (last.includes("-meta-")) stdout = JSON.stringify({ ...meta, skipped: ["analyze"] });
+    else if (last.startsWith("ls -t")) stdout = `/home/u/omi-runs/${over.log ?? LOG_NAME}\n`;
+    else if (last.includes("-meta-"))
+      stdout = JSON.stringify({ ...meta, skipped: ["analyze"], ...over.meta });
     else if (last.startsWith("cat ")) stdout = claudeLog(over.summary ?? "Did the work.");
     return Promise.resolve({ code: 0, stdout, stderr: "" });
   };
@@ -307,6 +314,54 @@ describe("worker-report --post", () => {
     };
     expect(await post(r, [prior])).toBe(0);
     expect(posts(r.seen)).toHaveLength(0);
+  });
+
+  it("a native resume with a new round of the same step and session posts as that round", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const prior = {
+      author: COORDINATOR_LOGIN,
+      body: stepMarker(marker({ session: "sess-1", next: "review" })),
+    };
+    const r = rig({ meta: { round: 2 } });
+    expect(await post(r, [prior])).toBe(0);
+    expect(posts(r.seen)[0]?.input).toContain("round=2 session=sess-1");
+  });
+
+  describe("Architect pseudo-step (OMI-173)", () => {
+    const ARCH_LOG = "omi-159-minibox-20261115-111111-architect-1-a1b2c3d4e5.jsonl";
+    const archMeta = { step: "architect", round: 1, packet: "architect-1-a1b2c3d4e5" };
+    const implComment = {
+      author: COORDINATOR_LOGIN,
+      body: `**Worker:** codex / prof-a · gpt-5 · high · session impl-sess\n\n${stepMarker(marker({ session: "impl-sess", next: "review" }))}`,
+    };
+
+    it("posts a signed report whose Next resumes the work step with the Architect decision", async () => {
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const r = rig({ meta: archMeta, log: ARCH_LOG });
+      expect(await post(r, [implComment])).toBe(0);
+      const [p] = posts(r.seen);
+      expect(p?.input).toContain("step architect · round 1");
+      expect(p?.input).toContain("resume implement with --architect-decision");
+      expect(p?.input).toContain("status=succeeded next=implement -->");
+    });
+
+    it("blocked Architect run waits for the PO", () => {
+      const w = { steps: [{ id: "implement", needs: [], role: "developer" }] };
+      expect(computeNext(w, [marker()], { step: "architect", status: "blocked" })).toBe(
+        "waiting-po",
+      );
+    });
+
+    it("the posted marker makes the Architect gate refuse a second packet for the same round", async () => {
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const r = rig({ meta: archMeta, log: ARCH_LOG });
+      await post(r, [implComment]);
+      const posted = { author: COORDINATOR_LOGIN, body: posts(r.seen)[0]?.input ?? "" };
+      const fail = { author: COORDINATOR_LOGIN, body: "**VERDICT:** FAIL" };
+      const gate = architectGate([fail, fail], [implComment, posted], 1);
+      expect(gate.refusal).toMatch(/already exists for round 1/);
+      expect(architectGate([fail, fail], [implComment], 1).refusal).toBeNull();
+    });
   });
 
   it("refuses a summary with a credential-like value before posting", async () => {
@@ -388,6 +443,21 @@ describe("next", () => {
     expect(await run(ms, "docs")).toBe(0);
     expect(out()).toContain("--step write --round 2 --findings");
     expect(out()).not.toContain("--resume sess-1");
+  });
+
+  it("architect succeeded: the work step resumes natively with findings and the Architect decision", async () => {
+    const ms = [
+      marker({ step: "implement", session: "impl-sess", next: "review" }),
+      marker({ step: "review", session: "rev-sess", status: "failed", next: "review" }),
+      marker({ step: "architect", session: "arch-sess", next: "implement" }),
+    ];
+    expect(await run(ms)).toBe(0);
+    const text = out();
+    expect(text).toContain(
+      "--step implement --round 2 --findings <findings.md> --architect-decision <decision.md>",
+    );
+    expect(text).toContain("--resume impl-sess");
+    expect(text).not.toContain("--resume arch-sess");
   });
 
   it("blocked: Waiting PO, no dispatch command", async () => {
