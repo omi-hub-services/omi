@@ -22,14 +22,14 @@ async function sandbox(fixture: "empty-repo" | "existing-repo") {
   const root = await mkdtemp(join(tmpdir(), "omi-onboard-"));
   temps.push(root);
   await cp(join(fixtures, fixture), root, { recursive: true });
-  await mkdir(join(root, ".omi-squad", "config"), { recursive: true });
+  await mkdir(join(root, ".omi", "config"), { recursive: true });
   const deps = {
     // Onboarding never touches GitHub; any call is a bug.
     github: {
       inspect: () => Promise.reject(new Error("unexpected GitHub call")),
       owner: () => Promise.reject(new Error("unexpected GitHub call")),
     },
-    config: await createProjectConfigStore(join(root, ".omi-squad", "config")),
+    config: await createProjectConfigStore(join(root, ".omi", "config")),
     onboarding: {
       codebase: await createCodebaseReader(root),
       files: await createOnboardingFileStore(root),
@@ -81,12 +81,12 @@ describe("onboarding a new or existing project", () => {
     expect(result).toMatchObject({ status: "preview" });
     if (result.kind !== "codebase") throw new Error("Expected codebase");
     expect(result.files).toEqual([
-      { path: ".omi-squad/config/project.yaml", action: "would-create" },
-      { path: ".omi-squad/workflows/onboarding-takeover.yaml", action: "would-create" },
-      { path: ".omi-squad/config/codebase.yaml", action: "would-create" },
-      { path: ".omi-squad/config/onboarding-plan.md", action: "would-create" },
+      { path: ".omi/config/project.yaml", action: "would-create" },
+      { path: ".omi/workflows/onboarding-takeover.yaml", action: "would-create" },
+      { path: ".omi/config/codebase.yaml", action: "would-create" },
+      { path: ".omi/config/onboarding-plan.md", action: "would-create" },
       ...(await deps.onboarding.templates.runtimeFiles())
-        .filter((file) => file.path !== ".omi-squad/workflows/onboarding-takeover.yaml")
+        .filter((file) => file.path !== ".omi/workflows/onboarding-takeover.yaml")
         .map((file) => ({ path: file.path, action: "would-create" })),
     ]);
     expect(await tree(root)).toEqual(before);
@@ -99,10 +99,10 @@ describe("onboarding a new or existing project", () => {
     expect(await tree(fresh.root)).toEqual(
       [
         ...new Set([
-          ".omi-squad/config/codebase.yaml",
-          ".omi-squad/config/onboarding-plan.md",
-          ".omi-squad/config/project.yaml",
-          ".omi-squad/workflows/onboarding-empty-repo.yaml",
+          ".omi/config/codebase.yaml",
+          ".omi/config/onboarding-plan.md",
+          ".omi/config/project.yaml",
+          ".omi/workflows/onboarding-empty-repo.yaml",
           "README.md",
           ...(await fresh.deps.onboarding.templates.runtimeFiles()).map((file) => file.path),
         ]),
@@ -111,20 +111,20 @@ describe("onboarding a new or existing project", () => {
 
     const taken = await sandbox("existing-repo");
     await initializeProject(taken.deps, request("existing", true));
-    const codebase = await readFile(join(taken.root, ".omi-squad/config/codebase.yaml"), "utf8");
+    const codebase = await readFile(join(taken.root, ".omi/config/codebase.yaml"), "utf8");
     expect(codebase).toContain('package_manager: "pnpm"');
     expect(codebase).toContain('test: "pnpm run test"');
-    const plan = await readFile(join(taken.root, ".omi-squad/config/onboarding-plan.md"), "utf8");
+    const plan = await readFile(join(taken.root, ".omi/config/onboarding-plan.md"), "utf8");
     expect(plan).toContain("Run `pnpm run test` once");
-    expect(await tree(taken.root)).toContain(".omi-squad/workflows/onboarding-takeover.yaml");
+    expect(await tree(taken.root)).toContain(".omi/workflows/onboarding-takeover.yaml");
   });
 
   it("keeps every existing file byte for byte and reports it as kept", async () => {
     const { root, deps } = await sandbox("existing-repo");
-    const workflow = join(root, ".omi-squad", "workflows", "onboarding-takeover.yaml");
-    await mkdir(join(root, ".omi-squad", "workflows"), { recursive: true });
+    const workflow = join(root, ".omi", "workflows", "onboarding-takeover.yaml");
+    await mkdir(join(root, ".omi", "workflows"), { recursive: true });
     await writeFile(workflow, "# hand-edited by the team\n");
-    await writeFile(join(root, ".omi-squad/config/codebase.yaml"), "language: custom\n");
+    await writeFile(join(root, ".omi/config/codebase.yaml"), "language: custom\n");
     const readme = await readFile(join(root, "README.md"), "utf8");
 
     const result = await initializeProject(deps, request("existing", true));
@@ -133,13 +133,13 @@ describe("onboarding a new or existing project", () => {
       ...Object.fromEntries(
         (await deps.onboarding.templates.runtimeFiles()).map((file) => [file.path, "created"]),
       ),
-      ".omi-squad/config/project.yaml": "created",
-      ".omi-squad/workflows/onboarding-takeover.yaml": "kept",
-      ".omi-squad/config/codebase.yaml": "kept",
-      ".omi-squad/config/onboarding-plan.md": "created",
+      ".omi/config/project.yaml": "created",
+      ".omi/workflows/onboarding-takeover.yaml": "kept",
+      ".omi/config/codebase.yaml": "kept",
+      ".omi/config/onboarding-plan.md": "created",
     });
     expect(await readFile(workflow, "utf8")).toBe("# hand-edited by the team\n");
-    expect(await readFile(join(root, ".omi-squad/config/codebase.yaml"), "utf8")).toBe(
+    expect(await readFile(join(root, ".omi/config/codebase.yaml"), "utf8")).toBe(
       "language: custom\n",
     );
     expect(await readFile(join(root, "README.md"), "utf8")).toBe(readme);
@@ -154,22 +154,22 @@ describe("onboarding a new or existing project", () => {
     const { root, deps } = await sandbox("empty-repo");
     const outside = await mkdtemp(join(tmpdir(), "omi-outside-"));
     temps.push(outside);
-    await symlink(outside, join(root, ".omi-squad", "workflows"));
+    await symlink(outside, join(root, ".omi", "workflows"));
     await expect(initializeProject(deps, request("new", true))).rejects.toMatchObject({
       code: "INVALID_ONBOARDING_PATH",
     });
     expect(await readdir(outside)).toEqual([]);
 
     const second = await sandbox("empty-repo");
-    await mkdir(join(second.root, ".omi-squad", "workflows"));
+    await mkdir(join(second.root, ".omi", "workflows"));
     await symlink(
       join(outside, "stolen.yaml"),
-      join(second.root, ".omi-squad/workflows/onboarding-empty-repo.yaml"),
+      join(second.root, ".omi/workflows/onboarding-empty-repo.yaml"),
     );
     const result = await initializeProject(second.deps, request("new", true));
     if (result.kind !== "codebase") throw new Error("Expected codebase");
     expect(result.files).toContainEqual({
-      path: ".omi-squad/workflows/onboarding-empty-repo.yaml",
+      path: ".omi/workflows/onboarding-empty-repo.yaml",
       action: "kept",
     });
     expect(await readdir(outside)).toEqual([]);

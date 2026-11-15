@@ -98,7 +98,7 @@ export const deployConfigSchema = z.strictObject({
 });
 export type DeployConfig = z.infer<typeof deployConfigSchema>;
 
-/** `.omi-squad/config/project.yaml`: repo, Project, branches, limits, policies. No secrets. */
+/** `.omi/config/project.yaml`: repo, Project, branches, limits, policies. No secrets. */
 export const projectConfigSchema = z
   .strictObject({
     schema_version: schemaVersionV1,

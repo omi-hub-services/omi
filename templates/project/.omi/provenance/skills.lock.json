@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "description": "Provenance of the curated skills in .omi-squad/skills. Each skill's id, version and sha256 can be copied into a context packet skillsManifest entry. A skill's sha256 is the SHA-256 of the lines '<path> <file sha256>\\n' for its files, in the listed order, where each file sha256 is of the file's bytes.",
+  "description": "Provenance of the curated skills in .omi/skills. Each skill's id, version and sha256 can be copied into a context packet skillsManifest entry. A skill's sha256 is the SHA-256 of the lines '<path> <file sha256>\\n' for its files, in the listed order, where each file sha256 is of the file's bytes.",
   "noticeFile": {
     "path": "skills/NOTICE.md",
     "sha256": "c97e093f78145f7b6da882591458d6e94419ca04e39b3d46c9d16381a992f38b"

@@ -35,7 +35,7 @@ const modelDeclarationSchema = z.strictObject({
 export type ModelDeclaration = z.infer<typeof modelDeclarationSchema>;
 
 /**
- * `.omi-squad/config/models.yaml`: model aliases, the efforts each supports, the capability
+ * `.omi/config/models.yaml`: model aliases, the efforts each supports, the capability
  * profiles steps refer to, and which aliases are verified for each profile. No credentials:
  * unknown fields are rejected.
  *

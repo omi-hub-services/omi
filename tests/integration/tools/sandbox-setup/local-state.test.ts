@@ -67,13 +67,13 @@ describe("sandbox local state", () => {
     const layout = runtimeLayout(stateDir);
     const original = readFileSync(layout.configFile, "utf8") + "# operator comment\n";
     writeFileSync(layout.configFile, original);
-    rmSync(join(stateDir, ".omi-squad/config/models.yaml"), { force: true });
+    rmSync(join(stateDir, ".omi/config/models.yaml"), { force: true });
     const before = readFileSync(layout.database);
     expect((await inspectLocalState({ ...base, stateDir })).missing).toContain(
-      ".omi-squad/config/models.yaml",
+      ".omi/config/models.yaml",
     );
     expect(readFileSync(layout.database)).toEqual(before);
-    expect(existsSync(join(stateDir, ".omi-squad/config/models.yaml"))).toBe(false);
+    expect(existsSync(join(stateDir, ".omi/config/models.yaml"))).toBe(false);
     await prepareLocalState({ ...base, stateDir });
     expect(readFileSync(layout.configFile, "utf8")).toBe(original);
     expect((await prepareLocalState({ ...base, stateDir })).changed).toEqual([]);
@@ -96,7 +96,7 @@ describe("sandbox local state", () => {
     ]);
     const reopened = openReadOnlyStateDatabase(layout.database);
     try {
-      const config = await loadRuntimeConfig(join(stateDir, ".omi-squad"));
+      const config = await loadRuntimeConfig(join(stateDir, ".omi"));
       expect(reopened.prepare("SELECT config_hash FROM projects").get()).toEqual({
         config_hash: runtimeConfigHash(config),
       });
@@ -170,9 +170,9 @@ describe("sandbox local state", () => {
         "state.db",
         "project row",
         "deploy-config.json",
-        ".omi-squad/config/models.yaml",
-        ".omi-squad/roles/developer.yaml",
-        ".omi-squad/provenance/skills.lock.json",
+        ".omi/config/models.yaml",
+        ".omi/roles/developer.yaml",
+        ".omi/provenance/skills.lock.json",
       ]),
     );
     expect(existsSync(stateDir)).toBe(false);
@@ -226,7 +226,7 @@ describe("sandbox local state", () => {
   it("writes only the runtime layout, nothing at the top level of the directory", async () => {
     const stateDir = tempState();
     await prepareLocalState({ ...base, stateDir });
-    expect(readdirSync(stateDir)).toEqual([".omi-squad"]);
+    expect(readdirSync(stateDir)).toEqual([".omi"]);
     const layout = runtimeLayout(stateDir);
     expect(existsSync(layout.configFile)).toBe(true);
     expect(existsSync(layout.database)).toBe(true);
@@ -240,7 +240,7 @@ describe("sandbox local state", () => {
     renameSync(layout.configFile, join(stateDir, "project.yaml"));
     renameSync(layout.database, join(stateDir, "state.db"));
     renameSync(layout.artifactsRoot, join(stateDir, "artifacts"));
-    rmSync(join(stateDir, ".omi-squad"), { recursive: true });
+    rmSync(join(stateDir, ".omi"), { recursive: true });
   };
 
   it("lists the legacy move on inspect, writes nothing, then moves it on prepare", async () => {
@@ -248,17 +248,17 @@ describe("sandbox local state", () => {
     await makeLegacy(stateDir);
     const { missing } = await inspectLocalState({ ...base, stateDir });
     expect(missing).toEqual([
-      "move project.yaml to .omi-squad/config/project.yaml",
-      "move state.db to .omi-squad/local/state/state.sqlite",
-      "move artifacts to .omi-squad/local/runs",
+      "move project.yaml to .omi/config/project.yaml",
+      "move state.db to .omi/local/state/state.sqlite",
+      "move artifacts to .omi/local/runs",
     ]);
     expect(existsSync(join(stateDir, "state.db"))).toBe(true);
-    expect(existsSync(join(stateDir, ".omi-squad"))).toBe(false);
+    expect(existsSync(join(stateDir, ".omi"))).toBe(false);
 
     const { changed } = await prepareLocalState({ ...base, stateDir });
     expect(changed.slice(0, missing.length)).toEqual(missing);
-    expect(changed).toContain(".omi-squad/config/models.yaml");
-    expect(readdirSync(stateDir)).toEqual([".omi-squad"]);
+    expect(changed).toContain(".omi/config/models.yaml");
+    expect(readdirSync(stateDir)).toEqual([".omi"]);
     expect((await inspectLocalState({ ...base, stateDir })).missing).toEqual([]);
     const db = openReadOnlyStateDatabase(runtimeLayout(stateDir).database);
     try {

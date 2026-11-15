@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import type { installProjectTool } from "../../../application/use-cases/project/install-project-tool.js";
 import type { inspectInstallation } from "../../../application/use-cases/project/inspect-installation.js";
+import type { migrateProjectDirectory } from "../../../application/use-cases/project/migrate-project-directory.js";
 import {
   presentFailure,
   presentSuccess,
@@ -11,6 +12,7 @@ import { EXIT_CODES } from "../presenters/exit-codes.js";
 import { formatOf, type CliContext, type GlobalOptions } from "./command-context.js";
 
 export interface InstallationCommands {
+  migrateDirectory?(input: unknown): ReturnType<typeof migrateProjectDirectory>;
   initialize?(input: {
     projectDir: string;
     configFile: string;
@@ -25,6 +27,32 @@ export function registerInstallationCommands(
   context: CliContext,
   actions?: InstallationCommands,
 ): void {
+  program
+    .command("migrate-dir")
+    .description("Move the legacy installation with git mv, then rewrite managed paths")
+    .requiredOption("--project <path>", "absolute Linux project path")
+    .action(async (_options: unknown, command: Command) => {
+      const options = command.optsWithGlobals<GlobalOptions & { project: string }>();
+      const format = formatOf(options);
+      try {
+        if (actions?.migrateDirectory === undefined) throw new Error("MIGRATION_NOT_WIRED");
+        const result = await actions.migrateDirectory({ projectDir: options.project });
+        context.emit(
+          presentSuccess(result, `Migrated to ${result.directory}; run omi update`, format),
+        );
+      } catch (error) {
+        context.emit(
+          presentFailure(
+            {
+              code: "INTERNAL_ERROR",
+              message: error instanceof Error ? error.message : "MIGRATION_FAILED",
+            },
+            format,
+            EXIT_CODES.FAILURE,
+          ),
+        );
+      }
+    });
   program
     .command("init")
     .description("Preview local project onboarding from an explicit JSON config baseline")

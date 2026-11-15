@@ -15,7 +15,7 @@ worker_dirs=__OMI_WORKER_DIRS__
 PATH="${worker_dirs:+$worker_dirs:}$(dirname -- "$node")${PATH:+:$PATH}"
 export PATH
 # Internal modes use the same pinned interpreter. They accept exactly these argv and run nothing else.
-runtime="$root/.omi-squad/tool/node_modules/omi-squad/dist/bootstrap/runtime.js"
+runtime="$root/.omi/tool/node_modules/omi-squad/dist/bootstrap/runtime.js"
 case "${1-}" in
   --omi-worker-version)
     if [ "$#" -ne 2 ]; then
@@ -39,4 +39,4 @@ case "${1-}" in
     exec "$node" "$runtime" "$root"
     ;;
 esac
-exec "$node" "$root/.omi-squad/tool/node_modules/omi-squad/dist/bootstrap/cli.js" "$@"
+exec "$node" "$root/.omi/tool/node_modules/omi-squad/dist/bootstrap/cli.js" "$@"

@@ -18,7 +18,7 @@ afterEach(async () => {
 async function defaultConfig() {
   const squad = await mkdtemp(join(tmpdir(), "omi-default-models-"));
   temps.push(squad);
-  await cp(resolve("templates/project/.omi-squad"), squad, { recursive: true });
+  await cp(resolve("templates/project/.omi"), squad, { recursive: true });
   await cp(resolve("templates/project/workflows"), join(squad, "workflows"), { recursive: true });
   await writeFile(join(squad, "config/project.yaml"), stringify(baseline));
   return loadRuntimeConfig(squad);

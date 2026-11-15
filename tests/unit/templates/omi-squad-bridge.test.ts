@@ -23,7 +23,7 @@ const AT = "2026-11-11T00:00:00.000Z";
 const config: BridgeConfig = {
   distribution: "Ubuntu-24.04",
   repository: "/home/dev/my project/it's",
-  shim: "/home/dev/my project/.omi-squad/bin/omi",
+  shim: "/home/dev/my project/.omi/bin/omi",
 };
 
 /** Values chosen to break naive quoting or a shell: spaces, quotes, backslashes, expansions. */
@@ -136,11 +136,11 @@ describe("quoting survives the Windows command line for every parameter the brid
     const statusConfig: BridgeConfig = {
       distribution: "Ubuntu-24.04",
       repository: "/home/dev/project",
-      shim: "/home/dev/project/.omi-squad/bin/omi",
+      shim: "/home/dev/project/.omi/bin/omi",
     };
     const args = buildWslArgs(statusConfig, buildCliArgv({ command: "status" }).args);
     expect(quoteWindowsCommandLine(args)).toBe(
-      "-d Ubuntu-24.04 --cd /home/dev/project --exec /home/dev/project/.omi-squad/bin/omi --json status",
+      "-d Ubuntu-24.04 --cd /home/dev/project --exec /home/dev/project/.omi/bin/omi --json status",
     );
   });
 

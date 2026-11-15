@@ -74,7 +74,7 @@ const qualityPacket = (step: string) =>
   `<!-- omi-quality {"policy":"task-default","step":"${step}","steps":["${step}"],"round":2} -->\n# Workflow feature · step ${step} · role qa\n`;
 
 const skillRunner = (c: Command) => {
-  const m = /cat templates\/project\/\.omi-squad\/skills\/([a-z-]+)\/SKILL\.md/.exec(payload(c));
+  const m = /cat templates\/project\/\.omi\/skills\/([a-z-]+)\/SKILL\.md/.exec(payload(c));
   return m ? { stdout: `BODY(${m[1] ?? ""})\n` } : undefined;
 };
 

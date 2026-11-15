@@ -31,7 +31,7 @@ afterEach(async () => {
 it("routes decisions through production runtime composition and authenticates exact GitHub evidence", async () => {
   dir = mkdtempSync(join(tmpdir(), "omi-runtime-approval-"));
   const project = join(dir, "project");
-  const squad = join(project, ".omi-squad");
+  const squad = join(project, ".omi");
   for (const path of ["config", "roles", "rules", "workflows", "provenance"])
     mkdirSync(join(squad, path), { recursive: true });
   expect(spawnSync("git", ["init", "--initial-branch=develop"], { cwd: project }).status).toBe(0);

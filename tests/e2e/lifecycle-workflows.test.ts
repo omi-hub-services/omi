@@ -27,7 +27,7 @@ import {
 } from "../unit/application/use-cases/runs/run-fakes.ts";
 
 const directory = resolve(import.meta.dirname, "../../templates/project/workflows");
-const squadDir = resolve(directory, "../.omi-squad");
+const squadDir = resolve(directory, "../.omi");
 const catalog = loadResolutionCatalog(squadDir);
 const skills = createFileSkillSource(squadDir);
 const rules = createFileRuleSource(squadDir);

@@ -31,7 +31,7 @@ const templates = join(root, "templates", "project");
 const workflow = workflowSchema.parse(
   parse(readFileSync(join(templates, "workflows", "idea-to-issues.yaml"), "utf8")),
 );
-const catalog = loadResolutionCatalog(join(templates, ".omi-squad"));
+const catalog = loadResolutionCatalog(join(templates, ".omi"));
 
 const H1 = "a".repeat(64);
 const H2 = "b".repeat(64);
@@ -174,10 +174,7 @@ describe("idea → requirements → Issues workflow", () => {
   it("AC3: the decompose step is told to group by deliverable, never one Issue per step", () => {
     const rule = catalog.rules.find((candidate) => candidate.id === "issue-decomposition");
     expect(rule).toMatchObject({ version: "1", mandatory: false });
-    const text = readFileSync(
-      join(templates, ".omi-squad", "rules", "issue-decomposition.md"),
-      "utf8",
-    );
+    const text = readFileSync(join(templates, ".omi", "rules", "issue-decomposition.md"), "utf8");
     expect(text).toMatch(/Never create an Issue for a workflow step/);
     expect(text).toMatch(/blocked by/);
     for (const id of ["decompose", "review"]) {

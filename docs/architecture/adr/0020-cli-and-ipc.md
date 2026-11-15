@@ -126,3 +126,5 @@ PO-approved decisions for OMI-070 (#142):
 
 `COMMAND_REFUSED` is an additive error code; protocol version 1 is retained without a bump.
 Setting `closed_at` when a run succeeds or is cancelled is accepted.
+
+> Status note (2026-11-15, OMI-153): the project install directory is now `.omi/`; historical decision text above is unchanged.

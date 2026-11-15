@@ -113,7 +113,7 @@ describe("live-prep", () => {
   it("loads runtime catalogs and opens the prepared runtime state without GitHub", async () => {
     const { stateDir, deps, flags } = await setup();
     await runLivePrep(deps, flags);
-    const config = await loadRuntimeConfig(join(stateDir, ".omi-squad"));
+    const config = await loadRuntimeConfig(join(stateDir, ".omi"));
     expect(config.workflows.byId("feature")).toBeDefined();
     expect(query(stateDir, "SELECT config_hash FROM projects")).toEqual([
       { config_hash: runtimeConfigHash(config) },
@@ -324,9 +324,9 @@ describe("live-prep", () => {
     renameSync(layout.configFile, join(stateDir, "project.yaml"));
     renameSync(layout.database, join(stateDir, "state.db"));
     renameSync(layout.artifactsRoot, join(stateDir, "artifacts"));
-    rmSync(join(stateDir, ".omi-squad"), { recursive: true });
+    rmSync(join(stateDir, ".omi"), { recursive: true });
     await expect(runLivePrep(deps, flags)).rejects.toThrow(
-      /local state incomplete \(move project\.yaml .*move state\.db to \.omi-squad\/local\/state\/state\.sqlite/,
+      /local state incomplete \(move project\.yaml .*move state\.db to \.omi\/local\/state\/state\.sqlite/,
     );
     expect(existsSync(join(stateDir, "state.db"))).toBe(true);
   });

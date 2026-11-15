@@ -60,8 +60,8 @@ function fake(
     const path = missing.endsWith(".md")
       ? `templates/prompts/${missing}`
       : missing === "minimal-change"
-        ? `templates/project/.omi-squad/skills/${missing}`
-        : `templates/project/.omi-squad/rules/${missing}.md`;
+        ? `templates/project/.omi/skills/${missing}`
+        : `templates/project/.omi/rules/${missing}.md`;
     rmSync(join(dir, path), { recursive: true, force: true });
   }
   const reply = (c: Command) => {
@@ -234,10 +234,10 @@ it.each(["analyze", "implement", "verify", "review"])(
     expect(text).toContain(`role ${selected?.role ?? ""}`);
     for (const skill of selected?.skills ?? [])
       expect(text).toContain(
-        readFileSync(`templates/project/.omi-squad/skills/${skill}/SKILL.md`, "utf8"),
+        readFileSync(`templates/project/.omi/skills/${skill}/SKILL.md`, "utf8"),
       );
     for (const rule of selected?.rules ?? [])
-      expect(text).toContain(readFileSync(`templates/project/.omi-squad/rules/${rule}.md`, "utf8"));
+      expect(text).toContain(readFileSync(`templates/project/.omi/rules/${rule}.md`, "utf8"));
     expect((text.match(/## Skill:/g) ?? []).length).toBe(selected?.skills.length);
     expect(text).not.toMatch(/^## Rule:.*\(mandatory\)/m);
     expect(f.seen.filter((c) => c.file === "gh")).toHaveLength(2);
@@ -252,10 +252,10 @@ it.each([{ options: [] }, { options: ["--dry-run"] }])(
     const text = output.join("\n");
     expect(text).toContain("Workflow release · step review · role reviewer");
     expect(text).toContain(
-      readFileSync("templates/project/.omi-squad/skills/independent-review/SKILL.md", "utf8"),
+      readFileSync("templates/project/.omi/skills/independent-review/SKILL.md", "utf8"),
     );
     for (const rule of ["project-baseline", "approval-gates", "evidence-and-tests"])
-      expect(text).toContain(readFileSync(`templates/project/.omi-squad/rules/${rule}.md`, "utf8"));
+      expect(text).toContain(readFileSync(`templates/project/.omi/rules/${rule}.md`, "utf8"));
     expect(text).toContain("## Report contract");
     expect(text).toContain("review-result-v1");
     expect(text).toContain('"stepId":"review"');
@@ -384,13 +384,10 @@ it("renders a policy-approved combined packet with verbatim contents of both ste
   expect(text).toContain("verify + review");
   expect(text).toContain("role reviewer");
   expect(text).toContain(
-    readFileSync(
-      "templates/project/.omi-squad/skills/verification-before-completion/SKILL.md",
-      "utf8",
-    ),
+    readFileSync("templates/project/.omi/skills/verification-before-completion/SKILL.md", "utf8"),
   );
   expect(text).toContain(
-    readFileSync("templates/project/.omi-squad/skills/independent-review/SKILL.md", "utf8"),
+    readFileSync("templates/project/.omi/skills/independent-review/SKILL.md", "utf8"),
   );
   expect(text).toContain("QA judges the supplied script-run check evidence; do not rerun tests.");
   expect(text).toContain("omi-quality");
@@ -459,7 +456,7 @@ it.each([
 });
 
 it("runtime dispatch and --findings packet carry the same skills for every work step", async () => {
-  const squad = resolve("templates/project/.omi-squad");
+  const squad = resolve("templates/project/.omi");
   const catalog = loadResolutionCatalog(squad);
   const skills = createFileSkillSource(squad);
   const rules = createFileRuleSource(squad);

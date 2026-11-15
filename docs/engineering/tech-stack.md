@@ -30,7 +30,7 @@ Phiên bản 1.0 · 10/11/2026. Đọc cùng `architecture.md`. Dependency thự
 | Quality | ESLint, typescript-eslint, Prettier | Lint/type/format nhất quán |
 | Architecture guard | dependency-cruiser + script allowlist | Kiểm tra import direction, cycle, vị trí file |
 | CI | GitHub Actions | Check PR, tests, schema drift, package smoke test |
-| Artifact distribution | npm package/tarball có version | Cài riêng trong `.omi-squad/tool/` |
+| Artifact distribution | npm package/tarball có version | Cài riêng trong `.omi/tool/` |
 
 Baseline thực tế là Node 24.22.2 theo `.nvmrc` và `package.json`; các dòng khác cần compatibility test trước khi đổi pin.
 
@@ -155,9 +155,9 @@ Vitest chọn Node environment; test cần OS process chạy integration, không
 
 ## 11. Cài đặt và phân phối
 
-Build artifact chỉ chứa `dist/`, `templates/`, `schemas/`, `migrations/` và metadata/license cần thiết. `npm pack` phải loại toàn bộ `.omi-squad/local`, auth, fixtures nhạy cảm, coverage và source temp.
+Build artifact chỉ chứa `dist/`, `templates/`, `schemas/`, `migrations/` và metadata/license cần thiết. `npm pack` phải loại toàn bộ `.omi/local`, auth, fixtures nhạy cảm, coverage và source temp.
 
-Project đích cài package version cố định trong `.omi-squad/tool/`. Shim `.omi-squad/bin/omi` resolve đường dẫn theo vị trí file, không theo cwd tùy ý. `omi init` preview mặc định, ghi bằng `--apply` (không có flag `--dry-run`), không ghi đè file người dùng ngoài phần managed marker. Update là ba chiều giữa bản mẫu cũ, tùy chỉnh project và bản mẫu mới; conflict được báo để xử lý.
+Project đích cài package version cố định trong `.omi/tool/`. Shim `.omi/bin/omi` resolve đường dẫn theo vị trí file, không theo cwd tùy ý. `omi init` preview mặc định, ghi bằng `--apply` (không có flag `--dry-run`), không ghi đè file người dùng ngoài phần managed marker. Update là ba chiều giữa bản mẫu cũ, tùy chỉnh project và bản mẫu mới; conflict được báo để xử lý.
 
 Framework có thể được cài từ tarball local trước khi có npm registry. Chưa cần publish public để nghiệm thu. Không thay đổi package manager hoặc lockfile của ứng dụng đích.
 

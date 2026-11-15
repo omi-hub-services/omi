@@ -40,14 +40,14 @@ it("installs Coordinator skills through the managed bridge and preserves edits o
     const text = await readFile(path, "utf8").catch(() => "MISSING");
     expect(text).toContain(`name: ${id}`);
     expect(text).not.toContain("tools/coordinator");
-    expect(text).toContain(".omi-squad/bin/omi");
+    expect(text).toContain(".omi/bin/omi");
     await writeFile(path, `${text}\nUser edits\n`);
     expect((await installProjectTool(store, input)).status).toBe("installed");
     expect(await readFile(path, "utf8")).toBe(`${text}\nUser edits\n`);
   }
-  const lock = await readFile(join(projectDir, ".omi-squad/provenance/skills.lock.json"), "utf8");
+  const lock = await readFile(join(projectDir, ".omi/provenance/skills.lock.json"), "utf8");
   expect(lock).not.toMatch(/omi-(?:status|next|watch)/);
-  const squad = join(projectDir, ".omi-squad");
+  const squad = join(projectDir, ".omi");
   const catalog = loadResolutionCatalog(squad);
   for (const role of catalog.roles) {
     const context = resolveRoleContext(catalog, { role: role.definition.id });

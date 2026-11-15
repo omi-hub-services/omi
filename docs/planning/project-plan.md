@@ -274,7 +274,7 @@ issues:
     workflow: feature
 ```
 
-Đây là ví dụ hai entries, không phải manifest đủ 56 Issues. Importer cần dry-run/apply/resume và mapping state local ở `.omi-squad/local/`; có journal và idempotency. Tên công cụ/importer chỉ được thêm vào CLI/tooling theo architecture, không tạo script ngẫu nhiên ở root.
+Đây là ví dụ hai entries, không phải manifest đủ 56 Issues. Importer cần dry-run/apply/resume và mapping state local ở `.omi/local/`; có journal và idempotency. Tên công cụ/importer chỉ được thêm vào CLI/tooling theo architecture, không tạo script ngẫu nhiên ở root.
 
 ## 10. Ma trận nghiệm thu v0.1
 

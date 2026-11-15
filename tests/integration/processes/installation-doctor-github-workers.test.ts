@@ -94,7 +94,7 @@ describe("doctor session runtime launch", () => {
         "--cd",
         request.projectDir,
         "--exec",
-        `${request.projectDir}/.omi-squad/bin/omi`,
+        `${request.projectDir}/.omi/bin/omi`,
         "--omi-worker-version",
         cli,
       ]),

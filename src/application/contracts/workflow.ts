@@ -30,7 +30,7 @@ const workflowGateSchema = z
   });
 
 /**
- * Workflow template (`.omi-squad/workflows/*.yaml`). Unique step ids and step references are
+ * Workflow template (`.omi/workflows/*.yaml`). Unique step ids and step references are
  * checked here; acyclicity is a workflow-domain rule and is not part of this contract.
  */
 export const workflowSchema = z
