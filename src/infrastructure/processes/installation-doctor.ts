@@ -31,6 +31,8 @@ export interface WslProbe {
     args: readonly string[],
     cwd: string,
     env?: Readonly<Record<string, string>>,
+    /** Append stderr to the result: some CLIs (codex login status) print their status there. */
+    includeStderr?: boolean,
   ): Promise<string | undefined>;
   settings(projectDir: string): Promise<OmiSetting | undefined>;
   canonical(path: string): Promise<string>;
@@ -88,7 +90,7 @@ export async function detectInterop(io: InteropIo): Promise<boolean> {
   return false;
 }
 
-const systemProbe: WslProbe = {
+export const systemProbe: WslProbe = {
   settings: loadOmiSetting,
   kernel: () => readFile("/proc/sys/kernel/osrelease", "utf8"),
   distro: () => process.env["WSL_DISTRO_NAME"],
@@ -99,7 +101,7 @@ const systemProbe: WslProbe = {
       readdir: (path) => readdir(path),
       readFile: (path) => readFile(path, "utf8"),
     }),
-  command: async (executable, args, cwd, env) => {
+  command: async (executable, args, cwd, env, includeStderr) => {
     const result = await runCommand({
       executable,
       args,
@@ -107,7 +109,8 @@ const systemProbe: WslProbe = {
       env: { ...buildCodexEnvironment(process.env, homedir()), ...env },
       timeoutMs: 10_000,
     });
-    return result.kind === "finished" && result.exit.exitCode === 0 ? result.stdout : undefined;
+    if (result.kind !== "finished" || result.exit.exitCode !== 0) return undefined;
+    return includeStderr === true ? `${result.stdout}\n${result.exit.stderr}` : result.stdout;
   },
   canonical: realpath,
   projectConfig: async (projectDir) => {
@@ -156,8 +159,10 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
       cwd: string,
       env?: Record<string, string>,
       profileId?: string,
+      includeStderr?: boolean,
     ) => {
-      if (dockerBinding === undefined) return probe.command(executable, args, cwd, env);
+      if (dockerBinding === undefined)
+        return probe.command(executable, args, cwd, env, includeStderr);
       const forwarded = Object.fromEntries(
         Object.entries(env ?? {}).filter(([key]) =>
           ["GH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CODEX_HOME"].includes(key),
@@ -184,6 +189,7 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
         ],
         cwd,
         forwarded,
+        includeStderr,
       );
     };
     let reachable = false;
@@ -439,6 +445,7 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
             input.projectDir,
             buildCodexEnvironment(process.env, codexProfileHome(profile.id)),
             profile.id,
+            true,
           );
           check(
             `profiles[${String(index)}].auth`,
