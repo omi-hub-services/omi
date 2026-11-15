@@ -13,6 +13,7 @@ Each version contains a `### Breaking` section; an empty section declares no bre
 - OMI-147: `close` accepts a release PR into `main`.
 - OMI-148: pin refresh removes its previous checkout backup.
 - OMI-149: Coordinator bridge reached no WSL CLI; `wsl.exe` argument quoting fixed.
+- OMI-152: flow prompt renders the release PR review packet.
 
 ### Breaking
 
