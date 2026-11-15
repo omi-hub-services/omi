@@ -259,6 +259,15 @@ export async function managePin(input: PinInput, run: Runner = createProcessRunn
       await rm(tempRecord, { force: true });
     }
     stage = undefined;
+    if (backup !== undefined) {
+      try {
+        await rm(backup, { recursive: true, force: true });
+      } catch (error) {
+        console.warn(
+          `pin: warning: could not remove backup ${backup}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     return { checkout, record: next, initialized: true };
   } finally {
     if (stage !== undefined) await rm(stage, { recursive: true, force: true });
