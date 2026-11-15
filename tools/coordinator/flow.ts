@@ -96,13 +96,15 @@ import { formatPick, pickProfile, readQuota, WORKER_KINDS, type WorkerKind } fro
 import {
   commitWorkerCommand,
   dispatchCommand,
+  nextCommand,
   reviewCommentCommand,
   workerReportCommand,
 } from "./flow-workers.ts";
 import { linkedIssue } from "./review-verdict.ts";
 import { promptCommand } from "./flow-prompt.ts";
+import { loadTemplate } from "./watch-workflow.ts";
 import "../register-ts-imports.ts";
-const { resolveQualityPolicy, workflowOptionIssues } =
+const { resolveQualityPolicy, resolveWorkflowRoute, workflowOptionIssues } =
   await import("../../src/domain/workflows/workflow-policy.ts");
 
 const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
@@ -128,8 +130,11 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   dispatch <issue> --profile <p> [--kind claude|codex] [--resume <id>] --prompt <file>
                                               WSL: unchanged prompt to ~/omi-runs, then the worker
                                               in the foreground (model/effort from the effort policy)
-  worker-report <issue> [--step <step-round>] final report, turns, permission denials, session/thread id
-                                              (--step verify-1: that step's newest log among parallel workers)
+  worker-report <issue> [--step <step-round>] [--post]
+                                              final report, turns, permission denials, session/thread id
+                                              (--step verify-1: that step's newest log among parallel workers;
+                                              --post: signed step report comment on the Issue, from dispatch metadata)
+  next <issue>                                read-only: next step and exact commands from the newest step report
   commit-worker <branch> --message-file <f>   WSL: stage source, tooling and managed root files, commit, print SHA
   review-comment <pr> --file <f>              check VERDICT/REVIEWED_HEAD/AC-n lines, post as the Coordinator`;
 
@@ -150,7 +155,7 @@ query($owner: String!, $repo: String!, $number: Int!, $project: Int!) {
     # ponytail: 100 is GitHub's page ceiling; more blockers stay blockersTruncated and refuse.
     blockedBy(first: 100) { totalCount nodes { number state } }
     labels(first: 100) { nodes { name } pageInfo { hasNextPage } }
-    comments(last: 100) { nodes { body } }
+    comments(last: 100) { nodes { author { login } body } }
     timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 30) { nodes {
       ... on CrossReferencedEvent { source { ... on PullRequest {
         number merged mergedAt baseRefName headRefOid body repository { nameWithOwner }
@@ -178,6 +183,7 @@ interface IssueContext {
   readonly blockers: readonly Blocker[];
   readonly blockersTruncated: boolean;
   readonly comments: readonly string[];
+  readonly authored: readonly AuthoredComment[];
   readonly pulls: readonly ReferencingPull[];
 }
 
@@ -285,6 +291,7 @@ async function readIssue(ctx: Context, number: number): Promise<IssueContext> {
       ? asNumber(blockedBy.totalCount, "blockedBy.totalCount") > blockers.length
       : false,
     comments: commentBodies(issue, "issue"),
+    authored: authoredComments(issue, "issue"),
     pulls: referencingPulls(issue),
   };
 }
@@ -810,6 +817,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       resume: { type: "string" },
       kind: { type: "string", default: "claude" },
       probe: { type: "boolean", default: false },
+      post: { type: "boolean", default: false },
       model: { type: "string" },
       json: { type: "boolean", default: false },
       help: { type: "boolean", default: false },
@@ -976,13 +984,30 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       });
     }
     case "worker-report": {
-      const issue = await readIssue(ctx, issueNumber(a));
+      const n = issueNumber(a);
+      const issue = await readIssue(ctx, n);
+      let post;
+      if (values.post) {
+        const route = resolveWorkflowRoute(issue.readiness.workflow ?? "");
+        const template = await loadTemplate(route.id);
+        if (route.kind === "delivery" || !template.ok) {
+          console.error(`${label}: refused: no workflow template to compute the next step`);
+          return 1;
+        }
+        post = { number: n, comments: issue.authored, workflow: template.workflow };
+      }
       return workerReportCommand(ctx, {
         planKey: issue.planKey,
         dryRun: dry,
         step: values.step ?? null,
+        ...(post === undefined ? {} : { post }),
       });
     }
+    case "next":
+      return nextCommand({
+        number: issueNumber(a),
+        comments: (await readIssue(ctx, issueNumber(a))).authored,
+      });
     case "commit-worker":
       return commitWorkerCommand(ctx, {
         branch: taskBranch(a),
