@@ -8,7 +8,7 @@ import type {
 } from "../../application/ports/run-recovery.js";
 import type { SupervisedProcess } from "./supervised-process.js";
 
-function startIdentity(pid: number): string | undefined {
+export function startIdentity(pid: number): string | undefined {
   try {
     const stat = fs.readFileSync(`/proc/${String(pid)}/stat`, "utf8");
     const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
@@ -20,7 +20,7 @@ function startIdentity(pid: number): string | undefined {
   }
 }
 
-function groupGone(pid: number): boolean {
+export function groupGone(pid: number): boolean {
   try {
     process.kill(-pid, 0);
     return false;

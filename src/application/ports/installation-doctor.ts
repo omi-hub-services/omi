@@ -1,7 +1,7 @@
 export interface InstallationDoctorCheck {
   name: string;
   ok: boolean;
-  status: "pass" | "fail";
+  status: "pass" | "fail" | "warn";
   detail: string;
   /** What the operator should do when the check fails (also given for a pass: how to re-check). */
   fix: string;

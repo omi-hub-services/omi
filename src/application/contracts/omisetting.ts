@@ -88,28 +88,33 @@ export const omisettingSchema = z.strictObject({
     .strictObject({
       container: z
         .string()
-        .min(1)
+        .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/)
         .optional()
-        .describe(
-          "Optional future Docker container name; defaults to omi-<repo> when the Docker runtime lands.",
-        ),
+        .describe("Docker container name; defaults to omi-<repo>."),
       image: z
         .string()
-        .min(1)
+        .regex(/^omi-worker:[a-zA-Z0-9][a-zA-Z0-9_.-]*$/)
         .optional()
-        .describe(
-          "Optional future locally built image tag; defaults to omi-worker:<framework-version>.",
-        ),
+        .describe("Locally built image tag; defaults to omi-worker:<framework-version>."),
       memory: z
         .string()
         .regex(/^\d+[bkmg]$/i)
         .optional()
-        .describe(
-          "Optional future Docker memory limit, e.g. 8g; defaults to 8g. Docker runtime is a separate feature.",
-        ),
+        .describe("Docker memory limit, e.g. 8g; defaults to 8g."),
+      memoryWarningPercent: z
+        .number()
+        .positive()
+        .max(100)
+        .optional()
+        .describe("Doctor memory warning threshold, percent; default 80."),
+      workVolumeWarningGb: z
+        .number()
+        .positive()
+        .optional()
+        .describe("Doctor work volume warning threshold in GB; default 20."),
     })
     .optional()
-    .describe("Reserved Docker configuration; does not start or configure Docker in this release."),
+    .describe("Enables the project Docker runtime; omit to retain the existing WSL binding."),
 });
 export type OmiSetting = z.infer<typeof omisettingSchema>;
 export interface WorkerCredentials {

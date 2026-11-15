@@ -7,7 +7,7 @@ import {
   PO_LOGIN,
   CLOSE_EVIDENCE_MARKER,
   REPO_SLUG,
-  type WslTarget,
+  type CoordinatorTarget,
 } from "./coordinator-settings.ts";
 import { wrongHeadCarry, type CarryJudgement } from "./carried-pass.ts";
 import { issueReadinessReasons, type IssueReadiness } from "./issue-readiness.ts";
@@ -47,14 +47,25 @@ export type Plan =
  * Consecutive WSL steps become one `bash -lc` payload (one wsl.exe call, `&&`-chained, each
  * argument quoted); host steps stay plain argv. `hostCwd` applies to host git steps.
  */
-export function toCommands(steps: readonly Step[], target: WslTarget, hostCwd: string): Command[] {
+export function toCommands(
+  steps: readonly Step[],
+  target: CoordinatorTarget,
+  hostCwd: string,
+): Command[] {
   const out: Command[] = [];
   let group: Step[] = [];
   const flush = () => {
     if (group.length === 0) return;
     const prefix = group.some((s) => s.needsNode) ? `${WSL_NODE_ENV} ` : "";
     const long = group.some((s) => s.needsNode) ? 900_000 : undefined;
-    out.push(wslCommand(prefix + joinSteps(group.map((s) => s.argv)), target, long));
+    const argv = group.map((s) => {
+      const args = [...s.argv];
+      const worktree = args.indexOf("worktree");
+      if (target.kind === "docker" && worktree >= 0 && args[worktree + 1] === "remove")
+        args.splice(worktree + 2, 0, "--force");
+      return args;
+    });
+    out.push(wslCommand(prefix + joinSteps(argv), target, long));
     group = [];
   };
   for (const step of steps) {

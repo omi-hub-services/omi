@@ -5,6 +5,11 @@ import { installCoordinatorSkills } from "./skill-installation.ts";
 
 export const COPY_PARITY = [
   {
+    repo: "templates/bridges/omi.cjs",
+    framework: "src/application/contracts/omisetting.ts",
+    test: "tests/unit/templates/docker-launcher.test.ts",
+  },
+  {
     repo: "tools/coordinator/pin-policy.ts",
     framework: "templates/prompts/coordinator-pin-guard.cjs",
     test: "tests/integration/tools/coordinator/pin-bootstrap.test.ts",

@@ -1,3 +1,4 @@
+import { dockerProject } from "./docker-runtime.js";
 import { loadOmiSetting } from "../config/load-omisetting.js";
 import type { OmiSetting } from "../../application/contracts/omisetting.js";
 import { buildClaudeCodeEnvironment } from "../executors/claude-code/claude-code-environment.js";
@@ -18,8 +19,8 @@ import { runCommand } from "./run-command.js";
 import { classifyWorkerCli } from "./worker-cli-compatibility.js";
 
 export const doctorInputSchema = z.strictObject({
-  projectDir: wslPathSchema,
-  distribution: sessionLaunchSchema.shape.distribution.unwrap(),
+  projectDir: z.string().min(1).max(4096),
+  distribution: sessionLaunchSchema.shape.distribution.default("docker"),
 });
 export interface WslProbe {
   kernel(): Promise<string>;
@@ -103,7 +104,7 @@ const systemProbe: WslProbe = {
       executable,
       args,
       cwd,
-      env: env ?? buildCodexEnvironment(process.env, homedir()),
+      env: { ...buildCodexEnvironment(process.env, homedir()), ...env },
       timeoutMs: 10_000,
     });
     return result.kind === "finished" && result.exit.exitCode === 0 ? result.stdout : undefined;
@@ -138,129 +139,6 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
         fix,
         ...(classification === undefined ? {} : { classification }),
       });
-    let kernel = "";
-    try {
-      kernel = await probe.kernel();
-    } catch {
-      /* reported below */
-    }
-    check(
-      "wsl2-kernel",
-      /microsoft.*wsl2/i.test(kernel),
-      "Requires a WSL2 Linux kernel",
-      "Run the Coordinator inside a WSL2 distribution",
-    );
-    check(
-      "distribution",
-      probe.distro() === input.distribution,
-      "Current distro must match the project binding",
-      `Run inside the ${input.distribution} distribution or pass the bound --distribution`,
-    );
-    check(
-      "interop",
-      await probe.interop(),
-      "Requires WSL interop and an accessible WSL_INTEROP socket",
-      "Enable WSL interop (wsl.conf [interop] enabled=true) and restart the distro",
-    );
-    const listArgs = ["--list", "--verbose"];
-    let wslExe = "wsl.exe";
-    let rawList = await probe.command(wslExe, listArgs, input.projectDir);
-    if (rawList === undefined) {
-      wslExe = WSL_EXE_FALLBACK;
-      rawList = await probe.command(wslExe, listArgs, input.projectDir);
-    }
-    const reachable = rawList !== undefined;
-    check(
-      "wsl-exe",
-      reachable,
-      "wsl.exe must be runnable from PATH or /mnt/c/Windows/System32",
-      "wsl.exe not reachable: set [interop] appendWindowsPath = true in /etc/wsl.conf (then wsl.exe --shutdown), or add /mnt/c/Windows/System32 to PATH",
-    );
-    const list = rawList?.replaceAll("\0", "");
-    const rows = list?.split(/\r?\n/).map((line) =>
-      line
-        .trim()
-        .replace(/^\*\s*/, "")
-        .split(/\s+/),
-    );
-    check(
-      "distribution-version",
-      rows?.some((row) => row[0] === input.distribution && row.at(-1) === "2") ?? false,
-      "Bound distro must be registered as WSL version 2",
-      reachable
-        ? `Run wsl.exe --set-version ${input.distribution} 2`
-        : "Cannot be checked until the wsl-exe check passes",
-    );
-    const windowsPath = await probe.command("wslpath", ["-w", input.projectDir], input.projectDir);
-    const expected = `\\\\wsl.localhost\\${input.distribution}\\`;
-    const older = `\\\\wsl$\\${input.distribution}\\`;
-    const unc = windowsPath?.trim();
-    const back =
-      unc === undefined ? undefined : await probe.command("wslpath", ["-u", unc], input.projectDir);
-    let canonical = "";
-    try {
-      canonical = await probe.canonical(input.projectDir);
-    } catch {
-      /* reported below */
-    }
-    check(
-      "path-mapping",
-      canonical === input.projectDir &&
-        !/^\/mnt\/[a-z](?:\/|$)/i.test(canonical) &&
-        (unc?.startsWith(expected) === true || unc?.startsWith(older) === true) &&
-        back?.trim() === canonical,
-      "Requires a Linux checkout with a reversible Windows UNC mapping",
-      "Keep the project on the Linux filesystem (not /mnt/<drive>), not behind a symlink",
-    );
-    const shim = join(input.projectDir, ".omi", "bin", "omi");
-    const reached = reachable
-      ? await probe.command(
-          wslExe,
-          [
-            "--distribution",
-            input.distribution,
-            "--cd",
-            input.projectDir,
-            "--exec",
-            shim,
-            "--version",
-          ],
-          input.projectDir,
-        )
-      : undefined;
-    check(
-      "windows-launch",
-      reached !== undefined && /^\d+\.\d+\.\d+/.test(reached.trim()),
-      "Windows must reach this project's local shim through typed argv",
-      reachable
-        ? "Reinstall the project shim with omi install --apply"
-        : "Cannot be checked until the wsl-exe check passes",
-    );
-
-    const nodeVersion = reachable
-      ? await probe.command(
-          wslExe,
-          [
-            "--distribution",
-            input.distribution,
-            "--cd",
-            input.projectDir,
-            "--exec",
-            shim,
-            "--omi-node-version",
-          ],
-          input.projectDir,
-        )
-      : undefined;
-    check(
-      "session-runtime-launch",
-      nodeVersion !== undefined && /^v\d+\.\d+\.\d+/.test(nodeVersion.trim()),
-      "Windows session start must be able to launch the runtime with Node.js through the project shim",
-      reachable
-        ? "Reinstall with omi install --apply using a working Node.js, or configure node on PATH"
-        : "Cannot be checked until the wsl-exe check passes",
-    );
-
     let settings: OmiSetting | undefined;
     let settingsDetail = "omisetting.local.json: missing file";
     try {
@@ -268,6 +146,246 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
     } catch (error) {
       settingsDetail =
         error instanceof Error ? error.message : "omisetting.local.json: invalid settings";
+    }
+    const dockerBinding =
+      settings?.docker === undefined
+        ? undefined
+        : dockerProject(settings, input.projectDir, "0.1.1");
+    const command: WslProbe["command"] = async (executable, args, cwd, env) => {
+      if (dockerBinding === undefined) return probe.command(executable, args, cwd, env);
+      const forwarded = Object.fromEntries(
+        Object.entries(env ?? {}).filter(([key]) =>
+          ["GH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CODEX_HOME"].includes(key),
+        ),
+      );
+      for (const [key, value] of Object.entries(forwarded)) {
+        if (key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR") {
+          const id = value.split("/").at(-1) ?? "";
+          forwarded[key] = key === "CODEX_HOME" ? `/profiles/${id}` : `/work/.profiles/${id}`;
+        }
+      }
+      return probe.command(
+        "docker",
+        [
+          "exec",
+          ...Object.keys(forwarded).flatMap((key) => ["-e", key]),
+          "-w",
+          dockerBinding.repoDir,
+          dockerBinding.container,
+          executable,
+          ...args,
+        ],
+        cwd,
+        forwarded,
+      );
+    };
+    let reachable = false;
+    let wslExe = "wsl.exe";
+    const shim = join(input.projectDir, ".omi", "bin", "omi");
+    if (dockerBinding === undefined) {
+      wslPathSchema.parse(input.projectDir);
+      let kernel = "";
+      try {
+        kernel = await probe.kernel();
+      } catch {
+        /* reported below */
+      }
+      check(
+        "wsl2-kernel",
+        /microsoft.*wsl2/i.test(kernel),
+        "Requires a WSL2 Linux kernel",
+        "Run the Coordinator inside a WSL2 distribution",
+      );
+      check(
+        "distribution",
+        probe.distro() === input.distribution,
+        "Current distro must match the project binding",
+        `Run inside the ${input.distribution} distribution or pass the bound --distribution`,
+      );
+      check(
+        "interop",
+        await probe.interop(),
+        "Requires WSL interop and an accessible WSL_INTEROP socket",
+        "Enable WSL interop (wsl.conf [interop] enabled=true) and restart the distro",
+      );
+      const listArgs = ["--list", "--verbose"];
+      wslExe = "wsl.exe";
+      let rawList = await probe.command(wslExe, listArgs, input.projectDir);
+      if (rawList === undefined) {
+        wslExe = WSL_EXE_FALLBACK;
+        rawList = await probe.command(wslExe, listArgs, input.projectDir);
+      }
+      reachable = rawList !== undefined;
+      check(
+        "wsl-exe",
+        reachable,
+        "wsl.exe must be runnable from PATH or /mnt/c/Windows/System32",
+        "wsl.exe not reachable: set [interop] appendWindowsPath = true in /etc/wsl.conf (then wsl.exe --shutdown), or add /mnt/c/Windows/System32 to PATH",
+      );
+      const list = rawList?.replaceAll("\0", "");
+      const rows = list?.split(/\r?\n/).map((line) =>
+        line
+          .trim()
+          .replace(/^\*\s*/, "")
+          .split(/\s+/),
+      );
+      check(
+        "distribution-version",
+        rows?.some((row) => row[0] === input.distribution && row.at(-1) === "2") ?? false,
+        "Bound distro must be registered as WSL version 2",
+        reachable
+          ? `Run wsl.exe --set-version ${input.distribution} 2`
+          : "Cannot be checked until the wsl-exe check passes",
+      );
+      const windowsPath = await probe.command(
+        "wslpath",
+        ["-w", input.projectDir],
+        input.projectDir,
+      );
+      const expected = `\\\\wsl.localhost\\${input.distribution}\\`;
+      const older = `\\\\wsl$\\${input.distribution}\\`;
+      const unc = windowsPath?.trim();
+      const back =
+        unc === undefined
+          ? undefined
+          : await probe.command("wslpath", ["-u", unc], input.projectDir);
+      let canonical = "";
+      try {
+        canonical = await probe.canonical(input.projectDir);
+      } catch {
+        /* reported below */
+      }
+      check(
+        "path-mapping",
+        canonical === input.projectDir &&
+          !/^\/mnt\/[a-z](?:\/|$)/i.test(canonical) &&
+          (unc?.startsWith(expected) === true || unc?.startsWith(older) === true) &&
+          back?.trim() === canonical,
+        "Requires a Linux checkout with a reversible Windows UNC mapping",
+        "Keep the project on the Linux filesystem (not /mnt/<drive>), not behind a symlink",
+      );
+
+      const reached = reachable
+        ? await probe.command(
+            wslExe,
+            [
+              "--distribution",
+              input.distribution,
+              "--cd",
+              input.projectDir,
+              "--exec",
+              shim,
+              "--version",
+            ],
+            input.projectDir,
+          )
+        : undefined;
+      check(
+        "windows-launch",
+        reached !== undefined && /^\d+\.\d+\.\d+/.test(reached.trim()),
+        "Windows must reach this project's local shim through typed argv",
+        reachable
+          ? "Reinstall the project shim with omi install --apply"
+          : "Cannot be checked until the wsl-exe check passes",
+      );
+
+      const nodeVersion = reachable
+        ? await probe.command(
+            wslExe,
+            [
+              "--distribution",
+              input.distribution,
+              "--cd",
+              input.projectDir,
+              "--exec",
+              shim,
+              "--omi-node-version",
+            ],
+            input.projectDir,
+          )
+        : undefined;
+      check(
+        "session-runtime-launch",
+        nodeVersion !== undefined && /^v\d+\.\d+\.\d+/.test(nodeVersion.trim()),
+        "Windows session start must be able to launch the runtime with Node.js through the project shim",
+        reachable
+          ? "Reinstall with omi install --apply using a working Node.js, or configure node on PATH"
+          : "Cannot be checked until the wsl-exe check passes",
+      );
+    } else {
+      const docker = (args: readonly string[]) => probe.command("docker", args, input.projectDir);
+      const versionText = (await docker(["version", "--format", "{{.Server.Version}}"]))?.trim();
+      const dockerVersion = /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(versionText ?? "")
+        ? versionText
+        : undefined;
+      check(
+        "docker-version",
+        dockerVersion !== undefined,
+        dockerVersion === undefined ? "Docker engine unavailable" : `Docker ${dockerVersion}`,
+        "Start Docker Desktop",
+      );
+      const running = await docker([
+        "inspect",
+        "--format",
+        "{{.State.Running}}",
+        dockerBinding.container,
+      ]);
+      check(
+        "docker-container",
+        running?.trim() === "true",
+        `Container ${dockerBinding.container} must be running`,
+        "Run omi docker up",
+      );
+      for (const volume of [
+        dockerBinding.workVolume,
+        ...dockerBinding.loginProfiles.map((id) => `omi-profile-${id}`),
+      ]) {
+        check(
+          `docker-volume-${volume}`,
+          (await docker(["volume", "inspect", "--format", "{{.Name}}", volume]))?.trim() === volume,
+          `Required volume ${volume}`,
+          "Run omi docker up",
+        );
+      }
+      const capacity = (
+        name: string,
+        measured: number | undefined,
+        limit: number,
+        detail: string,
+      ) => {
+        const known = measured !== undefined && Number.isFinite(measured) && measured >= 0;
+        checks.push({
+          name,
+          ok: known,
+          status: !known ? "fail" : measured > limit ? "warn" : "pass",
+          detail,
+          fix: "Run task cleanup or adjust Docker capacity settings",
+        });
+      };
+      const bytesText = await docker(["exec", dockerBinding.container, "du", "-sb", "/work"]);
+      const bytes = /^(\d+)\s+\/work\s*$/.exec(bytesText?.trim() ?? "")?.[1];
+      capacity(
+        "docker-work-volume-size",
+        bytes === undefined ? undefined : Number(bytes),
+        (settings?.docker?.workVolumeWarningGb ?? 20) * 1_000_000_000,
+        bytes === undefined ? "Work volume size unavailable" : `Work volume ${bytes} bytes`,
+      );
+      const stats = parseWith(
+        z.object({
+          MemPerc: z.string().regex(/^\d+(?:\.\d+)?%$/),
+          MemUsage: z.string().regex(/^\d+(?:\.\d+)?[A-Za-z]+ \/ \d+(?:\.\d+)?[A-Za-z]+$/),
+        }),
+        await docker(["stats", "--no-stream", "--format", "{{json .}}", dockerBinding.container]),
+      );
+      const percent = /^(\d+(?:\.\d+)?)%$/.exec(stats?.MemPerc ?? "")?.[1];
+      capacity(
+        "docker-memory",
+        percent === undefined ? undefined : Number(percent),
+        settings?.docker?.memoryWarningPercent ?? 80,
+        stats === undefined
+          ? "Container memory unavailable"
+          : `Memory ${stats.MemUsage}; ${stats.MemPerc}`,
+      );
     }
     check(
       "settings-schema",
@@ -289,7 +407,7 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
     if (settings !== undefined) {
       for (const [index, profile] of settings.profiles.entries()) {
         if (profile.tool === "claude") {
-          const output = await probe.command(
+          const output = await command(
             "claude",
             ["auth", "status"],
             input.projectDir,
@@ -307,7 +425,7 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
             "Obtain a fresh token with claude setup-token",
           );
         } else {
-          const output = await probe.command(
+          const output = await command(
             "codex",
             ["login", "status"],
             input.projectDir,
@@ -328,7 +446,7 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
     const gh = (args: readonly string[]) =>
       settings === undefined
         ? Promise.resolve(undefined)
-        : probe.command("gh", args, input.projectDir, {
+        : command("gh", args, input.projectDir, {
             ...buildCodexEnvironment(process.env, homedir()),
             GH_TOKEN: settings.github.token,
           });
@@ -406,24 +524,27 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
     // Worker CLIs: ranges come from the adapters (compatibility.md), classified once here.
     const classified: ("supported" | "untested" | "unsupported" | "not-installed")[] = [];
     for (const cli of ["claude", "codex"] as const) {
-      const output = reachable
-        ? await probe.command(
-            wslExe,
-            [
-              "--distribution",
-              input.distribution,
-              "--cd",
-              input.projectDir,
-              "--exec",
-              shim,
-              "--omi-worker-version",
-              cli,
-            ],
-            input.projectDir,
-          )
-        : undefined;
+      const output =
+        dockerBinding !== undefined
+          ? await command(cli, ["--version"], input.projectDir)
+          : reachable
+            ? await command(
+                wslExe,
+                [
+                  "--distribution",
+                  input.distribution,
+                  "--cd",
+                  input.projectDir,
+                  "--exec",
+                  shim,
+                  "--omi-worker-version",
+                  cli,
+                ],
+                input.projectDir,
+              )
+            : undefined;
       if (output === undefined) {
-        const shellOutput = await probe.command(cli, ["--version"], input.projectDir);
+        const shellOutput = await command(cli, ["--version"], input.projectDir);
         classified.push("not-installed");
         check(
           `worker-cli-${cli}`,

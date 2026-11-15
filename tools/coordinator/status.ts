@@ -6,7 +6,7 @@
 import { parseArgs } from "node:util";
 import { join } from "node:path";
 import { COORDINATOR_TOOL_ROOT } from "./tool-root.ts";
-import { QUOTA_SETTINGS, WORKER_PROFILES, wslTarget } from "./coordinator-settings.ts";
+import { QUOTA_SETTINGS, coordinatorProfiles, coordinatorTarget } from "./coordinator-settings.ts";
 import { readProject, readProjectReadme, readRequiredChecks } from "./github-reads.ts";
 import {
   classifyReview,
@@ -283,10 +283,10 @@ async function main(): Promise<void> {
   const [project, required, workers, quota, readme, localState] = await Promise.all([
     readProject(run),
     readRequiredChecks(run),
-    readWorkers(run, wslTarget()),
-    readQuota(run, wslTarget(), WORKER_PROFILES, QUOTA_SETTINGS, false),
+    readWorkers(run, await coordinatorTarget()),
+    readQuota(run, await coordinatorTarget(), await coordinatorProfiles(), QUOTA_SETTINGS, false),
     readProjectReadme(run),
-    readLocalState(run, wslTarget(), process.cwd()),
+    readLocalState(run, await coordinatorTarget(), process.cwd()),
   ]);
   const next = await readNextLines(run, project.items, process.cwd());
   const report = buildReport(

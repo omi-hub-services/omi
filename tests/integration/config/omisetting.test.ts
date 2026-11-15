@@ -7,6 +7,46 @@ import { createCliEnvironment } from "../../../src/bootstrap/container.ts";
 import { runCli } from "../../../src/interfaces/cli/commands/create-program.ts";
 
 const dirs: string[] = [];
+it("logs a Docker login profile in through its named volume", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "omi-docker-login-"));
+  dirs.push(dir);
+  await mkdir(join(dir, ".omi"));
+  await writeFile(
+    join(dir, ".omi/omisetting.local.json"),
+    JSON.stringify({
+      version: 1,
+      github: { token: "fake-github", gitUser: { name: "bot", email: "bot@example.com" } },
+      profiles: [{ id: "codex-main", tool: "codex", auth: { type: "login" } }],
+      docker: { container: "omi-demo" },
+    }),
+  );
+  const binary = join(dir, "fake-docker");
+  const record = join(dir, "call.json");
+  await writeFile(
+    binary,
+    `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(record)}, JSON.stringify({ args: process.argv.slice(2), home: process.env.CODEX_HOME }));\n`,
+  );
+  await chmod(binary, 0o755);
+  await createProfileLogin({ executable: binary, home: dir })({
+    projectDir: dir,
+    profileId: "codex-main",
+  });
+  expect(JSON.parse(await readFile(record, "utf8"))).toEqual({
+    args: [
+      "exec",
+      "-i",
+      "-e",
+      "CODEX_HOME",
+      "omi-demo",
+      "codex",
+      "-c",
+      'cli_auth_credentials_store="file"',
+      "login",
+      "--device-auth",
+    ],
+    home: "/profiles/codex-main",
+  });
+});
 afterEach(async () => {
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });

@@ -5,7 +5,7 @@ import {
   QUOTA_MIN_INTERVAL_MS,
   type QuotaSettings,
   type WorkerProfile,
-  type WslTarget,
+  type CoordinatorTarget,
 } from "./coordinator-settings.ts";
 import type { Runner } from "./process-runner.ts";
 import { decideExpiryProbe, localTime, readQuota, type QuotaReport } from "./quota.ts";
@@ -53,7 +53,7 @@ export function resetText(resetsAt: number | null | undefined, now: number, cloc
 
 export interface WatchPollerOptions {
   readonly run: Runner;
-  readonly target: WslTarget;
+  readonly target: CoordinatorTarget;
   readonly profiles: readonly WorkerProfile[];
   readonly settings: QuotaSettings;
   readonly workerIntervalMs: number;

@@ -26,6 +26,25 @@ const config: BridgeConfig = {
   shim: "/home/dev/my project/.omi/bin/omi",
 };
 
+it("transports a Docker project call through exec with typed argv", () => {
+  const dockerConfig = parseConfig({
+    distribution: "docker",
+    repository: "/work/demo",
+    shim: "/work/demo/.omi/bin/omi",
+    docker: { container: "omi-demo" },
+  });
+  expect(buildWslArgs(dockerConfig, ["--json", "status"])).toEqual([
+    "exec",
+    "-i",
+    "-w",
+    "/work/demo",
+    "omi-demo",
+    "/work/demo/.omi/bin/omi",
+    "--json",
+    "status",
+  ]);
+});
+
 /** Values chosen to break naive quoting or a shell: spaces, quotes, backslashes, expansions. */
 const NASTY = [
   "plain",

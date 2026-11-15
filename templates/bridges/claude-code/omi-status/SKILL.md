@@ -12,7 +12,9 @@ Run the installed framework CLI from the project root:
 ```
 
 On Windows use `node .omi/bin/omi.cjs` with the same arguments; the installed launcher
-binds the WSL distribution and project. Use `--json` when a field is needed.
+selects `docker exec -i` when local settings contain a `docker` block and otherwise keeps
+the WSL binding. Docker status and logs are read inside the project container. Use `--json`
+when a field is needed; never put token values on the command line.
 
 Data collection is script-first. Report counts, work in flight, PR checks, review state,
 attention, workers and quota as the CLI reports them. Unknown stays unknown. Recommend one

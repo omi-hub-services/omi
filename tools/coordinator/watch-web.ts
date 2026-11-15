@@ -12,11 +12,11 @@ import type { WatchSnapshot } from "../../src/application/contracts/watch-snapsh
 import "../register-ts-imports.ts";
 import {
   QUOTA_SETTINGS,
-  WORKER_PROFILES,
-  wslTarget,
+  coordinatorProfiles,
+  coordinatorTarget,
   type QuotaSettings,
   type WorkerProfile,
-  type WslTarget,
+  type CoordinatorTarget,
 } from "./coordinator-settings.ts";
 import { createProcessRunner, type Runner } from "./process-runner.ts";
 import { clean, createWatchPoller, TASKS_INTERVAL_MS } from "./watch-core.ts";
@@ -36,7 +36,7 @@ export const HEALTH_BODY: string = SHARED_HEALTH_BODY;
 
 export interface WatchServerOptions {
   readonly run: Runner;
-  readonly target: WslTarget;
+  readonly target: CoordinatorTarget;
   readonly profiles: readonly WorkerProfile[];
   readonly settings: QuotaSettings;
   /** 0 picks a free port. */
@@ -244,8 +244,8 @@ async function main(): Promise<void> {
   }
   const server = createWatchServer({
     run: createProcessRunner(),
-    target: wslTarget(),
-    profiles: WORKER_PROFILES,
+    target: await coordinatorTarget(),
+    profiles: await coordinatorProfiles(),
     settings: QUOTA_SETTINGS,
     port,
   });

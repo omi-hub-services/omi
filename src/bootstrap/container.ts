@@ -1,7 +1,12 @@
 import { loadOmiSetting } from "../infrastructure/config/load-omisetting.js";
-import { settingsCredentialPolicy } from "../application/contracts/omisetting.js";
+import { dockerRuntimeEnvironment } from "../infrastructure/config/docker-runtime-environment.js";
+import { settingsCredentialPolicy, type OmiSetting } from "../application/contracts/omisetting.js";
 import { resolveWorkerCredentials } from "../application/services/resolve-worker-credentials.js";
 import { createProfileLogin } from "../infrastructure/profiles/login-profile.js";
+import {
+  createDockerLifecycle,
+  dockerProject,
+} from "../infrastructure/processes/docker-runtime.js";
 import { createRunMergeEvidenceReader } from "../application/services/build-run-merge-evidence.js";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { loadWorkflowCatalog } from "../infrastructure/config/load-workflow-catalog.js";
@@ -539,7 +544,19 @@ export function createCliEnvironment(options: CliWiringOptions): CliEnvironment 
       doctor: (input) => inspectInstallation(createInstallationDoctor(), input),
     },
     profileLogin: createProfileLogin(),
-    launchSession: launchWindowsSession,
+    docker: createDockerLifecycle({ version: readPackageVersion() }),
+    launchSession: async (input) => {
+      const settings = await loadOmiSetting(process.cwd());
+      return launchWindowsSession(
+        input,
+        settings?.docker === undefined
+          ? {}
+          : {
+              docker: dockerProject(settings, process.cwd(), readPackageVersion()),
+              runtimeEnv: dockerRuntimeEnvironment(settings),
+            },
+      );
+    },
     readStdin: () => readStandardInput(process.stdin),
     readText: (path) => readBoundedText(path, 65_536),
     defaultSocketPath: options.socketPath,
@@ -714,9 +731,22 @@ export function createTaskImportUseCase(options: {
     );
 }
 
-export function createProfileUseCases(database: StateDatabase, canSave: () => boolean) {
+export function createProfileUseCases(
+  database: StateDatabase,
+  canSave: () => boolean,
+  settings?: OmiSetting,
+) {
   const registry = createSqliteProfileRegistry(database);
-  const executors = { "claude-code": new ClaudeCodeExecutor(), codex: new CodexExecutor() };
+  const credentials = (tool: "claude-code" | "codex") => (home: string) =>
+    resolveWorkerCredentials(settings, registry.list(), tool, home);
+  const credentialPolicy = settings === undefined ? {} : settingsCredentialPolicy(settings);
+  const executors = {
+    "claude-code": new ClaudeCodeExecutor({
+      credentials: credentials("claude-code"),
+      credentialPolicy,
+    }),
+    codex: new CodexExecutor({ credentials: credentials("codex"), credentialPolicy }),
+  };
   return {
     registerProfile: (input: unknown) =>
       canSave()

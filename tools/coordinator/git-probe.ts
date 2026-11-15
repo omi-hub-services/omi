@@ -1,7 +1,7 @@
 // Branch state of a checkout from read-only git calls. The same reads serve the WSL checkout
 // (each call through wsl.exe, or bash inside Linux) and the Coordinator's Windows clone (plain
 // argv); only how one git argv becomes a Command differs.
-import { BASE_BRANCH, type WslTarget } from "./coordinator-settings.ts";
+import { BASE_BRANCH, type CoordinatorTarget } from "./coordinator-settings.ts";
 import type { CleanupState } from "./flow-plans.ts";
 import { joinSteps, runChecked, wslCommand, type Command, type Runner } from "./process-runner.ts";
 
@@ -20,7 +20,7 @@ export interface ProbedState extends CleanupState {
 export type GitCommand = (args: readonly string[]) => Command;
 
 export const wslGit =
-  (target: WslTarget): GitCommand =>
+  (target: CoordinatorTarget): GitCommand =>
   (args) =>
     wslCommand(joinSteps([["git", ...args]]), target);
 
@@ -64,10 +64,10 @@ export async function probeBranch(
 /** Cleanup can be retried after its configured worktree directory has been removed. */
 export async function probeCleanupWsl(
   run: Runner,
-  target: WslTarget,
+  target: CoordinatorTarget,
   branch: string,
   options: ProbeOptions,
-): Promise<{ state: CleanupState | null; target: WslTarget; refusal?: string }> {
+): Promise<{ state: CleanupState | null; target: CoordinatorTarget; refusal?: string }> {
   const outside = { ...target, repoDir: "/" };
   const exists = await run(wslCommand(joinSteps([["test", "-d", target.repoDir]]), outside));
   if (exists.code === 1) {
