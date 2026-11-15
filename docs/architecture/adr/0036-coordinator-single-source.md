@@ -11,7 +11,7 @@ Repository adapters may import the authoritative pure policy through the Node re
 hook, using dynamic imports so plain `node tools/coordinator/flow.ts` continues to work.
 These adapters run from an immutable external tooling checkout, managed by the implemented
 pin mechanism below. Shared `src/` imports and packaged assets resolve within that checkout,
-so a broken work branch cannot change the Coordinator code used to repair it. The checked-in
+so a broken work branch cannot change the Coordinator code used to repair it. The machine-local
 pin is a full SHA from main, a release tag, or a develop first-parent merge with green CI
 `check`. Refresh checks provenance and CI and prepares dependencies before activation.
 
@@ -105,8 +105,13 @@ literal plain-Node flow entry point, skill preview/apply/drift and missing copy 
 ## Implemented tooling pin (review correction)
 
 The runtime CLI migration above remains deferred, but isolation of the repository tooling is
-implemented now. `tools/coordinator/coordinator-pin.json` is the checked-in desired pin (full
-SHA, source main/develop/release tag, previous SHA/source). `pin.ts` is the thin bootstrap,
+implemented now. The pin record is local machine state (amended by OMI-171), not a checked-in
+desired pin: `.omi/local/coordinator-pin.json` in the host checkout (git-ignored; full SHA, source
+main/develop/release tag, previous SHA/source) says which SHA this Coordinator machine runs. The
+gates (green CI, provenance) live in `pin-policy.ts` and `verifyPin`, not in a tracked file, so a
+refresh never dirties the repository and needs no chore PR. A host that still has the legacy
+`tools/coordinator/coordinator-pin.json` is migrated once: `pin.ts` copies it, validated, to the
+local record when that is missing, and never writes the legacy file. `pin.ts` is the thin bootstrap,
 independent of `src/`; `pin-policy.ts` validates records and provenance/CI decisions.
 `coordinator-target.ts` holds the existing WSL defaults for both settings and bootstrap, so
 overlap checks cover the default target too, without importing potentially broken framework
@@ -131,7 +136,7 @@ Refresh builds a fresh sibling staging clone at exactly the requested SHA, runs
 checkout by rename while retaining the former checkout for recovery. It never checks out or
 builds in the task worktree. An exclusive external lock prevents concurrent pin mutations;
 dirty or mismatched existing installations are refused. Failed preparation leaves the active
-checkout and tracked pin unchanged. The record is atomically updated only with activation;
+checkout and local pin record unchanged. The record is atomically updated only with activation;
 activation failure restores the prior checkout. Rollback uses the previous SHA/source and the
 same gates, and swaps the two record entries. Run refresh/rollback between Coordinator commands,
 not while another command is importing code from the pin. After activation and the atomic record
@@ -158,10 +163,13 @@ node tools/coordinator/pin.ts status
 node tools/coordinator/skill-installation.ts install --apply
 ```
 
-After first install, omit `--to` to rematerialize the checked-in pin; its provenance and CI are rechecked. The historical seed predates the self-hosted pin bootstrap and cannot be activated: the first install must select a green merged revision containing this mechanism, as shown above. Missing bootstrap entry points are refused before activation. Status is
+After first install, omit `--to` to rematerialize the recorded pin; its provenance and CI are rechecked. The historical seed predates the self-hosted pin bootstrap and cannot be activated: the first install must select a green merged revision containing this mechanism, as shown above. Missing bootstrap entry points are refused before activation. Status is
 read-only and reports an absent checkout as uninitialized, never silently falling back to
-moving develop. A failed first install leaves no active checkout. Refresh changes the tracked
-record for Coordinator review/commit; it never commits, pushes or changes GitHub state.
+moving develop. With no record at all, status reports `initialized: false` with a first-install
+hint, and `refresh --to <sha> --source <source>` creates the local record with `previous: null`.
+A failed first install leaves no active checkout. Refresh and rollback write only the local record
+(atomic temp file + rename, lock, change and symlink guards unchanged); they never change a
+tracked file, commit, push or change GitHub state.
 
 
 ## Bootstrap isolation and complete worker evidence (review correction)
