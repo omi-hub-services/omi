@@ -14,6 +14,7 @@ import { countAcceptanceCriteria } from "./acceptance-criteria.ts";
 import { inferComplexity, type EffortInput } from "./effort-policy.ts";
 import {
   BASE_BRANCH,
+  COORDINATOR_LOGIN,
   EFFORT_POLICY,
   OWNER,
   PROJECT_NUMBER,
@@ -102,6 +103,7 @@ import {
 import { linkedIssue } from "./review-verdict.ts";
 import { promptCommand } from "./flow-prompt.ts";
 import "../register-ts-imports.ts";
+const { nativeReviewsSchema } = await import("../../src/application/contracts/merge-delivery.ts");
 const { resolveQualityPolicy, workflowOptionIssues } =
   await import("../../src/domain/workflows/workflow-policy.ts");
 
@@ -293,6 +295,10 @@ const PULL_QUERY = `
 query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) { pullRequest(number: $number) {
     state mergeCommit { oid } ${PULL_FIELDS}
+    author { login }
+    reviews(first: 100) { pageInfo { hasNextPage } nodes {
+      author { login __typename } state commit { oid }
+    } }
   } }
 }`;
 
@@ -300,7 +306,38 @@ async function readPull(ctx: Context, number: number): Promise<PullForMerge> {
   const data = await graphql(ctx.run, PULL_QUERY, { owner: OWNER, repo: REPO, number });
   const pr = optObject(asObject(data.repository, "repository").pullRequest, "pullRequest");
   if (!pr) throw new Error(`PR #${String(number)} not found in ${REPO_SLUG}`);
+  const release = pr.baseRefName === "main";
+  const reviews = release ? asObject(pr.reviews, "pr.reviews") : undefined;
+  if (
+    reviews &&
+    asBoolean(asObject(reviews.pageInfo, "reviews.pageInfo").hasNextPage, "reviews.hasNextPage")
+  )
+    throw new Error("Release reviews truncated; cannot verify PO approval");
   return {
+    ...(reviews === undefined
+      ? {}
+      : {
+          nativeApproval: {
+            requiredCount: 1,
+            pullAuthor: asString(asObject(pr.author, "pr.author").login, "pr.author.login"),
+            runtimeActors: [COORDINATOR_LOGIN],
+            reviews: nativeReviewsSchema.parse(
+              asArray(reviews.nodes, "reviews.nodes").map((raw) => {
+                const review = asObject(raw, "review");
+                const author = optObject(review.author, "review.author");
+                return {
+                  actor: author?.login ?? "ghost",
+                  actorType: author?.__typename ?? "Ghost",
+                  state: review.state,
+                  commitSha: asString(
+                    asObject(review.commit, "review.commit").oid,
+                    "review.commit.oid",
+                  ),
+                };
+              }),
+            ),
+          },
+        }),
     ...parsePull(pr, "pullRequest"),
     state: asString(pr.state, "pr.state"),
     mergeCommit: optString(optObject(pr.mergeCommit, "mergeCommit")?.oid, "mergeCommit.oid"),
@@ -934,7 +971,11 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       const head = required(values.head, "--head");
       const pr = await readPull(ctx, issueNumber(a));
       const carry = await carryFor(ctx, pr.comments, pr.headRefOid, dry);
-      return go(planMerge(pr, head, await readRequiredChecks(ctx.run), carry));
+      const n = linkedIssue(pr.body);
+      const workflow = n === null ? null : (await readIssue(ctx, n)).readiness.workflow;
+      return go(
+        planMerge(pr, head, await readRequiredChecks(ctx.run, pr.baseRefName), carry, workflow),
+      );
     }
     case "sync":
       return syncCommand(ctx, taskBranch(a), required(values.reviewed, "--reviewed"), dry);
@@ -996,11 +1037,13 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         console.error(`${label}: refused: the PR body has no "Issue: #N" line`);
         return 1;
       }
+      const issue = await readIssue(ctx, n);
       return reviewCommentCommand(ctx, {
         pr: pr.number,
         prState: pr.state,
         prHead: pr.headRefOid,
-        issueBody: (await readIssue(ctx, n)).body,
+        issueBody: issue.body,
+        workflow: issue.readiness.workflow,
         body: readFileSync(required(values.file, "--file"), "utf8"),
         dryRun: dry,
       });

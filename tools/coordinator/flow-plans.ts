@@ -3,6 +3,8 @@
 // nothing (PR, comment, status change, branch) is created twice.
 import {
   BASE_BRANCH,
+  COORDINATOR_LOGIN,
+  PO_LOGIN,
   CLOSE_EVIDENCE_MARKER,
   REPO_SLUG,
   type WslTarget,
@@ -18,6 +20,10 @@ import {
   summarizeChecks,
   type OpenPull,
 } from "./github-snapshot.ts";
+import type { NativeApprovalInputs } from "../../src/domain/approvals/native-approval-policy.ts";
+import "../register-ts-imports.ts";
+const { eligibleNativeApprovals } =
+  await import("../../src/domain/approvals/native-approval-policy.ts");
 import type { AuthoredComment } from "./json-shape.ts";
 import { joinSteps, WSL_NODE_ENV, wslCommand, type Command } from "./process-runner.ts";
 
@@ -321,6 +327,7 @@ export function planOpenPr(
 export interface PullForMerge extends OpenPull {
   readonly state: string;
   readonly mergeCommit: string | null;
+  readonly nativeApproval?: NativeApprovalInputs;
 }
 
 /** GitHub merge states in which `gh pr merge` can merge without bypassing anything. */
@@ -342,6 +349,7 @@ export function planMerge(
   required: readonly string[],
   /** Judgement of the carry chain of the head's PASS (carry-git.ts); needed for a carried PASS. */
   carry?: CarryJudgement,
+  workflow?: string | null,
 ): Plan {
   assertSha(expectedHead);
   const n = `PR #${String(pr.number)}`;
@@ -355,11 +363,23 @@ export function planMerge(
   if (!sameHead) {
     return refuse(`${n} head is ${pr.headRefOid.slice(0, 7)}, not the reviewed ${expectedHead}`);
   }
-  if (pr.baseRefName !== BASE_BRANCH) {
+  const release = workflow === "release" && pr.baseRefName === "main";
+  if (pr.baseRefName !== BASE_BRANCH && !release) {
     return refuse(
       `${n} targets ${pr.baseRefName}; only task PRs into ${BASE_BRANCH} are merged here`,
     );
   }
+  if (release && pr.headRefName !== BASE_BRANCH)
+    return refuse(`${n} release must merge ${BASE_BRANCH} into main`);
+  if (
+    release &&
+    (pr.reviewDecision !== "APPROVED" ||
+      pr.nativeApproval === undefined ||
+      !eligibleNativeApprovals({ ...pr.nativeApproval, runtimeActors: [COORDINATOR_LOGIN] }).some(
+        (review) => review.actor.toLowerCase() === PO_LOGIN && review.commitSha === pr.headRefOid,
+      ))
+  )
+    return refuse(`${n} release needs native PO approval before merge`);
   if (pr.isDraft) return refuse(`${n} is a draft`);
   const checks = summarizeChecks(pr.checks, required);
   if (checks.overall !== "pass") {

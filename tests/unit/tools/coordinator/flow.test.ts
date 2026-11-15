@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -422,5 +425,122 @@ describe("flow pick-profile", () => {
       ok: false,
     });
     expect(seen.filter((command) => command.file === "gh")).toHaveLength(1);
+  });
+});
+
+describe("release review command wiring", () => {
+  const head = "a".repeat(40);
+  const review = (deferred: boolean) =>
+    `**VERDICT:** PASS · **REVIEWED_HEAD:** \`${head}\`\nAC-1: ${deferred ? "deferred — tag after merge" : "met — tag published"}`;
+
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  function context(workflow: string, state: string) {
+    const { ctx, seen } = fakeContext();
+    const run: Runner = (command) => {
+      seen.push(command);
+      let stdout = "";
+      if (command.args[1] === "graphql") {
+        const pullRequest = {
+          author: { login: "minibox-claude-code" },
+          reviews: {
+            pageInfo: { hasNextPage: false },
+            nodes: [
+              {
+                author: { login: "ttin-omihub", __typename: "User" },
+                state: "APPROVED",
+                commit: { oid: head },
+              },
+            ],
+          },
+          number: 314,
+          title: "Release",
+          state,
+          isDraft: false,
+          headRefName: "develop",
+          baseRefName: "main",
+          headRefOid: head,
+          body: "Issue: #311",
+          reviewDecision: "APPROVED",
+          mergeStateStatus: "CLEAN",
+          mergeCommit: null,
+          comments: { nodes: [{ author: { login: "minibox-claude-code" }, body: review(true) }] },
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  statusCheckRollup: {
+                    contexts: {
+                      nodes: [
+                        {
+                          __typename: "CheckRun",
+                          name: "check",
+                          status: "COMPLETED",
+                          conclusion: "SUCCESS",
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        };
+        stdout = JSON.stringify({
+          data: {
+            organization: { projectV2: { id: "project", field: { id: "status", options: [] } } },
+            repository: {
+              pullRequest,
+              issue: {
+                state: "OPEN",
+                body: "## Acceptance criteria\n- [ ] tag published\n",
+                comments: { nodes: [] },
+                timelineItems: { nodes: [] },
+                labels: { nodes: [], pageInfo: { hasNextPage: false } },
+                projectItems: {
+                  nodes: [{ id: "item", project: { id: "project" }, workflow: { name: workflow } }],
+                },
+              },
+            },
+          },
+        });
+      } else if (command.args[1] === "user") stdout = "minibox-claude-code";
+      else if (command.args[1]?.includes("rules/branches/")) stdout = "[]";
+      return Promise.resolve({ code: 0, stdout, stderr: "" });
+    };
+    return { ctx: { ...ctx, run }, seen };
+  }
+
+  it.each([
+    ["release", "OPEN", true, 0],
+    ["feature", "OPEN", true, 1],
+    ["release", "MERGED", false, 0],
+    ["feature", "MERGED", false, 1],
+    ["release", "CLOSED", false, 1],
+  ] as const)("review-comment: %s %s deferred=%s", async (workflow, state, deferred, expected) => {
+    const dir = mkdtempSync(join(tmpdir(), "omi-release-review-"));
+    try {
+      const file = join(dir, "review.md");
+      writeFileSync(file, review(deferred));
+      const { ctx, seen } = context(workflow, state);
+      expect(await main(["review-comment", "314", "--file", file], ctx)).toBe(expected);
+      expect(seen.some((c) => c.args[0] === "pr" && c.args[1] === "comment")).toBe(expected === 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["release", 0],
+    ["feature", 1],
+  ] as const)("merge reads the linked Issue workflow %s", async (workflow, expected) => {
+    const { ctx, seen } = context(workflow, "OPEN");
+    expect(await main(["merge", "314", "--head", head, "--dry-run"], ctx)).toBe(expected);
+    if (expected === 0)
+      expect(seen.some((c) => c.args[1]?.endsWith("rules/branches/main"))).toBe(true);
   });
 });

@@ -66,10 +66,10 @@ export function parseRequiredChecks(rules: unknown): string[] {
 }
 
 /** Required status checks of the base branch rulesets, read live (never hard-coded). */
-export async function readRequiredChecks(run: Runner): Promise<string[]> {
+export async function readRequiredChecks(run: Runner, base = BASE_BRANCH): Promise<string[]> {
   const stdout = await runChecked(run, {
     file: "gh",
-    args: ["api", `repos/${REPO_SLUG}/rules/branches/${BASE_BRANCH}`],
+    args: ["api", `repos/${REPO_SLUG}/rules/branches/${base}`],
   });
   return parseRequiredChecks(parseJson(stdout, "rules"));
 }

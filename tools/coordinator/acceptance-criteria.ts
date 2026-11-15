@@ -26,7 +26,10 @@ export type AcVerdict = "met" | "not met";
 export function parseAcLines(review: string): Map<number, AcVerdict> {
   const out = new Map<number, AcVerdict>();
   for (const line of parseAcReviewLines(review)) {
-    out.set(line.number, out.has(line.number) ? "not met" : (line.verdict ?? "not met"));
+    out.set(
+      line.number,
+      out.has(line.number) ? "not met" : line.verdict === "met" ? "met" : "not met",
+    );
   }
   return out;
 }

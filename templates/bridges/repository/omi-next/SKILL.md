@@ -206,7 +206,12 @@ node "$coordinatorPin/tools/coordinator/flow.ts" cleanup <branch>
   not by editing the Issue by hand.
 - For a release Issue, before merging the release PR from develop into main, dispatch a fresh
   independent worker to review that PR at its current head. The Coordinator posts the verdict
-  through `flow.ts review-comment <pr> --file <f>`; PASS must cover every AC on that head.
+  through `flow.ts review-comment <pr> --file <f>`. Only for Workflow `release`, criteria owned
+  by PO approval or a post-merge Coordinator step may use `AC-n: deferred — <Coordinator step>`;
+  PASS requires every other AC met on that head. Deferral never grants PO approval.
+  `merge` accepts main only for a release Issue's develop → main PR with native approval.
+  After the deferred steps complete, post a new PASS on the same head with every AC met and
+  evidence; `close` refuses while any AC remains deferred or not met.
   Follow the existing PO approval and release merge gates, then merge, tag through the approved
   release procedure, and run `flow.ts close N --comment-file <f>`. Review, approval and carried-PASS
   requirements remain in force; tagging and publishing are not automated by `close`.
