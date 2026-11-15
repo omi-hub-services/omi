@@ -156,7 +156,9 @@ fast-forwards develop in the main checkout and deletes the merged branch (OMI-06
 
 Use the Issue's Workflow template's actual step IDs, not aliases. For feature this is
 analyze (analyst), implement (developer), review (reviewer); docs uses write/accept,
-bugfix also uses reproduce. Run all applicable steps and preserve their dependencies and gates.
+bugfix uses one fix step (developer: systematic-debugging, TDD, minimal-change) then review.
+The fix worker writes the regression test first and reports `regressionTest: {file, name}`;
+the Coordinator never copies a root cause into a second worker. Run all applicable steps and preserve their dependencies and gates.
 When the approved Issue already has measurable AC and an implementation map, supply the recorded scope decision with `prompt --scope-approved <decision-ref>`; the packet records the Issue as scope evidence. Pass the same `--scope-approved <decision-ref>` to the first `dispatch` too: it records `analyze` as skipped in the dispatch metadata (never read from packet text), the signed step report carries that skip to later steps, and `next` repeats the flag in the prompt commands it prints. Otherwise start analyze as a fresh worker and pass its report forward as task data in notes. Business-rule or cost changes go to the PO.
 
 The LLM writes only task-specific notes or review findings. Generate every fresh worker's full
@@ -246,7 +248,10 @@ review includes verification-before-completion and evidence-and-tests. Separate 
 ui-ux visual verification, onboarding-takeover baseline-verify and ci-cd pipeline output.
 Other workflows retain their actual template steps. The script gates require green checks on
 the exact SHA and one AC-n line per top-level criterion before PASS. Bugfix also supplies
-`review-comment --regression-evidence <script-output.json>`: base/head each record full revision,
+`review-comment --regression-evidence <script-output.json>`, produced by
+`flow.ts regression-evidence --worktree <dir> --test-file <f> --test-name <n> --out <json>`
+(the script runs the worker's test on the base with the fix reverted, then on the head; red is
+never the worker's claim): base/head each record full revision,
 the same command argv and exitCode (base > 0, head = 0). Refactor keeps unchanged/passing test
 evidence gates. Pushing early starts CI; merge still requires the review PASS on the fixed revision.
 

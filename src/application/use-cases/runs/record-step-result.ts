@@ -11,7 +11,7 @@ import type { AgentAttemptStatus } from "../../../domain/runs/agent-attempt.js";
 import { transitionStep } from "../../../domain/runs/step-run.js";
 import type { StepStatus } from "../../../domain/runs/step-run.js";
 import { executionResultSchema } from "../../contracts/agent-execution.js";
-import { artifactPathSchema } from "../../contracts/artifact.js";
+import { artifactPathSchema, artifactReferenceSchema } from "../../contracts/artifact.js";
 import type { ArtifactReference } from "../../contracts/artifact.js";
 import { checkRunRecordSchema } from "../../contracts/check-run.js";
 import type { CheckRunRecord } from "../../contracts/check-run.js";
@@ -34,6 +34,8 @@ const recordStepResultSchema = z.strictObject({
   result: z.unknown().optional(),
   /** What the runtime itself observed when it ran the step's required checks (OMI-085). */
   checkRuns: z.array(checkRunRecordSchema).default([]),
+  /** The `regression-test` artifact the runtime's own script wrote; a worker's claim never counts. */
+  regressionEvidence: artifactReferenceSchema.optional(),
 });
 export type RecordStepResultInput = z.input<typeof recordStepResultSchema>;
 
@@ -121,7 +123,7 @@ export function recordStepResult(
 ): RecordStepResult {
   const parsed = recordStepResultSchema.safeParse(input);
   if (!parsed.success) return { ok: false, reason: "INVALID_INPUT" };
-  const { attemptId, execution, result, checkRuns } = parsed.data;
+  const { attemptId, execution, result, checkRuns, regressionEvidence } = parsed.data;
 
   const attempt = deps.attempts.get(attemptId);
   if (attempt === undefined) return { ok: false, reason: "ATTEMPT_NOT_FOUND" };
@@ -137,7 +139,7 @@ export function recordStepResult(
     return { ok: false, reason: "EXECUTION_MISMATCH" };
   }
 
-  const verdict = verify(deps, attempt, execution.outcome, result, checkRuns);
+  const verdict = verify(deps, attempt, execution.outcome, result, checkRuns, regressionEvidence);
   if ("refusal" in verdict) {
     return {
       ok: false,
@@ -269,6 +271,7 @@ function verify(
   outcome: string,
   raw: unknown,
   checkRuns: readonly CheckRunRecord[],
+  regressionEvidence: ArtifactReference | undefined,
 ): Verdict {
   // Exit code and process outcome describe the process only; a structured result is still needed.
   if (outcome !== "succeeded") return { failure: "EXECUTION_FAILED" };
@@ -383,27 +386,31 @@ function verify(
   // Setting revision explicitly (even to undefined) drops the worker's claim.
   const verified: VerifiedResult = { ...report, artifacts, revision };
 
+  // regression-test is run by its own script (below), never as a plain check or on a worker's word.
   const runtimeChecks = attempt.requiredChecks.filter(
-    (id) => id === "project-check" || deps.checks?.has(id) === true,
+    (id) => id !== "regression-test" && (id === "project-check" || deps.checks?.has(id) === true),
   );
   // The worker's own check list is informational for these ids; only the runtime's run counts.
   const reported = new Set(report.checks.map((check) => check.id));
-  const evidenceChecks = attempt.requiredChecks.filter((id) => !runtimeChecks.includes(id));
+  const evidenceChecks = attempt.requiredChecks.filter(
+    (id) => id !== "regression-test" && !runtimeChecks.includes(id),
+  );
   if (!evidenceChecks.every((id) => reported.has(id))) {
     return { failure: "REQUIRED_CHECK_MISSING", report };
   }
   const checkFailure = verifyRuntimeChecks(deps, attempt, verified, runtimeChecks, checkRuns);
   if (checkFailure !== undefined) return { failure: checkFailure, report };
 
-  if (attempt.role.id === "reviewer" && attempt.requiredChecks.includes("regression-test")) {
-    const ref = report.checks.find((check) => check.id === "regression-test")?.evidenceRef;
-    const artifact = artifacts.find((entry) => entry.path === ref);
+  if (attempt.requiredChecks.includes("regression-test")) {
     try {
       if (
-        artifact === undefined ||
+        regressionEvidence === undefined ||
+        !regressionEvidence.path.startsWith(`${attempt.artifactRoot}/`) ||
         !validRegressionEvidence(
           JSON.parse(
-            new TextDecoder("utf-8", { fatal: true }).decode(deps.artifacts.read(artifact)),
+            new TextDecoder("utf-8", { fatal: true }).decode(
+              deps.artifacts.read(regressionEvidence),
+            ),
           ) as unknown,
           revision?.baseSha ?? "",
           revision?.headSha ?? "",

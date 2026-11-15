@@ -44,6 +44,7 @@ import { retainWorkerLogs } from "../application/use-cases/runs/retain-worker-lo
 import { createCliGitWorkspace } from "../infrastructure/git/cli-git-workspace.js";
 import { createProcessCheckRunner } from "../infrastructure/processes/process-check-runner.js";
 import { reuseCheckRuns } from "../application/services/reuse-check-runs.js";
+import { createRegressionExecutor } from "../infrastructure/processes/regression-executor.js";
 import { createGithubRestClient } from "../infrastructure/github/github-rest-client.js";
 import { createGhApiTransport } from "../infrastructure/github/gh-api-transport.js";
 import type { GithubTransport } from "../infrastructure/github/github-transport.js";
@@ -1174,6 +1175,7 @@ export async function createProjectRunCommandUseCases(
       return dispatchPlannedRunStep(dependencies(), request, step.id, step.runId);
     },
   };
+  const regressionCheck = config.project.checks?.["regression-test"];
   const completion = {
     // Only configured checks exist; with none, no id is runtime-owned and nothing is run.
     ...(config.project.checks === undefined
@@ -1194,6 +1196,19 @@ export async function createProjectRunCommandUseCases(
             }),
             { artifacts, workspaces, now, nextId },
           ),
+        }),
+    // The regression-test command is the test runner; the script appends the file and `-t <name>`.
+    ...(regressionCheck === undefined
+      ? {}
+      : {
+          regression: {
+            command: regressionCheck.command,
+            executor: (request: { workspacePath: string; baseSha: string; testFile: string }) =>
+              createRegressionExecutor({
+                ...request,
+                timeoutMs: regressionCheck.timeout_seconds * 1000,
+              }),
+          },
         }),
     findings: stepFindings,
     failoversMade: (stepRunId) => attempts.failoversForStep(stepRunId),

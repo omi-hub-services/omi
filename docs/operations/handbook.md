@@ -197,6 +197,16 @@ those workflows is refused with `CHECK_UNCONFIGURED`, and `workflows validate` (
 that has `config/project.yaml`) reports `step "implement" requires check "project-check" but
 project.yaml has no checks.project-check`.
 
+`checks.regression-test` is required for the bugfix workflow, for example
+`"regression-test": { "command": ["npm", "run", "test:unit", "--"], "timeout_seconds": 600 }`.
+The bugfix `fix` worker writes the regression test first and reports `regressionTest {file, name}`.
+The runtime then runs `command` plus `<file> -t <name>` on the head and on the merge-base with the
+fix files reverted (only the test file is copied from the head). The step passes only when it fails
+on the base and passes on the head. Without the entry `workflows validate` reports `gate
+"regression-test" requires check "regression-test" but project.yaml has no checks.regression-test`
+and dispatch of `fix` is refused with `CHECK_UNCONFIGURED: checks.regression-test`. A base failure
+for the wrong reason, such as a missing file, still counts as red; review judges the test.
+
 ```sh
 <cli> init --project /home/user/project --config /home/user/baseline.json --variant existing
 <cli> init --project /home/user/project --config /home/user/baseline.json --variant existing --apply
