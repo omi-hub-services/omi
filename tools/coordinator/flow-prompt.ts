@@ -16,7 +16,13 @@ const { resolveWorkflowRoute, dispatchSkills } =
   await import("../../src/domain/workflows/workflow-policy.ts");
 import { extractAcceptanceCriteria } from "./acceptance-criteria.ts";
 import { CHECK_ARGV, CHECK_ID, readStoredCheck } from "./check-reuse.ts";
-import { COORDINATOR_LOGIN, OWNER, PROJECT_NUMBER, REPO } from "./coordinator-settings.ts";
+import {
+  COORDINATOR_LOGIN,
+  OWNER,
+  PROJECT_NUMBER,
+  REPO,
+  RUNS_DIR_FROM_HOME,
+} from "./coordinator-settings.ts";
 import type { WorkerCtx } from "./flow-workers.ts";
 import { graphql } from "./github-reads.ts";
 import {
@@ -38,7 +44,38 @@ import {
 import { runChecked, wslCommand } from "./process-runner.ts";
 import { loadTemplate } from "./watch-workflow.ts";
 import { NATIVE_RESUME_HEADER, SECURITY_REVIEW_MARKER } from "./worker-launch.ts";
-import { parseStepMarkers, parseStepResults } from "./worker-report.ts";
+import {
+  fullSummary,
+  isCodexLog,
+  parseClaudeReport,
+  parseCodexReport,
+  parseStepMarkers,
+  parseStepResults,
+  TRUNCATION_POINTER,
+} from "./worker-report.ts";
+
+/** OMI-176: the untruncated summary of a worker log, or null when the log cannot be read. */
+async function readLogSummary(
+  ctx: WorkerCtx,
+  target: WorkerCtx["target"],
+  logName: string,
+  session: string,
+): Promise<string | null> {
+  const path = `$HOME/${RUNS_DIR_FROM_HOME}/${logName}`;
+  const log = await ctx.run(wslCommand(`cat ${path}`, target, 120_000));
+  if (log.code !== 0) return null;
+  if (!isCodexLog(logName)) {
+    const claude = parseClaudeReport(log.stdout);
+    // the log must be the worker the Coordinator signed, not just a file of the same name shape
+    return claude.report === null || claude.sessionId !== session
+      ? null
+      : fullSummary(claude.report);
+  }
+  const lastPath = path.replace(/\.jsonl$/, "-last.md");
+  const last = await ctx.run(wslCommand(`cat ${lastPath}`, target, 30_000));
+  const codex = parseCodexReport(log.stdout, last.code === 0 ? last.stdout : "");
+  return codex.report === null || codex.threadId !== session ? null : fullSummary(codex.report);
+}
 
 const ISSUE_PACKET_QUERY = `
 query($owner: String!, $repo: String!, $number: Int!, $after: String, $itemsAfter: String) {
@@ -327,17 +364,45 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       if (gate.refusal !== null) throw new Error(gate.refusal);
       evidence.push(ARCHITECT_INSTRUCTIONS, renderHistory(gate.fails));
     }
-    if (input.architectDecision !== undefined)
-      evidence.push(
-        `## Architect decision (verbatim)\n${await readFile(input.architectDecision, "utf8")}`,
-      );
+    if (input.architectDecision !== undefined) {
+      let decision = await readFile(input.architectDecision, "utf8");
+      // The file's last non-empty line is the pointer truncateOverCapSummary appended. It must
+      // match the signed **Log:** of an Architect report on the Issue exactly; the full text then
+      // comes from that report's log. A file without a final pointer is used verbatim.
+      const name = TRUNCATION_POINTER.exec(decision.trimEnd().split("\n").at(-1) ?? "")?.[2];
+      if (name !== undefined) {
+        const signed = parseStepResults(issue.comments, COORDINATOR_LOGIN).find(
+          (r) => r.stepId === "architect" && r.truncated === true && r.log === name,
+        );
+        if (signed?.session === undefined)
+          throw new Error(
+            `--architect-decision points to ${name}, which no signed Architect report records`,
+          );
+        const full = await readLogSummary(ctx, target, name, signed.session);
+        if (full === null) throw new Error(`full text of ${name} unavailable`);
+        decision = full;
+      }
+      evidence.push(`## Architect decision (verbatim)\n${decision}`);
+    }
     const resume = input.findings !== undefined;
     // Coordinator-authored step reports only; an explicit --architect-decision replaces the marker's.
+    // a step report whose marker says truncated hands the full text from its log instead
+    const expandTruncated = (results: ReturnType<typeof parseStepResults>) =>
+      Promise.all(
+        results.map(async (r) => {
+          // the signed **Log:** line and session, never a pointer line in the worker's summary
+          const full =
+            r.log === undefined || r.session === undefined
+              ? null
+              : await readLogSummary(ctx, target, r.log, r.session);
+          return full === null ? r : { ...r, summary: full, fullText: true };
+        }),
+      );
     const earlierSteps =
       architect || resume
         ? ""
         : renderEarlierSteps(
-            parseStepResults(issue.comments, COORDINATOR_LOGIN),
+            await expandTruncated(parseStepResults(issue.comments, COORDINATOR_LOGIN)),
             earlierStepIds(template.workflow.steps, step.id, {
               round,
               architect: input.architectDecision === undefined,

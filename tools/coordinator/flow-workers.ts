@@ -46,6 +46,8 @@ import {
   parseCodexReport,
   parseStepMarkers,
   renderStepReport,
+  fullSummary,
+  truncateOverCapSummary,
   type DispatchMeta,
   type StepMarker,
   type WorkerReport,
@@ -304,7 +306,22 @@ export async function workerReportCommand(
   } else {
     report = { tool: "claude", file: name, ...parseClaudeReport(log) };
   }
-  const validated = report.report === null ? undefined : validateWorkerResult(report.report);
+  let validated = report.report === null ? undefined : validateWorkerResult(report.report);
+  // OMI-176: a summary over the cap is the only contract failure that still yields a report
+  let truncated = false;
+  if (input.post !== undefined && report.report !== null && validated?.success === false) {
+    const cut = truncateOverCapSummary(report.report, name);
+    if (cut !== null) {
+      // the guard sees the whole original summary, not only what survives the cut
+      try {
+        assertCredentialFree(fullSummary(report.report) ?? "");
+      } catch {
+        return refuse(label, "the report contains a credential-like value; nothing was posted");
+      }
+      validated = validateWorkerResult(cut);
+      truncated = validated.success;
+    }
+  }
   console.log(
     formatReport({
       ...report,
@@ -327,6 +344,7 @@ export async function workerReportCommand(
       logName: name,
       session: report.resumeId,
       result: validated.data,
+      truncated,
       ...input.post,
     });
   }
@@ -401,6 +419,8 @@ async function postStepReport(
     readonly logName: string;
     readonly session: string | null;
     readonly result: StepResult;
+    /** OMI-176: the summary was cut at the cap; the marker records it. */
+    readonly truncated: boolean;
     readonly number: number;
     readonly comments: readonly AuthoredComment[];
     readonly workflow: Pick<Workflow, "steps">;
@@ -443,6 +463,7 @@ async function postStepReport(
         { step: meta.step, status: input.result.status },
         skipped,
       ),
+      ...(input.truncated ? { truncated: true } : {}),
     };
   } catch (error) {
     return refuse(label, error instanceof Error ? error.message : String(error));
@@ -467,6 +488,7 @@ async function postStepReport(
     session: input.session,
     result: input.result,
     marker,
+    logName: input.logName,
   });
   try {
     assertCredentialFree(body);

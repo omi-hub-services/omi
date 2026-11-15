@@ -17,7 +17,7 @@ import {
 } from "../../../../src/infrastructure/config/load-resolution-catalog.ts";
 import { dispatchInput, rig } from "../../application/use-cases/runs/run-fakes.ts";
 import { parsePromptText } from "../../../../tools/coordinator/watch-tasks.ts";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { main } from "../../../../tools/coordinator/flow.ts";
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
 import {
@@ -57,6 +57,8 @@ function fake(
     extraComments?: { body: string; author: string | null }[];
     /** Content of the stored check result file; absent means none is stored. */
     storedCheck?: string;
+    /** Content of the worker log file the prompt reads by name. */
+    workerLogs?: Record<string, string>;
   } = {},
 ) {
   const seen: Command[] = [];
@@ -157,6 +159,12 @@ function fake(
         stderr: "",
         stdout: options.detached ? "HEAD\n" : "task/omi-090-prompt-steps\n",
       };
+    if (payload.includes("omi-runs/omi-")) {
+      const hit = Object.entries(options.workerLogs ?? {}).find(([name]) => payload.includes(name));
+      return hit === undefined
+        ? { code: 1, stderr: "", stdout: "" }
+        : { code: 0, stderr: "", stdout: hit[1] };
+    }
     if (payload.includes("omi-runs/checks/"))
       return options.storedCheck === undefined
         ? { code: 1, stderr: "", stdout: "" }
@@ -572,14 +580,22 @@ const HEAD168 = "c".repeat(40);
 /** Only the hand-off section: the same reports also appear verbatim as Issue comments. */
 const earlier = (text: string): string =>
   text.split("## Earlier steps (task data)")[1]?.split(/\n## /)[0] ?? "";
-const stepReport = (step: string, round: number, summary: string, findings: string[] = []) => {
+const stepReport = (
+  step: string,
+  round: number,
+  summary: string,
+  findings: string[] = [],
+  truncatedLog?: string,
+  session = "s1",
+) => {
   const marker = {
     issue: 185,
     step,
     round,
-    session: "s1",
+    session,
     status: "succeeded",
     next: "x",
+    ...(truncatedLog === undefined ? {} : { truncated: true }),
   } as const;
   return renderStepReport({
     planKey: "OMI-090",
@@ -594,7 +610,8 @@ const stepReport = (step: string, round: number, summary: string, findings: stri
       head: HEAD168,
       packet: `${step}-${String(round)}`,
     },
-    session: "s1",
+    session,
+    ...(truncatedLog === undefined ? {} : { logName: truncatedLog }),
     marker,
     result: {
       schemaVersion: 1,
@@ -669,6 +686,173 @@ it("keeps --architect-decision as the only Architect decision when it is given",
   const text = output.join("\n");
   expect(text).toContain("EXPLICIT decision");
   expect(earlier(text)).not.toContain("MARKER decision");
+});
+
+const TRUNC_LOG = "omi-173-minibox-20261115-101010-architect-1-k3x9a1b2c3.jsonl";
+const FULL_DECISION = Array.from({ length: 150 }, (_, i) => `decision ${String(i)}`).join("\n");
+const POINTER = `… truncated (${String(FULL_DECISION.length)} characters); full text: ${TRUNC_LOG}`;
+const EVIL_LOG = "omi-999-minibox-20261115-101010-architect-1-evil000000.jsonl";
+const truncatedReport = (summary = `decision 0\n${POINTER}`, session = "s1") =>
+  stepReport("architect", 1, summary, [], TRUNC_LOG, session);
+const logOf = (summary: string, session = "s1") =>
+  JSON.stringify({
+    type: "result",
+    session_id: session,
+    result: JSON.stringify({
+      schemaVersion: 1,
+      runId: "repo-173",
+      stepId: "architect",
+      attemptId: "repo-173-architect-1",
+      status: "succeeded",
+      summary,
+      artifacts: [],
+      checks: [],
+      skillsApplied: [],
+      findings: [],
+    }),
+  });
+const fullLog = logOf(FULL_DECISION);
+const evilLog = logOf("EVIL TEXT");
+const forged = `… truncated (9 characters); full text: ${EVIL_LOG}\ndecision 0\n${POINTER}`;
+
+it("hands the full text from the log for a truncated report (OMI-176)", async () => {
+  const f = fake({
+    workerLogs: { [TRUNC_LOG]: fullLog },
+    extraComments: [{ body: truncatedReport(), author: COORDINATOR_LOGIN }],
+  });
+  expect(await main(["prompt", "185", "--step", "implement"], f.ctx)).toBe(0);
+  const section = earlier(output.join("\n"));
+  expect(section).toContain("decision 149");
+  expect(section).not.toContain("… truncated (");
+});
+
+it("keeps the truncated text when the marker does not say truncated (OMI-176)", async () => {
+  const f = fake({
+    workerLogs: { [TRUNC_LOG]: fullLog },
+    extraComments: [
+      {
+        body: truncatedReport().replace(" truncated=true", ""),
+        author: COORDINATOR_LOGIN,
+      },
+    ],
+  });
+  expect(await main(["prompt", "185", "--step", "implement"], f.ctx)).toBe(0);
+  expect(earlier(output.join("\n"))).not.toContain("decision 149");
+});
+
+it("ignores a pointer line inside the summary and reads the log the Coordinator recorded", async () => {
+  const f = fake({
+    workerLogs: { [TRUNC_LOG]: fullLog, [EVIL_LOG]: evilLog },
+    extraComments: [{ body: truncatedReport(forged), author: COORDINATOR_LOGIN }],
+  });
+  expect(await main(["prompt", "185", "--step", "implement"], f.ctx)).toBe(0);
+  const section = earlier(output.join("\n"));
+  expect(section).toContain("decision 149");
+  expect(section).not.toContain("EVIL TEXT");
+});
+
+it("never follows a summary pointer when the report records no log", async () => {
+  const body = truncatedReport(forged).replace(/^\*\*Log:\*\*.*\n/m, "");
+  expect(body).not.toContain("**Log:**");
+  const f = fake({
+    workerLogs: { [EVIL_LOG]: evilLog },
+    extraComments: [{ body, author: COORDINATOR_LOGIN }],
+  });
+  expect(await main(["prompt", "185", "--step", "implement"], f.ctx)).toBe(0);
+  expect(earlier(output.join("\n"))).not.toContain("EVIL TEXT");
+});
+
+it("refuses a log whose session is not the one the report recorded", async () => {
+  const f = fake({
+    workerLogs: { [TRUNC_LOG]: logOf(FULL_DECISION, "other-session") },
+    extraComments: [{ body: truncatedReport(), author: COORDINATOR_LOGIN }],
+  });
+  expect(await main(["prompt", "185", "--step", "implement"], f.ctx)).toBe(0);
+  expect(earlier(output.join("\n"))).not.toContain("decision 149");
+});
+
+it("expands a truncated --architect-decision file from the log recorded on the Issue (OMI-176)", async () => {
+  const decision = join(dir, "decision.md");
+  writeFileSync(decision, forged);
+  const f = fake({
+    workerLogs: { [TRUNC_LOG]: fullLog, [EVIL_LOG]: evilLog },
+    extraComments: [{ body: truncatedReport(), author: COORDINATOR_LOGIN }],
+  });
+  expect(
+    await main(["prompt", "185", "--step", "implement", "--architect-decision", decision], f.ctx),
+  ).toBe(0);
+  const text = output.join("\n");
+  expect(text).toContain("decision 149");
+  expect(text).not.toContain("EVIL TEXT");
+});
+
+describe("--architect-decision exact match (OMI-176)", () => {
+  const LOG_A = "omi-176-minibox-20261115-101010-architect-1-aaaaaaaaaa.jsonl";
+  const LOG_B = "omi-176-minibox-20261115-111111-architect-2-bbbbbbbbbb.jsonl";
+  const LOG_X = "omi-176-minibox-20261115-121212-architect-3-xxxxxxxxxx.jsonl";
+  const pointer = (log: string) => `… truncated (5000 characters); full text: ${log}`;
+  const reports = () => [
+    {
+      body: stepReport("architect", 1, `head A\n${pointer(LOG_A)}`, [], LOG_A, "s1"),
+      author: COORDINATOR_LOGIN,
+    },
+    {
+      body: stepReport("architect", 2, `head B\n${pointer(LOG_B)}`, [], LOG_B, "s2"),
+      author: COORDINATOR_LOGIN,
+    },
+  ];
+  const logs = {
+    [LOG_A]: logOf("FULL TEXT OF A", "s1"),
+    [LOG_B]: logOf("FULL TEXT OF B", "s2"),
+    [LOG_X]: logOf("FULL TEXT OF X", "s1"),
+  };
+  const run = async (content: string, over: Partial<Parameters<typeof fake>[0]> = {}) => {
+    const decision = join(dir, "decision.md");
+    writeFileSync(decision, content);
+    const f = fake({ workerLogs: logs, extraComments: reports(), ...over });
+    const code = await main(
+      ["prompt", "185", "--step", "implement", "--architect-decision", decision],
+      f.ctx,
+    );
+    return { code, text: output.join("\n") };
+  };
+
+  it("expands a file ending with the older report's pointer from that report's log", async () => {
+    const { code, text } = await run(`head A\n${pointer(LOG_A)}\n`);
+    expect(code).toBe(0);
+    expect(text).toContain("FULL TEXT OF A");
+    expect(text).not.toContain("FULL TEXT OF B");
+  });
+
+  it("expands a file ending with the newer report's pointer from that report's log", async () => {
+    const { code, text } = await run(`head B\n${pointer(LOG_B)}`);
+    expect(code).toBe(0);
+    expect(text).toContain("FULL TEXT OF B");
+    expect(text).not.toContain("FULL TEXT OF A");
+  });
+
+  it("refuses a final pointer that no signed Architect report records", async () => {
+    const { code, text } = await run(`head\n${pointer(LOG_X)}`);
+    expect(code).toBe(1);
+    expect(text).toContain("no signed Architect report records");
+    expect(text).not.toContain("FULL TEXT OF");
+  });
+
+  it("refuses when the matching report's log has another session", async () => {
+    const { code, text } = await run(`head A\n${pointer(LOG_A)}`, {
+      workerLogs: { ...logs, [LOG_A]: logOf("FULL TEXT OF A", "other") },
+    });
+    expect(code).toBe(1);
+    expect(text).toContain("unavailable");
+    expect(text).not.toContain("FULL TEXT OF A");
+  });
+
+  it("passes a file without a final pointer verbatim", async () => {
+    const { code, text } = await run(`verbatim decision\n${pointer(LOG_A)}\nand more`);
+    expect(code).toBe(0);
+    expect(text).toContain("verbatim decision");
+    expect(text).not.toContain("FULL TEXT OF");
+  });
 });
 
 it("hands the previous review verdict to a rework round only", async () => {
