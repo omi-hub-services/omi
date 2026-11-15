@@ -109,6 +109,7 @@ import {
   workerReportCommand,
 } from "./flow-workers.ts";
 import { linkedIssue } from "./review-verdict.ts";
+import { checkWithReuse } from "./flow-check.ts";
 import { promptCommand } from "./flow-prompt.ts";
 import { loadTemplate } from "./watch-workflow.ts";
 import "../register-ts-imports.ts";
@@ -126,7 +127,8 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   promote [<issue>]                           Backlog -> Ready if blockers closed and ready (no N: first by priority)
   start-branch <issue> <slug>                 WSL: task/omi-NNN-<slug> from origin/${BASE_BRANCH}
   push <branch>                               WSL: git push -u origin <branch>
-  check <branch> --head <sha>                 WSL: npm run check on exactly <sha>
+  check <branch> --head <sha>                 WSL: npm run check on exactly <sha>; a passed result
+                                              for the same head is reused ("done: reused <sha>")
   open-pr <issue> <branch> --title <t> --body-file <f>
   sync <branch> --reviewed <sha>              WSL: merge origin/${BASE_BRANCH}, check, push, carry the PASS
                                               (clean merges only; a conflict is aborted and refused)
@@ -509,7 +511,14 @@ export async function pruneRuns(ctx: Context, dryRun: boolean): Promise<boolean>
 }
 
 // ── execution ────────────────────────────────────────────────────────────────
-async function execute(ctx: Context, label: string, plan: Plan, dryRun: boolean): Promise<boolean> {
+async function execute(
+  ctx: Context,
+  label: string,
+  plan: Plan,
+  dryRun: boolean,
+  /** Receives the stdout/stderr of every step, for a result that is stored (OMI-168). */
+  capture?: string[],
+): Promise<boolean> {
   if (plan.kind === "done") {
     console.log(`${label}: done: ${plan.note}`);
     return true;
@@ -527,6 +536,7 @@ async function execute(ctx: Context, label: string, plan: Plan, dryRun: boolean)
     const result = await ctx.run(command);
     const out = result.stdout.trim();
     if (out) console.log(out);
+    capture?.push(out, result.stderr.trim());
     if (result.code !== 0) {
       console.error(`${label}: failed (exit ${String(result.code)}): ${result.stderr.trim()}`);
       return false;
@@ -535,6 +545,19 @@ async function execute(ctx: Context, label: string, plan: Plan, dryRun: boolean)
   if (!dryRun) console.log(`${label}: ok`);
   return true;
 }
+
+/** A planned `npm run check`, reusing the stored passed result of the same head (OMI-168). */
+const runCheck = (ctx: Context, label: string, plan: Plan, head: string, dryRun: boolean) =>
+  checkWithReuse(
+    {
+      run: ctx.run,
+      target: ctx.target,
+      dryRun,
+      exec: (p, out) => execute(ctx, label, p, dryRun, out),
+    },
+    plan,
+    head,
+  );
 
 /**
  * Backlog -> Ready. With no Issue number, the first promotable Backlog Issue in status.ts order.
@@ -835,8 +858,17 @@ export async function syncCommand(
   }
   const commented = decision.kind === "resume" && decision.commented;
   if (!commented) {
-    const checkPlan = planCheck(branch, newHead, await probeWsl(ctx, branch));
-    if (!(await execute(ctx, `${label} (check)`, checkPlan, false))) return 1;
+    const checkState = await probeWsl(ctx, branch);
+    if (
+      !(await runCheck(
+        ctx,
+        `${label} (check)`,
+        planCheck(branch, newHead, checkState),
+        checkState.head,
+        false,
+      ))
+    )
+      return 1;
   }
   const after = await probeWsl(ctx, branch, { remote: true });
   if (
@@ -1044,7 +1076,16 @@ export async function main(argv: readonly string[], context?: Context): Promise<
     }
     case "check": {
       const branch = taskBranch(a);
-      return go(planCheck(branch, required(values.head, "--head"), await probeWsl(ctx, branch)));
+      const state = await probeWsl(ctx, branch);
+      return (await runCheck(
+        ctx,
+        label,
+        planCheck(branch, required(values.head, "--head"), state),
+        state.head,
+        dry,
+      ))
+        ? 0
+        : 1;
     }
     case "open-pr": {
       const n = issueNumber(a);

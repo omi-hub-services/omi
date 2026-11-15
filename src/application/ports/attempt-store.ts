@@ -56,8 +56,17 @@ export interface AttemptRecord {
   readonly startedAt: string;
 }
 
+/** A step result the runtime recorded when a step succeeded or failed with a verified result. */
+export interface RecordedStepResult {
+  readonly stepId: string;
+  readonly status: "succeeded" | "failed";
+  readonly result: StepResult;
+}
+
 /** Runtime-owned attempt rows. Implemented over SQLite `agent_attempts` by infrastructure. */
 export interface AttemptStore {
+  /** Recorded step results of the run, oldest first; the hand-off source of later step packets. */
+  stepResults?(runId: string): readonly RecordedStepResult[];
   /** Latest reservation/attempt for a workflow step; a pending reservation must not expose older evidence. */
   latestForRunStep?(runId: string, stepId: string): AttemptRecord | undefined;
   /** Quality rounds exclude operational failovers; verdicts come from recorded runtime events. */

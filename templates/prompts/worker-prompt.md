@@ -6,6 +6,8 @@
 
 {{task_context}}
 
+{{earlier_steps}}
+
 {{notes}}
 
 {{skills}}

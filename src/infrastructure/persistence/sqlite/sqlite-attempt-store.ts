@@ -88,6 +88,35 @@ export function createSqliteAttemptStore(
     return { ...rest, ...(selection === undefined ? {} : { selection }), status: value.status };
   };
   return {
+    stepResults(runId) {
+      const rows = db
+        .prepare(
+          `SELECT e.kind AS kind, s.step_key AS step_key, e.payload AS payload
+             FROM events e JOIN step_runs s ON s.id = e.subject
+            WHERE s.run_id=? AND e.kind IN ('step.failed', 'step.succeeded')
+            ORDER BY e.sequence`,
+        )
+        .all(identifierSchema.parse(runId));
+      return rows.flatMap((row) => {
+        const event = z
+          .object({
+            kind: z.enum(["step.failed", "step.succeeded"]),
+            step_key: z.string(),
+            payload: z.string(),
+          })
+          .parse(row);
+        const payload = z.object({ result: stepResultSchema }).safeParse(JSON.parse(event.payload));
+        return payload.success
+          ? [
+              {
+                stepId: event.step_key,
+                status: event.kind === "step.failed" ? ("failed" as const) : ("succeeded" as const),
+                result: payload.data.result,
+              },
+            ]
+          : [];
+      });
+    },
     latestForRunStep: (runId, stepId) =>
       read(
         db

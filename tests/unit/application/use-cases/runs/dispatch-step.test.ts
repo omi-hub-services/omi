@@ -32,6 +32,44 @@ describe("dispatchStep", () => {
     expect(prompt).toContain("one AC-n: met|not met — <evidence> line per criterion");
     expect(prompt).toContain("Each AC-n: line must stand alone at the start of a line");
   });
+  it("hands the newest recorded result of each earlier step to the worker as task data (OMI-168)", async () => {
+    const r = rig();
+    const result = (summary: string, findings: unknown[] = []) => ({
+      schemaVersion: 1 as const,
+      runId: "run-1",
+      stepId: "analyze",
+      attemptId: "a",
+      status: "succeeded" as const,
+      summary,
+      artifacts: [],
+      checks: [],
+      skillsApplied: [],
+      findings,
+    });
+    Object.assign(r.deps.attempts, {
+      stepResults: () => [
+        { stepId: "analyze", status: "succeeded", result: result("old analysis") },
+        {
+          stepId: "analyze",
+          status: "succeeded",
+          result: result("fresh analysis", [{ id: "F1", severity: "major", message: "gap" }]),
+        },
+        { stepId: "unrelated", status: "succeeded", result: result("not wanted") },
+      ],
+    });
+    dispatched(await dispatchStep(r.deps, dispatchInput({ earlierStepIds: ["analyze"] })));
+    const prompt = r.executor.started[0]?.prompt ?? "";
+    expect(prompt).toContain("## Earlier steps (task data)");
+    expect(prompt).toContain("fresh analysis");
+    expect(prompt).toContain("F1: gap");
+    expect(prompt).not.toContain("old analysis");
+    expect(prompt).not.toContain("not wanted");
+  });
+  it("adds no earlier-steps section when the step needs nothing", async () => {
+    const r = rig();
+    dispatched(await dispatchStep(r.deps, dispatchInput()));
+    expect(r.executor.started[0]?.prompt ?? "").not.toContain("Earlier steps");
+  });
   it("tells the worker to report every manifest skill with its own evidence artifact, and lists them (OMI-135)", async () => {
     const r = rig();
     dispatched(await dispatchStep(r.deps, dispatchInput()));

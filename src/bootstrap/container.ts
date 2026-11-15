@@ -43,6 +43,7 @@ import { logRetentionSettings } from "../application/contracts/log-retention.js"
 import { retainWorkerLogs } from "../application/use-cases/runs/retain-worker-logs.js";
 import { createCliGitWorkspace } from "../infrastructure/git/cli-git-workspace.js";
 import { createProcessCheckRunner } from "../infrastructure/processes/process-check-runner.js";
+import { reuseCheckRuns } from "../application/services/reuse-check-runs.js";
 import { createGithubRestClient } from "../infrastructure/github/github-rest-client.js";
 import { createGhApiTransport } from "../infrastructure/github/gh-api-transport.js";
 import type { GithubTransport } from "../infrastructure/github/github-transport.js";
@@ -1178,17 +1179,21 @@ export async function createProjectRunCommandUseCases(
     ...(config.project.checks === undefined
       ? {}
       : {
-          checks: createProcessCheckRunner({
-            checks: Object.fromEntries(
-              Object.entries(config.project.checks).map(([id, check]) => [
-                id,
-                { command: check.command, timeoutMs: check.timeout_seconds * 1000 },
-              ]),
-            ),
-            artifacts,
-            now,
-            nextId,
-          }),
+          // One runner for implement and review: the same check on the same head runs once.
+          checks: reuseCheckRuns(
+            createProcessCheckRunner({
+              checks: Object.fromEntries(
+                Object.entries(config.project.checks).map(([id, check]) => [
+                  id,
+                  { command: check.command, timeoutMs: check.timeout_seconds * 1000 },
+                ]),
+              ),
+              artifacts,
+              now,
+              nextId,
+            }),
+            { artifacts, workspaces, now, nextId },
+          ),
         }),
     findings: stepFindings,
     failoversMade: (stepRunId) => attempts.failoversForStep(stepRunId),

@@ -11,6 +11,7 @@ it("keeps the shared prompt renderable outside installed project templates", () 
       workspace: "workspace",
       read_first: "read first",
       task_context: "literal {{rules}}",
+      earlier_steps: "earlier",
       notes: "notes",
       skills: "skills",
       rules: "rules",

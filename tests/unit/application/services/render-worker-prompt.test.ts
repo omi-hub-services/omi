@@ -7,6 +7,7 @@ it("provides a pure single-pass renderer that refuses unresolved skeleton slots"
     workspace: "workspace",
     read_first: "read first",
     task_context: "{{rules}}",
+    earlier_steps: "earlier",
     notes: "notes",
     skills: "skills",
     rules: "rules",

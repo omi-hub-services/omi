@@ -44,6 +44,7 @@ import type { RuleContent, RuleSource } from "../../ports/rule-source.js";
 import type { SkillSource } from "../../ports/skill-source.js";
 import type { StateUnitOfWork } from "../../ports/state-unit-of-work.js";
 import { assembleContext, ContextSelectionError } from "../../services/assemble-context.js";
+import { earlierResultsFromRun, renderEarlierSteps } from "../../services/render-earlier-steps.js";
 import { resolveRoleContext, RoleResolutionError } from "../../services/resolve-role-context.js";
 
 /** Where an attempt's result artifacts must be published inside the artifact store. */
@@ -53,6 +54,8 @@ export function attemptArtifactRoot(attemptId: string): string {
 
 const dispatchStepSchema = z.strictObject({
   checkEvidenceSteps: z.array(slugSchema).default([]),
+  /** Steps whose newest recorded result this packet carries as task data (OMI-168). */
+  earlierStepIds: z.array(slugSchema).default([]),
   packetSteps: workflowSchema.shape.steps.optional(),
   quality: stepQualitySchema.optional(),
   models: modelsConfigSchema,
@@ -211,11 +214,13 @@ function buildPrompt(
   skills: readonly InlinedSkill[],
   rules: readonly (RuleContent & { id: string; version: string })[],
   checkLogs: readonly string[],
+  earlierSteps: string,
 ): string {
   return renderWorkerPrompt(workerPromptAssets.skeleton, {
     identity: `You are the "${packet.role}" worker for step "${packet.stepId}" (attempt ${packet.attemptId}).`,
     workspace: "",
     read_first: "",
+    earlier_steps: earlierSteps,
     notes: [
       ...(packet.quality === undefined
         ? []
@@ -692,6 +697,10 @@ export async function dispatchStep(
           inlined.contents,
           rules.contents,
           checkLogs,
+          renderEarlierSteps(
+            earlierResultsFromRun(deps.attempts.stepResults?.(step.runId) ?? []),
+            command.earlierStepIds,
+          ),
         ),
         model: command.execution.model,
         effort: command.execution.effort,
