@@ -4,6 +4,18 @@ All notable changes to omi-squad are documented here, following Keep a Changelog
 and Semantic Versioning. During 0.x, breaking changes are allowed and listed explicitly.
 Each version contains a `### Breaking` section; an empty section declares no breaking changes.
 
+## [0.1.1] - 2026-11-15
+
+### Fixed
+
+- OMI-145: commit-worker handles root files.
+- OMI-146: repository report entry shape.
+- OMI-147: `close` accepts a release PR into `main`.
+- OMI-148: pin refresh removes its previous checkout backup.
+- OMI-149: Coordinator bridge reached no WSL CLI; `wsl.exe` argument quoting fixed.
+
+### Breaking
+
 ## [0.1.0] - 2026-11-15
 
 ### Added
