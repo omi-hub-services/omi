@@ -28,15 +28,9 @@ steps:
     capability_profile: review
     output_contract: review-result-v1
 gates:
-  # Includes new paid runners, services and infrastructure. Unknown cost blocks execution.
-  - id: configure-cost-approved
+  # Approve the planned run scope once; changed estimates or extra rework need approval.
+  - id: run-cost-approved
     before: configure-pipeline
-    policy: approved-cost
-  - id: verify-cost-approved
-    before: verify
-    policy: approved-cost
-  - id: review-cost-approved
-    before: review
     policy: approved-cost
   # Publish actual pipeline output pinned to the tested revision, not a proposed YAML file.
   - id: pipeline-output

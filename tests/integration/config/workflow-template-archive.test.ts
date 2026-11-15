@@ -112,3 +112,25 @@ describe("pinned workflow template archive", () => {
     expect(catalog.byHash(sha("not: a workflow\n"))).toBeUndefined();
   });
 });
+
+it.each(["idea-to-issues", "docs", "ci-cd", "ui-ux"])(
+  "resolves old %s bytes and graph after updating",
+  async (id) => {
+    const old = readFileSync(`tests/fixtures/workflow-archive/${id}-small-steps.yaml`, "utf8");
+    const current = readFileSync(`templates/project/workflows/${id}.yaml`, "utf8");
+    const squad = mkdtempSync(join(tmpdir(), "omi-archive-"));
+    dirs.push(squad);
+    const workflows = join(squad, "workflows");
+    mkdirSync(workflows);
+    const file = join(workflows, `${id}.yaml`);
+    const load = () =>
+      loadWorkflowCatalog(workflows, [id], { localDir: join(squad, "local"), persist: true });
+    writeFileSync(file, old);
+    const original = (await load()).byId(id);
+    writeFileSync(file, current);
+    const catalog = await load();
+    expect(sha(current)).not.toBe(sha(old));
+    expect(catalog.byHash(sha(old))).toEqual(original);
+    expect(catalog.byId(id)?.hash).toBe(sha(current));
+  },
+);

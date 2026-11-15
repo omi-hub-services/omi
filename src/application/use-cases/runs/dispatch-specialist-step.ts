@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { workflowCostScope } from "../../../domain/workflows/workflow-policy.js";
+import { approvalSubjectSchema } from "../../contracts/approval.js";
 import { workflowSchema } from "../../contracts/workflow.js";
 import { identifierSchema } from "../../contracts/identifiers.js";
 import { assertCredentialFree } from "../../contracts/credential-input.js";
@@ -88,10 +90,37 @@ export async function dispatchSpecialistStep(
     }
   }
 
+  const costGates = workflow.gates.filter((gate) => gate.policy === "approved-cost");
+  const runCostGate = costGates.length === 1;
   if (cost.status === "unknown") return { ok: false, reason: "COST_UNKNOWN" };
   if (cost.status === "new") {
+    const subject = approvalSubjectSchema.safeParse(deps.subjects.read(cost.subjectId, "cost"));
+    if (
+      runCostGate &&
+      (deps.approvals.get(cost.approvalId)?.runId !== row.runId ||
+        !subject.success ||
+        subject.data.kind !== "cost")
+    )
+      return { ok: false, reason: "COST_APPROVAL_REQUIRED" };
+    const round = Math.max(
+      deps.attempts.qualityHistory?.(row.id).round ?? 1,
+      input.quality?.round ?? 1,
+    );
+    // Reuse the decision, never a cached passed flag; extra rounds expand the expected scope.
+    let subjects = deps.subjects;
+    if (runCostGate && subject.success && subject.data.kind === "cost") {
+      const current = subject.data;
+      subjects = {
+        read: () => ({
+          ...current,
+          scopeIds: [
+            ...new Set([...current.scopeIds, ...workflowCostScope(workflow.steps, step.id, round)]),
+          ],
+        }),
+      };
+    }
     const decision = checkExecutionApprovals(
-      { store: deps.approvals, subjects: deps.subjects, now: deps.now },
+      { store: deps.approvals, subjects, now: deps.now },
       [{ approvalId: cost.approvalId, subjectId: cost.subjectId, kind: "cost" }],
       deps.allowedPoActors,
       deps.authorActor,
@@ -109,7 +138,9 @@ export async function dispatchSpecialistStep(
         ? ["design-evidence"]
         : [];
   if (
-    !workflow.gates.some((gate) => gate.before === step.id && gate.policy === "approved-cost") ||
+    !(runCostGate
+      ? costGates[0]?.before === workflow.steps[0]?.id && workflow.steps[0]?.needs.length === 0
+      : costGates.some((gate) => gate.before === step.id)) ||
     !expectedChecks.every((policy) =>
       workflow.gates.some((gate) => gate.after === step.id && gate.policy === policy),
     )

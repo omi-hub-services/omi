@@ -5,16 +5,9 @@ selection:
   task_types: [idea]
 quality_policy: lean
 steps:
-  - id: clarify-idea
-    role: analyst
-    needs: []
-    skills: [requirements-analysis]
-    rules: [project-baseline]
-    capability_profile: analysis
-    output_contract: analysis-result-v1
   - id: define-requirements
     role: analyst
-    needs: [clarify-idea]
+    needs: []
     skills: [requirements-analysis]
     rules: [project-baseline]
     capability_profile: analysis

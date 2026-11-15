@@ -167,12 +167,12 @@ describe("computeNext", () => {
     expect(computeNext(w, all, { step: "review", status: "succeeded" })).toBe("open-pr");
   });
 
-  it("docs: write -> verify -> accept", async () => {
+  it("docs: write -> accept", async () => {
     const w = await workflow("docs");
-    expect(computeNext(w, [], { step: "write", status: "succeeded" })).toBe("verify");
+    expect(computeNext(w, [], { step: "write", status: "succeeded" })).toBe("accept");
     expect(
-      computeNext(w, [marker({ step: "write" })], { step: "verify", status: "succeeded" }),
-    ).toBe("accept");
+      computeNext(w, [marker({ step: "write" })], { step: "accept", status: "succeeded" }),
+    ).toBe("open-pr");
   });
 
   it("a merged review packet satisfies the quality step", async () => {
@@ -194,18 +194,14 @@ describe("computeNext", () => {
   it("an explicitly failed upstream step is not satisfied by a downstream success", async () => {
     const w = await workflow("docs");
     const prior = [marker({ step: "write", status: "failed" })];
-    expect(computeNext(w, prior, { step: "verify", status: "succeeded" })).toBe("write");
+    expect(computeNext(w, prior, { step: "accept", status: "succeeded" })).toBe("write");
   });
 
   it("reworked upstream work invalidates the downstream results older than it", async () => {
     const w = await workflow("docs");
-    const prior = [
-      marker({ step: "write" }),
-      marker({ step: "verify" }),
-      marker({ step: "accept", status: "failed" }),
-    ];
-    // write succeeds again: verify (older than the new write) must run again, not accept
-    expect(computeNext(w, prior, { step: "write", status: "succeeded" })).toBe("verify");
+    const prior = [marker({ step: "write" }), marker({ step: "accept", status: "failed" })];
+    // A new write invalidates the older acceptance verdict.
+    expect(computeNext(w, prior, { step: "write", status: "succeeded" })).toBe("accept");
   });
 
   it("failed resumes the same step with findings; blocked waits for the PO", async () => {
@@ -216,8 +212,8 @@ describe("computeNext", () => {
 
   it("a later failed marker un-does an earlier success of the same step", async () => {
     const w = await workflow("docs");
-    const prior = [marker({ step: "write" }), marker({ step: "verify", status: "failed" })];
-    expect(computeNext(w, prior, { step: "write", status: "succeeded" })).toBe("verify");
+    const prior = [marker({ step: "write" }), marker({ step: "write", status: "failed" })];
+    expect(computeNext(w, prior, { step: "accept", status: "succeeded" })).toBe("write");
   });
 
   it("refuses a step the workflow does not have", async () => {

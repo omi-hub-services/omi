@@ -195,15 +195,12 @@ describe("buildSnapshot: the repo's data in the shared WatchSnapshot contract", 
       },
     });
     expect(card?.layout.nodes.map((n) => n.id)).toEqual([
-      "design-cost-approved",
+      "run-cost-approved",
       "design",
       "design-evidence",
-      "implement-cost-approved",
       "implement",
-      "verify-cost-approved",
       "verify",
       "visual-evidence",
-      "review-cost-approved",
       "review",
       "ready-to-merge",
     ]);
