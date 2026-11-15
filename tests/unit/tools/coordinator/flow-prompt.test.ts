@@ -173,6 +173,14 @@ it("uses only the configured owner's Project and supplies the concrete Plan Key"
   expect(text).not.toContain("OMI-999");
 });
 
+it("states the checks/skillsApplied entry shape in the report contract (OMI-146)", async () => {
+  expect(await main(["prompt", "185", "--step", "implement"], fake().ctx)).toBe(0);
+  const text = output.join("\n");
+  expect(text).toContain("`artifacts`, `checks` and `skillsApplied` stay empty arrays");
+  expect(text).toContain("quote checks and skills in `summary`");
+  expect(text).toContain('any entry must be an object `{"id","evidenceRef"}`');
+});
+
 it("reads the Workflow from later Project-item pages without duplicating comments", async () => {
   const f = fake({ paginatedProjects: true });
   expect(await main(["prompt", "185", "--step", "implement"], f.ctx)).toBe(0);
