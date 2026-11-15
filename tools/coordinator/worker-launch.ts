@@ -13,6 +13,12 @@ export const CLAUDE_DENIED_TOOLS = REPOSITORY_WORKER_DENIED_TOOLS;
 
 export const NATIVE_RESUME_HEADER = "# Native resume only";
 
+/**
+ * Second line of a review packet that `flow.ts prompt` rendered with the security risk. Only the
+ * script writes it (the packet is the Coordinator's file); `dispatch` records it in the metadata.
+ */
+export const SECURITY_REVIEW_MARKER = "<!-- omi-security-review required -->";
+
 /** `$HOME/omi-runs/omi-<task>-<suffix>`; `task` is the digits of the Plan Key. */
 export function runsPath(task: string, suffix: string): string {
   assertTask(task);

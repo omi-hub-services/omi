@@ -30,6 +30,7 @@ import {
   claudeLaunchPayload,
   codexLaunchPayload,
   NATIVE_RESUME_HEADER,
+  SECURITY_REVIEW_MARKER,
   dispatchStamp,
   promptFile,
   runsPath,
@@ -125,6 +126,7 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
   let level = input.complexity;
   let packetBase = "adhoc"; // a packet without quality metadata has no step or attempt to name it
   let reported: { readonly step: string; readonly round: number } | null = null;
+  let securityReview = false;
   const packet = input.prompt.startsWith(`${NATIVE_RESUME_HEADER}\n\n`)
     ? input.prompt.slice(NATIVE_RESUME_HEADER.length + 2)
     : input.prompt;
@@ -134,6 +136,9 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
       const quality = stepQualitySchema.parse(JSON.parse(raw ?? "") as unknown);
       packetBase = `${quality.step}-${String(quality.round)}`;
       reported = { step: quality.steps.join(","), round: quality.round };
+      // Exactly the second line of the packet: text further down (Issue body, notes) never counts.
+      securityReview =
+        quality.step === "review" && packet.split(/\r?\n/)[1] === SECURITY_REVIEW_MARKER;
       if (
         input.resume !== null &&
         ["analyze", "architect", "verify", "review"].includes(quality.step)
@@ -206,6 +211,7 @@ export async function dispatchCommand(ctx: WorkerCtx, input: DispatchInput): Pro
           head,
           packet: packetId,
           skipped: input.scopeApproved == null ? [] : ["analyze"],
+          ...(securityReview ? { securityReview: true } : {}),
         };
   const writeMeta: Command | null =
     meta === null
@@ -552,13 +558,46 @@ export interface ReviewCommentInput {
   readonly regressionEvidence?: unknown;
   readonly issueBody: string;
   readonly workflow?: string | null;
+  /** The review packet's security risk (`securityReviewRisk`); the review then needs `Security:`. */
+  readonly securityRisk?: boolean;
+  /** The Issue's Plan Key; its review packets' dispatch metadata can also require `Security:`. */
+  readonly planKey?: string | null;
   readonly body: string;
   readonly dryRun: boolean;
 }
 
+/**
+ * True when `flow.ts dispatch` recorded a security-marked review packet for this exact head in
+ * ~/omi-runs. The metadata is script-written; the worker's text and flags never feed it.
+ */
+async function recordedSecurityReview(
+  ctx: Pick<WorkerCtx, "run" | "target">,
+  planKey: string | null | undefined,
+  head: string,
+): Promise<boolean> {
+  const task = /^OMI-(\d+)$/.exec(planKey ?? "")?.[1];
+  if (task === undefined) return false;
+  const read = await ctx.run(
+    wslCommand(
+      `for f in ${runsPath(task, "meta-review-")}*.json; do cat $f; echo; done 2>/dev/null; true`,
+      ctx.target,
+      30_000,
+    ),
+  );
+  if (read.code !== 0) throw new Error("cannot read the review dispatch metadata in ~/omi-runs");
+  return read.stdout.split("\n").some((line) => {
+    try {
+      const meta = JSON.parse(line) as { securityReview?: unknown; head?: unknown };
+      return meta.securityReview === true && meta.head === head;
+    } catch {
+      return false;
+    }
+  });
+}
+
 /** Validates the VERDICT/AC format against the PR and its Issue, then posts as the Coordinator. */
 export async function reviewCommentCommand(
-  ctx: Pick<WorkerCtx, "run">,
+  ctx: Pick<WorkerCtx, "run" | "target">,
   input: ReviewCommentInput,
 ): Promise<number> {
   const label = `review-comment ${String(input.pr)}`;
@@ -567,12 +606,21 @@ export async function reviewCommentCommand(
       label,
       `PR #${String(input.pr)} is ${input.prState}; needs OPEN or a MERGED release PR`,
     );
+  let securityRisk = input.securityRisk === true;
+  if (!securityRisk) {
+    try {
+      securityRisk = await recordedSecurityReview(ctx, input.planKey, input.prHead);
+    } catch (error) {
+      return refuse(label, error instanceof Error ? error.message : String(error));
+    }
+  }
   const checked = checkReview(input.body, {
     acCount: countAcceptanceCriteria(input.issueBody),
     prHead: input.prHead,
     workflow: input.workflow,
     baseSha: input.baseSha,
     regressionEvidence: input.regressionEvidence,
+    securityRisk,
   });
   if (!checked.ok) return refuse(label, checked.reasons.join("; "));
   if (checked.verdict === "PASS" && input.checkStatus !== "pass")

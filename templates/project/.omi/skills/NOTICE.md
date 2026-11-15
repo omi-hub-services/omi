@@ -5,6 +5,9 @@ below. Each is licensed under the MIT License, whose copyright and permission no
 in full here as the licence requires. Which skill derives from which source, and how it was changed,
 is recorded in `../provenance/skills.lock.json`.
 
+The `security-review` skill is the exception: it is original content written for this project, with
+no third-party text. It is recorded in the same lock file as an original skill.
+
 These notices cover only the text adapted into the skills in this directory. Nothing else from the
 upstream repositories (scripts, data, fonts, images, logos, hooks or plugin files) is included.
 

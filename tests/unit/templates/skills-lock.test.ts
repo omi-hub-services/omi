@@ -21,6 +21,8 @@ interface LockSkill {
   sha256: string;
   sources: { source: string; originalPaths: LockFile[] }[];
   files: LockFile[];
+  /** Written for this project: no third-party source, and then no licence to reproduce. */
+  original?: boolean;
   modified: boolean;
   modification: string;
 }
@@ -85,7 +87,12 @@ function findLockViolations(root: string): string[] {
     ids.add(skill.id);
     if (!slugSchema.safeParse(skill.id).success) out.push(`${skill.id}: not a valid skill id`);
     if (skill.version.length === 0) out.push(`${skill.id}: empty version`);
-    if (skill.sources.length === 0) out.push(`${skill.id}: no source recorded`);
+    if (skill.sources.length === 0 && skill.original !== true) {
+      out.push(`${skill.id}: no source recorded`);
+    }
+    if (skill.original === true && skill.sources.length > 0) {
+      out.push(`${skill.id}: an original skill cannot list a third-party source`);
+    }
     if (skill.modification.trim() === "") out.push(`${skill.id}: modification not described`);
     for (const { source, originalPaths } of skill.sources) {
       if (!(source in lock.sources)) out.push(`${skill.id}: unknown source ${source}`);
@@ -155,6 +162,25 @@ describe("skills.lock.json", () => {
       expect(exclusion.reason.trim()).not.toBe("");
       expect(exclusion.source in lock.sources).toBe(true);
     }
+  });
+
+  it("records security-review as an original skill with provenance", () => {
+    const lock = JSON.parse(
+      readFileSync(join(squadDir, "provenance/skills.lock.json"), "utf8"),
+    ) as Lock;
+    const skill = lock.skills.find((entry) => entry.id === "security-review");
+    expect(skill).toMatchObject({ original: true, sources: [], modified: false });
+    expect(skill?.files.map((file) => file.path)).toEqual(["skills/security-review/SKILL.md"]);
+    expect(readNormalised(join(squadDir, NOTICE))).toContain("security-review");
+  });
+
+  it("flags a skill with no source that is not marked original", () => {
+    const dir = copyOfSquadDir();
+    const path = join(dir, "provenance/skills.lock.json");
+    const lock = JSON.parse(readFileSync(path, "utf8")) as Lock;
+    for (const skill of lock.skills) delete skill.original;
+    writeFileSync(path, JSON.stringify(lock));
+    expect(findLockViolations(dir)).toContain("security-review: no source recorded");
   });
 
   it("flags an edited skill file", () => {

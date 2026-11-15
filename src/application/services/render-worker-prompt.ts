@@ -1,10 +1,15 @@
 import {
+  reviewRiskSkills,
   workflowReviewFocus,
   type QualityPolicyInput,
 } from "../../domain/workflows/workflow-policy.js";
 import { workerPromptAssets } from "./worker-prompt-assets.js";
 import type { z } from "zod";
 import type { stepQualitySchema } from "../contracts/workflow.js";
+
+/** A security-relevant review is refused without this section (review-comment and the runtime gate). */
+const SECURITY_SECTION_INSTRUCTION =
+  "Security-relevant change: apply the security-review skill. Your result must contain a section that starts with the line `Security:`; under it, one line per checklist area of that skill saying `checked` or `no findings`, each with its evidence (file:line, command or case). A security defect is a must-fix finding. A review without this section is refused.";
 
 /** Shared instructions for repository and installed-runtime packets. */
 export function renderQualityInstructions(
@@ -22,6 +27,9 @@ export function renderQualityInstructions(
           risks !== undefined &&
           workflowReviewFocus(risks).length > 0
             ? [`Review focus: ${workflowReviewFocus(risks).join(", ")}`]
+            : []),
+          ...(reviewRiskSkills(quality.step, risks).length > 0
+            ? [SECURITY_SECTION_INSTRUCTION]
             : []),
           ...(deltaReview ? [workerPromptAssets.qualityDelta] : []),
         ]

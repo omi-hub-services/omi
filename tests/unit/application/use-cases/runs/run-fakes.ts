@@ -65,6 +65,7 @@ export function catalog(): ResolutionCatalog {
       { id: "tdd", version: "1", sha256: h("a") },
       { id: "debugging", version: "1", sha256: h("c") },
       { id: "receiving-code-review", version: "1", sha256: h("b") },
+      { id: "security-review", version: "1", sha256: h("f") },
     ],
     rules: [
       { id: "architecture-boundaries", version: "1", sha256: h("d"), mandatory: false },
@@ -85,6 +86,11 @@ export class FakeSkillSource implements SkillSource {
     this.files.set("receiving-code-review", {
       sha256: h("b"),
       skillMd: "# Receiving review\nVerify each finding first.\n",
+      bundledFiles: [],
+    });
+    this.files.set("security-review", {
+      sha256: h("f"),
+      skillMd: "# Security review\nWalk the checklist.\n",
       bundledFiles: [],
     });
     this.files.set("debugging", {

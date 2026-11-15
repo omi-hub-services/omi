@@ -3,7 +3,7 @@
   "description": "Provenance of the curated skills in .omi/skills. Each skill's id, version and sha256 can be copied into a context packet skillsManifest entry. A skill's sha256 is the SHA-256 of the lines '<path> <file sha256>\\n' for its files, in the listed order, where each file sha256 is of the file's bytes.",
   "noticeFile": {
     "path": "skills/NOTICE.md",
-    "sha256": "c97e093f78145f7b6da882591458d6e94419ca04e39b3d46c9d16381a992f38b"
+    "sha256": "6a403be9c9df4d1af1e1585af5269b5742f393745f41c14258960aa96124b298"
   },
   "sources": {
     "superpowers": {
@@ -276,6 +276,21 @@
       ],
       "modified": true,
       "modification": "Condensed the ten-category rule list into a web-focused checklist. Removed: search.py tool and CSV databases, design-system persistence, design dials, stack list, native/mobile-only rules and the pro-rules checklist. Nothing is run or installed."
+    },
+    {
+      "id": "security-review",
+      "version": "1",
+      "sha256": "1fbfa5b08d0d40015d725e1b79e68137ccd8d16912d6b76b8241e550445dc47b",
+      "original": true,
+      "sources": [],
+      "files": [
+        {
+          "path": "skills/security-review/SKILL.md",
+          "sha256": "0b4eac87a66618ad59eb78b81df63a38952bdfaff5e37e1126aee28108dd841f"
+        }
+      ],
+      "modified": false,
+      "modification": "Original content written for this project (OMI-170, ADR-0042); no third-party text was copied or adapted. Checklist of nine security areas with concrete failure cases and the Security: output section."
     }
   ],
   "exclusions": [

@@ -4,7 +4,7 @@ import { recordStepResult } from "../../../../../src/application/use-cases/runs/
 import { createRunMergeEvidenceReader } from "../../../../../src/application/services/build-run-merge-evidence.ts";
 import { stepResultSchema } from "../../../../../src/application/contracts/result.ts";
 import { contextPacketSchema } from "../../../../../src/application/contracts/context.ts";
-import { dispatchInput, HEAD, BASE, rig, type Rig } from "./run-fakes.ts";
+import { dispatchInput, HEAD, BASE, rig, skillEvidence, type Rig } from "./run-fakes.ts";
 
 async function started(r: Rig, input: Record<string, unknown> = dispatchInput()) {
   const dispatch = await dispatchStep(r.deps, input);
@@ -170,6 +170,70 @@ describe("recordStepResult", () => {
         failure: "REVIEW_AC_LINES_INVALID",
         detail: "AC_LINE_MISSING",
       });
+    });
+  });
+  describe("security review gate", () => {
+    async function securityReview(summary: string, paths: string[]) {
+      const r = rig();
+      r.deps.catalog = {
+        ...r.deps.catalog,
+        roles: r.deps.catalog.roles.map((entry) => ({
+          ...entry,
+          definition: { ...entry.definition, id: "reviewer" },
+        })),
+      };
+      const input = dispatchInput({
+        role: "reviewer",
+        quality: { policy: "task-default", step: "review", steps: ["review"], round: 1 },
+      });
+      const context = contextPacketSchema.partial().parse(input["context"]);
+      const { attempt, handle } = await started(r, {
+        ...input,
+        context: { ...context, allowedScope: { paths } },
+      });
+      const evidence = skillEvidence(attempt, (path, text) => r.artifacts.publish(path, text));
+      const report = {
+        ...goodResult(r, attempt.id, { summary }),
+        skillsApplied: evidence.skillsApplied,
+      };
+      report.artifacts = [...report.artifacts, ...evidence.artifacts];
+      return { attempt, result: await record(r, attempt.id, handle, report) };
+    }
+    const exec = ["src/infrastructure/process/exec-runner.ts"];
+    const plain = ["src/interfaces/cli/commands/task.ts"];
+
+    it("fails a security-risk review that has no Security: section", async () => {
+      const { attempt, result } = await securityReview("AC-1: met — evidence", exec);
+      expect(attempt.skills.map((skill) => skill.id)).toContain("security-review");
+      expect(result).toMatchObject({
+        ok: true,
+        stepStatus: "failed",
+        failure: "REVIEW_SECURITY_SECTION_MISSING",
+      });
+    });
+
+    it.each([
+      "Security:\n",
+      "Security:\n\n## Verdict:\nready",
+      "Security: TODO",
+      "Security:\n- secrets: checked",
+    ])("fails a security-risk review whose Security: section is unusable: %s", async (tail) => {
+      const { result } = await securityReview(`AC-1: met — evidence\n${tail}`, exec);
+      expect(result).toMatchObject({ failure: "REVIEW_SECURITY_SECTION_MISSING" });
+    });
+
+    it("accepts a security-risk review with a Security: section", async () => {
+      const { result } = await securityReview(
+        "AC-1: met — evidence\nSecurity:\n- Command injection: checked — argv array, src/x.ts:4",
+        exec,
+      );
+      expect(result).toMatchObject({ stepStatus: "succeeded" });
+    });
+
+    it("does not ask a review without the security risk for a Security: section", async () => {
+      const { attempt, result } = await securityReview("AC-1: met — evidence", plain);
+      expect(attempt.skills.map((skill) => skill.id)).not.toContain("security-review");
+      expect(result).toMatchObject({ stepStatus: "succeeded" });
     });
   });
   it("accepts a verified result: step and attempt succeed and the writer is released", async () => {
