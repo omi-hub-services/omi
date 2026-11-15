@@ -149,17 +149,26 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
     }
     const dockerBinding =
       settings?.docker === undefined ? undefined : dockerProject(settings, input.projectDir);
-    const command: WslProbe["command"] = async (executable, args, cwd, env) => {
+    // Container profile paths come from the profile id, never from the host path in env.
+    const command = async (
+      executable: string,
+      args: readonly string[],
+      cwd: string,
+      env?: Record<string, string>,
+      profileId?: string,
+    ) => {
       if (dockerBinding === undefined) return probe.command(executable, args, cwd, env);
       const forwarded = Object.fromEntries(
         Object.entries(env ?? {}).filter(([key]) =>
           ["GH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR", "CODEX_HOME"].includes(key),
         ),
       );
-      for (const [key, value] of Object.entries(forwarded)) {
-        if (key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR") {
-          const id = value.split("/").at(-1) ?? "";
-          forwarded[key] = key === "CODEX_HOME" ? `/profiles/${id}` : `/work/.profiles/${id}`;
+      for (const key of ["CODEX_HOME", "CLAUDE_CONFIG_DIR"]) {
+        if (key in forwarded) {
+          forwarded[key] =
+            key === "CODEX_HOME"
+              ? `/profiles/${profileId ?? ""}`
+              : `/work/.profiles/${profileId ?? ""}`;
         }
       }
       return probe.command(
@@ -414,6 +423,7 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
               join(homedir(), ".claude-profiles", profile.id),
               { token: profile.auth.token },
             ),
+            profile.id,
           );
           const live = parseWith(z.object({ loggedIn: z.boolean() }), output)?.loggedIn === true;
           check(
@@ -428,6 +438,7 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
             ["login", "status"],
             input.projectDir,
             buildCodexEnvironment(process.env, codexProfileHome(profile.id)),
+            profile.id,
           );
           check(
             `profiles[${String(index)}].auth`,
