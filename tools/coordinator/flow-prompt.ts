@@ -59,18 +59,22 @@ async function readLogSummary(
   ctx: WorkerCtx,
   target: WorkerCtx["target"],
   logName: string,
+  session: string,
 ): Promise<string | null> {
   const path = `$HOME/${RUNS_DIR_FROM_HOME}/${logName}`;
   const log = await ctx.run(wslCommand(`cat ${path}`, target, 120_000));
   if (log.code !== 0) return null;
   if (!isCodexLog(logName)) {
-    const report = parseClaudeReport(log.stdout).report;
-    return report === null ? null : fullSummary(report);
+    const claude = parseClaudeReport(log.stdout);
+    // the log must be the worker the Coordinator signed, not just a file of the same name shape
+    return claude.report === null || claude.sessionId !== session
+      ? null
+      : fullSummary(claude.report);
   }
   const lastPath = path.replace(/\.jsonl$/, "-last.md");
   const last = await ctx.run(wslCommand(`cat ${lastPath}`, target, 30_000));
-  const report = parseCodexReport(log.stdout, last.code === 0 ? last.stdout : "").report;
-  return report === null ? null : fullSummary(report);
+  const codex = parseCodexReport(log.stdout, last.code === 0 ? last.stdout : "");
+  return codex.report === null || codex.threadId !== session ? null : fullSummary(codex.report);
 }
 
 const ISSUE_PACKET_QUERY = `
@@ -362,11 +366,20 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
     }
     if (input.architectDecision !== undefined) {
       let decision = await readFile(input.architectDecision, "utf8");
-      // shortcut: the file is the decision summary as the Coordinator copied it; a pointer line
-      // swaps the whole file for the full text from the log
-      const name = TRUNCATION_POINTER.exec(decision)?.[2];
-      const full = name === undefined ? null : await readLogSummary(ctx, target, name);
-      if (full !== null) decision = full;
+      // shortcut: the file is the decision summary as the Coordinator copied it; when it carries a
+      // pointer line, the newest truncated Architect report on the Issue (its signed log) supplies
+      // the full text and replaces the whole file
+      const signed = parseStepResults(issue.comments, COORDINATOR_LOGIN)
+        .filter((r) => r.stepId === "architect" && r.truncated === true)
+        .at(-1);
+      if (
+        signed?.log !== undefined &&
+        signed.session !== undefined &&
+        decision.split("\n").some((l) => TRUNCATION_POINTER.test(l))
+      ) {
+        const full = await readLogSummary(ctx, target, signed.log, signed.session);
+        if (full !== null) decision = full;
+      }
       evidence.push(`## Architect decision (verbatim)\n${decision}`);
     }
     const resume = input.findings !== undefined;
@@ -375,8 +388,11 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
     const expandTruncated = (results: ReturnType<typeof parseStepResults>) =>
       Promise.all(
         results.map(async (r) => {
-          const name = r.truncated ? TRUNCATION_POINTER.exec(r.summary)?.[2] : undefined;
-          const full = name === undefined ? null : await readLogSummary(ctx, target, name);
+          // the signed **Log:** line and session, never a pointer line in the worker's summary
+          const full =
+            r.log === undefined || r.session === undefined
+              ? null
+              : await readLogSummary(ctx, target, r.log, r.session);
           return full === null ? r : { ...r, summary: full, fullText: true };
         }),
       );

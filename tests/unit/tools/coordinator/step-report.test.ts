@@ -413,6 +413,25 @@ describe("worker-report --post", () => {
   });
 });
 
+describe("worker-report --post credential guard on an over-cap summary (OMI-176)", () => {
+  it("refuses a credential-like value in the tail that truncation would cut", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const r = rig({
+      summary: `${"filler line\n".repeat(500)}ghp_abcdefghijklmnopqrstuvwxyz0123456789`,
+    });
+    const code = await workerReportCommand(r.ctx, {
+      planKey: "OMI-159",
+      dryRun: false,
+      step: null,
+      post: { number: 323, comments: [], workflow: await workflow("feature") },
+    });
+    expect(code).toBe(1);
+    expect(posts(r.seen)).toHaveLength(0);
+    expect(err.mock.calls.flat().join("\n")).toContain("credential");
+  });
+});
+
 describe("next", () => {
   const out = () => vi.mocked(console.log).mock.calls.flat().join("\n");
   const comment = (m: StepMarker, profile = "prof-a") => ({

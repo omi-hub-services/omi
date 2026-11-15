@@ -78,10 +78,10 @@ export function earlierStepIds(
 }
 
 /** Recorded text is quoted line by line and redacted: it can neither pose as a section nor leak. */
-const quote = (text: string, limit: number): string =>
+const quote = (text: string, limit: number, lineLimit = LINE_LIMIT): string =>
   text
     .split("\n")
-    .map((line) => redactDiagnostic(line, LINE_LIMIT))
+    .map((line) => redactDiagnostic(line, lineLimit))
     .filter((line) => line !== "")
     .map((line) => `> ${line}`)
     .join("\n")
@@ -105,7 +105,9 @@ export function renderEarlierSteps(
     const block = [
       `### Step ${r.stepId} · round ${String(r.round)} · ${r.status}`,
       "Summary:",
-      quote(r.summary, r.fullText === true ? Number.POSITIVE_INFINITY : SUMMARY_LIMIT),
+      r.fullText === true
+        ? quote(r.summary, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)
+        : quote(r.summary, SUMMARY_LIMIT),
       ...(findings === "" ? [] : ["Findings:", findings]),
     ].join("\n");
     return r.fullText === true ? block : block.slice(0, budget);

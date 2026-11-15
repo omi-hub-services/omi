@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { renderEarlierSteps } from "../../../../src/application/services/render-earlier-steps.ts";
 import {
   renderStepReport,
   parseStepResults,
@@ -78,5 +79,33 @@ describe("parseStepResults", () => {
   it("skips a Coordinator comment whose report layout is not intact", () => {
     const broken = report("implement", 1, "ok").replace("**Findings:**", "Findings");
     expect(parseStepResults([{ author: COORDINATOR, body: broken }], COORDINATOR)).toEqual([]);
+  });
+});
+
+describe("renderEarlierSteps full text (OMI-176)", () => {
+  const paragraph = `${"word ".repeat(150)}MEANINGFUL TAIL`;
+  const entry = (fullText: boolean) => [
+    {
+      stepId: "architect",
+      round: 1,
+      status: "succeeded",
+      summary: paragraph,
+      findings: [],
+      fullText,
+    },
+  ];
+
+  it("keeps a long paragraph whole, still redacting secrets", () => {
+    const out = renderEarlierSteps(
+      entry(true).map((e) => ({ ...e, summary: `${paragraph} token=abc123secret` })),
+      ["architect"],
+    );
+    expect(out).toContain("MEANINGFUL TAIL");
+    expect(out).toContain("token=[REDACTED]");
+    expect(out).not.toContain("abc123secret");
+  });
+
+  it("still caps a line of a summary that is not full text", () => {
+    expect(renderEarlierSteps(entry(false), ["architect"])).not.toContain("MEANINGFUL TAIL");
   });
 });

@@ -46,6 +46,7 @@ import {
   parseCodexReport,
   parseStepMarkers,
   renderStepReport,
+  fullSummary,
   truncateOverCapSummary,
   type DispatchMeta,
   type StepMarker,
@@ -311,6 +312,12 @@ export async function workerReportCommand(
   if (input.post !== undefined && report.report !== null && validated?.success === false) {
     const cut = truncateOverCapSummary(report.report, name);
     if (cut !== null) {
+      // the guard sees the whole original summary, not only what survives the cut
+      try {
+        assertCredentialFree(fullSummary(report.report) ?? "");
+      } catch {
+        return refuse(label, "the report contains a credential-like value; nothing was posted");
+      }
       validated = validateWorkerResult(cut);
       truncated = validated.success;
     }
@@ -481,6 +488,7 @@ async function postStepReport(
     session: input.session,
     result: input.result,
     marker,
+    logName: input.logName,
   });
   try {
     assertCredentialFree(body);

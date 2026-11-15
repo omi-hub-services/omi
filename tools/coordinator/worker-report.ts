@@ -168,6 +168,8 @@ export interface ParsedMarker {
   /** From the Worker line of the same comment, for a native resume. */
   readonly tool: "claude" | "codex" | null;
   readonly profile: string | null;
+  /** From the `**Log:**` header line (OMI-176): the worker log the Coordinator signed, never summary text. */
+  readonly log: string | null;
   /** From the `**Skipped:**` line of the same comment. */
   readonly skipped: readonly string[];
 }
@@ -195,6 +197,7 @@ export function parseStepMarkers(
           next: m[6] ?? "",
           ...(m[7] === undefined ? {} : { truncated: true }),
         },
+        log: /^\*\*Log:\*\* (omi-\d+-[A-Za-z0-9._-]+\.jsonl)$/m.exec(header)?.[1] ?? null,
         tool: (worker?.[1] as "claude" | "codex" | undefined) ?? null,
         profile: worker?.[2] ?? null,
         skipped:
@@ -213,9 +216,13 @@ export function parseStepMarkers(
 export function parseStepResults(
   comments: readonly { readonly author: string | null; readonly body: string }[],
   coordinator: string,
-): (EarlierStepResult & { readonly truncated?: boolean })[] {
+): (EarlierStepResult & {
+  readonly truncated?: boolean;
+  readonly log?: string;
+  readonly session?: string;
+})[] {
   return comments.flatMap((c) =>
-    parseStepMarkers([c], coordinator).flatMap(({ marker }) => {
+    parseStepMarkers([c], coordinator).flatMap(({ marker, log }) => {
       const s = c.body.indexOf("\n**Summary:** ");
       const f = c.body.lastIndexOf("\n**Findings:**");
       const n = c.body.lastIndexOf("\n**Next:**");
@@ -231,7 +238,9 @@ export function parseStepResults(
         status: marker.status,
         summary,
         findings,
-        ...(marker.truncated === true ? { truncated: true } : {}),
+        ...(marker.truncated === true
+          ? { truncated: true, session: marker.session, ...(log === null ? {} : { log }) }
+          : {}),
       }));
     }),
   );
@@ -299,9 +308,9 @@ export function computeNext(
 
 // ── Over-cap summary (OMI-176) ──────────────────────────────────────────────
 const SUMMARY_CAP = 4000;
-/** Last line of a truncated summary. The log name is the only thing read back from it. */
+/** Last line of a truncated summary. Display only: recovery reads the signed `**Log:**` line. */
 export const TRUNCATION_POINTER =
-  /^… truncated \((\d+) characters\); full text: (omi-\d+-[A-Za-z0-9._-]+\.jsonl)$/m;
+  /^… truncated \((\d+) characters\); full text: (omi-\d+-[A-Za-z0-9._-]+\.jsonl)$/;
 
 /**
  * The report text with its summary cut at a line boundary below the cap and a pointer line to the
@@ -350,6 +359,8 @@ export function renderStepReport(input: {
   readonly session: string;
   readonly result: StepResult;
   readonly marker: StepMarker;
+  /** The worker log of a truncated report, signed into the header. */
+  readonly logName?: string;
 }): string {
   const { meta, result, marker } = input;
   const lines = result.findings
@@ -381,6 +392,9 @@ export function renderStepReport(input: {
     ...(skipped.length === 0
       ? []
       : [`**Skipped:** ${skipped.join(",")} (recorded scope decision)`]),
+    ...(marker.truncated === true && input.logName !== undefined
+      ? [`**Log:** ${input.logName}`]
+      : []),
   ];
   const tail = [
     `**Next:** ${nextLine} — \`${FLOW} next ${String(marker.issue)}\`${suggestion}`,
@@ -408,7 +422,9 @@ export function renderStepReport(input: {
   const cut = (s: string, max: number) =>
     s.length <= max ? s : `${s.slice(0, Math.max(0, max - 1))}…`;
   // a truncated summary keeps its pointer line: it is the only way back to the full text
-  const pointer = marker.truncated === true ? TRUNCATION_POINTER.exec(summary)?.[0] : undefined;
+  const lastLine = summary.split("\n").at(-1) ?? "";
+  const pointer =
+    marker.truncated === true && TRUNCATION_POINTER.test(lastLine) ? lastLine : undefined;
   const cutSummary = (s: string, max: number) =>
     pointer === undefined || s.length <= max
       ? cut(s, max)
