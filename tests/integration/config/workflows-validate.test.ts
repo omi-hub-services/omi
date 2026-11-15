@@ -248,3 +248,40 @@ it("identifies the id field when a workflow id disagrees with its filename", asy
     { file, path: "id", message: "id must match the workflow filename" },
   ]);
 });
+
+it.each([
+  ["idea-to-issues", ["define-requirements", "decompose", "review"]],
+  ["docs", ["write", "accept"]],
+] as const)("%s merges duplicate work while preserving approval boundaries", (id, ids) => {
+  const workflow = workflowSchema.parse(
+    parse(readFileSync(`templates/project/workflows/${id}.yaml`, "utf8")),
+  );
+  expect(workflow.steps.map((step) => step.id)).toEqual(ids);
+  expect(workflow.steps[0]?.needs).toEqual([]);
+  if (id === "docs") {
+    expect(workflow.steps[1]?.needs).toEqual(["write"]);
+    expect(workflow.steps[1]?.skills).toEqual(
+      expect.arrayContaining(["independent-review", "verification-before-completion"]),
+    );
+    expect(workflow.gates).toEqual(
+      expect.arrayContaining([
+        { id: "docs-acceptance", after: "accept", policy: "docs-acceptance" },
+        { id: "ready-to-merge", after: "accept", policy: "develop-merge" },
+      ]),
+    );
+  } else
+    expect(workflow.gates).toContainEqual({
+      id: "requirements-approved",
+      before: "decompose",
+      policy: "approved-business-baseline",
+    });
+});
+
+it.each(["ui-ux", "ci-cd"])("%s has one cost gate before the run starts", (id) => {
+  const workflow = workflowSchema.parse(
+    parse(readFileSync(`templates/project/workflows/${id}.yaml`, "utf8")),
+  );
+  expect(workflow.gates.filter((gate) => gate.policy === "approved-cost")).toEqual([
+    { id: "run-cost-approved", before: workflow.steps[0]?.id, policy: "approved-cost" },
+  ]);
+});

@@ -264,6 +264,18 @@ node "$coordinatorPin/tools/coordinator/flow.ts" cleanup <branch>
 **(judge)** The closing comment states the PR, merge commit, checks and review verdict. Report
 the outcome to the PO in a few lines.
 
+For idea-to-issues use `define-requirements` → `decompose` → `review`; keep
+`requirements-approved` before decomposition. Docs uses `write` → `accept`: the fresh
+reviewer checks examples, links and implementation agreement with both independent-review
+and verification-before-completion. Keep the docs-acceptance and ready-to-merge gates.
+Pinned older runs retain their original steps.
+
+UI/UX and CI/CD approve cost once before the first step for the planned run. Bind the
+cost decision to the run and its estimate hash; scope IDs are `<step-id>.round-<N>`
+for every planned step and round. Dispatch rechecks that decision without asking again
+while it covers the current estimate and scope. Extra rework outside that plan or a changed
+estimate requires a fresh PO cost approval before dispatch; unknown cost blocks.
+
 ## Workflow cost policy (OMI-093)
 
 - Use the template quality policy through flow.ts prompt. Changed coding workflows use --step review, one worker per round. Risk flags add review focus, never a second worker. Specialist QA retains its own template step. Never append step skills or rules manually.

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse } from "yaml";
@@ -40,6 +40,11 @@ beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "omi-specialist-"));
   db = openStateDatabase(join(directory, "state.sqlite"));
   applyMigrations(db, loadMigrations(resolve(templates, "../../../migrations")));
+  db.exec(`
+    INSERT INTO projects (id, repo_identity, config_hash, created_at, updated_at) VALUES ('p','acme/app','h','now','now');
+    INSERT INTO task_snapshots (id, project_id, issue_node_id, issue_number, content_hash, remote_updated_at, scope, captured_at) VALUES ('task-42','p','i',42,'h','now','{}','now');
+    INSERT INTO workflow_runs (id, task_id, template_hash, status, quality_phase, created_at, updated_at) VALUES ('run-1','task-42','h','running','initial','now','now');
+  `);
 });
 afterEach(() => {
   db.close();
@@ -62,7 +67,11 @@ async function setup(id: "ui-ux" | "ci-cd", stepId = "verify") {
   const r = rig();
   r.steps.rows.set("step-1", { ...r.steps.must("step-1"), stepId });
   const store = createSqliteApprovalStore(db);
-  let subject: ApprovalSubject = { kind: "cost", estimateHash: h("1"), scopeIds: ["task-42"] };
+  let subject: ApprovalSubject = {
+    kind: "cost",
+    estimateHash: h("1"),
+    scopeIds: workflow.steps.map((step) => `${step.id}.round-1`),
+  };
   let ids = 0;
   const approvals = {
     store,
@@ -149,6 +158,10 @@ async function setup(id: "ui-ux" | "ci-cd", stepId = "verify") {
     workflow,
     preparation,
     approvals,
+    extendPlan: () => {
+      if (subject.kind !== "cost") throw new Error("not cost");
+      subject = { ...subject, scopeIds: [...subject.scopeIds, `${stepId}.round-2`] };
+    },
     changeEstimate: () => {
       subject = { kind: "cost", estimateHash: h("2"), scopeIds: ["task-42"] };
     },
@@ -308,6 +321,7 @@ describe("new costs require PO approval before any worker starts", () => {
         schemaVersion: 1,
         kind: "cost",
         subjectId: "paid-service",
+        runId: "run-1",
       });
       if (!requested.ok) throw new Error(requested.reason);
       const preparation = {
@@ -379,3 +393,142 @@ describe("specialist rework skills", () => {
     },
   );
 });
+
+describe("run cost approval scope", () => {
+  it.each(["ui-ux", "ci-cd"] as const)(
+    "%s reuses one decision for planned steps and requires a new one for extra rework",
+    async (id) => {
+      const s = await setup(id);
+      const request = requestApproval(s.approvals, {
+        schemaVersion: 1,
+        kind: "cost",
+        subjectId: "paid-service",
+        runId: "run-1",
+      });
+      if (!request.ok) throw new Error(request.reason);
+      const approve = async (approvalId: string, version: number) => {
+        expect(
+          await recordApproval(s.approvals, {
+            schemaVersion: 1,
+            approvalId,
+            expectedVersion: version,
+            decision: "approved",
+            pathway: "github",
+          }),
+        ).toMatchObject({ ok: true });
+      };
+      await approve(request.request.id, request.request.version);
+      const cost = { status: "new", approvalId: request.request.id, subjectId: "paid-service" };
+      for (const step of s.workflow.steps) {
+        const next = await setup(id, step.id);
+        expect(
+          await dispatchSpecialistStep(
+            { ...next.deps, approvals: s.deps.approvals, subjects: s.deps.subjects },
+            { ...next.preparation, cost },
+            next.input,
+          ),
+        ).toMatchObject({ ok: true });
+      }
+      const input = {
+        ...s.input,
+        quality: { policy: "strict", step: "verify", steps: ["verify"], round: 2 },
+      };
+      expect(await dispatchSpecialistStep(s.deps, { ...s.preparation, cost }, input)).toMatchObject(
+        { ok: false, reason: "COST_APPROVAL_REQUIRED" },
+      );
+      s.extendPlan();
+      expect(await dispatchSpecialistStep(s.deps, { ...s.preparation, cost }, input)).toMatchObject(
+        { ok: false, reason: "COST_APPROVAL_REQUIRED" },
+      );
+      const renewed = requestApproval(s.approvals, {
+        schemaVersion: 1,
+        kind: "cost",
+        subjectId: "paid-service",
+        runId: "run-1",
+      });
+      if (!renewed.ok) throw new Error(renewed.reason);
+      await approve(renewed.request.id, renewed.request.version);
+      expect(
+        await dispatchSpecialistStep(
+          s.deps,
+          { ...s.preparation, cost: { ...cost, approvalId: renewed.request.id } },
+          input,
+        ),
+      ).toMatchObject({ ok: true });
+    },
+  );
+
+  it.each(["configure-pipeline", "verify"])(
+    "refuses a misplaced run cost gate when dispatching %s",
+    async (step) => {
+      const s = await setup("ci-cd", step);
+      s.preparation.workflow.gates = s.workflow.gates
+        .filter((gate) => gate.policy !== "approved-cost")
+        .concat([{ id: "run-cost-approved", before: "verify", policy: "approved-cost" }]);
+      expect(await dispatchSpecialistStep(s.deps, s.preparation, s.input)).toMatchObject({
+        ok: false,
+        reason: "MANDATORY_GATE_MISSING",
+      });
+      expect(s.r.executor.started).toHaveLength(0);
+    },
+  );
+});
+
+it.each(["missing-run", "partial-plan", "recorded-rework"] as const)(
+  "refuses %s cost approval scope",
+  async (mode) => {
+    const s = await setup("ci-cd");
+    if (mode === "partial-plan")
+      s.approvals.subjects.read = () => ({
+        kind: "cost",
+        estimateHash: h("1"),
+        scopeIds: ["verify.round-1"],
+      });
+    const request = requestApproval(s.approvals, {
+      schemaVersion: 1,
+      kind: "cost",
+      subjectId: "paid-service",
+      ...(mode === "missing-run" ? {} : { runId: "run-1" }),
+    });
+    if (!request.ok) throw new Error(request.reason);
+    expect(
+      await recordApproval(s.approvals, {
+        schemaVersion: 1,
+        approvalId: request.request.id,
+        expectedVersion: request.request.version,
+        decision: "approved",
+        pathway: "github",
+      }),
+    ).toMatchObject({ ok: true });
+    const attempts =
+      mode === "recorded-rework"
+        ? Object.assign(s.deps.attempts, { qualityHistory: () => ({ round: 2 }) })
+        : s.deps.attempts;
+    expect(
+      await dispatchSpecialistStep(
+        { ...s.deps, attempts },
+        {
+          ...s.preparation,
+          cost: { status: "new", approvalId: request.request.id, subjectId: "paid-service" },
+        },
+        s.input,
+      ),
+    ).toMatchObject({ ok: false, reason: "COST_APPROVAL_REQUIRED" });
+    expect(s.r.executor.started).toHaveLength(0);
+  },
+);
+
+it.each(["ui-ux", "ci-cd"] as const)(
+  "still dispatches the archived %s per-step cost gates",
+  async (id) => {
+    const workflow = workflowSchema.parse(
+      parse(readFileSync(`tests/fixtures/workflow-archive/${id}-small-steps.yaml`, "utf8")),
+    );
+    for (const step of workflow.steps) {
+      const s = await setup(id, step.id);
+      expect(
+        await dispatchSpecialistStep(s.deps, { ...s.preparation, workflow }, s.input),
+      ).toMatchObject({ ok: true });
+    }
+  },
+);

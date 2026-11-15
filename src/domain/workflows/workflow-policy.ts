@@ -149,6 +149,17 @@ export interface WorkflowStep {
   readonly needs: readonly string[];
 }
 
+/** Cost scope covers the initial plan plus the step's current quality round. */
+export function workflowCostScope(
+  steps: readonly WorkflowStep[],
+  stepId: string,
+  round: number,
+): readonly string[] {
+  return [
+    ...new Set([...steps.map((step) => `${step.id}.round-1`), `${stepId}.round-${String(round)}`]),
+  ];
+}
+
 /** A gate is a runtime condition, not an agent. `before` blocks a step, `after` blocks completion. */
 export type WorkflowGate =
   | { readonly id: string; readonly before: string }

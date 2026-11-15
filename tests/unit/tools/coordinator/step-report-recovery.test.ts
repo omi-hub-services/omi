@@ -78,19 +78,16 @@ describe("recovery after a failed quality step", () => {
     expect(s.post("review", 2, "succeeded")).toBe("open-pr");
   });
 
-  it("docs: write ok, verify ok, accept failed -> write rework -> verify round 2 -> accept round 2", async () => {
+  it("docs: accept failed -> write rework -> accept round 2", async () => {
     const w = await workflow("docs");
     const s = series(w);
-    s.post("write", 1, "succeeded");
-    expect(s.post("verify", 1, "succeeded")).toBe("accept");
+    expect(s.post("write", 1, "succeeded")).toBe("accept");
     s.post("accept", 1, "failed");
     const failed = s.printed();
     expect(failed).toContain("--step write --round 2 --findings");
     expect(failed).not.toContain("--step accept");
 
-    expect(s.post("write", 2, "succeeded")).toBe("verify");
-    expect(s.printed()).toContain("--step verify --round 2");
-    expect(s.post("verify", 2, "succeeded")).toBe("accept");
+    expect(s.post("write", 2, "succeeded")).toBe("accept");
     expect(s.printed()).toContain("--step accept --round 2");
   });
 

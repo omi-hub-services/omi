@@ -36,18 +36,9 @@ steps:
     capability_profile: review
     output_contract: review-result-v1
 gates:
-  # Re-evaluate current estimates before every step, including paid design tools.
-  - id: design-cost-approved
+  # Approve the planned run scope once; changed estimates or extra rework need approval.
+  - id: run-cost-approved
     before: design
-    policy: approved-cost
-  - id: implement-cost-approved
-    before: implement
-    policy: approved-cost
-  - id: verify-cost-approved
-    before: verify
-    policy: approved-cost
-  - id: review-cost-approved
-    before: review
     policy: approved-cost
   # Checks reference hashed artifacts: design rationale/flows and rendered visual evidence.
   - id: design-evidence
