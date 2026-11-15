@@ -188,11 +188,17 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
     };
     const issue = await readPromptIssue(ctx, input.number);
     const route = resolveWorkflowRoute(issue.workflow);
-    if (route.kind === "delivery")
+    const releaseReview = issue.workflow === "release" && input.step === "review";
+    if (route.kind === "delivery" && !releaseReview)
       throw new Error(
         `Workflow ${issue.workflow} uses the gated ${route.id} delivery use case, not worker dispatch`,
       );
-    const template = await loadTemplate(route.id, "templates/project/workflows", read);
+    // Release review reuses the standard reviewer packet; delivery stays approval-gated.
+    const template = await loadTemplate(
+      releaseReview ? "feature" : route.id,
+      "templates/project/workflows",
+      read,
+    );
     if (!template.ok) throw new Error(template.reason);
     const requested = input.step.split(",");
     const round = Number(input.round ?? "1");
@@ -303,7 +309,7 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       )
     ).join("\n\n");
     const text = renderWorkerPrompt(await read("templates/prompts/worker-prompt.md"), {
-      identity: `${resume ? `${NATIVE_RESUME_HEADER}\n\n` : ""}<!-- omi-quality ${JSON.stringify(quality)} -->\n# Workflow ${template.workflow.id} · step ${packetSteps.map((s) => s.id).join(" + ")} · role ${step.role}`,
+      identity: `${resume ? `${NATIVE_RESUME_HEADER}\n\n` : ""}<!-- omi-quality ${JSON.stringify(quality)} -->\n# Workflow ${releaseReview ? issue.workflow : template.workflow.id} · step ${packetSteps.map((s) => s.id).join(" + ")} · role ${step.role}`,
       workspace: `## Workspace\nWork only in ${target.repoDir}\nBranch: ${branch}`,
       read_first: resume
         ? ""
