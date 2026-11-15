@@ -2,6 +2,7 @@
 // Coordinator, not the worker, runs the worker's regression test on the base with the fix files
 // reverted and on the head, and records the exit codes. The output is the file
 // `review-comment --regression-evidence` reads.
+import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { BASE_BRANCH, wslTarget, type WslTarget } from "./coordinator-settings.ts";
 import {
@@ -44,8 +45,11 @@ function wslRegressionExecutor(
   timeoutMs: number,
 ): Executor {
   const exitOf = (code: number) => (code === SETUP_FAILED || code >= 127 ? null : code);
+  // Arguments travel base64-encoded and NUL-separated, so the payload holds no quote or backslash
+  // whatever the test name contains; xargs -0 hands them to the command unchanged (exit 123 = failed).
+  const encode = (args: readonly string[]) => Buffer.from(args.join("\0")).toString("base64");
   return async (where, argv) => {
-    const test = joinSteps([argv]);
+    const test = `echo ${encode(argv)} | base64 -d | xargs -0 env`;
     if (where === "head") {
       const revision = (await runChecked(run, wslCommand("git rev-parse HEAD", target))).trim();
       const result = await run(wslCommand(`${WSL_NODE_ENV} ${test}`, target, timeoutMs));
@@ -57,18 +61,22 @@ function wslRegressionExecutor(
         wslCommand(joinSteps([["git", "rev-parse", "--verify", `${baseSha}^{commit}`]]), target),
       )
     ).trim();
-    const q = shellQuote;
-    const tree = "$T/base";
-    const dir = testFile.slice(0, testFile.lastIndexOf("/"));
+    // The Coordinator owns the temp path, so it can clean up even when the timed run is killed.
+    const parent = `/tmp/omi-regression-${randomUUID()}`;
+    const tree = `${parent}/base`;
     const payload =
-      `T=$(mktemp -d); ` +
-      `{ git worktree add --detach ${tree} ${q(revision)} && mkdir -p ${tree}/${q(dir)} && ` +
-      `cp ${q(testFile)} ${tree}/${q(testFile)} && ` +
-      `{ [ ! -d node_modules ] || ln -s ${q(target.repoDir)}/node_modules ${tree}/node_modules; }; } ` +
-      `&& { cd ${tree} && ${WSL_NODE_ENV} ${test}; rc=$?; } || rc=${String(SETUP_FAILED)}; ` +
-      `cd ${q(target.repoDir)}; git worktree remove --force ${tree}; rm -rf $T; exit $rc`;
-    const result = await run(wslCommand(payload, target, timeoutMs));
-    return { revision, exitCode: exitOf(result.code) };
+      `{ git worktree add --detach ${tree} ${shellQuote(revision)} && ` +
+      `echo ${encode([testFile])} | base64 -d | xargs -0 -I{} cp --parents {} ${tree} && ` +
+      `{ [ ! -d node_modules ] || ln -s ${shellQuote(target.repoDir)}/node_modules ${tree}/node_modules; }; } ` +
+      `&& { cd ${tree} && ${WSL_NODE_ENV} ${test}; rc=$?; } || rc=${String(SETUP_FAILED)}; exit $rc`;
+    try {
+      const result = await run(wslCommand(payload, target, timeoutMs));
+      return { revision, exitCode: exitOf(result.code) };
+    } finally {
+      await run(
+        wslCommand(`git worktree remove --force ${tree}; rm -rf ${parent}`, target, 60_000),
+      ).catch(() => undefined);
+    }
   };
 }
 

@@ -110,9 +110,63 @@ it("runs git and both test runs in the WSL checkout and writes the evidence to t
   const payloads = calls.map((c) => c.args.at(-1) ?? "");
   expect(payloads[0]).toBe("git merge-base HEAD origin/develop");
   expect(payloads.some((p) => p.includes("worktree add --detach"))).toBe(true);
-  expect(
-    payloads.some((p) => p.includes("npm run test:unit -- tests/unit/a.test.ts -t 'fixes it'")),
-  ).toBe(true);
+  expect(decodedArgs(payloads)).toContainEqual([
+    "npm",
+    "run",
+    "test:unit",
+    "--",
+    "tests/unit/a.test.ts",
+    "-t",
+    "fixes it",
+  ]);
+});
+
+const decodedArgs = (payloads: string[]) =>
+  payloads.flatMap((p) =>
+    [...p.matchAll(/echo (\S+) \| base64 -d/g)].map((m) =>
+      Buffer.from(m[1] ?? "", "base64")
+        .toString()
+        .split("\0"),
+    ),
+  );
+
+const wslRun = (testName: string, runnerCode: (payload: string) => number) => {
+  const target = { viaWslExe: true, distro: "d", repoDir: "/home/u/omi" };
+  const payloads: string[] = [];
+  const runner = (command: { args: readonly string[] }) => {
+    const payload = command.args.at(-1) ?? "";
+    payloads.push(payload);
+    const stdout = payload.startsWith("git rev-parse HEAD") ? `${head}\n` : `${base}\n`;
+    return Promise.resolve({ code: runnerCode(payload), stdout, stderr: "" });
+  };
+  const status = regressionEvidenceCommand({
+    testFile: "tests/unit/a.test.ts",
+    testName,
+    out: join(dir, "e.json"),
+    run: runner,
+    target,
+    base,
+  });
+  return { payloads, status };
+};
+
+it.each([`handles user's input`, `says "hi"`, String.raw`matches \d+ and a\\b`])(
+  "carries the test name %s to WSL without a quote or backslash in the payload",
+  async (name) => {
+    const r = wslRun(name, (p) => (p.includes("worktree add") ? 1 : 0));
+    expect(await r.status).toBe(0);
+    expect(decodedArgs(r.payloads).some((a) => a.at(-1) === name)).toBe(true);
+  },
+);
+
+it("removes the throwaway base worktree in a separate WSL call even when the run times out", async () => {
+  const r = wslRun("fixes it", (p) => (p.includes("worktree add") ? 128 : 0));
+  expect(await r.status).toBe(1);
+  const run = r.payloads.find((p) => p.includes("worktree add")) ?? "";
+  const path = /--detach (\S+)/.exec(run)?.[1] ?? "";
+  const cleanup = r.payloads.find((p) => p.startsWith("git worktree remove"));
+  expect(cleanup).toContain(path);
+  expect(cleanup).toContain(`rm -rf ${path.replace("/base", "")}`);
 });
 
 it.each(["src/a.test.ts", "../tests/unit/a.test.ts", "tests/other/a.test.ts"])(
