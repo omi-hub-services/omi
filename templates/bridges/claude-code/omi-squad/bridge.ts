@@ -3,7 +3,7 @@
 //   wsl.exe -d <distribution> --cd <repository> --exec <shim> --json <typed args...>
 //
 // `--exec` runs the shim without the distro's shell, so nothing is re-expanded there. Windows
-// still hands wsl.exe one command-line string, so every argument is quoted by
+// still hands wsl.exe one command-line string, so arguments are quoted only when needed by
 // `quoteWindowsCommandLine` and tested for round-trip. Free text (a pause reason) goes over
 // stdin, never on the command line. The answer is the CLI's versioned JSON document.
 //
@@ -342,12 +342,14 @@ export function buildWslArgs(config: BridgeConfig, cliArgs: readonly string[]): 
 
 /**
  * One Windows command-line string for `args`, quoted so the standard parser
- * (`CommandLineToArgvW`, the C runtime) returns exactly `args`. Every argument is quoted:
- * backslashes are doubled only before a quote, and a quote becomes `\"`.
+ * (`CommandLineToArgvW`, the C runtime) returns exactly `args`. Plain tokens stay unquoted
+ * so wsl.exe recognizes its options; empty arguments, whitespace and quotes require quoting.
+ * Within quotes, backslashes are doubled before quotes and at the end of the argument.
  */
 export function quoteWindowsCommandLine(args: readonly string[]): string {
   return args
     .map((arg) => {
+      if (arg !== "" && !/[\s"]/.test(arg)) return arg;
       let quoted = '"';
       let backslashes = 0;
       for (const char of arg) {
