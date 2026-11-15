@@ -366,6 +366,13 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
       restrictions: (await read("templates/prompts/repository-worker-restrictions.md")).trimEnd(),
       report_contract: (await read("templates/prompts/repository-worker-report.md"))
         .trimEnd()
+        .concat(
+          template.workflow.gates.some(
+            (gate) => gate.policy === "regression-test" && gate.after === step.id,
+          )
+            ? `\n\n${(await read("templates/prompts/regression-test-report.md")).trimEnd()}`
+            : "",
+        )
         .replace("(OMI-NNN)", `(${issue.planKey ?? "OMI-NNN"})`)
         .replace("{{output_contracts}}", packetSteps.map((s) => s.output_contract).join(", "))
         .replace(

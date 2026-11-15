@@ -4,22 +4,17 @@ version: 1
 selection:
   task_types: [bugfix]
 quality_policy: task-default
-# Reproduce the defect and identify its cause before implementing the fix.
-# regression-test evidence records the regression test failing without the fix and
-# passing on the tested head; a success summary alone is insufficient.
+# One developer reproduces and fixes the defect, so no second worker re-derives the root
+# cause (ADR-0042 decision 2). The worker writes the regression test first and reports its
+# file and name as regressionTest; a script (the runtime, and `flow.ts regression-evidence`
+# for the repository) runs that test on the base with the fix reverted and on the head.
+# The regression-test gate needs that script-recorded red run and a green head run.
 # Rework uses the shared 2 + Architect + 2 controller, never a DAG back-edge.
 steps:
-  - id: reproduce
+  - id: fix
     role: developer
     needs: []
-    skills: [systematic-debugging, test-driven-development]
-    rules: [project-baseline, approval-gates, evidence-and-tests, architecture-boundaries]
-    capability_profile: coding
-    output_contract: analysis-result-v1
-  - id: implement
-    role: developer
-    needs: [reproduce]
-    skills: [test-driven-development, minimal-change]
+    skills: [systematic-debugging, test-driven-development, minimal-change]
     rules: [project-baseline, approval-gates, evidence-and-tests, architecture-boundaries]
     capability_profile: coding
     output_contract: implementation-result-v1
@@ -28,7 +23,7 @@ steps:
     required_checks: [project-check]
   - id: review
     role: reviewer
-    needs: [implement]
+    needs: [fix]
     skills: [independent-review, verification-before-completion]
     rules: [project-baseline, approval-gates, evidence-and-tests]
     capability_profile: review
@@ -37,12 +32,12 @@ steps:
 gates:
   # Reuse the approved baseline; scope changes require a fresh PO decision.
   - id: scope-approved
-    before: implement
+    before: fix
     policy: approved-business-baseline
-  # Evidence policies are required check ids, verified by recordStepResult against
-  # nonempty hashed artifacts; the Coordinator supplies them at dispatch.
+  # The evidence artifact is written by the script, never by the worker; recordStepResult
+  # validates it (base red, head green, same argv, exact SHAs).
   - id: regression-test
-    after: review
+    after: fix
     policy: regression-test
   # Independent review, current head/base checks and confirmed develop merge use
   # the existing delivery gates (ADR-0034); a worker cannot approve its own work.

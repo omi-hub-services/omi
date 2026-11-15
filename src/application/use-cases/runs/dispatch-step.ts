@@ -211,6 +211,7 @@ function buildPrompt(
   skills: readonly InlinedSkill[],
   rules: readonly (RuleContent & { id: string; version: string })[],
   checkLogs: readonly string[],
+  regressionGate: boolean,
 ): string {
   return renderWorkerPrompt(workerPromptAssets.skeleton, {
     identity: `You are the "${packet.role}" worker for step "${packet.stepId}" (attempt ${packet.attemptId}).`,
@@ -241,6 +242,7 @@ function buildPrompt(
       packet.quality?.step === "verify" || packet.quality?.step === "review"
         ? workerPromptAssets.qualityChecks
         : workerPromptAssets.developerChecks,
+      ...(regressionGate ? [workerPromptAssets.regressionReport] : []),
     ].join("\n"),
     report_contract: workerPromptAssets.report
       .replace("{{artifact_dir}}", artifactDir)
@@ -692,6 +694,7 @@ export async function dispatchStep(
           inlined.contents,
           rules.contents,
           checkLogs,
+          command.requiredChecks.includes("regression-test"),
         ),
         model: command.execution.model,
         effort: command.execution.effort,

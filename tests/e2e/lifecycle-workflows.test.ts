@@ -115,7 +115,7 @@ async function execute(
     `${dispatched.attempt.artifactRoot}/evidence.txt`,
     mode === "empty"
       ? ""
-      : workflow.id === "bugfix" && step.id === "review"
+      : checksFor(workflow, step.id).includes("regression-test")
         ? JSON.stringify({
             base: { revision: BASE, command: ["npm", "test", "regression"], exitCode: 1 },
             head: { revision: HEAD, command: ["npm", "test", "regression"], exitCode: 0 },
@@ -141,11 +141,16 @@ async function execute(
       artifacts: mode === "phantom" ? [] : [artifact, ...skillProof.artifacts],
       revision: { headSha: mode === "stale" ? "c".repeat(40) : HEAD, baseSha: BASE },
       checks: checksFor(workflow, step.id)
-        .filter((id) => mode !== "missing" || id !== omittedCheck)
+        .filter((id) => id !== "regression-test" && (mode !== "missing" || id !== omittedCheck))
         .map((id) => ({ id, evidenceRef: artifact.path })),
       skillsApplied: skillProof.skillsApplied,
       findings: [],
     },
+    // The script-written red/green artifact; never taken from the worker's own check list.
+    ...(checksFor(workflow, step.id).includes("regression-test") &&
+    omittedCheck !== "regression-test"
+      ? { regressionEvidence: artifact }
+      : {}),
   });
 }
 
@@ -161,7 +166,7 @@ describe("lifecycle templates use the shared workflow engine", () => {
       const gates = new Map<string, GateStatus>();
       const scope = workflow.gates.find((gate) => gate.policy === "approved-business-baseline");
       if (scope === undefined || scope.before === undefined) throw new Error("missing scope gate");
-      expect(scope.before).toBe(id === "docs" ? "write" : "implement");
+      expect(scope.before).toBe(id === "docs" ? "write" : id === "bugfix" ? "fix" : "implement");
 
       for (const step of workflow.steps) {
         if (step.id === scope.before) {
@@ -191,7 +196,9 @@ describe("lifecycle templates use the shared workflow engine", () => {
       expect(r.executor.started).toHaveLength(workflow.steps.length);
       const review = workflow.steps.find((step) => step.role === "reviewer");
       expect(review?.skills).toContain("independent-review");
-      expect(review?.needs).toEqual([id === "docs" ? "verify" : "implement"]);
+      expect(review?.needs).toEqual([
+        id === "docs" ? "verify" : id === "bugfix" ? "fix" : "implement",
+      ]);
       expect(workflow.gates).toContainEqual({
         id: "ready-to-merge",
         after: review?.id,
@@ -202,8 +209,19 @@ describe("lifecycle templates use the shared workflow engine", () => {
     },
   );
 
+  it("bugfix fails without script-recorded regression evidence despite exit zero", async () => {
+    const workflow = await load("bugfix");
+    const step = workflow.steps.find((candidate) => candidate.id === "fix");
+    if (step === undefined) throw new Error("missing fix step");
+    expect(checksFor(workflow, step.id)).toContain("regression-test");
+    expect(await execute(rig(), workflow, step, "missing", "regression-test")).toMatchObject({
+      ok: true,
+      stepStatus: "failed",
+      failure: "REGRESSION_EVIDENCE_INVALID",
+    });
+  });
+
   it.each([
-    ["bugfix", "review", "regression-test"],
     ["refactor", "review", "existing-tests-unchanged"],
     ["refactor", "review", "existing-tests-passing"],
     ["docs", "accept", "docs-acceptance"],
@@ -232,7 +250,9 @@ describe("lifecycle templates use the shared workflow engine", () => {
     "%s refuses invalid evidence artifacts and stale revisions",
     async (id) => {
       const workflow = await load(id);
-      const step = workflow.steps.find((s) => s.id === (id === "docs" ? "accept" : "review"));
+      const step = workflow.steps.find(
+        (s) => s.id === (id === "docs" ? "accept" : id === "bugfix" ? "fix" : "review"),
+      );
       if (step === undefined) throw new Error("missing evidence step");
       for (const mode of ["phantom", "empty", "corrupt", "stale"] as const) {
         const result = await execute(rig(), workflow, step, mode);
@@ -241,7 +261,12 @@ describe("lifecycle templates use the shared workflow engine", () => {
           expect(result).toMatchObject({
             ok: true,
             stepStatus: "failed",
-            failure: mode === "corrupt" ? "ARTIFACT_HASH_MISMATCH" : "ARTIFACT_INVALID",
+            failure:
+              mode === "corrupt"
+                ? "ARTIFACT_HASH_MISMATCH"
+                : id === "bugfix" && mode === "empty"
+                  ? "REGRESSION_EVIDENCE_INVALID"
+                  : "ARTIFACT_INVALID",
           });
       }
     },

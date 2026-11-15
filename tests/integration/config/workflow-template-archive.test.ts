@@ -45,6 +45,30 @@ describe("pinned workflow template archive", () => {
     expect(catalog.byId("feature")?.workflow.steps.map((step) => step.id)).not.toContain("verify");
   });
 
+  it("keeps resolving reproduce/implement for a bugfix run pinned before the single fix step", async () => {
+    const oldBugfix = readFileSync(
+      resolve("tests/fixtures/workflow-archive/bugfix-reproduce-implement.yaml"),
+      "utf8",
+    );
+    const current = readFileSync(resolve("templates/project/workflows/bugfix.yaml"), "utf8");
+    const squad = mkdtempSync(join(tmpdir(), "omi-archive-"));
+    dirs.push(squad);
+    mkdirSync(join(squad, "workflows"), { recursive: true });
+    const load = () =>
+      loadWorkflowCatalog(join(squad, "workflows"), ["bugfix"], {
+        localDir: join(squad, "local"),
+        persist: true,
+      });
+    writeFileSync(join(squad, "workflows", "bugfix.yaml"), oldBugfix);
+    await load(); // a run planned now pins sha(oldBugfix)
+    writeFileSync(join(squad, "workflows", "bugfix.yaml"), current);
+    const catalog = await load();
+    const ids = (hash: string) => catalog.byHash(hash)?.workflow.steps.map((step) => step.id);
+    expect(ids(sha(oldBugfix))).toEqual(["reproduce", "implement", "review"]);
+    expect(ids(sha(current))).toEqual(["fix", "review"]);
+    expect(catalog.byId("bugfix")?.hash).toBe(sha(current));
+  });
+
   it("loads the template of a run planned before the archive existed from an install backup", async () => {
     const p = project();
     p.install(updated);

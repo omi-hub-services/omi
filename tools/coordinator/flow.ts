@@ -110,6 +110,7 @@ import {
 } from "./flow-workers.ts";
 import { linkedIssue } from "./review-verdict.ts";
 import { promptCommand } from "./flow-prompt.ts";
+import { regressionEvidenceCommand } from "./regression-evidence.ts";
 import { loadTemplate } from "./watch-workflow.ts";
 import "../register-ts-imports.ts";
 const { nativeReviewsSchema } = await import("../../src/application/contracts/merge-delivery.ts");
@@ -152,6 +153,9 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
                                               --post: signed step report comment on the Issue, from dispatch metadata)
   next <issue>                                read-only: next step and exact commands from the newest step report
   commit-worker <branch> --message-file <f>   WSL: stage source, tooling and managed root files, commit, print SHA
+  regression-evidence --worktree <dir> --test-file <f> --test-name <n> --out <f> [--base <sha>]
+                                              run the fix worker's regression test on the base with the fix
+                                              reverted and on the head; writes the script evidence for review-comment
   review-comment <pr> --file <f>              check VERDICT/REVIEWED_HEAD/AC-n lines, post as the Coordinator`;
 
 export interface Context {
@@ -881,6 +885,9 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       file: { type: "string" },
       clear: { type: "boolean", default: false },
       "regression-evidence": { type: "string" },
+      "test-file": { type: "string" },
+      "test-name": { type: "string" },
+      base: { type: "string" },
       head: { type: "string" },
       reviewed: { type: "string" },
       title: { type: "string" },
@@ -1138,6 +1145,14 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         branch: taskBranch(a),
         message: readFileSync(required(values["message-file"], "--message-file"), "utf8"),
         dryRun: dry,
+      });
+    case "regression-evidence":
+      return regressionEvidenceCommand({
+        worktree: required(values.worktree, "--worktree"),
+        testFile: required(values["test-file"], "--test-file"),
+        testName: required(values["test-name"], "--test-name"),
+        out: required(values.out, "--out"),
+        ...(values.base === undefined ? {} : { base: values.base }),
       });
     case "review-comment": {
       const pr = await readPull(ctx, issueNumber(a));

@@ -62,9 +62,9 @@ describe("mapTemplatePos (observed lifecycle step -> template step)", () => {
     expect(await pos("docs", "Review")).toEqual({ kind: "node", id: "accept" });
   });
 
-  it("bugfix: two developer steps run in one worker; the last one is shown", async () => {
-    expect(await pos("bugfix", "Work")).toEqual({ kind: "node", id: "implement" });
-    expect(workStepId(await ok("bugfix"))).toBe("implement");
+  it("bugfix: one developer fix step", async () => {
+    expect(await pos("bugfix", "Work")).toEqual({ kind: "node", id: "fix" });
+    expect(workStepId(await ok("bugfix"))).toBe("fix");
   });
 
   it("unknown (with a reason) when the template has no matching step or the step is unknown", async () => {

@@ -130,6 +130,15 @@ export function createDispatchPlanner(deps: {
     if (!step.required_checks.every((id) => Object.hasOwn(configured, id))) {
       throw new Error("CHECK_UNCONFIGURED");
     }
+    // The regression gate's red/green run needs its command: `checks.regression-test`.
+    if (
+      workflow?.gates.some(
+        (gate) => gate.after === step.id && gate.policy === "regression-test",
+      ) === true &&
+      !Object.hasOwn(configured, "regression-test")
+    ) {
+      throw new Error("CHECK_UNCONFIGURED: checks.regression-test");
+    }
     return {
       checkEvidenceSteps:
         qualityStepId(step) === "review"
