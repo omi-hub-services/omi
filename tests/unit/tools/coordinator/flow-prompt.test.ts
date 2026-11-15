@@ -244,6 +244,43 @@ it.each(["analyze", "implement", "verify", "review"])(
   },
 );
 
+it.each([{ options: [] }, { options: ["--dry-run"] }])(
+  "renders a release review packet with options $options",
+  async ({ options }) => {
+    const f = fake({ workflow: "release" });
+    expect(await main(["prompt", "311", "--step", "review", ...options], f.ctx)).toBe(0);
+    const text = output.join("\n");
+    expect(text).toContain("Workflow release · step review · role reviewer");
+    expect(text).toContain(
+      readFileSync("templates/project/.omi-squad/skills/independent-review/SKILL.md", "utf8"),
+    );
+    for (const rule of ["project-baseline", "approval-gates", "evidence-and-tests"])
+      expect(text).toContain(readFileSync(`templates/project/.omi-squad/rules/${rule}.md`, "utf8"));
+    expect(text).toContain("## Report contract");
+    expect(text).toContain("review-result-v1");
+    expect(text).toContain('"stepId":"review"');
+  },
+);
+
+it("keeps deploy review behind its delivery refusal", async () => {
+  const f = fake({ workflow: "deploy" });
+  expect(await main(["prompt", "311", "--step", "review"], f.ctx)).toBe(1);
+  expect(output.join("\n")).toBe(
+    "prompt: refused: Workflow deploy uses the gated deploy-release delivery use case, not worker dispatch",
+  );
+});
+
+it.each(["analyze", "implement", "verify", "prepare-release", "verify,review", "unknown"])(
+  "keeps the gated release refusal for step %s",
+  async (step) => {
+    const f = fake({ workflow: "release" });
+    expect(await main(["prompt", "311", "--step", step, "--dry-run"], f.ctx)).toBe(1);
+    expect(output.join("\n")).toBe(
+      "prompt: refused: Workflow release uses the gated prepare-release delivery use case, not worker dispatch",
+    );
+  },
+);
+
 it("writes only --out and preserves notes bytes and overrides", async () => {
   const notes = join(dir, "notes.md");
   const out = join(dir, "prompt.md");
