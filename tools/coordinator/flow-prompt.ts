@@ -366,19 +366,21 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
     }
     if (input.architectDecision !== undefined) {
       let decision = await readFile(input.architectDecision, "utf8");
-      // shortcut: the file is the decision summary as the Coordinator copied it; when it carries a
-      // pointer line, the newest truncated Architect report on the Issue (its signed log) supplies
-      // the full text and replaces the whole file
-      const signed = parseStepResults(issue.comments, COORDINATOR_LOGIN)
-        .filter((r) => r.stepId === "architect" && r.truncated === true)
-        .at(-1);
-      if (
-        signed?.log !== undefined &&
-        signed.session !== undefined &&
-        decision.split("\n").some((l) => TRUNCATION_POINTER.test(l))
-      ) {
-        const full = await readLogSummary(ctx, target, signed.log, signed.session);
-        if (full !== null) decision = full;
+      // The file's last non-empty line is the pointer truncateOverCapSummary appended. It must
+      // match the signed **Log:** of an Architect report on the Issue exactly; the full text then
+      // comes from that report's log. A file without a final pointer is used verbatim.
+      const name = TRUNCATION_POINTER.exec(decision.trimEnd().split("\n").at(-1) ?? "")?.[2];
+      if (name !== undefined) {
+        const signed = parseStepResults(issue.comments, COORDINATOR_LOGIN).find(
+          (r) => r.stepId === "architect" && r.truncated === true && r.log === name,
+        );
+        if (signed?.session === undefined)
+          throw new Error(
+            `--architect-decision points to ${name}, which no signed Architect report records`,
+          );
+        const full = await readLogSummary(ctx, target, name, signed.session);
+        if (full === null) throw new Error(`full text of ${name} unavailable`);
+        decision = full;
       }
       evidence.push(`## Architect decision (verbatim)\n${decision}`);
     }

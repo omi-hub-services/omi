@@ -17,7 +17,7 @@ import {
 } from "../../../../src/infrastructure/config/load-resolution-catalog.ts";
 import { dispatchInput, rig } from "../../application/use-cases/runs/run-fakes.ts";
 import { parsePromptText } from "../../../../tools/coordinator/watch-tasks.ts";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { main } from "../../../../tools/coordinator/flow.ts";
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
 import {
@@ -784,6 +784,75 @@ it("expands a truncated --architect-decision file from the log recorded on the I
   const text = output.join("\n");
   expect(text).toContain("decision 149");
   expect(text).not.toContain("EVIL TEXT");
+});
+
+describe("--architect-decision exact match (OMI-176)", () => {
+  const LOG_A = "omi-176-minibox-20261115-101010-architect-1-aaaaaaaaaa.jsonl";
+  const LOG_B = "omi-176-minibox-20261115-111111-architect-2-bbbbbbbbbb.jsonl";
+  const LOG_X = "omi-176-minibox-20261115-121212-architect-3-xxxxxxxxxx.jsonl";
+  const pointer = (log: string) => `… truncated (5000 characters); full text: ${log}`;
+  const reports = () => [
+    {
+      body: stepReport("architect", 1, `head A\n${pointer(LOG_A)}`, [], LOG_A, "s1"),
+      author: COORDINATOR_LOGIN,
+    },
+    {
+      body: stepReport("architect", 2, `head B\n${pointer(LOG_B)}`, [], LOG_B, "s2"),
+      author: COORDINATOR_LOGIN,
+    },
+  ];
+  const logs = {
+    [LOG_A]: logOf("FULL TEXT OF A", "s1"),
+    [LOG_B]: logOf("FULL TEXT OF B", "s2"),
+    [LOG_X]: logOf("FULL TEXT OF X", "s1"),
+  };
+  const run = async (content: string, over: Partial<Parameters<typeof fake>[0]> = {}) => {
+    const decision = join(dir, "decision.md");
+    writeFileSync(decision, content);
+    const f = fake({ workerLogs: logs, extraComments: reports(), ...over });
+    const code = await main(
+      ["prompt", "185", "--step", "implement", "--architect-decision", decision],
+      f.ctx,
+    );
+    return { code, text: output.join("\n") };
+  };
+
+  it("expands a file ending with the older report's pointer from that report's log", async () => {
+    const { code, text } = await run(`head A\n${pointer(LOG_A)}\n`);
+    expect(code).toBe(0);
+    expect(text).toContain("FULL TEXT OF A");
+    expect(text).not.toContain("FULL TEXT OF B");
+  });
+
+  it("expands a file ending with the newer report's pointer from that report's log", async () => {
+    const { code, text } = await run(`head B\n${pointer(LOG_B)}`);
+    expect(code).toBe(0);
+    expect(text).toContain("FULL TEXT OF B");
+    expect(text).not.toContain("FULL TEXT OF A");
+  });
+
+  it("refuses a final pointer that no signed Architect report records", async () => {
+    const { code, text } = await run(`head\n${pointer(LOG_X)}`);
+    expect(code).toBe(1);
+    expect(text).toContain("no signed Architect report records");
+    expect(text).not.toContain("FULL TEXT OF");
+  });
+
+  it("refuses when the matching report's log has another session", async () => {
+    const { code, text } = await run(`head A\n${pointer(LOG_A)}`, {
+      workerLogs: { ...logs, [LOG_A]: logOf("FULL TEXT OF A", "other") },
+    });
+    expect(code).toBe(1);
+    expect(text).toContain("unavailable");
+    expect(text).not.toContain("FULL TEXT OF A");
+  });
+
+  it("passes a file without a final pointer verbatim", async () => {
+    const { code, text } = await run(`verbatim decision\n${pointer(LOG_A)}\nand more`);
+    expect(code).toBe(0);
+    expect(text).toContain("verbatim decision");
+    expect(text).not.toContain("FULL TEXT OF");
+  });
 });
 
 it("hands the previous review verdict to a rework round only", async () => {
