@@ -17,6 +17,7 @@ it("creates token profile directories before the first runtime probe", async () 
   const calls: DockerCommand[] = [];
   const lifecycle = createDockerLifecycle({
     version: "0.1.1",
+    integrationBranch: () => Promise.resolve("develop"),
     settings: () =>
       Promise.resolve({
         ...settings,
@@ -46,6 +47,7 @@ it("creates a bounded container with no persistent credentials and keeps volumes
   const calls: DockerCommand[] = [];
   const lifecycle = createDockerLifecycle({
     version: "0.1.1",
+    integrationBranch: () => Promise.resolve("develop"),
     settings: () => Promise.resolve(settings),
     run: (command) => {
       calls.push(command);
@@ -67,6 +69,7 @@ it("creates a bounded container with no persistent credentials and keeps volumes
   expect(clone?.args).toContain("GH_TOKEN");
   expect(clone?.args.join(" ")).not.toContain(settings.github.token);
   expect(clone?.input).not.toContain(settings.github.token);
+  expect(JSON.parse(clone?.input ?? "{}")).toMatchObject({ branch: "develop" });
   calls.length = 0;
   await lifecycle("down", { projectDir: "/tmp/demo" });
   expect(calls.some((command) => command.args[0] === "volume")).toBe(false);
@@ -76,6 +79,7 @@ it("prunes only its own builder after a successful build", async () => {
   const calls: DockerCommand[] = [];
   const lifecycle = createDockerLifecycle({
     version: "0.1.1",
+    integrationBranch: () => Promise.resolve("develop"),
     settings: () => Promise.resolve(settings),
     run: (command) => {
       calls.push(command);
@@ -102,6 +106,7 @@ it("does not delete images after a failed build", async () => {
   const calls: DockerCommand[] = [];
   const lifecycle = createDockerLifecycle({
     version: "0.1.1",
+    integrationBranch: () => Promise.resolve("develop"),
     settings: () => Promise.resolve(settings),
     run: (command) => {
       calls.push(command);
@@ -182,6 +187,7 @@ it("uses the selected watch port for each project's loopback publication", async
   ] as const) {
     const lifecycle = createDockerLifecycle({
       version: "9.8.7",
+      integrationBranch: () => Promise.resolve("develop"),
       settings: () => Promise.resolve({ ...settings, docker: { watchPort } }),
       run: (command) => {
         calls.push(command);

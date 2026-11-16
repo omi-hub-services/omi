@@ -68,3 +68,46 @@ it("runs the installed CommonJS bridge against a fake Docker executable", async 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it("hints at omi docker up when the in-container CLI is missing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "omi-docker-bridge-"));
+  try {
+    await mkdir(join(root, ".omi/bin"), { recursive: true });
+    await mkdir(join(root, ".omi/tool/node_modules"), { recursive: true });
+    await symlink(resolve("."), join(root, ".omi/tool/node_modules/omi-squad"));
+    await mkdir(join(root, "bin"));
+    await writeFile(
+      join(root, ".omi/omisetting.local.json"),
+      JSON.stringify({
+        version: 1,
+        github: { token: "fake-github-bridge", gitUser: { name: "bot", email: "bot@example.com" } },
+        profiles: [{ id: "test", tool: "codex", auth: { type: "login" } }],
+        docker: { container: "omi-test" },
+      }),
+    );
+    // The CLI exec fails (126); the follow-up `test -x` probe reports it missing (1).
+    await writeFile(
+      join(root, "bin/docker"),
+      `#!${process.execPath}\nprocess.exit(process.argv.includes('test') ? 1 : 126);\n`,
+    );
+    await chmod(join(root, "bin/docker"), 0o755);
+    const bridge = join(root, ".omi/bin/omi.cjs");
+    await copyFile(resolve("templates/bridges/omi.cjs"), bridge);
+    const child = spawn(process.execPath, [bridge, "status"], {
+      cwd: root,
+      env: { PATH: join(root, "bin") },
+      stdio: ["ignore", "ignore", "pipe"],
+      shell: false,
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+    const code = await new Promise<number | null>((done, reject) => {
+      child.once("error", reject);
+      child.once("exit", done);
+    });
+    expect(code).toBe(126);
+    expect(stderr).toContain("omi docker up");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

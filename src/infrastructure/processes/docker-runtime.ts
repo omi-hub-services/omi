@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
-import { basename, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { OmiSetting } from "../../application/contracts/omisetting.js";
 import type { DockerLifecycle } from "../../application/ports/docker-runtime.js";
 import { readPackageVersion } from "../config/package-content.js";
 import { loadOmiSetting } from "../config/load-omisetting.js";
+import { createProjectConfigStore } from "../config/project-config-store.js";
 
 export interface DockerTarget {
   readonly container: string;
@@ -102,11 +103,18 @@ export function dockerProject(
   };
 }
 
+async function readIntegrationBranch(projectDir: string): Promise<string> {
+  const project = await (await createProjectConfigStore(join(projectDir, ".omi", "config"))).read();
+  if (project === undefined) throw new Error("PROJECT_NOT_CONFIGURED");
+  return project.branches.integration;
+}
+
 export function createDockerLifecycle(options: {
   version?: string;
   run?: DockerRunner;
   templateDir?: string;
   settings?: typeof loadOmiSetting;
+  integrationBranch?: (projectDir: string) => Promise<string>;
 }): DockerLifecycle {
   const run = options.run ?? runDockerCommand;
   const checked = async (command: DockerCommand) => {
@@ -250,6 +258,7 @@ export function createDockerLifecycle(options: {
         repo: project.repo,
         url: `https://github.com/${match[1]}.git`,
         gitUser: settings.github.gitUser,
+        branch: await (options.integrationBranch ?? readIntegrationBranch)(projectDir),
       }),
     });
   };
