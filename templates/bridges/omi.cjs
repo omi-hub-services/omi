@@ -173,6 +173,18 @@ async function main() {
     },
   );
   process.exitCode = result.status ?? 1;
+  if (process.exitCode !== 0) {
+    // Only on failure, so a healthy run costs no extra docker call.
+    const probe = spawnSync(
+      "docker",
+      ["exec", target.container, "test", "-x", `${target.repoDir}/.omi/bin/omi`],
+      { shell: false, stdio: "ignore", windowsHide: true },
+    );
+    if (probe.status === 1)
+      process.stderr.write(
+        "The omi CLI is missing in the Docker container. Run `omi docker up`; the .omi install must be on the project's integration branch.\n",
+      );
+  }
 }
 function legacy() {
   if (/^--omi-(?:runtime|node-version|worker-version)$/.test(args[0] ?? "")) {
