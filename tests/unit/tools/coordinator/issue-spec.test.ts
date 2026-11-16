@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   issueSpecContent,
   nextPlanKey,
+  nextEpicPlanKey,
   parseIssueSpec,
   validateSpecOptions,
 } from "../../../../tools/coordinator/issue-spec.ts";
@@ -138,5 +139,28 @@ describe("Work Type workflow gate", () => {
       kind: "refuse",
       reason: "Task has ## Tái hiện; use Work Type Bug and Workflow bugfix",
     });
+  });
+});
+
+describe("Epic spec", () => {
+  const epic =
+    "---\ntitle: Container\nworkType: Epic\narea: tools\nmilestone: M1\nstatus: Backlog\n---\nScope.\n";
+  it("allocates EP-nn above existing keys and refuses exhaustion", () => {
+    expect(nextEpicPlanKey([null, "OMI-999", "EP-01", "EP-09"])).toBe("EP-10");
+    expect(nextEpicPlanKey([])).toBe("EP-01");
+    expect(() => nextEpicPlanKey(["EP-99"])).toThrow(/exhausted/);
+  });
+  it.each(["title", "workType", "area", "milestone", "status"])("requires Epic %s", (field) => {
+    expect(parseIssueSpec(epic.replace(new RegExp(`^${field}:.*\\n`, "m"), ""), true).kind).toBe(
+      "refuse",
+    );
+  });
+  it.each([
+    "<!-- omi-squad:plan-key=EP-01 -->\n<!-- omi-squad:plan-key=EP-02 -->",
+    "<!-- omi-squad:plan-key=OMI-001 -->",
+    "<!--  omi-squad:plan-key=EP-01  -->",
+    "<!-- omi-squad:plan-key=EP-01 -->\n<!-- omi-squad:plan-key=wrong -->",
+  ])("refuses conflicting Epic markers", (suffix) => {
+    expect(parseIssueSpec(epic + suffix, true).kind).toBe("refuse");
   });
 });

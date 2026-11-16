@@ -184,6 +184,32 @@ Attention line for each open non-Epic Issue failing readiness, including legacy 
 already In Progress or Done; it reports them without throwing or repairing them. Closed
 Issues, Epics, PRs and drafts are excluded from readiness warnings.
 
+### Issue relations and Epic intake (OMI-186)
+
+`flow.ts block N --by M --reason <text>` adds the native blocked-by relation, sets Backlog
+through the ordinary status plan and posts one Coordinator comment. An existing relation is a
+no-op, including status/comment writes. `set-epic N --epic E` moves the native sub-issue using
+`replace_parent: true`; an existing parent is a no-op. Both support `--dry-run`.
+
+`new-epic --file <spec.md>` reuses issue-spec.ts's YAML parser and issue-creation.ts's Project
+writes. Its strict frontmatter is `title`, `workType: Epic`, `area`, `milestone` (exact title),
+and `status` (live Project option), followed by a nonempty container body. It bypasses task
+readiness and sets Work Type, Area, Status, Plan Key and the native milestone. The next EP-nn
+key is above all allocated Issue/Project keys, including closed Issues; EP-99 exhausts the
+existing two-digit marker space. The durable marker/retry behavior matches new-issue.
+
+`edit-issue N --file <spec.md>` replaces only the body after shared readiness validation against
+the current Project fields. The file can contain Markdown or the existing task YAML spec; YAML
+is parsed by issue-spec.ts. An omitted marker is restored from the current Plan Key; a conflicting
+marker is refused. Unchanged content is a no-op. A changed number of top-level AC prints a warning,
+including on dry run. Scope decisions remain Coordinator/PO responsibilities, never file text.
+
+Before any local marker or remote creation write, `new-issue` reads all native sub-issues and
+refuses `EPIC_SUB_ISSUE_LIMIT` at the named limit of 100. Parent moves use the same preflight.
+The preflight cannot reserve capacity against concurrent writers. As with existing creation,
+a network failure between writes can leave partial remote work for Coordinator reconciliation;
+an existing block link deliberately does not replay status or comments.
+
 ## Promoting Backlog tasks (OMI-060)
 
 `node tools/coordinator/flow.ts promote [N] [--dry-run]` moves a Backlog Issue to Ready so
