@@ -8,6 +8,7 @@ import { Command, CommanderError } from "commander";
 import { EXIT_CODES } from "../presenters/exit-codes.js";
 import type { ExitCode } from "../presenters/exit-codes.js";
 import { presentFailure, presentUsageError } from "../presenters/result-presenter.js";
+import { NoRuntimeStateError } from "../../../application/ports/runtime-state.js";
 import { createCliContext, formatOf } from "./command-context.js";
 import type { CliContext, CliOutput, GlobalOptions } from "./command-context.js";
 import { registerApprovalCommands } from "./approval-commands.js";
@@ -104,6 +105,8 @@ export async function runCli(
           ? "a command is required (try --help)"
           : error.message.replace(/^error: /, "");
       context.emit(presentUsageError(message, format));
+    } else if (error instanceof NoRuntimeStateError) {
+      context.emit(presentFailure({ code: error.code, message: error.message }, format));
     } else {
       context.emit(
         presentFailure(

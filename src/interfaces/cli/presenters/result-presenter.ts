@@ -41,11 +41,14 @@ export function presentSuccess(value: unknown, text: string, format: OutputForma
 }
 
 export function presentFailure(
-  error: IpcError | { readonly code: "DOCTOR_FAILED"; readonly message: string },
+  error:
+    IpcError | { readonly code: "DOCTOR_FAILED" | "NO_RUNTIME_STATE"; readonly message: string },
   format: OutputFormat,
   exitCode: ExitCode = error.code === "DOCTOR_FAILED"
     ? EXIT_CODES.DOCTOR_FAILED
-    : exitCodeForError(error.code),
+    : error.code === "NO_RUNTIME_STATE"
+      ? EXIT_CODES.RUNTIME_UNAVAILABLE
+      : exitCodeForError(error.code),
 ): Presented {
   if (format === "json") {
     const doc = {

@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 let root = "";
 let origin = "";
 let seed = "";
+let fakeNpm = "";
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", ...args], {
     cwd,
@@ -18,7 +19,7 @@ const commit = (file: string): void => {
   git(seed, "commit", "-q", "-m", file);
   git(seed, "push", "-q", "origin", "develop");
 };
-const init = (branch: string) =>
+const init = (branch: string, extraEnv: Record<string, string> = {}) =>
   spawnSync(process.execPath, [resolve("templates/docker/init.mjs")], {
     input: JSON.stringify({
       repo: "demo",
@@ -33,6 +34,8 @@ const init = (branch: string) =>
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: `url.${origin}.insteadOf`,
       GIT_CONFIG_VALUE_0: "https://github.com/acme/demo.git",
+      OMI_NPM: fakeNpm,
+      ...extraEnv,
     },
   });
 const checkout = () => join(root, "work/demo");
@@ -50,6 +53,21 @@ beforeEach(() => {
   git(seed, "checkout", "-q", "-b", "develop");
   commit("one.txt");
   mkdirSync(join(root, "work"));
+  fakeNpm = join(root, "fake-npm.sh");
+  writeFileSync(
+    fakeNpm,
+    `#!/bin/sh\necho "$@" >> "${join(root, "npm.log")}"\nmkdir -p node_modules\nexit \${FAKE_NPM_EXIT:-0}\n`,
+    { mode: 0o755 },
+  );
+  // Init requires the project runtime on the branch; every test starts with one committed.
+  mkdirSync(join(seed, ".omi/tool"), { recursive: true });
+  writeFileSync(join(seed, ".omi/tool/package.json"), "{}");
+  writeFileSync(join(seed, ".omi/tool/package-lock.json"), "lock-0");
+  writeFileSync(join(seed, ".gitignore"), "node_modules/\n");
+  git(seed, "add", ".gitignore");
+  git(seed, "add", "-f", ".omi/tool");
+  git(seed, "commit", "-q", "-m", "tool");
+  git(seed, "push", "-q", "origin", "develop");
 });
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
@@ -80,6 +98,47 @@ describe("container init integration branch", () => {
     expect(diverged.status).not.toBe(0);
     expect(diverged.stderr).toContain("develop");
     expect(git(checkout(), "rev-parse", "HEAD")).toBe(local);
+  });
+
+  describe(".omi/tool runtime install", () => {
+    let log = "";
+    let npmEnv: Record<string, string> = {};
+    const installs = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").length - 1 : 0);
+    const commitTool = (lock: string): void => {
+      writeFileSync(join(seed, ".omi/tool/package-lock.json"), lock);
+      git(seed, "add", "-f", ".omi/tool");
+      git(seed, "commit", "-q", "-m", "tool");
+      git(seed, "push", "-q", "origin", "develop");
+    };
+    beforeEach(() => {
+      log = join(root, "npm.log");
+      npmEnv = {};
+    });
+
+    it("installs when node_modules is missing, skips on an unchanged lock, reinstalls on change", () => {
+      commitTool("lock-1");
+      expect(init("develop", npmEnv).status).toBe(0);
+      expect(installs()).toBe(1);
+      expect(readFileSync(log, "utf8")).toContain("ci --no-audit --no-fund");
+      expect(init("develop", npmEnv).status).toBe(0);
+      expect(installs()).toBe(1);
+      commitTool("lock-2");
+      expect(init("develop", npmEnv).status).toBe(0);
+      expect(installs()).toBe(2);
+    });
+
+    it("exits non-zero with a clear message when the install fails or package.json is absent", () => {
+      commitTool("lock-1");
+      const failed = init("develop", { ...npmEnv, FAKE_NPM_EXIT: "1" });
+      expect(failed.status).not.toBe(0);
+      expect(failed.stderr).toContain(".omi/tool");
+      git(seed, "rm", "-q", ".omi/tool/package.json");
+      git(seed, "commit", "-q", "-m", "drop");
+      git(seed, "push", "-q", "origin", "develop");
+      const missing = init("develop", npmEnv);
+      expect(missing.status).not.toBe(0);
+      expect(missing.stderr).toContain("package.json");
+    });
   });
 
   it("rejects an unsafe branch name", () => {
