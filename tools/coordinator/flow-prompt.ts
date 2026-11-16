@@ -41,7 +41,11 @@ import {
   readTaskPullComments,
   renderHistory,
 } from "./flow-architect.ts";
+import { previousReviewOf } from "./flow-compose.ts";
 import { runChecked, wslCommand } from "./process-runner.ts";
+
+/** Largest delta diff put into a packet; a bigger one is cut and says so. */
+const DELTA_LIMIT = 30_000;
 import { loadTemplate } from "./watch-workflow.ts";
 import { NATIVE_RESUME_HEADER, SECURITY_REVIEW_MARKER } from "./worker-launch.ts";
 import {
@@ -346,10 +350,23 @@ export async function promptCommand(ctx: WorkerCtx, input: PromptInput): Promise
         );
       }
     }
+    // OMI-185: a later review round takes what the flags omit from the recorded step reports and git
+    const recorded =
+      quality.step === "review" && round > 1 && !architect
+        ? previousReviewOf(issue.comments, round)
+        : null;
     if (input.previousVerdict !== undefined)
       evidence.push(`## Previous verdict\n${await readFile(input.previousVerdict, "utf8")}`);
+    else if (recorded !== null) evidence.push(`## Previous verdict\n${recorded.text}`);
     if (input.delta !== undefined)
       evidence.push(`## Delta since previous verdict\n${await readFile(input.delta, "utf8")}`);
+    else if (recorded?.head != null) {
+      const to = /^[a-f0-9]{40}$/.test(input.head ?? "") ? (input.head ?? "HEAD") : "HEAD";
+      const diff = await runChecked(ctx.run, wslCommand(`git diff ${recorded.head} ${to}`, target));
+      evidence.push(
+        `## Delta since previous verdict (${recorded.head}..${to})\n${diff.length > DELTA_LIMIT ? `${diff.slice(0, DELTA_LIMIT)}\n… delta cut at ${String(DELTA_LIMIT)} characters` : diff}`,
+      );
+    }
     const branch =
       input.branch ??
       (await runChecked(ctx.run, wslCommand("git rev-parse --abbrev-ref HEAD", target))).trim();

@@ -64,6 +64,9 @@ export interface RunsRetention {
 const { logRetentionSettings } = await import("../../src/application/contracts/log-retention.ts");
 export const RUNS_RETENTION: RunsRetention = logRetentionSettings(undefined);
 
+/** Attribution trailer `commit-worker --from-report` appends to the worker's proposed message. */
+export const COMMIT_TRAILER = "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>";
+
 /** Hidden marker appended to the closing evidence comment so `close` never posts it twice. */
 export const CLOSE_EVIDENCE_MARKER = "<!-- omi-coordinator:close-evidence -->";
 

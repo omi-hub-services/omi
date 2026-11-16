@@ -871,6 +871,57 @@ it("hands the previous review verdict to a rework round only", async () => {
   expect(earlier(output.join("\n"))).toBe("");
 });
 
+it("fills the round-2 review delta and previous verdict from recorded data (OMI-185)", async () => {
+  const extraComments = [
+    {
+      body: stepReport("review", 1, "AC-1: not met — old gap", ["fix the gap"]),
+      author: COORDINATOR_LOGIN,
+    },
+  ];
+  const f = fake({ extraComments });
+  const next = "a".repeat(40);
+  expect(
+    await main(["prompt", "185", "--step", "review", "--round", "2", "--head", next], f.ctx),
+  ).toBe(0);
+  const text = output.join("\n");
+  expect(text).toContain("## Previous verdict\nReview round 1 (succeeded) on head " + HEAD168);
+  expect(text).toContain("AC-1: not met — old gap");
+  expect(text).toContain("fix the gap");
+  expect(text).toContain(`## Delta since previous verdict (${HEAD168}..${next})`);
+  expect(f.seen.some((c) => c.args.at(-1) === `git diff ${HEAD168} ${next}`)).toBe(true);
+});
+
+it("lets explicit --previous-verdict and --delta win over the recorded data (OMI-185)", async () => {
+  const previous = join(dir, "previous.md");
+  const delta = join(dir, "delta.md");
+  writeFileSync(previous, "EXPLICIT VERDICT");
+  writeFileSync(delta, "EXPLICIT DELTA");
+  const extraComments = [{ body: stepReport("review", 1, "RECORDED"), author: COORDINATOR_LOGIN }];
+  const f = fake({ extraComments });
+  expect(
+    await main(
+      [
+        "prompt",
+        "185",
+        "--step",
+        "review",
+        "--round",
+        "2",
+        "--previous-verdict",
+        previous,
+        "--delta",
+        delta,
+      ],
+      f.ctx,
+    ),
+  ).toBe(0);
+  const text = output.join("\n");
+  expect(text).toContain("EXPLICIT VERDICT");
+  expect(text).toContain("EXPLICIT DELTA");
+  expect(text.split("## Previous verdict")[1]).not.toContain("RECORDED");
+  expect(f.seen.some((c) => c.args.at(-1)?.startsWith("git diff"))).toBe(false);
+});
+
 it("renders review without --check-log from the stored result for the head (OMI-168)", async () => {
   const f = fake({ storedCheck: storedCheck() });
   expect(await main(["prompt", "185", "--step", "review", "--head", HEAD168], f.ctx)).toBe(0);
