@@ -51,7 +51,7 @@ import {
 } from "./migrate-project-directory.js";
 
 export interface ProvisionOptions {
-  /** Docker project: the runtime lives in the image, so the host install builds no native modules. */
+  /** Docker project: the runtime is installed in the container checkout by init, so the host install builds no native modules. */
   docker?: boolean;
 }
 export type ProvisionPackage = (

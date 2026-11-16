@@ -8,7 +8,8 @@ import type { IpcErrorCode } from "../../ipc/protocol.js";
  *   0  OK                   the command ran and the runtime accepted it
  *   1  FAILURE              unexpected failure inside the CLI itself, or INTERNAL_ERROR from runtime
  *   2  USAGE                bad arguments, unknown command or option (nothing was sent)
- *   3  RUNTIME_UNAVAILABLE  no runtime on the socket, or it did not answer in time
+ *   3  RUNTIME_UNAVAILABLE  no runtime on the socket, or it did not answer in time, or no runtime
+ *                           state exists yet (NO_RUNTIME_STATE: run `session start`)
  *   4  REQUEST_REJECTED     the runtime understood the request and refused it with a typed error
  *                           (invalid command, unsupported version, too large, not implemented)
  *   5  PROTOCOL_ERROR       the runtime's answer was malformed or did not match the request

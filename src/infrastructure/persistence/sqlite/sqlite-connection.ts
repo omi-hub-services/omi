@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import Database from "better-sqlite3";
+import { NoRuntimeStateError } from "../../../application/ports/runtime-state.js";
 
 /** Default time a writer waits for a lock before SQLITE_BUSY (tech-stack.md §6: finite). */
 export const DEFAULT_BUSY_TIMEOUT_MS = 5_000;
@@ -54,6 +56,7 @@ export function openReadOnlyStateDatabase(
   filePath: string,
   busyTimeoutMs: number = DEFAULT_BUSY_TIMEOUT_MS,
 ): StateDatabase {
+  if (!existsSync(filePath)) throw new NoRuntimeStateError();
   return new Database(filePath, { readonly: true, fileMustExist: true, timeout: busyTimeoutMs });
 }
 

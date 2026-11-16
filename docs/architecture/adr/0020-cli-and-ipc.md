@@ -78,7 +78,7 @@ Error codes (stable; a code is never reused or renamed):
 | 0    | `OK`                  | The command ran and the runtime accepted it (not "task accepted")    |
 | 1    | `FAILURE`             | Unexpected CLI failure, or `INTERNAL_ERROR` from the runtime         |
 | 2    | `USAGE`               | Bad arguments, unknown command/option, missing command               |
-| 3    | `RUNTIME_UNAVAILABLE` | `RUNTIME_UNAVAILABLE` or `TIMEOUT`                                   |
+| 3    | `RUNTIME_UNAVAILABLE` | `RUNTIME_UNAVAILABLE`, `TIMEOUT` or `NO_RUNTIME_STATE` (CLI-local)   |
 | 4    | `REQUEST_REJECTED`    | `PAYLOAD_TOO_LARGE`, `MALFORMED_REQUEST`, `UNSUPPORTED_VERSION`, `INVALID_COMMAND`, `NOT_IMPLEMENTED`, `APPROVAL_REFUSED`, `COMMAND_REFUSED` |
 | 5    | `PROTOCOL_ERROR`      | `PROTOCOL_ERROR`                                                     |
 

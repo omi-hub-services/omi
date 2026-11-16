@@ -1,6 +1,7 @@
 import process from "node:process";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 let input = "";
 for await (const chunk of process.stdin) {
@@ -57,3 +58,25 @@ if (run(["-C", directory, "merge", "--ff-only", "FETCH_HEAD"]).status !== 0)
   fail(
     `Container branch ${config.branch} has diverged from origin; resolve it manually. Nothing was changed.`,
   );
+
+// The runtime lives in the container checkout (.omi/tool/node_modules is gitignored): install it
+// when missing or when package-lock.json changed since the last successful install.
+const tool = `${directory}/.omi/tool`;
+if (!existsSync(`${tool}/package.json`))
+  fail("The project runtime is not installed on this branch: .omi/tool/package.json is missing.");
+if (!existsSync(`${tool}/package-lock.json`))
+  fail("The project runtime cannot be installed: .omi/tool/package-lock.json is missing.");
+const lockHash = createHash("sha256")
+  .update(readFileSync(`${tool}/package-lock.json`))
+  .digest("hex");
+const marker = `${tool}/node_modules/.omi-lock-hash`;
+const installed = existsSync(marker) && readFileSync(marker, "utf8").trim() === lockHash;
+if (!installed) {
+  const npm = spawnSync(process.env.OMI_NPM ?? "npm", ["ci", "--no-audit", "--no-fund"], {
+    cwd: tool,
+    shell: false,
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  if (npm.status !== 0) fail("npm ci failed in .omi/tool; the project runtime is not installed.");
+  writeFileSync(marker, `${lockHash}\n`);
+}
