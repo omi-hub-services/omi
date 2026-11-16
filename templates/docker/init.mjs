@@ -64,6 +64,8 @@ if (run(["-C", directory, "merge", "--ff-only", "FETCH_HEAD"]).status !== 0)
 const tool = `${directory}/.omi/tool`;
 if (!existsSync(`${tool}/package.json`))
   fail("The project runtime is not installed on this branch: .omi/tool/package.json is missing.");
+if (!existsSync(`${tool}/package-lock.json`))
+  fail("The project runtime cannot be installed: .omi/tool/package-lock.json is missing.");
 const lockHash = createHash("sha256")
   .update(readFileSync(`${tool}/package-lock.json`))
   .digest("hex");

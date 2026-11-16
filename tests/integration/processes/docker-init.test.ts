@@ -127,6 +127,16 @@ describe("container init integration branch", () => {
       expect(installs()).toBe(2);
     });
 
+    it("exits non-zero naming package-lock.json when the lock is missing", () => {
+      git(seed, "rm", "-q", ".omi/tool/package-lock.json");
+      git(seed, "commit", "-q", "-m", "nolock");
+      git(seed, "push", "-q", "origin", "develop");
+      const result = init("develop", npmEnv);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("package-lock.json");
+      expect(result.stderr).not.toContain("ENOENT");
+    });
+
     it("exits non-zero with a clear message when the install fails or package.json is absent", () => {
       commitTool("lock-1");
       const failed = init("develop", { ...npmEnv, FAKE_NPM_EXIT: "1" });
