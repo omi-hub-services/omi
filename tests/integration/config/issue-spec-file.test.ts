@@ -58,7 +58,15 @@ describe("createIssueSpecFile", () => {
     writeFileSync(file, "---\ntitle: a\ntitle: b\n---\nbody\n");
     expect(await createIssueSpecFile(file).read()).toEqual({
       kind: "invalid",
-      reason: "frontmatter is not valid YAML",
+      reason: "spec front matter is not valid YAML (line 3)",
+    });
+  });
+
+  it("names the file line of unparsable front matter on the runtime path", async () => {
+    writeFileSync(file, "---\ntitle: omi github rulesets: create\n---\nbody\n");
+    expect(await createIssueSpecFile(file).read()).toEqual({
+      kind: "invalid",
+      reason: "spec front matter is not valid YAML (line 2)",
     });
   });
 
