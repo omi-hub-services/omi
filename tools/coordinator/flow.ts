@@ -8,7 +8,9 @@ import { join } from "node:path";
 import { COORDINATOR_TOOL_ROOT } from "./tool-root.ts";
 import { readFileSync, readdirSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { createIssue } from "./issue-creation.ts";
+import { createIssue, setIssueEpic } from "./issue-creation.ts";
+import { marker, MARKER_PATTERN } from "../github-bootstrap/manifest.ts";
+import { parseIssueSpec } from "./issue-spec.ts";
 import { issueReadinessReasons, type IssueReadiness } from "./issue-readiness.ts";
 import { countAcceptanceCriteria } from "./acceptance-criteria.ts";
 import { inferComplexity, type EffortInput } from "./effort-policy.ts";
@@ -124,6 +126,10 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   handoff --file <f> | --clear                replace or empty the Project README handoff
   workflow-options                          read-only check of live Project Workflow/template routing
   new-issue --file <spec.md>                 validated Issue with Project fields and Backlog
+  new-epic --file <spec.md>                  Epic container with the next EP-nn key
+  block <issue> --by <issue> --reason <text>  native blocked-by, Backlog and Coordinator comment
+  set-epic <issue> --epic <issue>             replace the native parent
+  edit-issue <issue> --file <spec.md>         validated body replacement; warn on changed AC count
   set-status <issue> <status>
   promote [<issue>]                           Backlog -> Ready if blockers closed and ready (no N: first by priority)
   start-branch <issue> <slug>                 WSL: task/omi-NNN-<slug> from origin/${BASE_BRANCH}
@@ -944,6 +950,9 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       "dry-run": { type: "boolean", default: false },
       file: { type: "string" },
       clear: { type: "boolean", default: false },
+      by: { type: "string" },
+      reason: { type: "string" },
+      epic: { type: "string" },
       "regression-evidence": { type: "string" },
       "test-file": { type: "string" },
       "test-name": { type: "string" },
@@ -1085,6 +1094,114 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       });
     case "new-issue":
       return createIssue(ctx.run, required(values.file, "--file"), dry);
+    case "new-epic":
+      return createIssue(ctx.run, required(values.file, "--file"), dry, true);
+    case "set-epic":
+      return setIssueEpic(ctx.run, issueNumber(a), issueNumber(values.epic), dry);
+    case "block": {
+      const n = issueNumber(a);
+      const by = issueNumber(values.by);
+      const reason = required(values.reason?.trim(), "--reason");
+      if (n === by) return go({ kind: "refuse", reason: "an Issue cannot block itself" });
+      const blocker = asObject(
+        parseJson(
+          await runChecked(ctx.run, {
+            file: "gh",
+            args: ["api", `repos/${REPO_SLUG}/issues/${String(by)}`],
+          }),
+          "blocker",
+        ),
+        "blocker",
+      );
+      const id = asNumber(blocker.id, "blocker.id");
+      const pages = asArray(
+        parseJson(
+          await runChecked(ctx.run, {
+            file: "gh",
+            args: [
+              "api",
+              `repos/${REPO_SLUG}/issues/${String(n)}/dependencies/blocked_by?per_page=100`,
+              "--paginate",
+              "--slurp",
+            ],
+          }),
+          "blocked-by",
+        ),
+        "blocked-by pages",
+      );
+      if (
+        pages
+          .flatMap((p) => asArray(p, "blocked-by page"))
+          .some((raw) => asNumber(asObject(raw, "blocker").id, "blocker.id") === id)
+      )
+        return go({ kind: "done", note: `#${String(n)} is already blocked by #${String(by)}` });
+      const issue = await readIssue(ctx, n);
+      const status = planSetStatus(n, "Backlog", issue.field, issue.item, issue.readiness);
+      if (status.kind === "refuse") return go(status);
+      return go({
+        kind: "run",
+        steps: [
+          {
+            side: "host",
+            argv: [
+              "gh",
+              "api",
+              `repos/${REPO_SLUG}/issues/${String(n)}/dependencies/blocked_by`,
+              "--method",
+              "POST",
+              "--input",
+              "-",
+            ],
+            input: JSON.stringify({ issue_id: id }),
+          },
+          ...(status.kind === "run" ? status.steps : []),
+          {
+            side: "host",
+            argv: ["gh", "issue", "comment", String(n), "--repo", REPO_SLUG, "--body-file", "-"],
+            input: `**Coordinator:** Blocked by #${String(by)}. ${reason}`,
+          },
+        ],
+      });
+    }
+    case "edit-issue": {
+      const n = issueNumber(a);
+      const source = readFileSync(required(values.file, "--file"), "utf8");
+      let body = source.trim();
+      if (/^---\r?\n/.test(source)) {
+        const parsed = parseIssueSpec(source);
+        if (parsed.kind === "refuse") return go({ kind: "refuse", reason: parsed.reason });
+        body = parsed.spec.body;
+      }
+      const issue = await readIssue(ctx, n);
+      if (!MARKER_PATTERN.test(body) && issue.planKey) body = `${body}\n${marker(issue.planKey)}`;
+      const reasons = issueReadinessReasons({ ...issue.readiness, body });
+      if (reasons.length > 0) return go({ kind: "refuse", reason: reasons.join("; ") });
+      if (body === issue.body.trim()) return go({ kind: "done", note: "Issue body is unchanged" });
+      const before = countAcceptanceCriteria(issue.body);
+      const after = countAcceptanceCriteria(body);
+      if (before !== after)
+        console.warn(
+          `edit-issue: warning: top-level AC count ${String(before)} -> ${String(after)}`,
+        );
+      return go({
+        kind: "run",
+        steps: [
+          {
+            side: "host",
+            argv: [
+              "gh",
+              "api",
+              `repos/${REPO_SLUG}/issues/${String(n)}`,
+              "--method",
+              "PATCH",
+              "--input",
+              "-",
+            ],
+            input: JSON.stringify({ body }),
+          },
+        ],
+      });
+    }
     case "set-status": {
       const n = issueNumber(a);
       const issue = await readIssue(ctx, n);
