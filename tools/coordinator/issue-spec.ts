@@ -45,7 +45,12 @@ export function parseIssueSpec(source: string, epic = false): SpecResult {
   try {
     raw = parse(match[1] ?? "", { uniqueKeys: true });
   } catch (error) {
-    return { kind: "refuse", reason: `invalid YAML: ${String(error)}` };
+    // +1: front matter line 1 is file line 2, after the opening `---`.
+    const line = (error as { linePos?: readonly { line: number }[] }).linePos?.[0]?.line;
+    return {
+      kind: "refuse",
+      reason: `spec front matter is not valid YAML${line === undefined ? "" : ` (line ${String(line + 1)})`}`,
+    };
   }
   const result = (epic ? epicFrontmatter : frontmatter).safeParse(raw);
   if (!result.success)
