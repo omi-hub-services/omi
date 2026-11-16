@@ -62,6 +62,8 @@ export function verdictFromReports(input: {
   readonly comments: readonly AuthoredComment[];
   readonly issueBody: string;
   readonly prHead: string;
+  /** The Issue's Workflow: only `release` accepts deferred criteria. */
+  readonly workflow?: string | null | undefined;
 }) {
   const report = recordedReports(input.comments)
     .filter((r) => r.step === "review")
@@ -78,6 +80,7 @@ export function verdictFromReports(input: {
     summary: report.summary,
     head: report.head,
     status: report.status,
+    workflow: input.workflow,
   });
 }
 

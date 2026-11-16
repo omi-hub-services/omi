@@ -99,6 +99,13 @@ describe("composeCommitMessage", () => {
     expect(made.ok && made.message.split(trailer).length).toBe(2);
   });
 
+  it("refuses an empty Proposed commit line instead of taking the next line", () => {
+    expect(composeCommitMessage("Proposed commit:\nUnverified: none", trailer).ok).toBe(false);
+    expect(composeCommitMessage("Proposed commit:  \n\nfeat: stray (OMI-1)", trailer).ok).toBe(
+      false,
+    );
+  });
+
   it.each([
     "no such line",
     "Proposed commit message ending (OMI-185), using the Plan Key",

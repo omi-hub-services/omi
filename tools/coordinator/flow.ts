@@ -1275,6 +1275,7 @@ export async function main(argv: readonly string[], context?: Context): Promise<
         comments: issue.authored,
         issueBody: issue.body,
         prHead: pr.headRefOid,
+        workflow: issue.readiness.workflow,
       });
       if (!made.ok) {
         console.error(`${label}: refused: ${made.reasons.join("; ")}`);

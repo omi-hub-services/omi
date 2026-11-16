@@ -77,6 +77,50 @@ describe("verdictFromReports", () => {
     });
   });
 
+  it("keeps the recorded Security: section so a security-relevant review is accepted", () => {
+    const secure = report(
+      "review",
+      1,
+      "Reviewed.\nAC-1: met — tests\nAC-2: met — docs\n\nSecurity:\n- Command injection: checked — argv array at src/x.ts:4",
+    );
+    const made = verdictFromReports({ comments: [secure], issueBody: ISSUE, prHead: HEAD });
+    if (!made.ok) throw new Error(made.reasons.join("; "));
+    expect(made.text).toContain("Command injection: checked");
+    expect(checkReview(made.text, { acCount: 2, prHead: HEAD, securityRisk: true }).ok).toBe(true);
+    const plain = verdictFromReports({ comments: [good], issueBody: ISSUE, prHead: HEAD });
+    expect(
+      plain.ok && checkReview(plain.text, { acCount: 2, prHead: HEAD, securityRisk: true }).ok,
+    ).toBe(false);
+  });
+
+  describe("deferred criteria", () => {
+    const deferred = report("review", 1, "AC-1: met — tests\nAC-2: deferred — tag after merge");
+
+    it("accepts a deferred line for a release workflow, as checkReview does", () => {
+      const made = verdictFromReports({
+        comments: [deferred],
+        issueBody: ISSUE,
+        prHead: HEAD,
+        workflow: "release",
+      });
+      if (!made.ok) throw new Error(made.reasons.join("; "));
+      expect(made.verdict).toBe("PASS");
+      expect(checkReview(made.text, { acCount: 2, prHead: HEAD, workflow: "release" }).ok).toBe(
+        true,
+      );
+    });
+
+    it.each(["feature", null, undefined])("refuses a deferred line for workflow %s", (workflow) => {
+      const made = verdictFromReports({
+        comments: [deferred],
+        issueBody: ISSUE,
+        prHead: HEAD,
+        ...(workflow === undefined ? {} : { workflow }),
+      });
+      expect(made.ok).toBe(false);
+    });
+  });
+
   it("refuses when the report has no line for a criterion", () => {
     const partial = report("review", 1, "AC-1: met — tests");
     const made = verdictFromReports({ comments: [partial], issueBody: ISSUE, prHead: HEAD });
