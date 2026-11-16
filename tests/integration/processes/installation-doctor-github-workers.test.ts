@@ -12,6 +12,8 @@ const request = { projectDir: "/home/user/project", distribution: "Ubuntu" };
 const config = {
   repository: { owner: "acme", name: "app" },
   project: { owner: "acme", number: 3 },
+  branches: { integration: "develop", release: "main" },
+  checks: { ci: { command: ["npm", "test"], timeout_seconds: 600 } },
   policies: { mandatory_approvals: [], github_approval_actors: ["po-human"] },
 } as unknown as ProjectConfig;
 
@@ -145,7 +147,7 @@ describe("doctor GitHub and worker CLI checks", () => {
     expect(report.supported).toBe(true);
     expect(report.version).toBe(1);
     for (const check of report.checks) {
-      expect(["pass", "fail"]).toContain(check.status);
+      expect(["pass", "fail", "warn"]).toContain(check.status);
       expect(check.fix.length).toBeGreaterThan(0);
     }
   });
@@ -378,4 +380,49 @@ it("fails a rejected Claude token using only that profile's env and a path diagn
   ]);
   expect(environments.every((env) => env["GH_TOKEN"] === undefined)).toBe(true);
   expect(JSON.stringify(report)).not.toContain("fake-claude");
+});
+
+it("warns about missing rulesets without failing doctor", async () => {
+  const { report, status } = await run();
+  expect(status("github-rulesets")).toMatchObject({ status: "warn" });
+  expect(status("github-rulesets")?.detail).toContain("missing");
+  expect(report.supported).toBe(true);
+});
+
+it("warns for a weaker main approval while keeping doctor supported", async () => {
+  const { desiredBranchRulesets } = await import("../../../src/domain/delivery/github-rulesets.js");
+  const rulesets = desiredBranchRulesets(config.branches, ["ci"]).map((ruleset, index) => ({
+    ...ruleset,
+    id: index + 1,
+  }));
+  const main = rulesets[0];
+  if (main === undefined) throw new Error("main fixture required");
+  const weak = {
+    ...main,
+    rules: main.rules.map((rule) =>
+      rule.type === "pull_request"
+        ? { ...rule, parameters: { ...rule.parameters, required_approving_review_count: 0 } }
+        : rule,
+    ),
+  };
+  const { report, status } = await run({
+    "gh api repos/acme/app/rulesets?includes_parents=false&per_page=100": JSON.stringify(rulesets),
+    "gh api repos/acme/app/rulesets/1": JSON.stringify(weak),
+    "gh api repos/acme/app/rulesets/2": JSON.stringify(rulesets[1]),
+  });
+  expect(status("github-rulesets")).toMatchObject({
+    status: "warn",
+    detail: "effective rules on omi-main lack or weaken pull_request",
+  });
+  expect(report.supported).toBe(true);
+});
+it("warns for missing rulesets with readable GitHub access", async () => {
+  const { report, status } = await run({
+    "gh api repos/acme/app/rulesets?includes_parents=false&per_page=100": "[]",
+  });
+  expect(status("github-rulesets")).toMatchObject({
+    status: "warn",
+    detail: "ruleset omi-main missing; ruleset omi-develop missing",
+  });
+  expect(report.supported).toBe(true);
 });

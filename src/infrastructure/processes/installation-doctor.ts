@@ -1,3 +1,6 @@
+import { desiredBranchRulesets, rulesetFailures } from "../../domain/delivery/github-rulesets.js";
+import { createGithubRulesets } from "../github/github-rulesets.js";
+import { createGithubRestClient } from "../github/github-rest-client.js";
 import { dockerProject } from "./docker-runtime.js";
 import { loadOmiSetting } from "../config/load-omisetting.js";
 import type { OmiSetting } from "../../application/contracts/omisetting.js";
@@ -502,6 +505,47 @@ export function createInstallationDoctor(probe: WslProbe = systemProbe): Install
         ? configFix
         : "Grant the agent account write access to the repository and re-run gh auth login",
     );
+    let rulesetDetail = "Rulesets could not be read: project config missing";
+    let rulesetsOk = false;
+    if (config !== undefined) {
+      try {
+        const github = createGithubRulesets(
+          createGithubRestClient({
+            transport: {
+              send: async (request) => {
+                const output = await gh(["api", request.path]);
+                return {
+                  status: output === undefined ? 403 : 200,
+                  headers: {},
+                  body: output ?? "",
+                };
+              },
+            },
+            now: Date.now,
+            random: Math.random,
+            sleep: () => Promise.resolve(),
+          }),
+        );
+        const observed = await github.read(`${config.repository.owner}/${config.repository.name}`);
+        const failures = rulesetFailures(
+          desiredBranchRulesets(config.branches, Object.keys(config.checks ?? {})),
+          observed,
+        );
+        if (Object.keys(config.checks ?? {}).length === 0)
+          failures.push("Required check is not configured");
+        rulesetsOk = failures.length === 0;
+        rulesetDetail = rulesetsOk ? "Configured branch rulesets verified" : failures.join("; ");
+      } catch {
+        rulesetDetail = "Rulesets could not be read (missing rulesets or insufficient access)";
+      }
+    }
+    checks.push({
+      name: "github-rulesets",
+      ok: true,
+      status: rulesetsOk ? "pass" : "warn",
+      detail: rulesetDetail,
+      fix: "Run omi github rulesets --dry-run, then ask a repository admin to apply the plan",
+    });
     const project =
       config === undefined
         ? undefined

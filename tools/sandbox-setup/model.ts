@@ -1,7 +1,6 @@
 // Pure part of the sandbox setup (OMI-089): desired state, comparison with what GitHub reports,
 // and the ordered list of API calls that would close the gap. No I/O; main.ts reads and writes.
 // One evaluation feeds three uses: the dry-run plan, the real run and `--verify`.
-import { z } from "zod";
 
 export const PRODUCTION_REPOSITORY = "omi-hub-services/omi";
 export const CHECK_NAME = "sandbox-check";
@@ -10,8 +9,6 @@ export const CHECK_WORKFLOW_PATH = ".github/workflows/sandbox-check.yml";
 export const PIPELINE_MARKER = "<!-- omi-sandbox:pipeline-report -->";
 /** The sandbox Project (org Project #2, ADR-0015); the live harness guard accepts only this one. */
 export const SANDBOX_PROJECT_NUMBER = 2;
-const RULESET_MAIN = "omi-sandbox-main";
-const RULESET_DEVELOP = "omi-sandbox-develop";
 const RULESET_TAGS = "omi-sandbox-tags";
 
 export interface SetupOptions {
@@ -101,60 +98,22 @@ export function assertLivePrepApiCall(
 }
 
 // ── rulesets (ADR-0015: no bypass, native review on main, named check) ───────────────────────
-interface Rule {
-  readonly type: string;
-  readonly parameters?: Record<string, unknown>;
-}
-export interface Ruleset {
-  readonly name: string;
-  readonly target: "branch" | "tag";
-  readonly enforcement: "active";
-  readonly bypass_actors: readonly unknown[];
-  readonly conditions: { readonly ref_name: { include: string[]; exclude: string[] } };
-  readonly rules: readonly Rule[];
-}
-export type ObservedRuleset = Ruleset & { readonly id: number };
-
-const requiredCheck: Rule = {
-  type: "required_status_checks",
-  parameters: {
-    strict_required_status_checks_policy: false,
-    required_status_checks: [{ context: CHECK_NAME }],
-  },
-};
-const pullRequest = (approvals: number, strict: boolean): Rule => ({
-  type: "pull_request",
-  parameters: {
-    required_approving_review_count: approvals,
-    dismiss_stale_reviews_on_push: strict,
-    require_code_owner_review: false,
-    require_last_push_approval: strict,
-    required_review_thread_resolution: false,
-  },
-});
-const ruleset = (name: string, target: Ruleset["target"], ref: string, rules: Rule[]): Ruleset => ({
-  name,
-  target,
-  enforcement: "active",
-  bypass_actors: [],
-  conditions: { ref_name: { include: [ref], exclude: [] } },
-  rules,
-});
-
+export { projectRuleset } from "../../src/application/contracts/github-rulesets.ts";
+import { effectiveRuleFailures as sharedRuleFailures } from "../../src/application/contracts/github-rulesets.ts";
+import {
+  desiredBranchRulesets,
+  ruleset,
+  planRulesets,
+} from "../../src/domain/delivery/github-rulesets.ts";
+import type { Ruleset, ObservedRuleset } from "../../src/domain/delivery/github-rulesets.ts";
+export type { Ruleset, ObservedRuleset };
 export function desiredRulesets(): Ruleset[] {
   return [
-    ruleset(RULESET_MAIN, "branch", "refs/heads/main", [
-      { type: "deletion" },
-      { type: "non_fast_forward" },
-      pullRequest(1, true),
-      requiredCheck,
-    ]),
-    ruleset(RULESET_DEVELOP, "branch", "refs/heads/develop", [
-      { type: "deletion" },
-      { type: "non_fast_forward" },
-      pullRequest(0, false),
-      requiredCheck,
-    ]),
+    ...desiredBranchRulesets(
+      { integration: "develop", release: "main" },
+      [CHECK_NAME],
+      "omi-sandbox",
+    ),
     ruleset(RULESET_TAGS, "tag", "refs/tags/sandbox-deploy-*", [
       { type: "deletion" },
       { type: "update" },
@@ -162,70 +121,8 @@ export function desiredRulesets(): Ruleset[] {
     ]),
   ];
 }
-
-const rawRulesetSchema = z.looseObject({
-  id: z.number(),
-  name: z.string(),
-  target: z.enum(["branch", "tag", "push"]),
-  enforcement: z.string(),
-  bypass_actors: z.array(z.unknown()).nullish(),
-  conditions: z
-    .looseObject({
-      ref_name: z.looseObject({
-        include: z.array(z.string()).default([]),
-        exclude: z.array(z.string()).default([]),
-      }),
-    })
-    .nullish(),
-  rules: z.array(
-    z.looseObject({ type: z.string(), parameters: z.record(z.string(), z.unknown()).optional() }),
-  ),
-});
-const PARAMETER_KEYS: Record<string, readonly string[]> = {
-  pull_request: [
-    "required_approving_review_count",
-    "dismiss_stale_reviews_on_push",
-    "require_code_owner_review",
-    "require_last_push_approval",
-    "required_review_thread_resolution",
-  ],
-  required_status_checks: ["strict_required_status_checks_policy"],
-};
-
-function projectRule(rule: {
-  type: string;
-  parameters?: Record<string, unknown> | undefined;
-}): Rule {
-  const keys = PARAMETER_KEYS[rule.type];
-  if (keys === undefined) return { type: rule.type };
-  const parameters: Record<string, unknown> = {};
-  for (const key of keys)
-    if (rule.parameters?.[key] !== undefined) parameters[key] = rule.parameters[key];
-  if (rule.type === "required_status_checks") {
-    const checks = rule.parameters?.["required_status_checks"];
-    parameters["required_status_checks"] = Array.isArray(checks)
-      ? checks.map((c: unknown) => ({ context: (c as { context?: unknown }).context }))
-      : [];
-  }
-  return { type: rule.type, parameters };
-}
-
-/**
- * Compares the rules GitHub enforces on `main` (`GET rules/branches/main`) with the rules the
- * main ruleset sets, by parsed parameters. Returns one failure per missing or weaker rule.
- */
 export function effectiveRuleFailures(raw: unknown): string[] {
-  const parsed = z
-    .array(
-      z.looseObject({ type: z.string(), parameters: z.record(z.string(), z.unknown()).optional() }),
-    )
-    .safeParse(raw);
-  if (!parsed.success) return ["effective rules on main could not be read"];
-  const have = parsed.data.map(projectRule);
-  const want = desiredRulesets().find((r) => r.name === RULESET_MAIN)?.rules ?? [];
-  return want
-    .filter((rule) => !have.some((h) => sameJson(h, rule)))
-    .map((rule) => `effective rules on main lack or weaken ${rule.type}`);
+  return sharedRuleFailures(raw, desiredRulesets()[0]?.rules ?? [], "main");
 }
 
 /** Items still unsatisfied, blockers included; unlike planSteps it never throws. */
@@ -250,43 +147,6 @@ export async function settleAfterApply(deps: {
   }
   return remaining;
 }
-
-/** Reduces a GitHub ruleset response to the fields this script sets, so defaults never show as drift. */
-export function projectRuleset(raw: unknown): ObservedRuleset | undefined {
-  const parsed = rawRulesetSchema.safeParse(raw);
-  if (!parsed.success) return undefined;
-  const target = parsed.data.target;
-  if (target === "push") return undefined;
-  const data = parsed.data;
-  const rules = data.rules.map(projectRule);
-  return {
-    id: data.id,
-    name: data.name,
-    target,
-    enforcement: data.enforcement as "active",
-    bypass_actors: data.bypass_actors ?? [],
-    conditions: { ref_name: data.conditions?.ref_name ?? { include: [], exclude: [] } },
-    rules,
-  };
-}
-
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    const items = value.map(canonical);
-    return items.every((i) => typeof i === "object")
-      ? items.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
-      : items;
-  }
-  if (value !== null && typeof value === "object")
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => [k, canonical(v)]),
-    );
-  return value;
-}
-const sameJson = (a: unknown, b: unknown) =>
-  JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 
 // ── environment (ADR-0015: required reviewer, no self review, no admin bypass) ───────────────
 export interface ObservedEnvironment {
@@ -506,34 +366,20 @@ export function evaluateSandbox(observed: Observed, options: SetupOptions): Item
 
   for (const want of desiredRulesets()) {
     const id = `ruleset-${want.name.replace("omi-sandbox-", "")}`;
-    const have = observed.rulesets.find((r) => r.name === want.name);
-    if (have !== undefined) {
-      // `id` is undefined here and dropped by JSON, so only the fields we set are compared.
-      if (sameJson({ ...have, id: undefined }, want)) {
-        items.push(done(id, `ruleset ${want.name} matches`));
-        continue;
-      }
-    }
-    items.push(
-      todo(
-        have === undefined
-          ? {
-              id,
-              method: "POST",
-              path: `${base}/rulesets`,
-              body: { ...want },
-              summary: `create ruleset ${want.name} (no bypass actors)`,
-            }
-          : {
-              id,
-              method: "PUT",
-              path: `${base}/rulesets/${String(have.id)}`,
-              body: { ...want },
-              summary: `replace ruleset ${want.name} (no bypass actors)`,
-            },
-        have === undefined ? `ruleset ${want.name} missing` : `ruleset ${want.name} drifted`,
-      ),
-    );
+    const step = planRulesets(options.repository, [want], observed.rulesets)[0];
+    if (step === undefined) items.push(done(id, `ruleset ${want.name} matches`));
+    else
+      items.push(
+        todo(
+          {
+            ...step,
+            id,
+            body: { ...step.body },
+            summary: `${step.method === "POST" ? "create" : "replace"} ruleset ${want.name} (no bypass actors)`,
+          },
+          step.method === "POST" ? `ruleset ${want.name} missing` : `ruleset ${want.name} drifted`,
+        ),
+      );
   }
 
   const issue = observed.pipelineIssue;
