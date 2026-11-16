@@ -6,7 +6,7 @@
 // the argv it needs. Auth comes from the local gh/git logins; nothing token-like is printed.
 import { join } from "node:path";
 import { COORDINATOR_TOOL_ROOT } from "./tool-root.ts";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { createIssue, setIssueEpic } from "./issue-creation.ts";
 import { marker, MARKER_PATTERN } from "../github-bootstrap/manifest.ts";
@@ -112,6 +112,13 @@ import {
 } from "./flow-workers.ts";
 import { linkedIssue, securityReviewRisk } from "./review-verdict.ts";
 import { checkWithReuse } from "./flow-check.ts";
+import {
+  commitMessageFromReports,
+  generatedCloseComment,
+  generatedPrBody,
+  verdictFromReports,
+  writePrBody,
+} from "./flow-compose.ts";
 import { promptCommand } from "./flow-prompt.ts";
 import { regressionEvidenceCommand } from "./regression-evidence.ts";
 import { loadTemplate } from "./watch-workflow.ts";
@@ -136,11 +143,13 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
   push <branch>                               WSL: git push -u origin <branch>
   check <branch> --head <sha>                 WSL: npm run check on exactly <sha>; a passed result
                                               for the same head is reused ("done: reused <sha>")
-  open-pr <issue> <branch> --title <t> --body-file <f>
+  open-pr <issue> <branch> --title <t> [--body-file <f> | --notes <f>]
+                                              without --body-file: Issue link, files by layer and the stored check
   sync <branch> --reviewed <sha>              WSL: merge origin/${BASE_BRANCH}, check, push, carry the PASS
                                               (clean merges only; a conflict is aborted and refused)
   merge <pr> --head <sha>                     checks green, agent PASS @head, merge state clean
-  close <issue> --comment-file <f>            tick AC from the review + comment + close + Done
+  close <issue> [--comment-file <f>]          tick AC from the review + comment + close + Done
+                                              (no file: PR, merge commit, required checks, verdict)
   cleanup <branch>                            delete the merged local branch (WSL and host), then
                                               archive its worker logs in ~/omi-runs
   prune-runs                                  one-time log sweep for every Done task
@@ -160,7 +169,10 @@ const USAGE = `usage: node tools/coordinator/flow.ts <subcommand> [--dry-run]
                                               (--step verify-1: that step's newest log among parallel workers;
                                               --post: signed step report comment on the Issue, from dispatch metadata)
   next <issue>                                read-only: next step and exact commands from the newest step report
-  commit-worker <branch> --message-file <f>   WSL: stage source, tooling and managed root files, commit, print SHA
+  commit-worker <branch> --message-file <f> | --from-report <issue>
+                                              WSL: stage source, tooling and managed root files, commit, print SHA
+                                              (--from-report: the report's "Proposed commit" line + trailer)
+  verdict <issue> --pr <pr> [--out <f>]       VERDICT file from the newest signed review report (for review-comment)
   regression-evidence [--worktree <wsl dir>] --test-file <f> --test-name <n> --out <f> [--base <sha>]
                                               run the fix worker's regression test on the base with the fix
                                               reverted and on the head; writes the script evidence for review-comment
@@ -963,6 +975,8 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       "body-file": { type: "string" },
       "comment-file": { type: "string" },
       "message-file": { type: "string" },
+      "from-report": { type: "string" },
+      pr: { type: "string" },
       prompt: { type: "string" },
       step: { type: "string" },
       round: { type: "string" },
@@ -1243,8 +1257,17 @@ export async function main(argv: readonly string[], context?: Context): Promise<
     case "open-pr": {
       const n = issueNumber(a);
       const branch = taskBranch(b);
-      const bodyFile = required(values["body-file"], "--body-file");
-      const body = readFileSync(bodyFile, "utf8");
+      let bodyFile = values["body-file"];
+      let body: string;
+      if (bodyFile === undefined) {
+        body = await generatedPrBody(ctx.run, ctx.target, {
+          issue: n,
+          branch,
+          notes: values.notes === undefined ? undefined : readFileSync(values.notes, "utf8"),
+        });
+        if (dry) console.log(body);
+        bodyFile = dry ? "<generated>" : writePrBody(ctx.hostCwd, n, body);
+      } else body = readFileSync(bodyFile, "utf8");
       const existing = await readExistingPulls(ctx, branch);
       return go(planOpenPr(n, branch, required(values.title, "--title"), bodyFile, body, existing));
     }
@@ -1262,8 +1285,18 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       return syncCommand(ctx, taskBranch(a), required(values.reviewed, "--reviewed"), dry);
     case "close": {
       const n = issueNumber(a);
-      const comment = readFileSync(required(values["comment-file"], "--comment-file"), "utf8");
       const issue = await readIssue(ctx, n);
+      const commentFile = values["comment-file"];
+      const comment =
+        commentFile !== undefined
+          ? readFileSync(commentFile, "utf8")
+          : await generatedCloseComment({
+              issue: n,
+              workflow: issue.readiness.workflow,
+              pulls: issue.pulls,
+              mergeCommitOf: async (pr) => (await readPull(ctx, pr)).mergeCommit,
+              requiredChecksOf: (base) => readRequiredChecks(ctx.run, base),
+            });
       const target = { number: n, ...issue, workflow: issue.readiness.workflow };
       const carries = await carriesFor(ctx, issue.pulls, dry);
       return go(planClose(target, comment, issue.field, issue.item, issue.pulls, carries));
@@ -1327,12 +1360,48 @@ export async function main(argv: readonly string[], context?: Context): Promise<
       }
       return nextCommand({ number: n, comments: issue.authored, workflow });
     }
-    case "commit-worker":
-      return commitWorkerCommand(ctx, {
-        branch: taskBranch(a),
-        message: readFileSync(required(values["message-file"], "--message-file"), "utf8"),
-        dryRun: dry,
+    case "commit-worker": {
+      const fromReport = values["from-report"];
+      if ((fromReport === undefined) === (values["message-file"] === undefined))
+        throw new Error("commit-worker: use exactly one of --message-file or --from-report");
+      let message: string;
+      if (fromReport === undefined) message = readFileSync(values["message-file"] ?? "", "utf8");
+      else {
+        const made = commitMessageFromReports(
+          (await readIssue(ctx, issueNumber(fromReport))).authored,
+        );
+        if (!made.ok) {
+          console.error(`${label}: refused: ${made.reasons.join("; ")}`);
+          return 1;
+        }
+        message = made.message;
+      }
+      return commitWorkerCommand(ctx, { branch: taskBranch(a), message, dryRun: dry });
+    }
+    case "verdict": {
+      const n = issueNumber(a);
+      const pr = await readPull(ctx, issueNumber(required(values.pr, "--pr")));
+      if (linkedIssue(pr.body) !== n) {
+        console.error(
+          `${label}: refused: PR #${String(pr.number)} has no "Issue: #${String(n)}" line`,
+        );
+        return 1;
+      }
+      const issue = await readIssue(ctx, n);
+      const made = verdictFromReports({
+        comments: issue.authored,
+        issueBody: issue.body,
+        prHead: pr.headRefOid,
+        workflow: issue.readiness.workflow,
       });
+      if (!made.ok) {
+        console.error(`${label}: refused: ${made.reasons.join("; ")}`);
+        return 1;
+      }
+      if (values.out === undefined || dry) console.log(made.text);
+      else writeFileSync(values.out, made.text, "utf8");
+      return 0;
+    }
     case "regression-evidence":
       return regressionEvidenceCommand({
         ...(values.worktree === undefined ? {} : { worktree: values.worktree }),

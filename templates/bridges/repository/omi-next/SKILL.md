@@ -141,7 +141,11 @@ and commits authorized changes via commit-worker, then runs the fixed-head check
 
 ```
 node "$coordinatorPin/tools/coordinator/flow.ts" commit-worker <branch> --message-file <local-file>
+node "$coordinatorPin/tools/coordinator/flow.ts" commit-worker <branch> --from-report N   # default
 ```
+
+`--from-report N` takes the "Proposed commit:" line of the newest signed worker report on Issue N and
+appends the configured attribution trailer; it refuses when the line is missing.
 
 Native resume is the sole exception to the full packet. Generate a compact resume packet (the step's skills and rules plus `receiving-code-review`, then
 the findings; no long notes/scope) and send it only to the original implementer's native
@@ -164,9 +168,13 @@ Take the head SHA from the worker report, then:
 ```
 node "$coordinatorPin/tools/coordinator/flow.ts" check <branch> --head <sha>     # npm run check on exactly <sha>
 node "$coordinatorPin/tools/coordinator/flow.ts" push <branch>                   # right after a green check: CI overlaps review
-node "$coordinatorPin/tools/coordinator/flow.ts" open-pr N <branch> --title "OMI-NNN: …" --body-file <f>
+node "$coordinatorPin/tools/coordinator/flow.ts" open-pr N <branch> --title "OMI-NNN: …" [--notes <f>]
 node "$coordinatorPin/tools/coordinator/flow.ts" set-status N "In Review"
 ```
+
+Without `--body-file`, `open-pr` generates the body: `Issue: #N`, a file-to-layer table from the
+diff against `origin/develop`, and the stored `check` result of the branch head (refuses without a
+passed one); `--notes <f>` adds the Coordinator's notes. `--body-file <f>` still overrides it.
 
 After the script-run check, put its exact SHA, command, exit status and output/evidence in notes.
 In step 5 use `prompt --step review --head <sha> --check-log <log.md>` for feature, refactor,
@@ -193,7 +201,9 @@ using step 3. Pin notes to <sha> and supply the diff, AC, scope decisions, scrip
 evidence. No resume of the author's thread and no shared context; a different tool/profile is not
 required. The worker checks AGENTS.md, the diff and Skills applied / Rules applied claims against
 evidence. Missing evidence is a finding to investigate, not an invented approval. The Coordinator
-only posts the worker's validated verdict with
+only posts the worker's validated verdict. Build the file with
+`node "$coordinatorPin/tools/coordinator/flow.ts" verdict N --pr <pr> --out <f>` (header and AC lines from
+the newest signed review report on the PR head; refuses a missing AC line), read it, then post with
 `node "$coordinatorPin/tools/coordinator/flow.ts" review-comment <pr> --file <f>` (validates VERDICT, REVIEWED_HEAD =
 PR head and one AC line per criterion before posting; OMI-077) from the Coordinator account (`COORDINATOR_LOGIN` in `coordinator-settings.ts`); `VERDICT` comments by
 any other account are ignored by `merge`, `close` and `status.ts` (which flags them). The body
@@ -213,7 +223,7 @@ must contain:
 
   Every criterion gets exactly one line; PASS requires every line to be `met`.
 
-FAIL → generate a --findings packet for native implementer resume (or a full --notes packet for a fresh implementer), then repeat 4–5 with the fresh independent review worker, `--round <N> --previous-verdict <verdict.md> --delta <diff.md>` and fresh check evidence for the new SHA (limit: 2 rounds,
+FAIL → generate a --findings packet for native implementer resume (or a full --notes packet for a fresh implementer), then repeat 4–5 with the fresh independent review worker, `--round <N>` (for a review round N > 1 `prompt` fills the previous verdict and the delta from the recorded review report and git; `--previous-verdict`/`--delta` override) and fresh check evidence for the new SHA (limit: 2 rounds,
 then Architect, then 2 more; design-patterns.md; then ask the PO). When you call the Architect,
 first post `gh pr comment <pr> --body "**ARCHITECT:** <reason>"` from the Coordinator account
 (reason required; ADR-0014, OMI-074): `/omi-watch` lights the Architect node from it and warns
@@ -247,7 +257,7 @@ head), not the whole task.
 
 ```
 node "$coordinatorPin/tools/coordinator/flow.ts" merge <pr> --head <sha>
-node "$coordinatorPin/tools/coordinator/flow.ts" close N --comment-file <f>     # tick AC + comment + close + Done
+node "$coordinatorPin/tools/coordinator/flow.ts" close N     # tick AC + comment + close + Done; the comment (PR, merge commit, required checks, verdict) is generated, or pass --comment-file <f>
 node "$coordinatorPin/tools/coordinator/flow.ts" cleanup <branch>
 ```
 
