@@ -1,8 +1,9 @@
 // Pure spec parsing, Project option validation and Plan Key allocation (no GitHub writes).
-import { parse } from "yaml";
 import { z } from "zod";
 import { marker, MARKER_PATTERN } from "../github-bootstrap/manifest.ts";
 import "../register-ts-imports.ts";
+const { splitIssueSpec } =
+  await import("../../src/infrastructure/config/issue-spec-frontmatter.ts");
 const { issueSpecBodyReasons } = await import("../../src/domain/tasks/issue-spec-policy.ts");
 import { ISSUE_FIELDS } from "./issue-readiness.ts";
 
@@ -39,21 +40,16 @@ export interface ProjectField {
 }
 
 export function parseIssueSpec(source: string, epic = false): SpecResult {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/.exec(source);
-  if (!match) return { kind: "refuse", reason: "spec requires YAML frontmatter" };
-  let raw: unknown;
-  try {
-    raw = parse(match[1] ?? "", { uniqueKeys: true });
-  } catch (error) {
-    return { kind: "refuse", reason: `invalid YAML: ${String(error)}` };
-  }
+  const split = splitIssueSpec(source);
+  if (split.kind === "invalid") return { kind: "refuse", reason: split.reason };
+  const raw = split.frontmatter;
   const result = (epic ? epicFrontmatter : frontmatter).safeParse(raw);
   if (!result.success)
     return {
       kind: "refuse",
       reason: result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
     };
-  const body = (match[2] ?? "").trim();
+  const body = split.body.trim();
   const reasons = epic
     ? (!body ? ["Epic body must not be empty"] : []).concat(
         (body.match(/<!--\s*omi-squad:plan-key=/g)?.length ?? 0) > 1 ||

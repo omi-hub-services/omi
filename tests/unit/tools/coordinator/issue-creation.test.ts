@@ -232,6 +232,18 @@ describe("new-issue with fake GitHub", () => {
     expect(await createIssue(run, file, false)).toBe(1);
     expect(seen).toEqual([]);
   });
+  it.each([false, true])(
+    "refuses front matter that is not valid YAML with a named line (dryRun=%s)",
+    async (dryRun) => {
+      writeFileSync(file, source.replace("title: A task", "title: omi github rulesets: create"));
+      const { run, seen } = fake();
+      expect(await createIssue(run, file, dryRun)).toBe(1);
+      expect(seen).toEqual([]);
+      expect(vi.mocked(console.error).mock.calls.flat().join()).toBe(
+        "new-issue: refused: spec front matter is not valid YAML (line 2)",
+      );
+    },
+  );
   it("refuses live invalid options before writing anything", async () => {
     const { run, seen } = fake({ invalidOption: true });
     expect(await createIssue(run, file, false)).toBe(1);
