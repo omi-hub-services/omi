@@ -1,3 +1,4 @@
+import { registerGithubCommands, type GithubCommands } from "./github-commands.js";
 import {
   registerInstallationCommands,
   type InstallationCommands,
@@ -36,6 +37,7 @@ export interface CliEnvironment extends CliOutput {
   readonly overview?: OverviewCommands;
   readonly logs?: LogCommands;
   readonly workflows?: WorkflowCommands;
+  readonly github?: GithubCommands;
 }
 
 /** Builds the Commander program. Every command is registered here and nowhere else. */
@@ -59,6 +61,7 @@ export function createProgram(context: CliContext, environment: CliEnvironment):
     });
   registerInstallationCommands(program, context, environment.installation);
   registerDockerCommands(program, context, environment.docker);
+  registerGithubCommands(program, context, environment.github);
   registerStatusCommand(program, context, environment.overview);
   registerSessionCommands(program, context, environment.launchSession);
   registerApprovalCommands(program, context);

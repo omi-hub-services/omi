@@ -1,3 +1,5 @@
+import { configureGithubRulesets } from "../application/use-cases/project/configure-github-rulesets.js";
+import { createGithubRulesets } from "../infrastructure/github/github-rulesets.js";
 import { loadOmiSetting } from "../infrastructure/config/load-omisetting.js";
 import { dockerRuntimeEnvironment } from "../infrastructure/config/docker-runtime-environment.js";
 import { settingsCredentialPolicy, type OmiSetting } from "../application/contracts/omisetting.js";
@@ -483,6 +485,30 @@ export function createLogCommands(): LogCommands {
 export function createCliEnvironment(options: CliWiringOptions): CliEnvironment {
   return {
     sendCommand,
+    github: {
+      rulesets: async (mode) => {
+        const config = await createOnboardingProjectConfigStore(process.cwd()).read();
+        if (config === undefined)
+          return {
+            ok: false,
+            code: "PROJECT_NOT_CONFIGURED",
+            failures: ["Configure .omi/config/project.yaml first"],
+            steps: [],
+          };
+        return configureGithubRulesets(
+          createGithubRulesets(
+            createGithubRestClient({
+              transport: createGhApiTransport(),
+              now: Date.now,
+              random: Math.random,
+              sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+            }),
+          ),
+          config,
+          mode,
+        );
+      },
+    },
     workflows: {
       validate: () =>
         validateWorkflows({
