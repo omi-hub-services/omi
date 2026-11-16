@@ -79,6 +79,19 @@ const SECTION_END =
 const AREA_STATUS = /\b(?:checked|no findings)\b\s*(?:—|–|--?|:)\s*(\S.*)$/i;
 const PLACEHOLDER = /^(?:todo|tbd|n\/?a|none|nothing|-+|\.+|\?+)\W*$/i;
 
+/** The `Security:` heading line and the lines under it up to the section end; empty when absent. */
+export function securitySectionLines(review: string): string[] {
+  const lines = review.split(/\r?\n/);
+  const at = lines.findIndex((line) => SECURITY_HEADING.test(line));
+  if (at < 0) return [];
+  const section = [lines[at] ?? ""];
+  for (const line of lines.slice(at + 1)) {
+    if (SECTION_END.test(line)) break;
+    section.push(line);
+  }
+  return section;
+}
+
 /**
  * Whether a security-relevant review has a bounded `Security:` section (up to the next heading or
  * review part) with at least one area line saying `checked` or `no findings` plus real evidence.
@@ -86,14 +99,9 @@ const PLACEHOLDER = /^(?:todo|tbd|n\/?a|none|nothing|-+|\.+|\?+)\W*$/i;
  * evidence is true stays the reviewer's and the Coordinator's judgment.
  */
 export function hasSecuritySection(review: string): boolean {
-  const lines = review.split(/\r?\n/);
-  const at = lines.findIndex((line) => SECURITY_HEADING.test(line));
-  if (at < 0) return false;
-  const section = [SECURITY_HEADING.exec(lines[at] ?? "")?.[1] ?? ""];
-  for (const line of lines.slice(at + 1)) {
-    if (SECTION_END.test(line)) break;
-    section.push(line);
-  }
+  const raw = securitySectionLines(review);
+  if (raw.length === 0) return false;
+  const section = [SECURITY_HEADING.exec(raw[0] ?? "")?.[1] ?? "", ...raw.slice(1)];
   return section.some((line) => {
     const evidence = AREA_STATUS.exec(line)?.[1]?.trim();
     return evidence !== undefined && !PLACEHOLDER.test(evidence);
