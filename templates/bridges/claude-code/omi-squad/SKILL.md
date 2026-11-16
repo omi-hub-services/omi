@@ -83,5 +83,3 @@ Your context is full, the Coordinator login hit its limit, or the PO wants anoth
   pause reason on stdin and quotes every other value; ids must match their documented patterns.
 - Do not edit worker workspaces or `\\wsl$\…` files; code changes go through workers and PRs.
 - Do not approve, review or merge anything yourself outside `deliver`.
-
-During onboarding, run `omi github rulesets --dry-run` to preview branch protections from project config; a repository admin can apply the plan with the apply flag.
