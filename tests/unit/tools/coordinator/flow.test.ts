@@ -561,3 +561,233 @@ describe("release review command wiring", () => {
       expect(seen.some((c) => c.args[1]?.endsWith("rules/branches/main"))).toBe(true);
   });
 });
+
+describe("Issue relation commands", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "omi-relations-"));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+  const body = `## Mục tiêu
+Do it.
+## Phạm vi
+One change.
+## Acceptance criteria
+- [ ] Works
+## Implementation map
+- src/domain/tasks/task.ts
+## Dependencies
+None.
+<!-- omi-squad:plan-key=OMI-186 -->`;
+  function context(
+    options: {
+      noItem?: boolean;
+      full?: boolean;
+      badEpic?: boolean;
+      foreignParent?: boolean;
+      foreignBlocker?: boolean;
+      parentError?: number;
+    } = {},
+  ) {
+    const seen: Command[] = [];
+    let blocked = false;
+    let parent = 1;
+    let currentBody = body;
+    const { ctx } = fakeContext();
+    const run: Runner = (command) => {
+      seen.push(command);
+      const path = command.args[1] ?? "";
+      const write = command.args.includes("POST") || command.args.includes("PATCH");
+      let result: unknown = {};
+      if (path === "graphql")
+        result = {
+          data: {
+            organization: {
+              projectV2: {
+                id: "project",
+                field: { id: "status", options: [{ id: "backlog", name: "Backlog" }] },
+              },
+            },
+            repository: {
+              issue: {
+                state: "OPEN",
+                body: currentBody,
+                comments: { nodes: [] },
+                timelineItems: { nodes: [] },
+                labels: { nodes: [], pageInfo: { hasNextPage: false } },
+                projectItems: {
+                  nodes: options.noItem
+                    ? []
+                    : [
+                        {
+                          id: "item",
+                          project: { id: "project" },
+                          planKey: { text: "OMI-186" },
+                          priority: { name: "P1" },
+                          workType: { name: "Task" },
+                          workflow: { name: "feature" },
+                          role: { name: "Developer" },
+                          area: { name: "domain" },
+                          status: { name: "In Progress" },
+                        },
+                      ],
+                },
+              },
+            },
+          },
+        };
+      else if (path.includes("blocked_by")) {
+        if (write) blocked = true;
+        result = [
+          [
+            ...(options.foreignBlocker ? [{ number: 2, id: 202 }] : []),
+            ...(blocked ? [{ number: 2, id: 102 }] : []),
+          ],
+        ];
+      } else if (path.includes("/sub_issues?"))
+        result = [Array.from({ length: options.full ? 100 : 0 }, (_, i) => ({ number: i + 200 }))];
+      else if (path.endsWith("/sub_issues")) parent = 3;
+      else if (path.endsWith("/parent")) {
+        if (options.parentError)
+          return Promise.resolve({
+            code: 1,
+            stdout: "",
+            stderr: `gh: Not Found (HTTP ${String(options.parentError)})`,
+          });
+        result = {
+          number: options.foreignParent && parent === 1 ? 3 : parent,
+          id: parent === 1 ? 101 : 103,
+        };
+      } else if (path.endsWith("/issues/2")) result = { id: 102 };
+      else if (path.endsWith("/issues/3"))
+        result = { id: 103, body: options.badEpic ? "task" : "<!-- omi-squad:plan-key=EP-03 -->" };
+      else if (path.endsWith("/issues/9")) {
+        if (write) currentBody = (JSON.parse(command.input ?? "{}") as { body: string }).body;
+        result = { id: 109, body: currentBody };
+      }
+      return Promise.resolve({ code: 0, stdout: JSON.stringify(result), stderr: "" });
+    };
+    return { ctx: { ...ctx, run }, seen };
+  }
+  const writes = (seen: Command[]) =>
+    seen.filter(
+      (c) =>
+        c.args.includes("POST") ||
+        c.args.includes("PATCH") ||
+        c.args.includes("item-edit") ||
+        (c.args[0] === "issue" && c.args[1] === "comment"),
+    );
+
+  it("block links the native dependency, returns to Backlog, comments once and then writes nothing", async () => {
+    const { ctx, seen } = context();
+    const args = ["block", "9", "--by", "2", "--reason", "Needs dependency"];
+    expect(await main(args, ctx)).toBe(0);
+    expect(writes(seen)).toHaveLength(3);
+    expect(
+      seen.find((c) => c.args[1]?.endsWith("blocked_by") && c.args.includes("POST"))?.input,
+    ).toBe('{"issue_id":102}');
+    expect(seen.some((c) => c.args.includes("item-edit") && c.args.includes("backlog"))).toBe(true);
+    expect(seen.some((c) => (c.input ?? c.args.join(" ")).includes("Needs dependency"))).toBe(true);
+    seen.length = 0;
+    expect(await main(args, ctx)).toBe(0);
+    expect(writes(seen)).toEqual([]);
+  });
+  it("block compares dependency identity across repositories", async () => {
+    const { ctx, seen } = context({ foreignBlocker: true });
+    expect(await main(["block", "9", "--by", "2", "--reason", "Wait"], ctx)).toBe(0);
+    expect(writes(seen)).toHaveLength(3);
+  });
+  it("block refuses a missing Project item before writing the link", async () => {
+    const { ctx, seen } = context({ noItem: true });
+    expect(await main(["block", "9", "--by", "2", "--reason", "Wait"], ctx)).toBe(1);
+    expect(writes(seen)).toEqual([]);
+  });
+  it("set-epic replaces the native parent and then writes nothing", async () => {
+    const { ctx, seen } = context();
+    expect(await main(["set-epic", "9", "--epic", "3"], ctx)).toBe(0);
+    expect(writes(seen)).toHaveLength(1);
+    expect(writes(seen)[0]?.input).toBe('{"sub_issue_id":109,"replace_parent":true}');
+    seen.length = 0;
+    expect(await main(["set-epic", "9", "--epic", "3"], ctx)).toBe(0);
+    expect(writes(seen)).toEqual([]);
+  });
+  it("set-epic compares parent identity across repositories", async () => {
+    const { ctx, seen } = context({ foreignParent: true });
+    expect(await main(["set-epic", "9", "--epic", "3"], ctx)).toBe(0);
+    expect(writes(seen)).toHaveLength(1);
+  });
+  it("set-epic attaches an Issue without a parent", async () => {
+    const { ctx, seen } = context({ parentError: 404 });
+    expect(await main(["set-epic", "9", "--epic", "3"], ctx)).toBe(0);
+    expect(writes(seen)).toHaveLength(1);
+  });
+  it("set-epic propagates parent read errors without writing", async () => {
+    const { ctx, seen } = context({ parentError: 403 });
+    await expect(main(["set-epic", "9", "--epic", "3"], ctx)).rejects.toThrow(/parent/);
+    expect(writes(seen)).toEqual([]);
+  });
+  it.each([{ full: true }, { badEpic: true }])(
+    "set-epic refuses an invalid or full target (%j)",
+    async (options) => {
+      const { ctx, seen } = context(options);
+      expect(await main(["set-epic", "9", "--epic", "3"], ctx)).toBe(1);
+      expect(writes(seen)).toEqual([]);
+    },
+  );
+  it("edit-issue replaces only the body, warns on top-level AC count and then writes nothing", async () => {
+    const { ctx, seen } = context();
+    const file = join(dir, "body.md");
+    const replacement = body.replace("- [ ] Works", "- [ ] Changed\n- [ ] Another\n  - [ ] Nested");
+    writeFileSync(file, replacement.replace("\n<!-- omi-squad:plan-key=OMI-186 -->", ""));
+    expect(await main(["edit-issue", "9", "--file", file], ctx)).toBe(0);
+    expect(writes(seen)).toHaveLength(1);
+    expect(JSON.parse(writes(seen)[0]?.input ?? "{}")).toEqual({ body: replacement });
+    expect(vi.mocked(console.warn).mock.calls.flat().join()).toContain("1 -> 2");
+    seen.length = 0;
+    expect(await main(["edit-issue", "9", "--file", file], ctx)).toBe(0);
+    expect(writes(seen)).toEqual([]);
+  });
+  it("edit-issue reuses the task spec parser and changes only the body", async () => {
+    const { ctx, seen } = context();
+    const file = join(dir, "spec.md");
+    const replacement = body.replace("Works", "Updated");
+    writeFileSync(
+      file,
+      `---\ntitle: Ignored title\npriority: P1\nworkType: Task\nworkflow: feature\nrole: Developer\narea: domain\nmilestone: M1\nepic: 1\nblockedBy: []\n---\n${replacement}`,
+    );
+    expect(await main(["edit-issue", "9", "--file", file], ctx)).toBe(0);
+    expect(JSON.parse(writes(seen)[0]?.input ?? "{}")).toEqual({ body: replacement });
+    expect(writes(seen)).toHaveLength(1);
+  });
+  it.each(["bad body", body.replace("OMI-186", "OMI-999")])(
+    "edit-issue rejects an invalid replacement before writing",
+    async (replacement) => {
+      const { ctx, seen } = context();
+      const file = join(dir, "body.md");
+      writeFileSync(file, replacement);
+      expect(await main(["edit-issue", "9", "--file", file], ctx)).toBe(1);
+      expect(writes(seen)).toEqual([]);
+    },
+  );
+  it.each([
+    ["block", "9", "--by", "2", "--reason", "Wait"],
+    ["set-epic", "9", "--epic", "3"],
+  ])("dry run only reads for %s", async (...args) => {
+    const { ctx, seen } = context();
+    expect(await main([...args, "--dry-run"], ctx)).toBe(0);
+    expect(writes(seen)).toEqual([]);
+  });
+  it("edit-issue dry run only reads", async () => {
+    const { ctx, seen } = context();
+    const file = join(dir, "body.md");
+    writeFileSync(file, body.replace("Works", "Changed"));
+    expect(await main(["edit-issue", "9", "--file", file, "--dry-run"], ctx)).toBe(0);
+    expect(writes(seen)).toEqual([]);
+  });
+});

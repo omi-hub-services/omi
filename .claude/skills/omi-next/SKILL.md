@@ -126,7 +126,7 @@ in `ready`; on `refused:` stop and say why. Without one, take `ready[0]`; if `re
 `flow.ts promote` (no N: first entry under "Backlog, all blockers closed") and take that Issue.
 Unfinished work in flight (an open PR, a running worker) comes first. At most 3 tasks run in
 parallel (PO). A task that waits on the PO gets a Coordinator comment
-`**WAITING-PO:** <reason>` and a task waiting on an open blocker goes back to Backlog, so
+`**WAITING-PO:** <reason>`. For an open blocker, run `node "$coordinatorPin/tools/coordinator/flow.ts" block N --by M --reason "<reason>"` to add the native link, return the task to Backlog and post the Coordinator comment, so
 `/omi-watch` shows Waiting PO / Blocked instead of a stale step (OMI-086, ADR-0014). Read the Issue (`gh issue view N`) and the docs CLAUDE.md
 lists.
 
@@ -137,6 +137,23 @@ matching the marker, Priority/Work Type/Workflow/Role/Area, at least one top-lev
 `status.ts` lists such Issues under Attention. Area tooling or declared tools/coordinator/
 or .claude/skills/ paths also require a nonempty ## Framework counterpart section naming the
 framework module/template or the reason none applies.
+
+Issue relations and scope edits also go through `flow.ts` (preview with `--dry-run`):
+
+```text
+node "$coordinatorPin/tools/coordinator/flow.ts" block N --by M --reason "<reason>"
+node "$coordinatorPin/tools/coordinator/flow.ts" new-epic --file <epic-spec.md>
+node "$coordinatorPin/tools/coordinator/flow.ts" set-epic N --epic E
+node "$coordinatorPin/tools/coordinator/flow.ts" edit-issue N --file <spec.md>
+```
+
+Never use raw `gh` writes for these operations. `block` writes nothing when the native link
+already exists; `set-epic` replaces the parent. Epic specs require title, workType: Epic, area,
+milestone and status in YAML frontmatter, followed by the container body; task readiness does
+not apply. `edit-issue` accepts a body or the existing task spec format, preserves the Plan Key,
+checks readiness against current Project fields, and warns when the top-level AC count changes.
+It changes only the body; record scope decisions before editing. `new-issue` refuses a full
+Epic (100 sub-issues) before creating anything; choose another Epic through the scripts.
 
 ## 2. Start
 

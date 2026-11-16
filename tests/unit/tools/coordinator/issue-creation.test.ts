@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { main } from "../../../../tools/coordinator/flow.ts";
 import { createIssue } from "../../../../tools/coordinator/issue-creation.ts";
 import type { Command, Runner } from "../../../../tools/coordinator/process-runner.ts";
 
@@ -43,11 +44,13 @@ describe("new-issue with fake GitHub", () => {
     vi.restoreAllMocks();
   });
 
-  function fake(options: { invalidOption?: boolean; existing?: boolean } = {}) {
+  function fake(
+    options: { invalidOption?: boolean; existing?: boolean; full?: boolean; epic?: boolean } = {},
+  ) {
     const seen: Command[] = [];
     const fields = Object.entries({
       Priority: "P1",
-      "Work Type": "Task",
+      "Work Type": options.epic ? "Epic" : "Task",
       Workflow: "feature",
       Role: "Developer",
       Area: "tools",
@@ -99,7 +102,7 @@ describe("new-issue with fake GitHub", () => {
             },
           },
         };
-      } else if (path.includes("issues?"))
+      } else if (path.includes("/issues?"))
         result = [
           [
             {
@@ -130,6 +133,8 @@ describe("new-issue with fake GitHub", () => {
               : []),
           ],
         ];
+      else if (path.includes("/sub_issues?"))
+        result = [Array.from({ length: options.full ? 100 : 0 }, (_, i) => ({ number: i + 200 }))];
       else if (path.includes("milestones?")) result = [[{ number: 5, title: "M1" }]];
       else if (path.endsWith("/issues") && command.args.includes("POST")) {
         createdBody = (JSON.parse(command.input ?? "{}") as { body: string }).body;
@@ -185,6 +190,42 @@ describe("new-issue with fake GitHub", () => {
     ).toBe(true);
     expect(vi.mocked(console.log).mock.calls.flat().join()).toContain("done:");
   });
+  it("refuses a full epic before any remote or local write", async () => {
+    const { run, seen } = fake({ full: true });
+    expect(await createIssue(run, file, false)).toBe(1);
+    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(seen.filter(isWrite)).toEqual([]);
+    expect(vi.mocked(console.error).mock.calls.flat().join()).toContain("EPIC_SUB_ISSUE_LIMIT");
+  });
+  it("creates an Epic without the task readiness gate and sets every container field", async () => {
+    writeFileSync(
+      file,
+      "---\ntitle: Container\nworkType: Epic\narea: tools\nmilestone: M1\nstatus: Backlog\n---\nEpic scope.\n",
+    );
+    const { run, seen } = fake({ epic: true });
+    expect(
+      await main(["new-epic", "--file", file], {
+        run,
+        target: { viaWslExe: false, distro: "Ubuntu", repoDir: dir },
+        hostCwd: dir,
+        isWindows: false,
+      }),
+    ).toBe(0);
+    const create = seen.find((c) => c.args[1]?.endsWith("/issues") && c.args.includes("POST"));
+    expect(JSON.parse(create?.input ?? "{}")).toEqual({
+      title: "[EP-02] Container",
+      body: expect.stringContaining("plan-key=EP-02") as unknown,
+      milestone: 5,
+    });
+    const edits = seen.filter((c) => c.args.includes("item-edit"));
+    expect(edits).toHaveLength(4);
+    for (const value of ["opt-Epic", "opt-tools", "opt-Backlog", "EP-02"])
+      expect(edits.some((c) => c.args.includes(value))).toBe(true);
+    expect(seen.some((c) => c.args[1]?.includes("/sub_issues"))).toBe(false);
+    seen.length = 0;
+    expect(await createIssue(run, file, false, true)).toBe(0);
+    expect(seen.filter(isWrite)).toEqual([]);
+  });
   it("validates local input before contacting GitHub", async () => {
     writeFileSync(file, source.replace("role: Developer\n", ""));
     const { run, seen } = fake();
@@ -201,3 +242,12 @@ describe("new-issue with fake GitHub", () => {
     );
   });
 });
+
+function isWrite(c: Command) {
+  return (
+    c.args.includes("POST") ||
+    c.args.includes("PATCH") ||
+    c.args.includes("item-edit") ||
+    c.input?.includes("mutation")
+  );
+}
